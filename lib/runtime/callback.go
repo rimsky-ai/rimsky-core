@@ -97,15 +97,16 @@ type CallbackServer struct {
 	LifecycleSubs               *locks.LifecycleRegistry
 	LifecyclePeersForSpec       func(tplSpec node.TemplateSpec) []string
 	// @concept: data-processing
-	DataProcessors DataProcessingRegistry
-	PeerAuth       string
-	ServerIdentity *peer.IdentityHolder
-	ClientCAs      *x509.CertPool
-	addr           string
-	srv            *http.Server
-	serveErr       chan error
-	ackMu          sync.Mutex
-	ackOutcomes    map[shared.UUID]ackOutcomeRecord
+	DataProcessors   DataProcessingRegistry
+	ProducerVerbKick func()
+	PeerAuth         string
+	ServerIdentity   *peer.IdentityHolder
+	ClientCAs        *x509.CertPool
+	addr             string
+	srv              *http.Server
+	serveErr         chan error
+	ackMu            sync.Mutex
+	ackOutcomes      map[shared.UUID]ackOutcomeRecord
 }
 
 func (c *CallbackServer) authorizePeer(r *http.Request) error {
@@ -169,6 +170,7 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	r.Post("/v1/callback/{async_ack_id}", c.handleCallback)
 	if c.Persist != nil && c.Queue != nil {
 		r.Post("/v1/runs/{run_id}/keepalive", c.handleKeepalive)
+		r.Post("/v1/runs/{run_id}/attributes", c.handleAttributeWriteback)
 	}
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -569,6 +571,7 @@ func (c *CallbackServer) runArgs(supervisorID string, storeRegistry *locks.Regis
 		LifecycleSubs:               c.LifecycleSubs,
 		LifecyclePeersForSpec:       c.LifecyclePeersForSpec,
 		DataProcessors:              c.DataProcessors,
+		ProducerVerbKick:            c.ProducerVerbKick,
 	}
 }
 
@@ -706,7 +709,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 	}
 
 	scope := resolveAcqScope(ctx, args, acq)
-	terminalSig := signalForTerminal(t)
+	terminalSig := signalForTerminal(args, t)
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
 		NodeID:           acq.NodeID,

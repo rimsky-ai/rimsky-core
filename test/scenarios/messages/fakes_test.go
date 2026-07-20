@@ -59,6 +59,27 @@ func (f *fakeInstancesForEnqueue) SetPaused(context.Context, shared.UUID, bool, 
 	return false, nil
 }
 
+type fakeTemplatesForEnqueue struct{}
+
+func (f *fakeTemplatesForEnqueue) Insert(context.Context, persistence.TemplateInsertInput, persistence.Tx) error {
+	return nil
+}
+func (f *fakeTemplatesForEnqueue) GetByHash(context.Context, string, persistence.Tx) (*persistence.TemplateRow, error) {
+	return nil, nil
+}
+func (f *fakeTemplatesForEnqueue) List(context.Context, persistence.TemplateListFilter, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.TemplateRow], error) {
+	return persistence.PaginatedListResult[persistence.TemplateRow]{}, nil
+}
+func (f *fakeTemplatesForEnqueue) UpdateState(context.Context, string, persistence.TemplateState, persistence.Tx) error {
+	return nil
+}
+func (f *fakeTemplatesForEnqueue) DeleteByHash(context.Context, string, persistence.Tx) error {
+	return nil
+}
+func (f *fakeTemplatesForEnqueue) LockForUpdate(context.Context, string, persistence.Tx) (*persistence.TemplateRow, error) {
+	return nil, nil
+}
+
 type fakeEnqueueDeps struct {
 	msgs       *fakeMessages
 	queueModes map[shared.UUID]string
@@ -67,7 +88,8 @@ type fakeEnqueueDeps struct {
 func (d *fakeEnqueueDeps) Instances() persistence.InstanceTable {
 	return &fakeInstancesForEnqueue{queueModes: d.queueModes}
 }
-func (d *fakeEnqueueDeps) Messages() persistence.MessagesTable { return d.msgs }
+func (d *fakeEnqueueDeps) Templates() persistence.TemplateTable { return &fakeTemplatesForEnqueue{} }
+func (d *fakeEnqueueDeps) Messages() persistence.MessagesTable  { return d.msgs }
 
 func (f *fakeMessages) Insert(_ context.Context, _ persistence.Tx, req persistence.EnqueueMessageRequest) error {
 	f.rows[req.ID] = &persistence.MessageRow{

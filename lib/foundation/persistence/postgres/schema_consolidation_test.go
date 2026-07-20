@@ -35,6 +35,7 @@ var expectedTables = []string{
 	"rimsky_migrations",
 	"rimsky_node_attributes",
 	"rimsky_node_runs",
+	"rimsky_producer_verb_outbox",
 	"rimsky_nodes",
 	"rimsky_publisher_subscriptions",
 	"rimsky_run_scopes",

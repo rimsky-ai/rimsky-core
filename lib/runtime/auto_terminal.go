@@ -116,56 +116,7 @@ func CheckAndFireResolution(
 	}
 	pc, err := ResolveClaimHandleTerminal(ctx, args, tx, td)
 	if err != nil {
-		// @concept: error-policy
-		if cls := producerErrorClassOf(err); cls != "" {
-			rpc, rerr := routeHeldClaimVerbError(ctx, args, tx, row, td, cls)
-			if rerr != nil {
-				return nil, fmt.Errorf("CheckAndFireResolution: route verb error: %w", rerr)
-			}
-			return rpc, nil
-		}
 		return nil, fmt.Errorf("CheckAndFireResolution: %w", err)
-	}
-	return pc, nil
-}
-
-// @concept: error-policy
-// @concept: signal
-func routeHeldClaimVerbError(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row *persistence.ClaimHandleRow, td TerminalDecision, errorClass string,
-) (postCommitFn, error) {
-	var senderNodeRunID, senderFrameID shared.UUID
-	if row.NodeRunID != nil {
-		senderNodeRunID = *row.NodeRunID
-	}
-	if row.FrameID != nil {
-		senderFrameID = *row.FrameID
-	}
-	holderNodeType := ""
-	if nd, err := args.Persist.Nodes().Get(ctx, row.HolderNodeID, tx); err == nil && nd != nil {
-		holderNodeType = nd.NodeType
-	}
-	sig := errorPolicySignal(errorClass, map[string]any{
-		"source":          "claim_terminal_verb",
-		"producer":        td.ProducerName,
-		"claim_handle_id": td.ClaimHandleID.String(),
-	}, nil, nil, "give_up", 0, 0)
-	if err := emitSignalInTxOnce(ctx, args, tx,
-		row.HolderNodeID, holderNodeType, senderNodeRunID, td.LineageHint.InstanceID,
-		senderFrameID, sig); err != nil {
-		return nil, fmt.Errorf("emit claim-terminal error signal: %w", err)
-	}
-	abandonTD := td
-	abandonTD.Outcome = OutcomeAbandon
-	if err := promoteHandleState(ctx, args, tx, abandonTD); err != nil {
-		return nil, fmt.Errorf("promote handle after verb error: %w", err)
-	}
-	// @concept: claim-handle
-	// @decision: held-as-state-not-phase
-	pc, err := emitDeferredHeldCascade(ctx, args, tx, abandonTD)
-	if err != nil {
-		return nil, fmt.Errorf("deferred held cascade after verb error: %w", err)
 	}
 	return pc, nil
 }

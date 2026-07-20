@@ -16,7 +16,6 @@ import (
 )
 
 func TestSubClaimPayloadSubstitutionE2E(t *testing.T) {
-	t.Skip("filesystem list-split fan-out does not complete end-to-end: fan-out child runs cannot acquire their synthesized `parent/_list/<key>` sub-claims and stall (no policy: settle terminal/error/acquire/unavailable; retry: hang pending). Wraps demo.sh per ledger finding 2344 but exercises a feature gap queued as restore-feature ledger row 2366.")
 	t.Parallel()
 	ctx := context.Background()
 
@@ -166,31 +165,20 @@ func postFanoutSeed(t *testing.T, ep harness.RimskyEndpoint, instanceID string) 
 func waitForProcessedValues(t *testing.T, ep harness.RimskyEndpoint, instanceID string, want map[float64]struct{}) {
 	t.Helper()
 	for {
-		status, raw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/nodes?limit=100", "")
+		status, raw := ep.GetJSON(t, "/v1/events?instance_id="+instanceID+"&limit=500", "")
 		if status == http.StatusOK {
 			var resp struct {
-				Nodes []struct {
-					ID       string `json:"id"`
-					NodeType string `json:"node_type"`
-				} `json:"nodes"`
+				Events []struct {
+					Payload struct {
+						AttributesDelta map[string]any `json:"attributes_delta"`
+					} `json:"payload"`
+				} `json:"events"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
 				seen := make(map[float64]bool, len(want))
-				for _, n := range resp.Nodes {
-					if n.NodeType != "triage" {
-						continue
-					}
-					detailStatus, detailRaw := ep.GetJSON(t, "/v1/nodes/"+n.ID, "")
-					if detailStatus != http.StatusOK {
-						continue
-					}
-					var detail struct {
-						LatestAttributes struct {
-							ProcessedValue *float64 `json:"processed_value"`
-						} `json:"latest_attributes"`
-					}
-					if err := json.Unmarshal(detailRaw, &detail); err == nil && detail.LatestAttributes.ProcessedValue != nil {
-						seen[*detail.LatestAttributes.ProcessedValue] = true
+				for _, e := range resp.Events {
+					if v, ok := e.Payload.AttributesDelta["processed_value"].(float64); ok {
+						seen[v] = true
 					}
 				}
 				allSeen := true

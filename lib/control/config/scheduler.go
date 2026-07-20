@@ -12,6 +12,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/scheduler"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
@@ -23,6 +24,7 @@ type SchedulerConfig struct {
 	TickInterval            time.Duration
 	MaxQuietPeriodDefault   time.Duration
 	ClaimProducers          RemoteClaimProducersConfig
+	Executors               ExecutorsConfig
 	NamedLocks              locks.NamedLocksConfig
 	SupervisorID            string
 	Blob                    persistence.BlobBackend
@@ -30,6 +32,7 @@ type SchedulerConfig struct {
 	AuthSweepInterval       time.Duration
 	Metrics                 runtime.MetricsHook
 	Retention               runtime.RetentionConfig
+	LifecyclePeersForSpec   func(tplSpec node.TemplateSpec) []string
 }
 
 type SchedulerHandle interface {
@@ -61,6 +64,11 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: Driver.Coordinator() returned nil")
 	}
+	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors)
+	if err != nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartScheduler: dial lifecycle subscribers: %w", err)
+	}
 	inner := scheduler.Config{
 		Persist:                 persistStore,
 		Queue:                   persistQueue,
@@ -72,6 +80,8 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		ClaimHandles:            persistStore.ClaimHandles(),
 		SupervisorID:            cfg.SupervisorID,
 		StoreRegistry:           registry,
+		LifecycleSubs:           lifecycleSubs,
+		LifecyclePeersForSpec:   cfg.LifecyclePeersForSpec,
 		BlobBackend:             cfg.Blob,
 		BlobOrphans:             persistStore.BlobOrphans(),
 		OrphanBlobSweepInterval: cfg.OrphanBlobSweepInterval,
@@ -85,9 +95,10 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	go runAuthSweepLoop(sweepCtx, persistStore, cfg.Clock, cfg.Logger, authSweepEvery)
 	return schedulerHandleWithRegistry{
-		inner:       scheduler.Start(inner),
-		registry:    registry,
-		sweepCancel: sweepCancel,
+		inner:         scheduler.Start(inner),
+		registry:      registry,
+		lifecycleSubs: lifecycleSubs,
+		sweepCancel:   sweepCancel,
 	}, nil
 }
 
@@ -114,9 +125,10 @@ func runAuthSweepLoop(ctx context.Context, tables persistence.Tables, clock shar
 }
 
 type schedulerHandleWithRegistry struct {
-	inner       SchedulerHandle
-	registry    *locks.Registry
-	sweepCancel context.CancelFunc
+	inner         SchedulerHandle
+	registry      *locks.Registry
+	lifecycleSubs *locks.LifecycleRegistry
+	sweepCancel   context.CancelFunc
 }
 
 func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
@@ -126,6 +138,9 @@ func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
 	}
 	if h.registry != nil {
 		h.registry.Close()
+	}
+	if h.lifecycleSubs != nil {
+		h.lifecycleSubs.Close()
 	}
 	return err
 }

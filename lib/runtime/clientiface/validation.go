@@ -68,6 +68,7 @@ type ValidateLifecycleSubscriberInput struct {
 
 type ValidationRegistry interface {
 	Get(name string) (ValidationClient, bool)
+	All() []ValidationClient
 }
 
 type UnreachableValidatorPolicy string

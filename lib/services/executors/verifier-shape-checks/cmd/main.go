@@ -14,12 +14,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	verifiershapechecks "github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 func main() {
-	ops.Setup(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	opts, err := verifiershapechecks.LoadOptsFromEnv()
 	if err != nil {
 		slog.Error("verifier-shape-checks config", "error", err.Error())

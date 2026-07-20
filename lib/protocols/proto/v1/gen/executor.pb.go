@@ -113,13 +113,12 @@ type ExecuteRequest struct {
 	// Handles for each claim_producer the node references. Keyed by claim_producer-config name.
 	ClaimProducers map[string]*ClaimProducerHandle `protobuf:"bytes,7,rep,name=claim_producers,json=claimProducers,proto3" json:"claim_producers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// HTTP+JSON callback URL the executor may POST to for async handoff,
-	// incremental attribute writes, scratch writes, and keepalive bumps.
+	// incremental attribute writes, and keepalive bumps.
 	// Populated by the supervisor; empty string if the supervisor did not
 	// configure a callback endpoint.
 	CallbackUrl string `protobuf:"bytes,8,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
 	// Token the supervisor watches for cancellation requests, also used as the
-	// bearer token on incremental attribute, scratch, keepalive, and async
-	// terminal callbacks.
+	// bearer token on incremental attribute and keepalive callbacks.
 	CancelToken string `protobuf:"bytes,9,opt,name=cancel_token,json=cancelToken,proto3" json:"cancel_token,omitempty"`
 	// The supervisor-side rimsky_node_runs.id for this dispatch. Exposed
 	// so executors can key per-dispatch traces/state (the executor

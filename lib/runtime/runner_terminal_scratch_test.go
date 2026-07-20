@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -26,6 +27,7 @@ func (failingWriteBlobBackend) Name() string { return "failing" }
 type scratchRecorder struct {
 	persistence.Queue
 	writes int
+	bumps  int
 	last   struct {
 		nodeRunID     shared.UUID
 		inline        []byte
@@ -41,6 +43,11 @@ func (r *scratchRecorder) WriteScratchInTx(_ context.Context, _ persistence.Tx, 
 	r.last.handle = handle
 	r.last.handleBackend = handleBackend
 	return nil
+}
+
+func (r *scratchRecorder) BumpLastProgressAt(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) (bool, error) {
+	r.bumps++
+	return true, nil
 }
 
 func TestApplyTerminalScratchInTx_EmptyScratchIsNoOp(t *testing.T) {
@@ -98,6 +105,9 @@ func TestApplyTerminalScratchInTx_NonEmptyWritesInline(t *testing.T) {
 	}
 	if rec.writes != 1 {
 		t.Fatalf("expected 1 write, got %d", rec.writes)
+	}
+	if rec.bumps != 1 {
+		t.Fatalf("expected the scratch write to bump last_progress_at in the same tx, got %d bumps", rec.bumps)
 	}
 	if string(rec.last.inline) != string(payload) {
 		t.Fatalf("inline bytes mismatch: got %q want %q", rec.last.inline, payload)

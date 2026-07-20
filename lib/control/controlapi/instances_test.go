@@ -161,6 +161,58 @@ func TestCreateInstance_StaticConfigValidationGate(t *testing.T) {
 	})
 }
 
+// @concept: instance
+func TestCreateInstance_MessageQueueModeOperatorOverride(t *testing.T) {
+	t.Parallel()
+	h, teardown := newConstrainedExecutorHarness(t)
+	t.Cleanup(teardown)
+
+	tplID := registerAndDeployBody(t, h, refModeTemplateProvisionedValid("mqm-override-"+uuid.NewString()))
+
+	t.Run("omitted override inherits the template default", func(t *testing.T) {
+		status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+			"template":     tplID,
+			"instance_key": "ck-" + uuid.NewString(),
+		})
+		require.Equal(t, http.StatusCreated, status, out)
+		instID, _ := out["instance_id"].(string)
+		require.NotEmpty(t, instID)
+
+		getStatus, getOut := h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
+		require.Equal(t, http.StatusOK, getStatus, getOut)
+		require.Equal(t, "backlog", getOut["message_queue_mode"],
+			"an instance created without an override must inherit the template's default queue mode")
+	})
+
+	t.Run("operator override at creation wins over the template default", func(t *testing.T) {
+		status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+			"template":           tplID,
+			"instance_key":       "ck-" + uuid.NewString(),
+			"message_queue_mode": "coalesce",
+		})
+		require.Equal(t, http.StatusCreated, status, out)
+		instID, _ := out["instance_id"].(string)
+		require.NotEmpty(t, instID)
+
+		getStatus, getOut := h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
+		require.Equal(t, http.StatusOK, getStatus, getOut)
+		require.Equal(t, "coalesce", getOut["message_queue_mode"],
+			"an explicit message_queue_mode on the create request must override the template default on the persisted instance")
+	})
+
+	t.Run("invalid override is rejected before provisioning", func(t *testing.T) {
+		before := instanceCountForTemplate(t, h, tplID)
+		status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+			"template":           tplID,
+			"instance_key":       "ck-" + uuid.NewString(),
+			"message_queue_mode": "bogus",
+		})
+		require.Equal(t, http.StatusBadRequest, status, out)
+		require.Equal(t, before, instanceCountForTemplate(t, h, tplID),
+			"a rejected message_queue_mode must not provision an instance")
+	})
+}
+
 func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

@@ -15,6 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/store"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
 
 const ConfigEnv = "STORE_POSTGRES_CONFIG"
@@ -153,7 +154,7 @@ func LoadOptsFromEnv() (Opts, error) {
 		EnableLifecycle:   cfg.EnableLifecycle,
 		EnableExecutor:    cfg.EnableExecutor,
 		Host:              host,
-		GRPCPort:          cfg.GRPCPort,
+		GRPCPort:          agentport.Override(cfg.GRPCPort),
 		HTTPPort:          cfg.HTTPPort,
 		AdminPort:         cfg.AdminPort,
 	}, nil

@@ -394,7 +394,10 @@ func (s *nodeAttributesImpl) GetPriorRunData(
 	if err != nil {
 		return nil, err
 	}
-	if prior == nil || prior.Data == nil {
+	if prior == nil {
+		return nil, nil
+	}
+	if prior.Data == nil {
 		return map[string]any{}, nil
 	}
 	return prior.Data, nil

@@ -64,9 +64,14 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("Upsert A: %v", err)
 	}
+	completeRunAdmin(ctx, t, d, runA)
 
 	time.Sleep(10 * time.Millisecond)
 	runB := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+	if runB == runA {
+		t.Fatalf("seedConformanceRunForNode returned the same run twice (%v); "+
+			"runA must be settled before runB is seeded so GetLatestByNode has two distinct rows to choose between", runB)
+	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().Upsert(ctx, runB, fix.NodeID, map[string]any{"which": "B"}, tx)
 	}); err != nil {

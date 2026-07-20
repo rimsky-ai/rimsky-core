@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
 
 type Allowlist struct {
@@ -93,7 +95,7 @@ func LoadOptsFromEnv() (Opts, error) {
 	}
 	opts := Opts{
 		Host:                    envOr("RIMSKY_EXECUTOR_HOST", "0.0.0.0"),
-		GrpcPort:                grpcPort,
+		GrpcPort:                agentport.Override(grpcPort),
 		HTTPPort:                httpPort,
 		CallbackHost:            envOr("RIMSKY_EXECUTOR_CALLBACK_HOST", "127.0.0.1"),
 		SilenceTimeoutMsDefault: silenceMs,

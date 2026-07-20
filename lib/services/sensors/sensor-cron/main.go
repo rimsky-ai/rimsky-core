@@ -10,13 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
@@ -28,10 +27,10 @@ func (a slogAdapter) Error(msg string, args ...any) { a.l.Error(msg, args...) }
 
 func main() {
 	host := envOr("RIMSKY_SENSOR_CRON_HOST", "0.0.0.0")
-	port := atoiOr("RIMSKY_SENSOR_CRON_PORT", 9081)
+	port := agentport.Resolve("RIMSKY_SENSOR_CRON_PORT", 9081)
 	rimskyEndpoint := envOr("RIMSKY_ENDPOINT", "http://localhost:8080")
 
-	ops.Setup(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.Info("sensor-cron starting",
 		"grpc_port", port,
 		"rimsky_endpoint", rimskyEndpoint)
@@ -85,16 +84,4 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func atoiOr(k string, def int) int {
-	v := os.Getenv(k)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
 }

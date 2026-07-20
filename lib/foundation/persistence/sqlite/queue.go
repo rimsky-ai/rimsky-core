@@ -188,6 +188,11 @@ func (q *queueImpl) SelectCandidates(
 		         AND other.id <> d.id
 		         AND (other.claimed_by IS NOT NULL OR other.state IN ('held','parked'))
 		    )
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_wait_set w
+		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
+		        AND w.drained_at IS NULL
+		    )
 		  ORDER BY d.enqueued_at, d.sequence, d.id`,
 		nowUTC(),
 	)
@@ -446,7 +451,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, exp
 	_, err := q.db.ExecContext(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
-		  WHERE id = ? AND claimed_by = ?`,
+		  WHERE id = ? AND claimed_by = ? AND state NOT IN ('fresh', 'failed')`,
 		nodeRunID.String(), expectedClaimedBy,
 	)
 	return err
@@ -460,6 +465,51 @@ func (q *queueImpl) ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID
 		nodeRunID.String(),
 	)
 	return err
+}
+
+// @concept: node-run
+func (q *queueImpl) ReleaseClaimWithDisposition(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string, disposition string) error {
+	if disposition == "" {
+		return errors.New("sqlite.ReleaseClaimWithDisposition: disposition required")
+	}
+	_, err := q.db.ExecContext(ctx,
+		`UPDATE rimsky_node_runs
+		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale',
+		        prior_dispatch_id = id, prior_dispatch_disposition = ?
+		  WHERE id = ? AND claimed_by = ? AND state NOT IN ('fresh', 'failed')`,
+		disposition, nodeRunID.String(), expectedClaimedBy,
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite.ReleaseClaimWithDisposition: %w", err)
+	}
+	return nil
+}
+
+// @concept: node-run
+func (q *queueImpl) StampPriorDispatchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string) error {
+	if tx == nil {
+		return errors.New("sqlite.StampPriorDispatchInTx: tx required")
+	}
+	if disposition == "" {
+		return errors.New("sqlite.StampPriorDispatchInTx: disposition required")
+	}
+	res, err := q.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs
+		    SET prior_dispatch_id = ?, prior_dispatch_disposition = ?
+		  WHERE id = ?`,
+		priorNodeRunID.String(), disposition, nodeRunID.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite.StampPriorDispatchInTx: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite.StampPriorDispatchInTx: rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("sqlite.StampPriorDispatchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+	}
+	return nil
 }
 
 func (q *queueImpl) GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {

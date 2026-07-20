@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
@@ -242,6 +243,21 @@ func transitionThisHolderIfFullyResolved(
 	return transitionHolderIfFullyResolved(ctx, args, tx, acq.NodeRunID, td)
 }
 
+// @concept: auto-terminal
+// @concept: run-scope
+func holderIsAggregatingParent(
+	ctx context.Context, args RunArgs, tx persistence.Tx, holderNodeRunID foundationshared.UUID,
+) (bool, error) {
+	if args.Persist == nil || args.Persist.NodeRunTree() == nil {
+		return false, nil
+	}
+	children, err := args.Persist.NodeRunTree().ListChildren(ctx, tx, holderNodeRunID)
+	if err != nil {
+		return false, fmt.Errorf("holderIsAggregatingParent: ListChildren: %w", err)
+	}
+	return len(children) > 0, nil
+}
+
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
 func transitionHolderIfFullyResolved(
@@ -256,6 +272,13 @@ func transitionHolderIfFullyResolved(
 		return nil, fmt.Errorf("GetRunForGate: %w", err)
 	}
 	if holderRun == nil || holderRun.State != cascade.NodeStateHeld {
+		return nil, nil
+	}
+	aggregating, err := holderIsAggregatingParent(ctx, args, tx, holderNodeRunID)
+	if err != nil {
+		return nil, err
+	}
+	if aggregating {
 		return nil, nil
 	}
 	status, err := evaluateHolderPortfolio(ctx, args, tx, holderNodeRunID)
@@ -286,6 +309,13 @@ func transitionHolderIfFullyResolved(
 	if err := args.Persist.Nodes().UpdateState(
 		ctx, holderNodeRunID, newState, reason, &sigType, tx,
 	); err != nil {
+		if errors.Is(err, cascade.ErrIllegalTransition) {
+			if args.Logger != nil {
+				args.Logger.Warn("transitionHolderIfFullyResolved: raced with another terminal writer; leaving the settled verdict as-is",
+					"node_run_id", holderNodeRunID.String(), "error", err.Error())
+			}
+			return nil, nil
+		}
 		return nil, fmt.Errorf("UpdateState: %w", err)
 	}
 	holderNode, err := args.Persist.Nodes().Get(ctx, holderRun.NodeID, tx)

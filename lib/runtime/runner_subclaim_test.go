@@ -42,6 +42,7 @@ func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  "sup-U",
 	}
+	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, nil, runtime.AcquireSubClaimsInput{
 		ParentClaimHandleID: shared.UUID(uuid.New()),
 		ProducerName:        "ds-store",
@@ -65,6 +66,7 @@ func TestAcquireSubClaims_UnknownProducerErrors(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  "sup-X",
 	}
+	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, nil, runtime.AcquireSubClaimsInput{
 		ParentClaimHandleID: shared.UUID(uuid.New()),
 		ProducerName:        "missing-store",
@@ -101,6 +103,7 @@ func TestAcquireSubClaims_EmptyPartitionKeyRejected(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  "sup-EK",
 	}
+	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, nil, runtime.AcquireSubClaimsInput{
 		ParentClaimHandleID: shared.UUID(uuid.New()),
 		ProducerName:        "ds-store",
@@ -248,6 +251,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		Clock:          clk,
 		SupervisorID:   "sup-FAN",
 	}
+	args = withSyncVerbFlush(args)
 
 	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "fanout-runtime-dispatch", Version: "1",
@@ -451,8 +455,10 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  supOne,
 	}
+	argsOne = withSyncVerbFlush(argsOne)
 	argsTwo := argsOne
 	argsTwo.SupervisorID = supTwo
+	argsTwo = withSyncVerbFlush(argsTwo)
 
 	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "fanout-cross-supervisor", Version: "1",
@@ -613,6 +619,7 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  "sup-RO",
 	}
+	args = withSyncVerbFlush(args)
 
 	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "fanout-intent-inheritance", Version: "1",
@@ -720,6 +727,7 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  "sup-RW",
 	}
+	args = withSyncVerbFlush(args)
 
 	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "fanout-intent-inheritance-rw", Version: "1",
@@ -831,6 +839,7 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  "sup-AP",
 	}
+	args = withSyncVerbFlush(args)
 
 	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "fanout-addr-payload-persist", Version: "1",
@@ -941,6 +950,7 @@ func TestAcquireSubClaims_RejectsNonJSONAddress(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  "sup-AJ",
 	}
+	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, nil, runtime.AcquireSubClaimsInput{
 		ParentClaimHandleID: shared.UUID(uuid.New()),
 		ProducerName:        storeName,
@@ -978,6 +988,7 @@ func TestAcquireSubClaims_RejectsNonJSONPayload(t *testing.T) {
 		Clock:         clk,
 		SupervisorID:  "sup-PJ",
 	}
+	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, nil, runtime.AcquireSubClaimsInput{
 		ParentClaimHandleID: shared.UUID(uuid.New()),
 		ProducerName:        storeName,
@@ -987,4 +998,153 @@ func TestAcquireSubClaims_RejectsNonJSONPayload(t *testing.T) {
 		ParentIntent:        "rw",
 	})
 	require.ErrorContains(t, err, "non-JSON payload bytes")
+}
+
+// @story: sub-claim-payload-substitution
+// @story: fs-fanout-list-array
+func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	const storeName = "linked-subclaim-store"
+	reg := locks.NewRegistry()
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	wantPayload := []byte(`{"v":7}`)
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`"parent/_list/alpha"`), Payload: wantPayload},
+			},
+		}, nil
+	}
+	reg.Add(storeName, store)
+
+	clk := newTickClock(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		Clock:         clk,
+		SupervisorID:  "sup-LSC",
+	}
+	args = withSyncVerbFlush(args)
+
+	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "fanout-linked-subclaim-reuse", Version: "1",
+	})
+	ck := "ck-lsc"
+	var mainScopeID shared.UUID
+	var inst persistence.InstanceRow
+	var parentNode, childNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		inst = i
+		mainScopeID = ms
+		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		parentNode = p
+		c, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		childNode = c
+		return nil
+	}))
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+	childNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), childNode.ID, frameID)
+
+	parentClaimID := shared.UUID(uuid.New())
+	parentScope := json.RawMessage(`"@queue"`)
+	parentIntent := string(claimproducer.IntentReadWrite)
+	producerName := storeName
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 parentClaimID,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &producerName,
+			ClaimScopeData:     parentScope,
+			Intent:             &parentIntent,
+			HolderSupervisorID: "sup-LSC",
+			HolderNodeID:       parentNode.ID,
+			ExpiresAt:          time.Now().Add(10 * time.Minute),
+			NodeRunID:          &parentNodeRunID,
+		}, tx)
+	}))
+
+	var subClaims []runtime.SubClaim
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
+			ParentClaimHandleID: parentClaimID,
+			ParentClaimScope:    parentScope,
+			ProducerName:        storeName,
+			NodeRunID:           parentNodeRunID,
+			HolderNodeID:        parentNode.ID,
+			HolderSupervisorID:  "sup-LSC",
+			InstanceID:          inst.ID,
+			LivenessInterval:    30 * time.Second,
+			ParentIntent:        string(claimproducer.IntentReadWrite),
+		})
+		subClaims = out
+		return err
+	}))
+	require.Len(t, subClaims, 1)
+
+	claimSpec := claimproducer.ClaimSpec{
+		ProducerName: storeName,
+		Alias:        "fs_queue",
+		Selector:     "@queue",
+		Intent:       claimproducer.IntentReadWrite,
+	}
+
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		al, reused, err := runtime.ReuseLinkedSubClaimForTest(
+			ctx, args, tx, claimSpec, persistence.Candidate{NodeRunID: parentNodeRunID},
+			store, nil, 30*time.Second)
+		if err != nil {
+			return err
+		}
+		require.False(t, reused,
+			"the parent's own run must NOT attach to a sub-claim whose parent claim lives in the same run: got %+v", al)
+		return nil
+	}))
+
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return backend.ClaimHandles().UpdateNodeRunID(ctx, subClaims[0].ClaimHandleID, childNodeRunID, tx)
+	}))
+
+	var al runtime.AcquiredLock
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		got, reused, err := runtime.ReuseLinkedSubClaimForTest(
+			ctx, args, tx, claimSpec, persistence.Candidate{NodeRunID: childNodeRunID},
+			store, nil, 30*time.Second)
+		if err != nil {
+			return err
+		}
+		require.True(t, reused, "a fan-out child run must attach to its linked sub-claim")
+		al = got
+		return nil
+	}))
+	require.Equal(t, subClaims[0].ClaimHandleID, al.ClaimHandleID,
+		"the attached lock must be the synthesized sub-claim, not a fresh Open")
+	require.JSONEq(t, string(wantPayload), string(al.ClaimResult.Payload),
+		"the attached lock must carry the per-sub-claim payload for {{claim.<alias>.payload}} substitution")
+	require.Equal(t, `"parent/_list/alpha"`, string(al.ClaimResult.ClaimScope))
+
+	for _, c := range store.Calls() {
+		require.NotEqual(t, "open", c.Verb,
+			"child attachment must not dial producer Open (no double-acquire per partition)")
+	}
 }

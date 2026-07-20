@@ -47,6 +47,9 @@ type SupervisorConfig struct {
 
 	Executors ExecutorsConfig
 
+	Validators     RemoteValidatorsConfig
+	DataProcessors RemoteDataProcessorsConfig
+
 	LateBindServiceProxies map[string]string
 
 	ExtraInprocHandlers map[string]executor.InProcessHandler
@@ -141,7 +144,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
 	}
 	_, _, dataProcessors, dpClosers, err := DialPublisherAndValidationRegistries(
-		context.Background(), cfg.ClaimProducers, cfg.Executors, RemotePublishersConfig{})
+		context.Background(), cfg.ClaimProducers, cfg.Executors, RemotePublishersConfig{}, cfg.Validators, cfg.DataProcessors)
 	if err != nil {
 		stopIdentity()
 		registry.Close()

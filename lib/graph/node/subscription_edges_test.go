@@ -331,3 +331,39 @@ func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
 		t.Errorf("Match(terminal/success): want 0, got %d", len(got))
 	}
 }
+
+func TestBuildSubscriptionEdges_ResolvesViaCallingNodePlumbed(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "inner-entry", Executor: "stub"},
+		{Type: "inner-mid", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Node: "inner-entry", Type: "terminal/*", ForceUpstreamRefresh: spec.BoolPtr(false), ResolvesViaCallingNode: true},
+			},
+		},
+		{Type: "inner-exit", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Node: "inner-mid", Type: "terminal/*", ForceUpstreamRefresh: spec.BoolPtr(false)},
+			},
+		},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := out.Match("inner-entry", signal.TypePath("terminal/success"))
+	if len(matched) != 1 || !matched[0].ResolvesViaCallingNode {
+		t.Fatalf("entry-alias edge must carry ResolvesViaCallingNode; got %+v", matched)
+	}
+	plain := out.Match("inner-mid", signal.TypePath("terminal/success"))
+	if len(plain) != 1 || plain[0].ResolvesViaCallingNode {
+		t.Fatalf("internal-to-internal edge must not carry ResolvesViaCallingNode; got %+v", plain)
+	}
+
+	aliasSenders := out.CallingNodeSenderTypesForReceiver("inner-mid")
+	if len(aliasSenders) != 1 || aliasSenders[0] != "inner-entry" {
+		t.Fatalf("CallingNodeSenderTypesForReceiver(inner-mid): got %v, want [inner-entry]", aliasSenders)
+	}
+	if got := out.CallingNodeSenderTypesForReceiver("inner-exit"); len(got) != 0 {
+		t.Fatalf("CallingNodeSenderTypesForReceiver(inner-exit): got %v, want none", got)
+	}
+}

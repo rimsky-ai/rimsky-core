@@ -35,6 +35,9 @@ type RunArgs struct {
 	StoreRegistry  *locks.Registry
 	NamedLocks     locks.NamedLocksConfig
 
+	VerbOutbox       persistence.ProducerVerbOutboxTable
+	ProducerVerbKick func()
+
 	Clock                  shared.Clock
 	Logger                 shared.Logger
 	SupervisorID           string
@@ -229,7 +232,7 @@ func RunNode(
 	}
 
 	scope := resolveAcqScope(ctx, args, &acq)
-	terminalSig := signalForTerminal(terminal)
+	terminalSig := signalForTerminal(args, terminal)
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
 		NodeID:           acq.NodeID,

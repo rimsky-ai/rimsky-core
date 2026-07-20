@@ -1,0 +1,125 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+package claudeagent_test
+
+import (
+	"context"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+)
+
+func servicesModuleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for {
+		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("servicesModuleRoot: go.mod not found walking up from working dir")
+		}
+		dir = parent
+	}
+}
+
+func buildClaudeAgentBinary(t *testing.T) string {
+	t.Helper()
+	root := servicesModuleRoot(t)
+	out := filepath.Join(t.TempDir(), "claude-agent")
+	cmd := exec.Command("go", "build", "-o", out, "./executors/claude-agent/cmd")
+	cmd.Dir = root
+	cmd.Env = os.Environ()
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build claude-agent: %v\n%s", err, combined)
+	}
+	return out
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := lis.Addr().(*net.TCPAddr).Port
+	if err := lis.Close(); err != nil {
+		t.Fatalf("close probe listener: %v", err)
+	}
+	return port
+}
+
+func dialCapabilities(t *testing.T, addr string, deadline time.Duration) error {
+	t.Helper()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	_, err = genv1.NewExecutorObservabilityClient(conn).Capabilities(ctx, &genv1.ExecutorCapabilitiesRequest{})
+	return err
+}
+
+func TestClaudeAgentBinaryHonorsRimskyAgentPort(t *testing.T) {
+	bin := buildClaudeAgentBinary(t)
+
+	agentPort := freeTCPPort(t)
+	ignoredPort := freeTCPPort(t)
+
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(),
+		"RIMSKY_AGENT_PORT="+strconv.Itoa(agentPort),
+		"RIMSKY_EXECUTOR_PORT_GRPC="+strconv.Itoa(ignoredPort),
+		"RIMSKY_EXECUTOR_HOST=127.0.0.1",
+		"RIMSKY_EXECUTOR_STUB_MODE=1",
+	)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start claude-agent: %v", err)
+	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-exited
+	})
+
+	for {
+		select {
+		case <-exited:
+			t.Fatalf("claude-agent exited before binding RIMSKY_AGENT_PORT %d", agentPort)
+		default:
+		}
+		if err := dialCapabilities(t, "127.0.0.1:"+strconv.Itoa(agentPort), time.Second); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if err := dialCapabilities(t, "127.0.0.1:"+strconv.Itoa(ignoredPort), 500*time.Millisecond); err == nil {
+		t.Fatalf("claude-agent unexpectedly bound the fallback RIMSKY_EXECUTOR_PORT_GRPC %d when RIMSKY_AGENT_PORT was set", ignoredPort)
+	}
+}

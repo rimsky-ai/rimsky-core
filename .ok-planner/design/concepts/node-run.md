@@ -8,11 +8,11 @@ aliases: []
 
 ## What it is
 
-The node-run row is the parent row for one execution of one node within a frame. Its state machine is a single seven-state column (no separate phase column): `pending`, `stale`, `running`, `held`, `parked`, `fresh`, `failed`. The row carries a supervisor binding populated only while the run is actively dispatched, a non-null frame reference, the required-claim-producers list, and the parked-reason metadata when applicable.
+The node-run row is the parent row for one execution of one node within a frame. Its state machine is a single seven-state column (no separate phase column): `pending`, `stale`, `running`, `held`, `parked`, `fresh`, `failed`. The row carries a supervisor binding populated only while the run is actively dispatched, a non-null frame reference, the required-claim-producers list, and the park timing fields (parked-at, resume-at) when applicable.
 
-The row carries liveness and async-callback fields covering the run's last-progress timestamp and the async-acknowledgement identity. The progress timestamp is bumped by scratch writeback and by keepalive notifications; the async-acknowledgement identity is populated when the executor returns an await-callback outcome and is consulted by the callback handler to correlate inbound notifications back to the dispatch row.
+The row carries liveness and async-callback fields covering the run's last-progress timestamp and the async-acknowledgement identity. The progress timestamp is bumped by scratch writeback, by mid-dispatch attribute writebacks, and by keepalive notifications — each in the same transaction as the write it accompanies; the async-acknowledgement identity is populated when the executor returns an await-callback outcome and is consulted by the callback handler to correlate inbound notifications back to the dispatch row.
 
-The row also carries a nullable reference to a preceding dispatch row, set whenever a new dispatch is enqueued to follow a predecessor one (under any of the predecessor-bearing dispositions — stale-recovery, recalculate). Policy retry does not create a new row (see `decision:in-place-retry`); the retry loop reuses the same dispatch row in place. Optional scratch fields carry executor-attached opaque bytes per dispatch, with spill following `concept:blob-backend`. The executor sets scratch either by attaching scratch bytes to the settling terminal outcome or mid-dispatch via a scratch-callback notification, the dispatch protocol's sole mid-dispatch callback route; both writes persist on the dispatch row that received them. When a subsequent dispatch row is created for the same node and the new row carries a non-null predecessor reference, the enqueue path copies scratch from the predecessor dispatch row onto the new row at row creation, and the executor reads it from its own row on next dispatch.
+The row also carries a nullable reference to a preceding dispatch row, paired with a disposition drawn from the closed vocabulary {stale-recovery, retry-after-error, recalculate} explaining why the new dispatch supersedes the prior one. A quiet-period reap stamps stale-recovery on the released row itself (the same row re-dispatches); an error-policy-resolved retry stamps retry-after-error on the in-place-retried row (see `decision:in-place-retry`); operator recalculate stamps recalculate on the new row it enqueues. The stamp persists on the row, so the disposition is re-emitted to the executor on the next dispatch even across a supervisor restart. Optional scratch fields carry executor-attached opaque bytes per dispatch, with spill following `concept:blob-backend`. The executor sets scratch by attaching scratch bytes to a settling terminal outcome (success, error, or park) — there is no mid-dispatch scratch write channel (see `decision:scratch-protocol`); the write persists on the dispatch row that received it and bumps the progress timestamp in the same transaction. When a subsequent dispatch row is created for the same node and the new row carries a non-null predecessor reference, the enqueue path copies scratch from the predecessor dispatch row onto the new row at row creation, and the executor reads it from its own row on next dispatch.
 
 A tags representation is populated from the settling terminal verdict.
 
@@ -24,7 +24,7 @@ The row carries the run-tree extension and all state-bearing fields for the node
 - A sequence field — monotonic per (node_id, run_scope_id), assigned at row creation. The dispatcher's candidate order is enqueue-time primary; sequence breaks ties among candidates enqueued at the same instant within the same (node, run-scope) — it is not a global ordering key. Sequence also drives the gate evaluator's predecessor lookup for bag composition and the latest-run lookup that operator surfaces project into the per-state categorical summary (the per-scope monotonicity makes "the latest run for this node in this scope" well-defined within the RunScope; RunScopes never span frames per `concept:run-scope`, so per-scope monotonicity is also per-frame).
 - A creation-reason field — `cascade | operator_invalidate | recalculate | message_delivery`. Determines whether the row participates in cascade-walker accumulation (cascade only), goes through `pending` (cascade only), and is subject to per-template `cascade_mode` rules (cascade only). Non-cascade rows are created directly in state `stale` with the carry-forward bag (see `decision:non-cascade-direct-to-stale`). The `message_delivery` reason marks a row created when a named message is delivered to its message-receiver-node; the bag is the message body (not carry-forward), and the run dispatches via the empty-executor `pure_cascade` settle path (see `concept:message`). Policy retry is in-place on the existing row (see `decision:in-place-retry`) — no new row created.
 - A last-outcome field — the gate for cascade-firing.
-- Parked-reason metadata — parked-state taxonomy (see `concept:parked-state`).
+- Park timing fields — parked-at and resume-at (see `concept:parked-state`).
 - Policy-evaluation cursor — a single per-dispatch `retry_counter` field that holds the error-policy retry count (see `concept:error-policy` and `decision:in-place-retry`). Initialized to zero at row creation; mutated only during executor retry loops on this row.
 
 ## Seven-state state machine
@@ -43,26 +43,28 @@ Transitions:
 
 ```
 pending → stale      (gate_cleared: wait-set drained + no in-flight subscribed upstream)
-pending → failed     (instance_killed)
+pending → failed     (instance_killed, sibling_cancelled)
 
 stale → running      (dispatch_claimed — second leg of the split claim, after the re-read confirms ownership)
 stale → fresh        (pure_cascade, acquire_pass)
-stale → failed       (dispatch_impossible, policy_give_up, instance_killed)
+stale → failed       (dispatch_impossible, policy_give_up, instance_killed, sibling_cancelled)
 
 running → fresh      (handler_complete with no active claim participation; handler_pass)
 running → held       (handler_held — runner classifies a terminal outcome with active claim participation; fanout_dispatched — fan-out parent has yielded its synchronous dispatch phase and is acquirer of an active claim handle awaiting child aggregation, per `decision:held-as-state-not-phase`)
 running → parked     (handler_park)
-running → failed     (policy_give_up, auto_terminal_abandon, instance_killed)
+running → failed     (policy_give_up, auto_terminal_abandon, instance_killed, sibling_cancelled)
 
 (`policy_retry` is in-place on the existing row with no state transition firing — claims and bag preserved; see `decision:in-place-retry`.)
 
 held → fresh         (auto_terminal_commit — at this moment cascade fires terminal/success)
 held → failed        (auto_terminal_abandon — at this moment cascade fires terminal/error/abandoned)
-held → failed        (instance_killed)
+held → failed        (instance_killed, sibling_cancelled)
 
 parked → stale       (deadline_resume — bag preserved on the same row, re-eligible for dispatch)
-parked → failed      (instance_killed)
+parked → failed      (instance_killed, sibling_cancelled)
 ```
+
+The sibling_cancelled reason fires when a fan-out parent's aggregation policy decides the parent's verdict while this run is still in-flight — the run is force-cancelled rather than left to settle naturally (see `concept:fan-out`'s strict/first invariant). It settles the run failed with a sibling_failed error class, symmetric with instance_killed's settling shape.
 
 The dispatcher's claim is a two-leg operation: the first leg stamps a non-null claim on the row while leaving state at `stale`; the second leg re-reads the claim out-of-band, then transitions `stale → running` only if the row is still owned by this supervisor. The serialization-gate predicate covers any row with a non-null claim plus all rows in `{held, parked}`, so a stale-with-claim row blocks concurrent claims for the same (node, scope) — there is no "orphan window" where a row is `running` without a claim.
 
@@ -76,7 +78,7 @@ Every dispatch loads its persisted attribute bag (per `concept:attribute`) from 
 
 One queryable lifecycle row per node-run means every cross-process question ("is this run still active?", "what stores does it need?", "which frame is it in?", "has it gone stale?") is a SQL predicate over indexed columns. The frame ⊃ node-run hierarchy is the model: `concept:frame` is "one run of the cascade"; `concept:node-run` is the per-node execution within that frame.
 
-**Run-tree**: node-runs are organized into RunScopes (per `concept:run-scope`) via the run-scope reference. The tree shape lives on the run-scope record via its parent-run-scope reference. Walking the RunScope tree from a leaf RunScope to the frame's root RunScope recovers the full execution stack for that frame. A run represents the dispatch of one node within one RunScope; a fan-out parent's children live in fanout-partition RunScopes (one per partition); a sub-graph's internal nodes live in a sub-graph RunScope. Trees may be arbitrarily deep: fan-out of fan-outs, sub-graphs containing fan-outs, fan-outs of sub-graphs. State aggregation walks bottom-up through the RunScope tree in a single state-propagation transaction.
+**Run-tree**: node-runs are organized into RunScopes (per `concept:run-scope`) via the run-scope reference. The tree shape lives on the run-scope record via its parent-run-scope reference. Walking the RunScope tree from a leaf RunScope to the frame's root RunScope recovers the full execution stack for that frame. A run represents the dispatch of one node within one RunScope; a fan-out parent's children live in fanout-partition RunScopes (one per partition); a sub-graph's internal nodes live in a sub-graph RunScope. Trees may be arbitrarily deep: fan-out of fan-outs, sub-graphs containing fan-outs, fan-outs of sub-graphs. State aggregation walks bottom-up through the RunScope tree in a single state-propagation transaction. Parent-run rows admit the child-transitioned aggregation reason from every state, settled ones included: a late child transition re-opens the parent's aggregation verdict and the walker re-projects the settled parent's state and settling signal from its children (the leaf machine's no-outgoing-transitions rule is a leaf rule, not a parent-aggregation rule). A delegating caller staying `running` while its sub-graph internal cascade fires is its own audited transition reason.
 
 ## Boundaries
 

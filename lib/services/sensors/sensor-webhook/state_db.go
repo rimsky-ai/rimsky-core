@@ -109,3 +109,30 @@ func (s *stateDB) GetLastIdempotency(ctx context.Context, subscriptionID string)
 	}
 	return key, nil
 }
+
+type WatermarkRow struct {
+	SubscriptionID  string
+	LastIdempotency string
+}
+
+func (s *stateDB) ListWatermarks(ctx context.Context) ([]WatermarkRow, error) {
+	if s == nil {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT publisher_subscription_id, COALESCE(last_idempotency_key, '')
+		   FROM sensor_webhook_state`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []WatermarkRow{}
+	for rows.Next() {
+		var w WatermarkRow
+		if err := rows.Scan(&w.SubscriptionID, &w.LastIdempotency); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}

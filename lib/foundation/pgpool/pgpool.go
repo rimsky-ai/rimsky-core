@@ -118,6 +118,7 @@ func runPostgresWithRetry(ctx context.Context, cfg Config) (*pgmodule.PostgresCo
 				"-c", "synchronous_commit=off",
 				"-c", "full_page_writes=off",
 				"-c", "autovacuum=off",
+				"-c", "max_connections=1000",
 			),
 			testcontainers.WithWaitStrategy(
 				wait.ForAll(

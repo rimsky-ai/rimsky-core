@@ -23,12 +23,6 @@ func TestEffectiveCallbackHostPort(t *testing.T) {
 		wantPort      int
 	}{
 		{
-			name:         "no advertise host falls back to bind host:port",
-			listenerAddr: "0.0.0.0:9100",
-			wantHost:     "0.0.0.0",
-			wantPort:     9100,
-		},
-		{
 			name:          "advertise host without port reuses bind port",
 			listenerAddr:  "0.0.0.0:9100",
 			advertiseHost: "rimsky-supervisor",
@@ -44,19 +38,44 @@ func TestEffectiveCallbackHostPort(t *testing.T) {
 			wantPort:      9200,
 		},
 		{
-			name:         "ipv6 bind address splits cleanly",
-			listenerAddr: "[::]:9100",
-			wantHost:     "::",
+			name:         "explicit non-wildcard bind host is a legal advertise fallback",
+			listenerAddr: "10.1.2.3:9100",
+			wantHost:     "10.1.2.3",
+			wantPort:     9100,
+		},
+		{
+			name:         "loopback bind host is a legal advertise fallback",
+			listenerAddr: "127.0.0.1:9100",
+			wantHost:     "127.0.0.1",
 			wantPort:     9100,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			host, port := effectiveCallbackHostPort(tc.listenerAddr, tc.advertiseHost, tc.advertisePort)
+			host, port, err := effectiveCallbackHostPort(tc.listenerAddr, tc.advertiseHost, tc.advertisePort)
+			if err != nil {
+				t.Fatalf("effectiveCallbackHostPort(%q, %q, %d) unexpected error: %v",
+					tc.listenerAddr, tc.advertiseHost, tc.advertisePort, err)
+			}
 			if host != tc.wantHost || port != tc.wantPort {
 				t.Fatalf("effectiveCallbackHostPort(%q, %q, %d) = (%q, %d); want (%q, %d)",
 					tc.listenerAddr, tc.advertiseHost, tc.advertisePort, host, port, tc.wantHost, tc.wantPort)
+			}
+		})
+	}
+}
+
+func TestEffectiveCallbackHostPort_FailsFastOnWildcardBindWithoutAdvertise(t *testing.T) {
+	for _, listenerAddr := range []string{"0.0.0.0:9100", "[::]:9100"} {
+		t.Run(listenerAddr, func(t *testing.T) {
+			_, _, err := effectiveCallbackHostPort(listenerAddr, "", 0)
+			if err == nil {
+				t.Fatalf("effectiveCallbackHostPort(%q, \"\", 0): want startup error, got nil (would stamp an unreachable wildcard callback URL)", listenerAddr)
+			}
+			if !strings.Contains(err.Error(), "callback.advertise_host") ||
+				!strings.Contains(err.Error(), "RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST") {
+				t.Fatalf("error must name callback.advertise_host and RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST; got %q", err.Error())
 			}
 		})
 	}
@@ -68,8 +87,11 @@ func TestAdvertisedURLMatchesPersistedHostPort(t *testing.T) {
 		advertiseHost = "rimsky-supervisor"
 		advertisePort = 9200
 	)
-	host, port := effectiveCallbackHostPort(listenerAddr, advertiseHost, advertisePort)
-	url := advertisedCallbackURL(listenerAddr, advertiseHost, advertisePort, peer.PeerAuthNone)
+	host, port, err := effectiveCallbackHostPort(listenerAddr, advertiseHost, advertisePort)
+	if err != nil {
+		t.Fatalf("effectiveCallbackHostPort: %v", err)
+	}
+	url := advertisedCallbackURL(host, port, peer.PeerAuthNone)
 	want := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 	if url != want {
 		t.Fatalf("advertisedCallbackURL = %q; want %q (must match persisted host:port)", url, want)
@@ -77,7 +99,7 @@ func TestAdvertisedURLMatchesPersistedHostPort(t *testing.T) {
 }
 
 func TestAdvertisedURLUsesHTTPSUnderMTLS(t *testing.T) {
-	url := advertisedCallbackURL("0.0.0.0:9100", "rimsky-supervisor", 9200, peer.PeerAuthMTLS)
+	url := advertisedCallbackURL("rimsky-supervisor", 9200, peer.PeerAuthMTLS)
 	if !strings.HasPrefix(url, "https://") {
 		t.Fatalf("advertisedCallbackURL under mtls = %q; want https:// scheme", url)
 	}

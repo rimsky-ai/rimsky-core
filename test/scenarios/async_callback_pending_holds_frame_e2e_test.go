@@ -49,7 +49,7 @@ func TestAsyncCallbackPendingNodeHoldsFrameOpen(t *testing.T) {
 	frameID := h.GetRunningFrameID(iid)
 	require.NotEqual(t, shared.UUID{}, frameID)
 
-	require.NoError(t, frame.RunTick(h.Ctx, h.Persist, h.Queue, shared.SilentLogger{}),
+	require.NoError(t, frame.RunTick(h.Ctx, h.Persist, h.Queue, shared.SilentLogger{}, nil),
 		"forcing a frame-settlement sweep while the node is async-callback-pending must not error")
 
 	pending := getFrameDetail(t, h, iid, frameID)

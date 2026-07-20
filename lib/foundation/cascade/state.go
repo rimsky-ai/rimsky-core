@@ -50,10 +50,23 @@ var (
 
 	ReasonDeadlineResume = TransitionReason{Kind: "deadline_resume"}
 
+	ReasonCascadeResume = TransitionReason{Kind: "cascade_resume"}
+
 	ReasonChildTransitioned = TransitionReason{Kind: "child_transitioned"}
 
+	ReasonSubGraphInternalCascadeFired = TransitionReason{Kind: "subgraph_internal_cascade_fired"}
+
 	ReasonInstanceKilled = TransitionReason{Kind: "instance_killed"}
+
+	// @concept: cancel-siblings
+	ReasonSiblingCancelled = TransitionReason{Kind: "sibling_cancelled"}
 )
+
+// @concept: frame
+const SettlingSignalInstanceKilled = "terminal/error/instance_killed"
+
+// @concept: cancel-siblings
+const SettlingSignalSiblingFailed = "terminal/error/sibling_failed"
 
 // @concept: node-run
 // @decision: held-as-state-not-phase
@@ -65,6 +78,8 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		case "gate_cleared":
 			return NodeStateStale, nil
 		case "instance_killed":
+			return NodeStateFailed, nil
+		case "sibling_cancelled":
 			return NodeStateFailed, nil
 		}
 	case NodeStateStale:
@@ -80,6 +95,8 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		case "policy_give_up":
 			return NodeStateFailed, nil
 		case "instance_killed":
+			return NodeStateFailed, nil
+		case "sibling_cancelled":
 			return NodeStateFailed, nil
 		}
 	case NodeStateRunning:
@@ -100,6 +117,8 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateFailed, nil
 		case "instance_killed":
 			return NodeStateFailed, nil
+		case "sibling_cancelled":
+			return NodeStateFailed, nil
 		}
 	case NodeStateHeld:
 		switch reason.Kind {
@@ -109,12 +128,18 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateFailed, nil
 		case "instance_killed":
 			return NodeStateFailed, nil
+		case "sibling_cancelled":
+			return NodeStateFailed, nil
 		}
 	case NodeStateParked:
 		switch reason.Kind {
 		case "deadline_resume":
 			return NodeStateStale, nil
+		case "cascade_resume":
+			return NodeStateStale, nil
 		case "instance_killed":
+			return NodeStateFailed, nil
+		case "sibling_cancelled":
 			return NodeStateFailed, nil
 		}
 	}
@@ -123,12 +148,14 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 
 // @concept: node-run
 func NextStateParent(current NodeState, reason TransitionReason) (NodeState, error) {
-	if reason.Kind == "child_transitioned" {
-		switch current {
-		case NodeStatePending, NodeStateStale, NodeStateRunning,
-			NodeStateHeld, NodeStateParked:
-			return "", &parentAggregateOK{From: current}
+	switch reason.Kind {
+	case "child_transitioned":
+		return "", &parentAggregateOK{From: current}
+	case "subgraph_internal_cascade_fired":
+		if current == NodeStateRunning {
+			return NodeStateRunning, nil
 		}
+		return "", fmt.Errorf("%w: from=%s reason=%s", ErrIllegalTransition, current, reason.Kind)
 	}
 	return NextState(current, reason)
 }

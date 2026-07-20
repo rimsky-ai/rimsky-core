@@ -97,6 +97,7 @@ func TestCheckAndFireResolution_ProducerCandidateHandleRoundTripsFromDBToDataPro
 		Logger:         shared.SilentLogger{},
 		SupervisorID:   "sup-A",
 	}
+	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)

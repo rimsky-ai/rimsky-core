@@ -24,6 +24,8 @@ type SubscriptionEdge struct {
 	//	@concept: cascade
 	//	@concept: node-subscription
 	ForceUpstreamRefresh bool
+
+	ResolvesViaCallingNode bool
 }
 
 type SubscriptionEdgeMap struct {
@@ -137,6 +139,29 @@ func (m *SubscriptionEdgeMap) SenderNodeTypesForReceiver(receiverNodeType string
 	return out
 }
 
+// @concept: node-subscription
+func (m *SubscriptionEdgeMap) CallingNodeSenderTypesForReceiver(receiverNodeType string) []string {
+	if m == nil || len(m.bySender) == 0 {
+		return nil
+	}
+	var out []string
+	for sender, root := range m.bySender {
+		if sender == "" {
+			continue
+		}
+		found := false
+		walkAllEdges(root, func(e SubscriptionEdge) {
+			if e.ReceiverNodeType == receiverNodeType && e.ResolvesViaCallingNode {
+				found = true
+			}
+		})
+		if found {
+			out = append(out, sender)
+		}
+	}
+	return out
+}
+
 func (m *SubscriptionEdgeMap) ReceiverEdgesForSender(senderNodeType string) []SubscriptionEdge {
 	if m == nil || len(m.bySender) == 0 {
 		return nil
@@ -224,7 +249,8 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 		if existing.ReceiverNodeType == e.ReceiverNodeType &&
 			existing.TypePattern == e.TypePattern &&
 			existing.WhenExpr == e.WhenExpr &&
-			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh {
+			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh &&
+			existing.ResolvesViaCallingNode == e.ResolvesViaCallingNode {
 			return true
 		}
 	}
@@ -552,9 +578,10 @@ func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) (Subscr
 		return SubscriptionEdge{}, fmt.Errorf("subscription on %q to %q missing force_upstream_refresh", receiverType, s.Type)
 	}
 	return SubscriptionEdge{
-		ReceiverNodeType:     receiverType,
-		TypePattern:          pattern,
-		WhenExpr:             when,
-		ForceUpstreamRefresh: *s.ForceUpstreamRefresh,
+		ReceiverNodeType:       receiverType,
+		TypePattern:            pattern,
+		WhenExpr:               when,
+		ForceUpstreamRefresh:   *s.ForceUpstreamRefresh,
+		ResolvesViaCallingNode: s.ResolvesViaCallingNode,
 	}, nil
 }

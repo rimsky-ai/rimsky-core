@@ -57,6 +57,14 @@ func (r *singleValidatorRegistry) Get(name string) (ValidationClient, bool) {
 	return c, ok
 }
 
+func (r *singleValidatorRegistry) All() []ValidationClient {
+	out := make([]ValidationClient, 0, len(r.byName))
+	for _, c := range r.byName {
+		out = append(out, c)
+	}
+	return out
+}
+
 // @concept: inertness
 func TestRunValidationPipeline_ForwardsClaimAndPublisherBytesVerbatim(t *testing.T) {
 	v := &capturingValidator{name: "producer-a"}

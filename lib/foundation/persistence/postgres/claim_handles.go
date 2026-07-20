@@ -369,7 +369,8 @@ func (s *claimHandlesImpl) SetVersionID(
 	}
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles SET version_id = $1
-		 WHERE id = $2 AND `+claimantGuard("", 3),
+		 WHERE id = $2 AND (`+claimantGuard("", 3)+`
+		    OR (holder_supervisor_id IS NULL AND state <> 'active'))`,
 		v, id, supervisorID)
 	if err != nil {
 		return fmt.Errorf("lockholders.SetVersionID: %w", err)

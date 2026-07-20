@@ -66,6 +66,9 @@ func applyErrorPolicyWithScratch(
 			acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, sig); err != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: emit retry signal: %w", err)
 		}
+		if err := stampRetryAfterErrorInTx(ctx, args, tx, acq); err != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+		}
 		acq.RetryDecision = &decision
 		return nil, nil
 	}
@@ -87,8 +90,9 @@ func applyErrorPolicyWithScratch(
 		supID := args.SupervisorID
 		logger := args.Logger
 		requeuePC := func(ctx context.Context) {
-			if err := args.Queue.ReleaseClaim(ctx, nodeRunID, supID); err != nil && logger != nil {
-				logger.Warn("applyErrorPolicy: ReleaseClaim failed; row may stay claimed until liveness sweep",
+			// @concept: node-run
+			if err := args.Queue.ReleaseClaimWithDisposition(ctx, nodeRunID, supID, "retry_after_error"); err != nil && logger != nil {
+				logger.Warn("applyErrorPolicy: release-and-requeue failed; row may stay claimed until liveness sweep",
 					"dispatch_id", nodeRunID.String(), "error", err.Error())
 			}
 		}
@@ -239,8 +243,25 @@ func applyTerminalInfraError(
 		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, infraSig); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: emit signal: %w", err)
 	}
+	if err := stampRetryAfterErrorInTx(ctx, args, tx, acq); err != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
+	}
 	acq.RetryDecision = &policyDecision{Kind: spec.ActionRetry, DelayMs: 0, Signal: infraSig}
 	return nil, nil
+}
+
+// @concept: node-run
+// @concept: error-policy
+func stampRetryAfterErrorInTx(
+	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition,
+) error {
+	if err := args.Queue.StampPriorDispatchInTx(ctx, tx, acq.NodeRunID, acq.NodeRunID, "retry_after_error"); err != nil {
+		return fmt.Errorf("stamp retry_after_error: %w", err)
+	}
+	priorID := acq.NodeRunID
+	acq.PriorNodeRunID = &priorID
+	acq.PriorDispatchDisposition = "retry_after_error"
+	return nil
 }
 
 func applyInfraGiveUp(

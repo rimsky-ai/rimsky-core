@@ -28,6 +28,7 @@ var allReasons = []TransitionReason{
 	ReasonDeadlineResume,
 	ReasonChildTransitioned,
 	ReasonInstanceKilled,
+	ReasonSiblingCancelled,
 }
 
 var allStates = []NodeState{
@@ -43,8 +44,9 @@ var allStates = []NodeState{
 func TestTransitionTable(t *testing.T) {
 	valid := map[NodeState]map[string]NodeState{
 		NodeStatePending: {
-			"gate_cleared":    NodeStateStale,
-			"instance_killed": NodeStateFailed,
+			"gate_cleared":      NodeStateStale,
+			"instance_killed":   NodeStateFailed,
+			"sibling_cancelled": NodeStateFailed,
 		},
 		NodeStateStale: {
 			"dispatch_claimed":    NodeStateRunning,
@@ -53,6 +55,7 @@ func TestTransitionTable(t *testing.T) {
 			"acquire_pass":        NodeStateFresh,
 			"policy_give_up":      NodeStateFailed,
 			"instance_killed":     NodeStateFailed,
+			"sibling_cancelled":   NodeStateFailed,
 		},
 		NodeStateRunning: {
 			"handler_complete":      NodeStateFresh,
@@ -63,15 +66,18 @@ func TestTransitionTable(t *testing.T) {
 			"handler_park":          NodeStateParked,
 			"auto_terminal_abandon": NodeStateFailed,
 			"instance_killed":       NodeStateFailed,
+			"sibling_cancelled":     NodeStateFailed,
 		},
 		NodeStateHeld: {
 			"auto_terminal_commit":  NodeStateFresh,
 			"auto_terminal_abandon": NodeStateFailed,
 			"instance_killed":       NodeStateFailed,
+			"sibling_cancelled":     NodeStateFailed,
 		},
 		NodeStateParked: {
-			"deadline_resume": NodeStateStale,
-			"instance_killed": NodeStateFailed,
+			"deadline_resume":   NodeStateStale,
+			"instance_killed":   NodeStateFailed,
+			"sibling_cancelled": NodeStateFailed,
 		},
 	}
 
@@ -319,8 +325,9 @@ func TestNextState_ParkTimeoutRetired(t *testing.T) {
 
 func TestParkedTransitionsWhitelist(t *testing.T) {
 	allowed := map[string]NodeState{
-		"deadline_resume": NodeStateStale,
-		"instance_killed": NodeStateFailed,
+		"deadline_resume":   NodeStateStale,
+		"instance_killed":   NodeStateFailed,
+		"sibling_cancelled": NodeStateFailed,
 	}
 	for _, reason := range allReasons {
 		reason := reason
@@ -362,25 +369,33 @@ func TestInFlightAndTerminalHelpers(t *testing.T) {
 
 func TestNextStateParent_ChildTransitioned_AggregateOK(t *testing.T) {
 	t.Parallel()
-	inFlight := map[NodeState]bool{
-		NodeStatePending: true,
-		NodeStateStale:   true,
-		NodeStateRunning: true,
-		NodeStateHeld:    true,
-		NodeStateParked:  true,
-	}
 	for _, from := range allStates {
 		from := from
 		t.Run(string(from), func(t *testing.T) {
 			_, err := NextStateParent(from, ReasonChildTransitioned)
 			require.Error(t, err)
-			if inFlight[from] {
-				require.True(t, IsParentAggregateOK(err),
-					"expected aggregate-OK sentinel for in-flight parent, got %v", err)
-				return
-			}
+			require.True(t, IsParentAggregateOK(err),
+				"expected aggregate-OK sentinel for parent aggregation from %s (terminal parents admit late child transitions), got %v",
+				from, err)
+		})
+	}
+}
+
+func TestNextStateParent_SubgraphInternalCascadeFired_RunningStaysRunning(t *testing.T) {
+	t.Parallel()
+	got, err := NextStateParent(NodeStateRunning, ReasonSubGraphInternalCascadeFired)
+	require.NoError(t, err)
+	require.Equal(t, NodeStateRunning, got)
+	for _, from := range allStates {
+		if from == NodeStateRunning {
+			continue
+		}
+		from := from
+		t.Run(string(from), func(t *testing.T) {
+			_, err := NextStateParent(from, ReasonSubGraphInternalCascadeFired)
+			require.Error(t, err)
 			require.True(t, errors.Is(err, ErrIllegalTransition),
-				"expected ErrIllegalTransition for terminal parent, got %v", err)
+				"subgraph_internal_cascade_fired is only legal from running, got %v", err)
 		})
 	}
 }

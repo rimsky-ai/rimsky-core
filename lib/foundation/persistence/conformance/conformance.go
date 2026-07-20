@@ -20,6 +20,7 @@ func Suite(
 ) {
 	t.Helper()
 	t.Run("DispatchClaimRelease", func(t *testing.T) { testDispatchClaimRelease(t, factory(t)) })
+	t.Run("DispatchReleaseClaimSkipsTerminalRun", func(t *testing.T) { testDispatchReleaseClaimSkipsTerminalRun(t, factory(t)) })
 	t.Run("VerifyBeforeRunRead", func(t *testing.T) { testVerifyBeforeRunRead(t, factory(t)) })
 	t.Run("MigrationIdempotency", func(t *testing.T) { testMigrationIdempotency(t, factory(t)) })
 	t.Run("CoordinatorSchedulerTick", func(t *testing.T) { testCoordinatorSchedulerTick(t, factory(t)) })
@@ -51,6 +52,9 @@ func Suite(
 		t.Run("KindDerivableFromStructuralFields", func(t *testing.T) { testRunScopeKindDerivableFromStructuralFields(t, factory(t)) })
 	})
 	t.Run("SettlingSignalTypeNullNotEmptyStringSentinel", func(t *testing.T) { testSettlingSignalTypeNullNotEmptyStringSentinel(t, factory(t)) })
+	t.Run("FrameDerivedStateTerminatedOnKill", func(t *testing.T) { testFrameDerivedStateTerminatedOnKill(t, factory(t)) })
+	t.Run("FrameDerivedStateGenuineFailureStaysFailed", func(t *testing.T) { testFrameDerivedStateGenuineFailureStaysFailed(t, factory(t)) })
+	t.Run("RunScopeListTreeDeepestFirst", func(t *testing.T) { testRunScopeListTreeDeepestFirst(t, factory(t)) })
 	t.Run("RunInFlightLookup", func(t *testing.T) {
 		t.Run("SingleRowPerScopePerNode", func(t *testing.T) { testInFlightLookup_SingleRowPerScopePerNode(t, factory(t)) })
 		t.Run("NoFalsePositiveAcrossScopes", func(t *testing.T) { testInFlightLookup_NoFalsePositiveAcrossScopes(t, factory(t)) })
@@ -72,8 +76,11 @@ func Suite(
 		t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testRunStateWritesIsolated_NodeAttributesGetLatestByNode(t, factory(t)) })
 	})
 	t.Run("RecoveryAwareDispatch", func(t *testing.T) { testRecoveryAwareDispatch(t, factory(t)) })
+	t.Run("RecoveryDispositionStamps", func(t *testing.T) { testRecoveryDispositionStamps(t, factory(t)) })
+	t.Run("SelectCandidatesSkipsUndrainedWaitSet", func(t *testing.T) { testSelectCandidatesSkipsUndrainedWaitSet(t, factory(t)) })
 	t.Run("ScratchMissingRowContract", func(t *testing.T) { testScratchMissingRowContract(t, factory(t)) })
 	t.Run("NodeAttributesMergeDelta", func(t *testing.T) { testNodeAttributesMergeDelta(t, factory(t)) })
+	t.Run("NodeAttributesGetPriorRunData", func(t *testing.T) { testNodeAttributesGetPriorRunData(t, factory(t)) })
 	t.Run("NodeAttributesPerRunInsertByRun", func(t *testing.T) { testNodeAttributesPerRunInsertByRun(t, factory(t)) })
 	t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testNodeAttributesGetLatestByNode(t, factory(t)) })
 	t.Run("NodeAttributesCascadeDeleteWithRun", func(t *testing.T) { testNodeAttributesCascadeDeleteWithRun(t, factory(t), rawExec) })
@@ -91,6 +98,7 @@ func Suite(
 	t.Run("EventsListAuthPayloadFilters", func(t *testing.T) { testEventsListAuthPayloadFilters(t, factory(t)) })
 	t.Run("EventsListPagination", func(t *testing.T) { testEventsListPagination(t, factory(t)) })
 	t.Run("MessagesListByFrameID", func(t *testing.T) { testMessagesListByFrameID(t, factory(t)) })
+	t.Run("MessagesListBySender", func(t *testing.T) { testMessagesListBySender(t, factory(t)) })
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
 	t.Run("WaitSetGateEvaluatorMethods", func(t *testing.T) { testWaitSetGateEvaluatorMethods(t, factory(t)) })
 	// @decision: claimant-guard-helper

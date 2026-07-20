@@ -21,4 +21,5 @@ Owns: the sub-graph template-DSL shape (declared entry and exit nodes plus an in
 - Internal nodes can only reference other internal nodes within the same sub-graph or the entry alias (which resolves to the calling node per-invocation). References to outer-graph nodes or to other sub-graphs' internals are rejected at template registration.
 - All internal nodes MUST be reachable from the entry and MUST feed the exit; disconnected internals are rejected at registration.
 - Recursive sub-graphs (a sub-graph delegating to itself, directly or via a cycle) are rejected at registration.
+- Defense in depth at dispatch: a delegate invocation whose target sub-graph is already open in the invoking run-scope's ancestor chain is rejected before any child scope or child run is created — the runtime backstop behind the registration-time cycle rejection. Fan-out partition scopes share their graph's name by construction and are outside this check.
 - The `main` graph cannot be a sub-graph; a `main` graph carrying entry/exit declarations is rejected.

@@ -157,6 +157,9 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 		Logger:         shared.SilentLogger{},
 		SupervisorID:   supID,
 	}
+	cb.ProducerVerbKick = func() {
+		_, _ = runtime.FlushProducerVerbOutbox(context.Background(), seedArgs)
+	}
 	addr, err := cb.Start("127.0.0.1", 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cb.Close(context.Background()) })

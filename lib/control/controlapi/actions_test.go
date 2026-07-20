@@ -287,7 +287,7 @@ func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
 		"message:read":            2,
 		"event:read":              1,
 		"audit:read":              1,
-		"lineage:read":            7,
+		"lineage:read":            8,
 		"lineage:prune":           1,
 		"parked-node:read":        1,
 		"waitset:read":            1,

@@ -75,6 +75,8 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 	if post != nil {
 		post(ctx)
 	}
+	_, ferr := runtime.FlushProducerVerbOutbox(ctx, args)
+	require.NoError(t, ferr)
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), claimHandleID.String(), "abandon"),
 		"natural Abandon must hit Producer.Abandon once")

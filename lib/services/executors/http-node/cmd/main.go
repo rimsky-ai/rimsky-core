@@ -19,12 +19,11 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	httpnode "github.com/rimsky-ai/rimsky-core/lib/services/executors/http-node"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 func main() {
-	ops.Setup(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	opts, err := httpnode.LoadOptsFromEnv()
 	if err != nil {
 		slog.Error("http-node config", "error", err.Error())

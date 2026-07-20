@@ -44,6 +44,10 @@ func (r *singleValidatorRegistry) Get(name string) (runtime.ValidationClient, bo
 	return r.client, true
 }
 
+func (r *singleValidatorRegistry) All() []runtime.ValidationClient {
+	return []runtime.ValidationClient{r.client}
+}
+
 func TestCrossTableVerifier_ClaimAliasesPassThroughExecutorContext(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

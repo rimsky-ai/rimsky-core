@@ -496,27 +496,10 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				}
 			}
 		}
-		if isRealNode && tmpl != nil && s.When != "" && hooks.ExecutorDeclaredTags != nil {
+		if isRealNode && tmpl != nil {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
-			if sender.Executor != "" {
-				if declaredTags, ok := hooks.ExecutorDeclaredTags(sender.Executor); ok {
-					declaredSet := map[string]struct{}{}
-					for _, dt := range declaredTags {
-						declaredSet[dt] = struct{}{}
-					}
-					for _, tag := range extractPayloadTagLiterals(s.When) {
-						if _, present := declaredSet[tag]; !present {
-							res.Warnings = append(res.Warnings, ValidationWarning{
-								Path: sbase + ".when",
-								Msg: fmt.Sprintf("tag %q referenced in `payload.tags` filter is not declared by sender %q's executor %q; "+
-									"the subscription registers but will only fire if the emitter sends this exact tag",
-									tag, s.Node, sender.Executor),
-							})
-						}
-					}
-				}
-			}
+			validateSubscriptionDeclaredTags(s, sbase, sender, hooks, res)
 		}
 	}
 	type subKey struct {

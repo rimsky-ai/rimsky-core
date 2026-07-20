@@ -46,7 +46,7 @@ func applyTerminalPark(
 		}
 	}
 	// @concept: signal
-	parkSigType := string(parkTerminalSignal(t).Type)
+	parkSigType := string(parkTerminalSignal(args, t).Type)
 	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 		cascade.NodeStateParked, cascade.ReasonHandlerPark, &parkSigType, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
@@ -60,7 +60,7 @@ func applyTerminalPark(
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	// @concept: signal
-	parkSig := parkTerminalSignal(t)
+	parkSig := parkTerminalSignal(args, t)
 	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
 		acq.InstanceID, acq.NodeID, parkSig, now, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: emit signal: %w", err)
@@ -102,12 +102,16 @@ func shouldSpillBlob(args RunArgs, size int) bool {
 }
 
 // @concept: signal
-func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
+// @concept: executor
+func parkTerminalSignal(args RunArgs, t terminalEvent) signalpkg.Signal {
+	scratchSize := len(t.Scratch)
 	return signalpkg.Signal{
 		Type: "transient/park",
 		Payload: map[string]any{
-			"resume_at": t.ParkResumeAt,
-			"tags":      t.Tags,
+			"resume_at":       t.ParkResumeAt,
+			"tags":            t.Tags,
+			"scratch_size":    scratchSize,
+			"scratch_spilled": shouldSpillBlob(args, scratchSize),
 		},
 	}
 }

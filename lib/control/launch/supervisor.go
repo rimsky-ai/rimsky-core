@@ -119,7 +119,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	log := shared.NewSlogLogger(logger)
 
-	metricsPort, err := metricsPortFor("supervisor")
+	metricsPort, err := metricsPortFor("supervisor", rimskyCfg.Topology)
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
 		return nil, nil, err
@@ -175,7 +175,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 			"advertise_port", advertisePort)
 	}
 
-	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
+	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
 		return nil, nil, err
@@ -221,6 +221,8 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		Resolver:                    resolver,
 		ClaimProducers:              storesCfg,
 		NamedLocks:                  namedLocksCfg,
+		Validators:                  rimskyCfg.Validators,
+		DataProcessors:              rimskyCfg.DataProcessors,
 		CallbackHost:                callbackHost,
 		CallbackPort:                callbackPort,
 		CallbackAdvertiseHost:       advertiseHost,

@@ -110,7 +110,7 @@ func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_, validators, _, closers, err := DialPublisherAndValidationRegistries(ctx, stores, execs, publishers)
+	_, validators, _, closers, err := DialPublisherAndValidationRegistries(ctx, stores, execs, publishers, RemoteValidatorsConfig{}, RemoteDataProcessorsConfig{})
 	if err != nil {
 		t.Fatalf("DialPublisherAndValidationRegistries: %v", err)
 	}

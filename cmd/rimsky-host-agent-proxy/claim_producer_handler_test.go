@@ -86,7 +86,7 @@ func TestOpenThenCommit(t *testing.T) {
 	}
 }
 
-func TestReleaseDropsClaimRoute(t *testing.T) {
+func TestReleaseSurvivesRetryForIdempotency(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	connectFakeAgent(t, ts, "owner-1", "", func(protocol string, payload []byte) [][]byte {
 		var open genv1.OpenRequest
@@ -109,8 +109,12 @@ func TestReleaseDropsClaimRoute(t *testing.T) {
 	if _, err := client.Release(ctx, &genv1.ReleaseRequest{ClaimId: "claim-1"}); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	if _, ok := ts.state.lookupClaimRoute("claim-1"); ok {
-		t.Fatalf("Release should drop the claim route")
+	if _, ok := ts.state.lookupClaimRoute("claim-1"); !ok {
+		t.Fatalf("the claim route must survive a successful Release so a retried (duplicate) Release " +
+			"on the same claim still routes to the spawned producer instead of failing binding_not_found")
+	}
+	if _, err := client.Release(ctx, &genv1.ReleaseRequest{ClaimId: "claim-1"}); err != nil {
+		t.Fatalf("retried release: %v", err)
 	}
 }
 

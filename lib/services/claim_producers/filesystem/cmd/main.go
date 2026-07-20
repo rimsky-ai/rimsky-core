@@ -14,11 +14,10 @@ import (
 	"syscall"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/server"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
 func main() {
-	ops.Setup(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	opts, err := server.LoadOptsFromEnv()
 	if err != nil {

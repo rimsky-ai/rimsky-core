@@ -21,6 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
@@ -247,6 +248,14 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
 				return
 			}
+			var schemaViolation *nodepkg.MessageBodySchemaViolation
+			if errors.As(err, &schemaViolation) {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": schemaViolation.Error(),
+					"type":  schemaViolation.Type,
+				})
+				return
+			}
 			var unknownType *unknownMessageTypeError
 			if errors.As(err, &unknownType) {
 				declared := make([]string, 0, len(unknownType.Declared))
@@ -292,6 +301,7 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 		filter := persistence.MessageListFilter{
 			InstanceID: &instUUID,
 			Type:       q.Get("type"),
+			Sender:     q.Get("sender"),
 			SenderKind: q.Get("sender_kind"),
 		}
 		if s := q.Get("frame_id"); s != "" {

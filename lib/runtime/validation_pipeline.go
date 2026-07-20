@@ -73,9 +73,25 @@ func RunValidationPipeline(
 		appendFindings(&out, client.Name(), "publisher", "", errs, warns, err, policy)
 	}
 
-	_ = templateID
+	runLifecycleSubscriberRoleChecks(ctx, reg, policy, templateID, &out)
 
 	return out, nil
+}
+
+func runLifecycleSubscriberRoleChecks(
+	ctx context.Context, reg ValidationRegistry, policy UnreachableValidatorPolicy,
+	templateID string, out *ValidationOutcome,
+) {
+	for _, client := range reg.All() {
+		if !clientAdvertisesRole(client, "lifecycle_subscriber") {
+			continue
+		}
+		errs, warns, err := client.ValidateLifecycleSubscriber(ctx, ValidateLifecycleSubscriberInput{
+			SubscriberName: client.Name(),
+			TemplateID:     templateID,
+		})
+		appendFindings(out, client.Name(), "lifecycle_subscriber", "", errs, warns, err, policy)
+	}
 }
 
 func runExecutorRoleCheck(

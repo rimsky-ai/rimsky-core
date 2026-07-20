@@ -19,8 +19,10 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
@@ -67,13 +69,13 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 	tickMs := atoiDefault(os.Getenv("RIMSKY_SCHEDULER_TICK_MS"), 250)
 	log := shared.NewSlogLogger(logger)
 
-	metricsPort, err := metricsPortFor("scheduler")
+	metricsPort, err := metricsPortFor("scheduler", rimskyCfg.Topology)
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
 		return nil, nil, err
 	}
 
-	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
+	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
 		return nil, nil, err
@@ -90,18 +92,28 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 
 	mreg := observability.NewMetricsRegistry()
 
+	lateBindProxies := rimskyCfg.LateBindServiceProxies
+	peersForSpec := func(tplSpec node.TemplateSpec) []string {
+		return controlapi.LifecyclePeersForSpec(
+			controlapi.AppDeps{LateBindServiceProxies: lateBindProxies},
+			tplSpec,
+		)
+	}
+
 	h, err := config.StartScheduler(config.SchedulerConfig{
 		Driver:                  driver,
 		Clock:                   shared.SystemClock{},
 		Logger:                  log,
 		TickInterval:            time.Duration(tickMs) * time.Millisecond,
 		ClaimProducers:          rimskyCfg.ClaimProducers,
+		Executors:               rimskyCfg.Executors,
 		NamedLocks:              rimskyCfg.NamedLocks,
 		SupervisorID:            supervisorID,
 		Blob:                    blobBackend,
 		OrphanBlobSweepInterval: rimskyCfg.Blob.Retention.OrphanSweepInterval,
 		Metrics:                 observability.MetricsHookOf(mreg),
 		Retention:               rimskyCfg.Retention,
+		LifecyclePeersForSpec:   peersForSpec,
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())
@@ -148,7 +160,7 @@ var metricsRoleOffsets = map[string]int{
 	"control-api": 2,
 }
 
-func metricsPortFor(role string) (int, error) {
+func metricsPortFor(role string, topology persistence.Topology) (int, error) {
 	perRoleVar := "RIMSKY_METRICS_PORT_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_"))
 	if s := os.Getenv(perRoleVar); s != "" {
 		port, err := strconv.Atoi(s)
@@ -168,7 +180,7 @@ func metricsPortFor(role string) (int, error) {
 	if base <= 0 {
 		return 0, nil
 	}
-	if os.Getenv("RIMSKY_PROCESS_ROLE") == "unified" {
+	if topology.Unified() {
 		return base + metricsRoleOffsets[role], nil
 	}
 	return base, nil

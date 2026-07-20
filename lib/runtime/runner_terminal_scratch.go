@@ -9,6 +9,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
@@ -51,6 +52,14 @@ func applyTerminalScratchInTx(
 	}
 	if err := args.Queue.WriteScratchInTx(ctx, tx, acq.NodeRunID, inline, handle, handleBackend); err != nil {
 		return fmt.Errorf("applyTerminalScratchInTx: %w", err)
+	}
+	now := time.Now().UTC()
+	if args.Clock != nil {
+		now = args.Clock.Now().UTC()
+	}
+	// @decision: writeback-bumps-progress
+	if _, err := args.Queue.BumpLastProgressAt(ctx, tx, acq.NodeRunID, now); err != nil {
+		return fmt.Errorf("applyTerminalScratchInTx: bump last_progress_at: %w", err)
 	}
 	return nil
 }

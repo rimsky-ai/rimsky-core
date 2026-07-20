@@ -282,6 +282,38 @@ func TestApplyAttributeOverrides(t *testing.T) {
 			t.Fatalf("got %#v want %#v", got, want)
 		}
 	})
+
+	t.Run("directive-shaped override and default values are never substituted", func(t *testing.T) {
+		resolved := map[string]any{
+			"cli": map[string]any{"prompt": "{{nodes.upstream.attribute.result}}"},
+		}
+		ov := map[string]any{
+			"by_executor": map[string]any{
+				"claude-agent": map[string]any{
+					"cli": map[string]any{
+						"prompt":  "{{nodes.upstream.attribute.result}}",
+						"trailer": "{{params.foo | fallback}}",
+					},
+				},
+			},
+			"by_node": map[string]any{
+				"area-pass": map[string]any{
+					"cli": map[string]any{"note": "{{claim.data.field}}"},
+				},
+			},
+		}
+		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", logger)
+		want := map[string]any{
+			"cli": map[string]any{
+				"prompt":  "{{nodes.upstream.attribute.result}}",
+				"trailer": "{{params.foo | fallback}}",
+				"note":    "{{claim.data.field}}",
+			},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("a directive-shaped override/default value must pass through as a literal string, unsubstituted: got %#v want %#v", got, want)
+		}
+	})
 }
 
 func TestApplyAttributeOverrides_ByMatch(t *testing.T) {

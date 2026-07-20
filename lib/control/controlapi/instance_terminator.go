@@ -126,7 +126,7 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 		if inst.TerminatedAt != nil {
 			terminatedAtMs = inst.TerminatedAt.UnixMilli()
 		}
-		if err := CloseAndFanOutFrameRootRunScopesForInstance(tickCtx, t.deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil {
+		if err := CloseAndFanOutRunScopesForInstance(tickCtx, t.deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil {
 			t.logger.Warn("instance_terminator.run_scope_fanout_failed",
 				"instance_id", inst.ID,
 				"error", err.Error())

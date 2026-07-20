@@ -178,6 +178,9 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	}
 	require.NoError(t, bErr, "the losing contender must no-op cleanly, not error")
 
+	_, ferr := runtime.FlushProducerVerbOutbox(h.Ctx, baseArgs)
+	require.NoError(t, ferr)
+
 	commits := 0
 	for _, c := range store.Calls() {
 		switch c.Verb {

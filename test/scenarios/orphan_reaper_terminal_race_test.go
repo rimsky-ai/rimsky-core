@@ -119,6 +119,9 @@ func (f *reaperRaceFixture) releaseTerminal(t *testing.T, ctx context.Context) e
 	if post != nil {
 		post(ctx)
 	}
+	if _, err := runtime.FlushProducerVerbOutbox(ctx, f.args); err != nil {
+		return err
+	}
 	return nil
 }
 

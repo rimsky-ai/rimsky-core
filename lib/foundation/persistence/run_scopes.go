@@ -37,6 +37,8 @@ type RunScopeTable interface {
 	ListChildScopes(ctx context.Context, tx Tx, parentNodeRunID shared.UUID) ([]RunScopeRow, error)
 
 	ListParentChain(ctx context.Context, tx Tx, id shared.UUID) ([]RunScopeRow, error)
+
+	ListTreeDeepestFirst(ctx context.Context, tx Tx, rootRunScopeID shared.UUID) ([]RunScopeRow, error)
 }
 
 var ErrRunScopeClosed = errors.New("persistence: run scope is closed")

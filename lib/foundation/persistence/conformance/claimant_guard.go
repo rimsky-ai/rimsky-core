@@ -744,7 +744,7 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant ParkActiveInTx did not error")
 	}
 	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ParkActiveInTx")
-	parked, perr := q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
+	parked, perr := q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
 	if perr != nil {
 		t.Fatalf("GetParkedByNode after wrong-claimant park: %v", perr)
 	}
@@ -753,7 +753,7 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 	}
 
 	parkRun(ctx, t, d, parkInput(guardSupA))
-	parked, perr = q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
+	parked, perr = q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
 	if perr != nil {
 		t.Fatalf("GetParkedByNode after owner park: %v", perr)
 	}

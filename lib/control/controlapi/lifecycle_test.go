@@ -389,7 +389,7 @@ func TestFanOutRunScopeEvent_ContinuesPastPeerFailureNilErrorWithPerPeerErr(t *t
 	require.Nil(t, betaRow, "beta's failed dispatch must not be marked terminal (so a future re-fanout retries it)")
 }
 
-func TestCloseAndFanOutFrameRootRunScopesForInstance_DedupesSharedRootScope(t *testing.T) {
+func TestCloseAndFanOutRunScopesForInstance_DedupesSharedRootScope(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
 	ctx := context.Background()
@@ -397,7 +397,7 @@ func TestCloseAndFanOutFrameRootRunScopesForInstance_DedupesSharedRootScope(t *t
 	instanceID := seedInstanceForRunScopeFanout(t, f, uuid.NewString())
 	seedClosedFramesWithScopes(ctx, t, f, instanceID, 3, true)
 
-	err := CloseAndFanOutFrameRootRunScopesForInstance(ctx, f.deps, twoStoreSpec(), shared.UUID(instanceID), "instance_terminated")
+	err := CloseAndFanOutRunScopesForInstance(ctx, f.deps, twoStoreSpec(), shared.UUID(instanceID), "instance_terminated")
 	require.NoError(t, err)
 
 	require.Len(t, f.alpha.Calls(), 1,
@@ -405,7 +405,7 @@ func TestCloseAndFanOutFrameRootRunScopesForInstance_DedupesSharedRootScope(t *t
 	require.Len(t, f.beta.Calls(), 1)
 }
 
-func TestCloseAndFanOutFrameRootRunScopesForInstance_PaginatesAcrossFramePages(t *testing.T) {
+func TestCloseAndFanOutRunScopesForInstance_PaginatesAcrossFramePages(t *testing.T) {
 	f := newFanOutFixture(t)
 	ctx := context.Background()
 
@@ -414,7 +414,7 @@ func TestCloseAndFanOutFrameRootRunScopesForInstance_PaginatesAcrossFramePages(t
 	scopes := seedClosedFramesWithScopes(ctx, t, f, instanceID, n, false)
 	require.Len(t, scopes, n)
 
-	err := CloseAndFanOutFrameRootRunScopesForInstance(ctx, f.deps, twoStoreSpec(), shared.UUID(instanceID), "instance_terminated")
+	err := CloseAndFanOutRunScopesForInstance(ctx, f.deps, twoStoreSpec(), shared.UUID(instanceID), "instance_terminated")
 	require.NoError(t, err)
 
 	require.Len(t, f.alpha.Calls(), n,

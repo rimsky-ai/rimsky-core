@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
 const forcedErrorClass = "stub/forced_error"
@@ -64,7 +63,7 @@ func (observability) StreamTrace(_ *genv1.StreamTraceRequest, _ genv1.ExecutorOb
 }
 
 func main() {
-	ops.Setup(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	bind := os.Getenv("EXECUTOR_STUB_BIND")
 	if bind == "" {
 		bind = "0.0.0.0:9300"

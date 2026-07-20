@@ -9,7 +9,6 @@ import (
 	"os"
 
 	claudeagent "github.com/rimsky-ai/rimsky-core/lib/services/executors/claude-agent"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
 const moduleWitnessSpecifier = "scenario:per-node-module-witness"
@@ -34,7 +33,7 @@ func registerModuleWitness() {
 
 func main() {
 	registerModuleWitness()
-	ops.Setup(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	opts, err := claudeagent.LoadOptsFromEnv()
 	if err != nil {
 		slog.Error("claude-agent config", "error", err.Error())

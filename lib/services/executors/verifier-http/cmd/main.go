@@ -14,12 +14,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	verifierhttp "github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-http"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 func main() {
-	ops.Setup(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	opts, err := verifierhttp.LoadOptsFromEnv()
 	if err != nil {
 		slog.Error("verifier-http config", "error", err.Error())

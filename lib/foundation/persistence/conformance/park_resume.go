@@ -307,7 +307,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		ResumeAt:          now.Add(-1 * time.Minute),
 	})
 
-	parked, err := q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
+	parked, err := q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
 	if err != nil {
 		t.Fatalf("GetParkedByNode: %v", err)
 	}
@@ -336,7 +336,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		t.Fatalf("second ResumeParkedInTx resumed an already-stale row")
 	}
 
-	parked, err = q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
+	parked, err = q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
 	if err != nil {
 		t.Fatalf("GetParkedByNode after resume: %v", err)
 	}

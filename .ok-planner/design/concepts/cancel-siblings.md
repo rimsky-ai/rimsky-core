@@ -14,7 +14,7 @@ Snapshotted on the parent claim-handle row at acquire-time from the fan-out pare
 
 ## Boundaries
 
-Owns: the proactive cancel walker, the multi-supervisor scope filter. Does NOT own: the post-resolution aggregate verdict (see `concept:fan-out` aggregator), the `strict` policy itself (see `concept:node-run` aggregation), the held-durable promotion (see `concept:claim-lifetime`), the unconditional recursive descendant-cancel walk that fires on any Abandon regardless of aggregation policy (see `concept:claim-tree`). Adjacent: `concept:claim-tree`, `concept:fan-out`, `concept:claim-co-holdership`, `concept:claim-lifetime`.
+Owns: the proactive cancel walker, the multi-supervisor scope filter. Does NOT own: the post-resolution aggregate verdict (see `concept:fan-out` aggregator), the `strict` policy itself (see `concept:node-run` aggregation), the held-durable promotion (see `concept:claim-lifetime`), the unconditional recursive descendant-cancel walk that fires on any Abandon regardless of aggregation policy (see `concept:claim-tree`), the run-level force-cancellation of remaining in-flight clones under `strict`/`first` — a separate mechanism, keyed off the run tree rather than the claim tree, that reaches clones with no active claim to walk (see `concept:fan-out`, `concept:node-run`). Adjacent: `concept:claim-tree`, `concept:fan-out`, `concept:claim-co-holdership`, `concept:claim-lifetime`.
 
 ## Invariants
 

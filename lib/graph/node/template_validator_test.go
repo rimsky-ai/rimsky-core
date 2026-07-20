@@ -988,7 +988,7 @@ func TestTemplateValidator_Tags(t *testing.T) {
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
-	t.Run("subscription When payload.tags literal not in sender's declared_tags warns", func(t *testing.T) {
+	t.Run("subscription When payload.tags literal not in sender's declared_tags rejects registration", func(t *testing.T) {
 		spec := &TemplateSpec{
 			Name:    "demo",
 			Version: "1.0.0",
@@ -1004,15 +1004,16 @@ func TestTemplateValidator_Tags(t *testing.T) {
 		}
 		res := ValidateTemplate(spec, hooks)
 		found := false
-		for _, w := range res.Warnings {
-			if w.Path == "nodes[1].subscribes[0].when" && strings.Contains(w.Msg, "undeclared_tag") {
+		for _, e := range res.Errors {
+			if e.Path == "nodes[1].subscribes[0].when" && strings.Contains(e.Msg, "undeclared_tag") {
 				found = true
 			}
 		}
-		require.True(t, found, "expected a warning naming the undeclared tag at nodes[1].subscribes[0].when; warnings: %+v", res.Warnings)
+		require.True(t, found, "expected an error naming the undeclared tag at nodes[1].subscribes[0].when; errors: %+v", res.Errors)
+		require.False(t, res.Ok(), "registration must reject an undeclared subscription tag, not just warn")
 	})
 
-	t.Run("subscription When payload.tags literal in sender's declared_tags does not warn", func(t *testing.T) {
+	t.Run("subscription When payload.tags literal in sender's declared_tags does not reject", func(t *testing.T) {
 		spec := &TemplateSpec{
 			Name:    "demo",
 			Version: "1.0.0",
@@ -1027,9 +1028,9 @@ func TestTemplateValidator_Tags(t *testing.T) {
 			ExecutorDeclaredTags: func(string) ([]string, bool) { return []string{"declared_tag"}, true },
 		}
 		res := ValidateTemplate(spec, hooks)
-		for _, w := range res.Warnings {
-			if w.Path == "nodes[1].subscribes[0].when" {
-				t.Fatalf("unexpected undeclared-tag warning for a declared literal: %+v", w)
+		for _, e := range res.Errors {
+			if e.Path == "nodes[1].subscribes[0].when" {
+				t.Fatalf("unexpected undeclared-tag error for a declared literal: %+v", e)
 			}
 		}
 	})

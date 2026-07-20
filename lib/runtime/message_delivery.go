@@ -17,13 +17,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 type EnqueueMessageDeps interface {
 	Instances() persistence.InstanceTable
+	Templates() persistence.TemplateTable
 	Messages() persistence.MessagesTable
 }
 
+// @concept: message-schema
 func EnqueueMessage(ctx context.Context, tx persistence.Tx, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest) error {
 	if req.ID == (shared.UUID{}) {
 		return errors.New("EnqueueMessage: id required")
@@ -46,6 +49,17 @@ func EnqueueMessage(ctx context.Context, tx persistence.Tx, deps EnqueueMessageD
 	inst, err := deps.Instances().Get(ctx, req.InstanceID, tx)
 	if err != nil {
 		return fmt.Errorf("EnqueueMessage: get instance: %w", err)
+	}
+	if inst != nil {
+		tpl, err := deps.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+		if err != nil {
+			return fmt.Errorf("EnqueueMessage: get template: %w", err)
+		}
+		if tpl != nil {
+			if err := node.ValidateMessageBody(&tpl.Spec, req.Type, req.Payload); err != nil {
+				return fmt.Errorf("EnqueueMessage: %w", err)
+			}
+		}
 	}
 	if inst != nil && inst.MessageQueueMode == "coalesce" {
 		if _, err := deps.Messages().CancelPendingForInstance(ctx, tx, req.InstanceID); err != nil {

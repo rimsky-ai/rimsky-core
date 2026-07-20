@@ -81,6 +81,14 @@ func (r *fakeValidatorRegistry) Get(name string) (runtime.ValidationClient, bool
 	return c, ok
 }
 
+func (r *fakeValidatorRegistry) All() []runtime.ValidationClient {
+	out := make([]runtime.ValidationClient, 0, len(r.byName))
+	for _, c := range r.byName {
+		out = append(out, c)
+	}
+	return out
+}
+
 type validatorHarness struct {
 	*harness
 	validator *fakeValidator
@@ -202,6 +210,31 @@ func TestValidationPipeline_PublisherRoleHonoredAtRegistration(t *testing.T) {
 	require.NotEmpty(t, errs)
 	require.GreaterOrEqual(t, vfake.publisher, 1,
 		"registering a template with a publisher whose validator advertises the publisher role must invoke ValidatePublisher")
+	require.Equal(t, 0, vfake.executor)
+}
+
+func TestValidationPipeline_LifecycleSubscriberRoleHonoredAtRegistration(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "content",
+		supportedRoles: []string{"lifecycle_subscriber"},
+		errs: []runtime.ValidationFinding{{
+			Class:   "lifecycle_subscriber_rejected",
+			Message: "subscriber refuses this template",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-lifecycle-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Contains(t, out["error"], "validation pipeline")
+	errs, _ := out["validation_errors"].([]any)
+	require.NotEmpty(t, errs)
+	require.GreaterOrEqual(t, vfake.lifecycle, 1,
+		"registering any template must invoke ValidateLifecycleSubscriber template-wide on every validator advertising the lifecycle_subscriber role")
 	require.Equal(t, 0, vfake.executor)
 }
 

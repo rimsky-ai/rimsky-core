@@ -252,6 +252,9 @@ func (s *staticScopeTable) ListChildScopes(_ context.Context, _ persistence.Tx, 
 func (s *staticScopeTable) ListParentChain(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.RunScopeRow, error) {
 	return nil, nil
 }
+func (s *staticScopeTable) ListTreeDeepestFirst(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.RunScopeRow, error) {
+	return nil, nil
+}
 
 // @concept: fan-out
 func TestAcquireFanOutIfDeclared_ChildRunsSkipSplitScope(t *testing.T) {

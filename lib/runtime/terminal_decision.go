@@ -13,8 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type TerminalSource int
@@ -46,9 +44,9 @@ func (o TerminalOutcome) CauseString() string {
 	case OutcomeAbandon:
 		return "natural"
 	case OutcomeAbandonSiblingCancel:
-		return "sibling_cancel"
+		return "sibling_failed"
 	case OutcomeAbandonDescendantCancel:
-		return "descendant_cancel"
+		return "parent_resolved"
 	}
 	return ""
 }
@@ -112,18 +110,12 @@ func ResolveClaimHandleTerminal(
 	if err != nil {
 		return nil, err
 	}
-	commitRes, err := fireProducerVerb(ctx, td)
-	if err != nil {
-		return nil, err
-	}
-	if td.Outcome == OutcomeCommit && commitRes.VersionID != "" {
-		if err := args.ClaimHandles.SetVersionID(ctx, td.ClaimHandleID, td.SupervisorID, commitRes.VersionID, tx); err != nil {
-			return nil, fmt.Errorf("ResolveClaimHandleTerminal: SetVersionID (base Commit response): %w", err)
-		}
-		versionID = commitRes.VersionID
+	// @concept: terminal-resolution
+	if err := enqueueProducerVerb(ctx, args, tx, td); err != nil {
+		return nil, fmt.Errorf("ResolveClaimHandleTerminal: %w", err)
 	}
 	emitTerminalForensics(ctx, args, tx, td, versionID)
-	var post postCommitFn
+	post := kickProducerVerbDispatch(args)
 	if td.Outcome.IsAbandon() {
 		pc, err := cancelDescendantClaims(ctx, args, tx, td.ClaimHandleID)
 		if err != nil {
@@ -151,10 +143,9 @@ func ResolveClaimHandleTerminal(
 		return post, nil
 	}
 	settlePC, err := SettleFromFanoutChild(ctx, args, tx, FanoutChildSettlementInput{
-		ParentClaimHandleID:   *td.ParentClaimHandleID,
-		ChildClaimHandleID:    td.ClaimHandleID,
-		ChildOutcome:          td.Outcome,
-		ChildProducerMetadata: commitRes.ProducerMetadata,
+		ParentClaimHandleID: *td.ParentClaimHandleID,
+		ChildClaimHandleID:  td.ClaimHandleID,
+		ChildOutcome:        td.Outcome,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: settle children: %w", err)
@@ -201,30 +192,6 @@ func dispatchDataProcessingTerminal(
 		}
 	}
 	return "", nil
-}
-
-func fireProducerVerb(ctx context.Context, td TerminalDecision) (claimproducer.CommitResult, error) {
-	claimID := claimproducer.ClaimID(td.ClaimHandleID.String())
-	producerName := td.ProducerName
-	if producerName == "" && td.Producer != nil {
-		producerName = td.Producer.Name()
-	}
-	ctx = peer.WithServiceName(ctx, producerName)
-	var commitRes claimproducer.CommitResult
-	var verbErr error
-	switch {
-	case td.Outcome == OutcomeCommit:
-		commitRes, verbErr = td.Producer.Commit(ctx, claimID, td.Scope, td.Address)
-	case td.Outcome.IsAbandon():
-		verbErr = abandonOpenedClaim(ctx, td.Producer, td.ClaimHandleID, td.Scope, td.Address)
-	default:
-		return claimproducer.CommitResult{}, fmt.Errorf("ResolveClaimHandleTerminal: unknown outcome %v", td.Outcome)
-	}
-	if verbErr != nil {
-		return claimproducer.CommitResult{}, fmt.Errorf("ResolveClaimHandleTerminal: producer verb (%s, source=%d): %w",
-			outcomeVerbName(td.Outcome), td.Source, verbErr)
-	}
-	return commitRes, nil
 }
 
 func promoteHandleState(

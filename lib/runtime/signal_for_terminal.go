@@ -11,7 +11,7 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
-func signalForTerminal(t terminalEvent) signalpkg.Signal {
+func signalForTerminal(args RunArgs, t terminalEvent) signalpkg.Signal {
 	switch t.Kind {
 	case terminalKindComplete:
 		return signalpkg.BuildTerminalSuccessSignal(t.Changed, t.AttributesDel, t.ChangeSummary, t.Tags)
@@ -24,7 +24,7 @@ func signalForTerminal(t terminalEvent) signalpkg.Signal {
 		}
 		return signalpkg.BuildTerminalErrorSignal(t.ErrorClass, errorPayload, 0, 0, t.AttributesDel, t.Tags)
 	case terminalKindPark:
-		return parkTerminalSignal(t)
+		return parkTerminalSignal(args, t)
 	case terminalKindInfra:
 		return signalpkg.Signal{}
 	}

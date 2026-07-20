@@ -14,8 +14,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type HeldDurableReleaseReport struct {
@@ -41,27 +39,41 @@ func ReleaseHeldDurableClaims(
 		return HeldDurableReleaseReport{}, fmt.Errorf("ReleaseHeldDurableClaims: list: %w", err)
 	}
 	report := HeldDurableReleaseReport{Attempted: len(rows)}
+	if len(rows) == 0 {
+		return report, nil
+	}
+	outbox := ProducerVerbOutboxOf(args)
+	if outbox == nil {
+		return HeldDurableReleaseReport{}, fmt.Errorf(
+			"ReleaseHeldDurableClaims: no producer-verb outbox wired (RunArgs.VerbOutbox or a Tables backend providing one is required)")
+	}
+	if args.Clock == nil {
+		return HeldDurableReleaseReport{}, fmt.Errorf("ReleaseHeldDurableClaims: RunArgs.Clock is required to stamp outbox rows")
+	}
+	now := args.Clock.Now()
 	for _, r := range rows {
 		producerName := ""
 		if r.ProducerName != nil {
 			producerName = *r.ProducerName
 		}
-		producer, ok := args.StoreRegistry.GetWithContext(ctx, producerName, instanceID.String())
-		if !ok {
+		instID := instanceID
+		if err := outbox.Enqueue(ctx, persistence.ProducerVerbOutboxInsertInput{
+			ClaimHandleID:  r.ID,
+			ProducerName:   producerName,
+			Verb:           persistence.ProducerVerbRelease,
+			ClaimScopeData: []byte(r.ClaimScopeData),
+			Address:        []byte(r.Address),
+			SupervisorID:   args.SupervisorID,
+			InstanceID:     &instID,
+			NextAttemptAt:  now,
+			EnqueuedAt:     now,
+		}, tx); err != nil {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
 				ClaimHandleID: r.ID, ProducerName: producerName,
-				Err: fmt.Errorf("unknown producer %q", producerName),
-			})
-			continue
-		}
-		claimID := claimproducer.ClaimID(r.ID.String())
-		relCtx := peer.WithServiceName(ctx, producerName)
-		if err := producer.Release(relCtx, claimID, []byte(r.ClaimScopeData), []byte(r.Address)); err != nil {
-			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
-				ClaimHandleID: r.ID, ProducerName: producerName, Err: err,
+				Err: fmt.Errorf("enqueue release: %w", err),
 			})
 			if log != nil {
-				log.Warn("ReleaseHeldDurableClaims: producer.Release failed; row preserved for retry",
+				log.Warn("ReleaseHeldDurableClaims: enqueue release failed; row preserved for retry",
 					"claim_handle_id", r.ID.String(), "producer", producerName, "err", err.Error())
 			}
 			continue

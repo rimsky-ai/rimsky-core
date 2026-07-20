@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -162,6 +161,33 @@ type LeafRunEmitInput struct {
 	SubstitutionRefs   []SubstitutionRef
 }
 
+func frameTriggerFieldsFor(ctx context.Context, args RunArgs, frameID shared.UUID) (kind, messageID string) {
+	if args.Persist == nil {
+		return "", ""
+	}
+	frames := args.Persist.Frames()
+	if frames == nil {
+		return "", ""
+	}
+	var row *persistence.FrameRowWithMessage
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, ferr := frames.GetForObservabilityWithMessage(ctx, frameID, tx)
+		row = r
+		return ferr
+	}); err != nil {
+		if args.Logger != nil {
+			args.Logger.Warn("lineage_writer.frameTriggerFieldsFor failed",
+				"frame_id", frameID.String(),
+				"error", err.Error())
+		}
+		return "", ""
+	}
+	if row == nil {
+		return "", ""
+	}
+	return row.MessageSenderKind, row.TriggeringMessageID.String()
+}
+
 func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) {
 	if args.Persist == nil {
 		return
@@ -188,6 +214,7 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 	if in.ParentNodeRunID != nil {
 		parentNodeRunID = in.ParentNodeRunID.String()
 	}
+	frameTriggerKind, triggerMessageID := frameTriggerFieldsFor(ctx, args, in.FrameID)
 	rec := LeafRunRecord{
 		NodeRunID:          in.NodeRunID,
 		NodeID:             in.NodeID,
@@ -196,6 +223,8 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 		NodeAlias:          in.NodeAlias,
 		TemplateNodeAlias:  in.NodeAlias,
 		ParentNodeRunID:    parentNodeRunID,
+		FrameTriggerKind:   frameTriggerKind,
+		TriggerMessageID:   triggerMessageID,
 		ExecutorName:       in.ExecutorName,
 		TemplateHash:       in.TemplateHash,
 		ParamsSnapshotHash: paramsHash,
@@ -208,7 +237,6 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 		HeldClaims:         in.HeldClaims,
 		SubstitutionRefs:   in.SubstitutionRefs,
 	}
-	logMissingFieldsOnce(args.Logger, rec)
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return WriteLeafRunLineage(ctx, tx, lt, in.InstanceID, in.FrameID, args.Clock.Now(), rec)
 	}); err != nil {
@@ -246,34 +274,6 @@ func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {
 		})
 	}
 	return out
-}
-
-func missingLeafRunFields(rec LeafRunRecord) []string {
-	var out []string
-	if rec.ExecutorVersion == "" {
-		out = append(out, "executor_version")
-	}
-	if rec.FrameTriggerKind == "" {
-		out = append(out, "frame_trigger_kind")
-	}
-	if rec.TriggerMessageID == "" {
-		out = append(out, "trigger_message_id")
-	}
-	return out
-}
-
-var logMissingFieldsOnceState sync.Once
-
-func logMissingFieldsOnce(logger shared.Logger, rec LeafRunRecord) {
-	if logger == nil {
-		return
-	}
-	logMissingFieldsOnceState.Do(func() {
-		if missing := missingLeafRunFields(rec); len(missing) > 0 {
-			logger.Info("EmitLeafRunLineage: fields unavailable at this build level",
-				"missing", missing)
-		}
-	})
 }
 
 // @concept: lineage-record

@@ -79,6 +79,8 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	if post != nil {
 		post(ctx)
 	}
+	_, ferr := runtime.FlushProducerVerbOutbox(ctx, args)
+	require.NoError(t, ferr)
 
 	for i, sid := range subIDs {
 		require.Equal(t, 1, countCallsOnID(store.Calls(), sid.String(), "abandon"),
@@ -88,8 +90,8 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 		"parent claim must receive its own Abandon (aggregator decision)")
 
 	verifyLineageOutcome(ctx, t, backend, subIDs[0], persistence.LineageOutcomeAbandoned, "")
-	verifyLineageOutcome(ctx, t, backend, subIDs[1], persistence.LineageOutcomeForceCancelled, "sibling_cancel")
-	verifyLineageOutcome(ctx, t, backend, subIDs[2], persistence.LineageOutcomeForceCancelled, "sibling_cancel")
+	verifyLineageOutcome(ctx, t, backend, subIDs[1], persistence.LineageOutcomeForceCancelled, "sibling_failed")
+	verifyLineageOutcome(ctx, t, backend, subIDs[2], persistence.LineageOutcomeForceCancelled, "sibling_failed")
 	verifyLineageOutcome(ctx, t, backend, parentID, persistence.LineageOutcomeAbandoned, "")
 
 	var page persistence.EventListResult
@@ -105,13 +107,13 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	naturalCount := 0
 	for _, ev := range page.Events {
 		switch ev.Payload["cause"] {
-		case "sibling_cancel":
+		case "sibling_failed":
 			cancelCount++
 		case "natural":
 			naturalCount++
 		}
 	}
-	require.Equal(t, 2, cancelCount, "two siblings must emit cause=sibling_cancel events")
+	require.Equal(t, 2, cancelCount, "two siblings must emit cause=sibling_failed events")
 	require.GreaterOrEqual(t, naturalCount, 1, "the triggering child + parent emit cause=natural events")
 }
 

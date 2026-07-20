@@ -200,7 +200,7 @@ func TestValidateBlobConfig(t *testing.T) {
 	cases := []struct {
 		name     string
 		cfg      BlobConfig
-		role     string
+		topology Topology
 		wantErr  bool
 		wantWrap error
 	}{
@@ -210,16 +210,15 @@ func TestValidateBlobConfig(t *testing.T) {
 		{name: "filesystem-missing-root", cfg: BlobConfig{Backend: "filesystem"}, wantErr: true, wantWrap: ErrInvalidBlobConfig},
 		{name: "unknown-backend", cfg: BlobConfig{Backend: "s3"}, wantErr: true, wantWrap: ErrInvalidBlobConfig},
 		{name: "negative-threshold", cfg: BlobConfig{Backend: "inline", SpillThresholdBytes: -1}, wantErr: true, wantWrap: ErrInvalidBlobConfig},
-		{name: "memory-non-unified", cfg: BlobConfig{Backend: "memory"}, role: "scheduler", wantErr: true, wantWrap: ErrInvalidBlobConfig},
-		{name: "memory-empty-role", cfg: BlobConfig{Backend: "memory"}, role: "", wantErr: true, wantWrap: ErrInvalidBlobConfig},
-		{name: "memory-unified", cfg: BlobConfig{Backend: "memory"}, role: "unified", wantErr: false},
+		{name: "memory-split-topology", cfg: BlobConfig{Backend: "memory"}, topology: TopologySplit, wantErr: true, wantWrap: ErrInvalidBlobConfig},
+		{name: "memory-zero-value-topology", cfg: BlobConfig{Backend: "memory"}, topology: Topology(""), wantErr: true, wantWrap: ErrInvalidBlobConfig},
+		{name: "memory-unified", cfg: BlobConfig{Backend: "memory"}, topology: TopologyUnified, wantErr: false},
 		{name: "pglo-permitted", cfg: BlobConfig{Backend: "pg-largeobject"}, wantErr: false},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(ProcessRoleEnv, tc.role)
-			err := ValidateBlobConfig(tc.cfg)
+			err := ValidateBlobConfig(tc.cfg, tc.topology)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("want error, got nil")
@@ -231,6 +230,68 @@ func TestValidateBlobConfig(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("want nil, got %v", err)
+			}
+		})
+	}
+}
+
+func TestParseTopology(t *testing.T) {
+	cases := []struct {
+		in   string
+		want Topology
+	}{
+		{"unified", TopologyUnified},
+		{"", TopologySplit},
+		{"scheduler", TopologySplit},
+		{"Unified", TopologySplit},
+	}
+	for _, tc := range cases {
+		if got := ParseTopology(tc.in); got != tc.want {
+			t.Errorf("ParseTopology(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestTopologyFromEnv(t *testing.T) {
+	t.Run("unified when set", func(t *testing.T) {
+		t.Setenv(ProcessRoleEnv, "unified")
+		if got := TopologyFromEnv(); got != TopologyUnified {
+			t.Errorf("TopologyFromEnv() = %q, want %q", got, TopologyUnified)
+		}
+	})
+	t.Run("split when unset", func(t *testing.T) {
+		t.Setenv(ProcessRoleEnv, "")
+		if got := TopologyFromEnv(); got != TopologySplit {
+			t.Errorf("TopologyFromEnv() = %q, want %q", got, TopologySplit)
+		}
+	})
+}
+
+func TestSQLiteReplicaWarning(t *testing.T) {
+	cases := []struct {
+		name     string
+		driver   string
+		topology Topology
+		wantWarn bool
+	}{
+		{"sqlite-split-warns", "sqlite", TopologySplit, true},
+		{"sqlite-zero-value-topology-warns", "sqlite", Topology(""), true},
+		{"sqlite-unified-no-warning", "sqlite", TopologyUnified, false},
+		{"postgres-split-no-warning", "postgres", TopologySplit, false},
+		{"postgres-unified-no-warning", "postgres", TopologyUnified, false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			msg, warn := SQLiteReplicaWarning(tc.driver, tc.topology)
+			if warn != tc.wantWarn {
+				t.Fatalf("SQLiteReplicaWarning(%q, %q) warn = %v, want %v", tc.driver, tc.topology, warn, tc.wantWarn)
+			}
+			if warn && !strings.Contains(msg, "sqlite") {
+				t.Errorf("warning message %q does not name the sqlite driver", msg)
+			}
+			if !warn && msg != "" {
+				t.Errorf("no-warn case returned non-empty message %q", msg)
 			}
 		})
 	}

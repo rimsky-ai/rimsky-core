@@ -29,6 +29,17 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
+func withSyncVerbFlush(args runtime.RunArgs) runtime.RunArgs {
+	if args.Clock == nil {
+		args.Clock = shared.SystemClock{}
+	}
+	out := args
+	out.ProducerVerbKick = func() {
+		_, _ = runtime.FlushProducerVerbOutbox(context.Background(), out)
+	}
+	return out
+}
+
 func seedRunForNode(
 	ctx context.Context, t *testing.T, sb persistence.Tables, q persistence.Queue,
 	nodeID, frameID shared.UUID,
@@ -231,6 +242,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-A",
 	}
+	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, lockHolderID)
@@ -336,6 +348,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-D",
 	}
+	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
@@ -532,6 +545,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-BE",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindBestEffort}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -589,6 +603,7 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-TH",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 2}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -647,6 +662,7 @@ func TestResolveParentClaimChain_ThresholdFullCount_SurvivingSiblingsKeepRunning
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-THFC",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 3}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -725,6 +741,7 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-ST",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -790,6 +807,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-HP",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -880,6 +898,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-CQ",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -1015,6 +1034,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-G",
 	}
+	args = withSyncVerbFlush(args)
 	var postG func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, lockHolderID)
@@ -1093,6 +1113,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-BD",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindBestEffort}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -1162,6 +1183,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-CS",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -1248,6 +1270,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-CD",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -1423,6 +1446,7 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-HS",
 	}
+	args = withSyncVerbFlush(args)
 	var postA func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
@@ -1590,6 +1614,7 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-AF",
 	}
+	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
@@ -1659,6 +1684,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-CR",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -1762,6 +1788,7 @@ func TestSettleFromFanoutChild_MalformedAggregationPolicy_SafeFallback(t *testin
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-MP",
 	}
+	args = withSyncVerbFlush(args)
 
 	parentID := shared.UUID(uuid.New())
 	sub0 := shared.UUID(uuid.New())
@@ -1881,6 +1908,7 @@ func TestCancelInFlightSiblings_DifferentSupervisorSkipped(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-MS-A",
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	policyBytes, mErr := persistence.MarshalAggregationPolicy(policy)
@@ -2000,6 +2028,7 @@ func TestCancelDescendantClaims_DifferentSupervisorSkipped(t *testing.T) {
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-DC-A",
 	}
+	args = withSyncVerbFlush(args)
 
 	rootID := shared.UUID(uuid.New())
 	sameSupChild := shared.UUID(uuid.New())
@@ -2143,6 +2172,7 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 		SupervisorID:  "sup-DL",
 		Clock:         shared.SystemClock{},
 	}
+	args = withSyncVerbFlush(args)
 
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	rootID, subIDs := seedFanOutParentAndSubclaims(
@@ -2219,7 +2249,7 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 	require.Equal(t, spec.ClaimHandleStateAbandoned, activeRow.State,
 		"active child must be swept by the descendant-cancel walk so it is not left orphaned in-flight when the parent tears down")
 	require.Equal(t, 1, countCallsOnID(store.Calls(), activeChild.String(), "abandon"))
-	verifyLineageOutcomeRT(ctx, t, backend, activeChild, persistence.LineageOutcomeForceCancelled, "descendant_cancel")
+	verifyLineageOutcomeRT(ctx, t, backend, activeChild, persistence.LineageOutcomeForceCancelled, "parent_resolved")
 
 	committedRow := getRow(committedChild)
 	require.NotNil(t, committedRow)
@@ -2232,17 +2262,17 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 	require.NotNil(t, midRow)
 	require.Equal(t, spec.ClaimHandleStateAbandoned, midRow.State,
 		"intermediate child must be swept by the descendant-cancel walk")
-	verifyLineageOutcomeRT(ctx, t, backend, midChild, persistence.LineageOutcomeForceCancelled, "descendant_cancel")
+	verifyLineageOutcomeRT(ctx, t, backend, midChild, persistence.LineageOutcomeForceCancelled, "parent_resolved")
 
 	grandchildRow := getRow(grandchild)
 	require.NotNil(t, grandchildRow)
 	require.Equal(t, spec.ClaimHandleStateAbandoned, grandchildRow.State,
 		"grandchild must be swept by the recursive descendant-cancel walk, which recurses through every tree level so no in-flight descendant is left orphaned")
 	require.Equal(t, 1, countCallsOnID(store.Calls(), grandchild.String(), "abandon"))
-	verifyLineageOutcomeRT(ctx, t, backend, grandchild, persistence.LineageOutcomeForceCancelled, "descendant_cancel")
+	verifyLineageOutcomeRT(ctx, t, backend, grandchild, persistence.LineageOutcomeForceCancelled, "parent_resolved")
 }
 
-func TestCheckAndFireResolution_ProducerVerbError_RoutesToAbandonAndUnsticksCoHolders(t *testing.T) {
+func TestCheckAndFireResolution_ProducerVerbDeliveryFailure_DecisionHoldsAndRetries(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -2280,37 +2310,23 @@ func TestCheckAndFireResolution_ProducerVerbError_RoutesToAbandonAndUnsticksCoHo
 	store := storetest.NewFake("verb-err-store", claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
+	producerDown := true
 	store.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
-		if verb != "commit" {
-			return nil
+		if producerDown && verb == "commit" {
+			return &peer.ProducerCallError{
+				ProducerName: "verb-err-store",
+				Method:       "Commit",
+				ErrorClass:   "conflict",
+				Underlying:   errors.New("boom"),
+			}
 		}
-		return &peer.ProducerCallError{
-			ProducerName: "verb-err-store",
-			Method:       "Commit",
-			ErrorClass:   "conflict",
-			Underlying:   errors.New("boom"),
-		}
+		return nil
 	}
 	reg.Add("verb-err-store", store)
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	coholderRunID := seedRunForNode(ctx, t, backend, d.Queue(), coholderNode.ID, frameID)
-
-	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		claimed, err := d.Queue().ClaimDispatchRow(ctx, tx, coholderRunID, "sup-VE")
-		if err != nil {
-			return err
-		}
-		require.True(t, claimed, "coholder run must be claimable")
-		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, tx, coholderRunID, "sup-VE")
-		if err != nil {
-			return err
-		}
-		require.True(t, promoted, "coholder run must promote to running")
-		return backend.Nodes().UpdateState(ctx, coholderRunID,
-			cascade.NodeStateHeld, cascade.ReasonHandlerHeld, nil, tx)
-	}))
 
 	storeName := "verb-err-store"
 	intent := "rw"
@@ -2354,6 +2370,7 @@ func TestCheckAndFireResolution_ProducerVerbError_RoutesToAbandonAndUnsticksCoHo
 		SupervisorID:  "sup-VE",
 		Clock:         shared.SystemClock{},
 	}
+	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimID)
@@ -2370,47 +2387,31 @@ func TestCheckAndFireResolution_ProducerVerbError_RoutesToAbandonAndUnsticksCoHo
 		row = r
 		return err
 	}))
-	require.NotNil(t, row, "claim_handle row must be preserved past a producer verb error (Promote-not-delete)")
-	require.Equal(t, spec.ClaimHandleStateAbandoned, row.State,
-		"a classified producer verb error must promote the handle straight to abandoned, with no retried verb call")
+	require.NotNil(t, row, "claim_handle row must be preserved past a delivery failure (Promote-not-delete)")
+	require.Equal(t, spec.ClaimHandleStateCommitted, row.State,
+		"the durably recorded disposition must hold even when the producer rejects delivery; the verb is a notification, not a decision point")
 	require.Equal(t, 1, countCallsOnID(store.Calls(), claimID.String(), "commit"),
-		"exactly one Commit attempt must be made; the engine must not retry after a classified error")
-	require.Equal(t, 0, countCallsOnID(store.Calls(), claimID.String(), "abandon"),
-		"the verb-error fallback promotes state directly; it must not additionally fire an Abandon verb call")
+		"the dispatcher must have attempted delivery once")
 
-	var page persistence.EventListResult
-	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := backend.Events().List(ctx, persistence.EventListFilter{InstanceID: &inst.ID},
-			persistence.ListPagination{Limit: 50}, tx)
-		page = p
-		return err
-	}))
-	sawErrorSignal := false
-	for _, ev := range page.Events {
-		if ev.Payload["error_class"] != "conflict" {
-			continue
-		}
-		errPayload, ok := ev.Payload["error_payload"].(map[string]any)
-		if !ok {
-			continue
-		}
-		if errPayload["source"] == "claim_terminal_verb" {
-			sawErrorSignal = true
-		}
-	}
-	require.True(t, sawErrorSignal,
-		"a claim_terminal_verb error-policy signal (error_class=conflict) must be emitted on verb error")
+	outbox := runtime.ProducerVerbOutboxOf(args)
+	require.NotNil(t, outbox)
+	pending, err := outbox.ListAll(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, pending, 1, "the undelivered commit must stay queued for retry")
+	require.Equal(t, 1, pending[0].AttemptCount)
+	require.NotEmpty(t, pending[0].LastError)
 
-	var coholderRun *persistence.NodeRunForGate
+	producerDown = false
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := backend.Nodes().GetRunForGate(ctx, tx, coholderRunID)
-		coholderRun = r
-		return err
+		return outbox.RecordAttempt(ctx, pending[0].Seq, time.Unix(0, 0).UTC(), pending[0].LastError, tx)
 	}))
-	require.NotNil(t, coholderRun)
-	require.Equal(t, cascade.NodeStateFailed, coholderRun.State,
-		"a co-holder held on the now-resolved claim must be unstuck by the verb-error fallback, "+
-			"not left in held forever: its portfolio is fully resolved (poisoned) once this claim promotes to abandoned")
+	flushed, err := runtime.FlushProducerVerbOutbox(ctx, args)
+	require.NoError(t, err)
+	require.Equal(t, 1, flushed, "a recovered producer must receive the queued terminal verb")
+	require.Equal(t, 2, countCallsOnID(store.Calls(), claimID.String(), "commit"))
+	pending, err = outbox.ListAll(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, pending)
 }
 
 func verifyLineageOutcomeRT(
@@ -2537,6 +2538,7 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 		SupervisorID:  "sup-PHD",
 		Clock:         shared.SystemClock{},
 	}
+	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimID)

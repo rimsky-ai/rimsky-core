@@ -159,6 +159,9 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 	require.True(t, hooked.Load(),
 		"the PreAcquireUnavailableHook seam must have fired")
 
+	_, ferr := runtime.FlushProducerVerbOutbox(h.Ctx, args)
+	require.NoError(t, ferr)
+
 	callsA := storeA.Calls()
 	require.Equal(t, 1, countCalls(callsA, "open"),
 		"store-a must have been Open'd exactly once")

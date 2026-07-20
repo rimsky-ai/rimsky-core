@@ -45,6 +45,7 @@ Owns: the per-module manifests, the workspace definition, the layer-purity lint 
 - A lint rule denies the runtime layer from importing control or cmd.
 - Logging is stdlib structured logging only; HTTP routing, the Postgres driver, the SQLite driver (pure-Go, no CGO), and cron parsing are each pinned to a single library. Resist adding heavier alternatives.
 - The three runtime processes (scheduler, supervisor, control-api) never import each other; cross-process state flows through the shared persistence store only.
+- No internal ops package exists anywhere in the workspace. It was dead weight left over from the services split; it is an intentional absence, not an oversight, and a fitness test guards against its reintroduction.
 
 ## Licensing boundary
 

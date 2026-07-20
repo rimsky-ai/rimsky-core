@@ -438,7 +438,7 @@ func seedTerminalRunUnderEndedFrame(
 	return runScopeID, frameID
 }
 
-func TestDebugOverride_InvalidateNodeMixesPriorFrameRunScopeWithCurrentFrame(t *testing.T) {
+func TestDebugOverride_InvalidateNodeRefusesCrossFramePairing(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -449,7 +449,19 @@ func TestDebugOverride_InvalidateNodeMixesPriorFrameRunScopeWithCurrentFrame(t *
 	pauseInstanceForTest(t, h, instUUID)
 
 	rootNode := findNodeIDByType(t, h, instUUID, "root")
-	priorRunScope, _ := seedTerminalRunUnderEndedFrame(ctx, t, h, instUUID, rootNode.ID)
+	_, priorFrameID := seedTerminalRunUnderEndedFrame(ctx, t, h, instUUID, rootNode.ID)
+
+	var priorRunID shared.UUID
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		if err != nil {
+			return err
+		}
+		require.NotNil(t, latest)
+		require.Equal(t, priorFrameID, latest.FrameID, "test precondition: latest run belongs to the ended prior frame")
+		priorRunID = latest.NodeRunID
+		return nil
+	}))
 
 	currentFrameID, _ := seedFrameForTest(t, ctx, h, instUUID, "test/debug-mut-current")
 
@@ -457,8 +469,13 @@ func TestDebugOverride_InvalidateNodeMixesPriorFrameRunScopeWithCurrentFrame(t *
 		"action":    "invalidate_node",
 		"node_type": "root",
 	})
-	require.Equal(t, http.StatusOK, status, out)
-	require.GreaterOrEqual(t, int(out["runs_mutated"].(float64)), 1)
+	require.Equal(t, http.StatusConflict, status, out)
+	require.Contains(t, fmt.Sprint(out["error"]), priorFrameID.String())
+	require.Contains(t, fmt.Sprint(out["error"]), currentFrameID.String())
+	require.Equal(t, rootNode.ID.String(), out["node_id"])
+	require.Equal(t, "root", out["node_type"])
+	require.False(t, hasDebugOverrideAuditEvent(t, h, instUUID),
+		"a refused cross-frame invalidate must not be audited as an applied override")
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
@@ -466,17 +483,15 @@ func TestDebugOverride_InvalidateNodeMixesPriorFrameRunScopeWithCurrentFrame(t *
 			return err
 		}
 		require.NotNil(t, latest)
-		require.Equal(t, cascade.NodeStateStale, latest.State,
-			"invalidate_node must produce a stale node-run even when the prior run belongs to an ended frame")
-		require.Equal(t, currentFrameID, latest.FrameID,
-			"the new stale run must be stamped with the currently running frame's id")
-		require.Equal(t, priorRunScope, latest.RunScopeID,
-			"the new stale run inherits the prior (ended-frame) run's own run scope")
+		require.Equal(t, priorRunID, latest.NodeRunID,
+			"a refused cross-frame invalidate must not create any new node-run")
+		require.Equal(t, cascade.NodeStateFresh, latest.State,
+			"the prior frame's terminal run must remain untouched")
 		return nil
 	}))
 }
 
-func TestDebugOverride_SetAttributeRewritesPriorFrameTerminalRow(t *testing.T) {
+func TestDebugOverride_SetAttributeRefusesCrossFramePairing(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -501,7 +516,114 @@ func TestDebugOverride_SetAttributeRewritesPriorFrameTerminalRow(t *testing.T) {
 		return h.persist.NodeAttributes().Upsert(ctx, priorRunID, rootNode.ID, map[string]any{"seed": "prior"}, tx)
 	}))
 
-	seedFrameForTest(t, ctx, h, instUUID, "test/debug-attr-current")
+	currentFrameID, _ := seedFrameForTest(t, ctx, h, instUUID, "test/debug-attr-current")
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
+		"action":          "set_attribute",
+		"node_type":       "root",
+		"attribute_key":   "override_key",
+		"attribute_value": "override_value",
+	})
+	require.Equal(t, http.StatusConflict, status, out)
+	require.Contains(t, fmt.Sprint(out["error"]), priorFrameID.String())
+	require.Contains(t, fmt.Sprint(out["error"]), currentFrameID.String())
+	require.False(t, hasDebugOverrideAuditEvent(t, h, instUUID),
+		"a refused cross-frame set_attribute must not be audited as an applied override")
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := h.persist.NodeAttributes().GetByRun(ctx, priorRunID, tx)
+		if err != nil {
+			return err
+		}
+		require.NotNil(t, row)
+		require.NotContains(t, row.Data, "override_key",
+			"a refused cross-frame set_attribute must not write into the prior frame's terminal run")
+		require.Equal(t, "prior", row.Data["seed"])
+		return nil
+	}))
+}
+
+func seedRunInActiveFrame(
+	ctx context.Context, t *testing.T, h *harness,
+	nodeID, frameID, runScopeID shared.UUID, state cascade.NodeState,
+) shared.UUID {
+	t.Helper()
+	runID := shared.UUID(uuid.New())
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+        VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), $3, $4, $5, 0)
+    `, uuid.UUID(runID), uuid.UUID(nodeID), string(state), uuid.UUID(frameID), uuid.UUID(runScopeID))
+	return runID
+}
+
+func rootRunScopeForFrame(t *testing.T, ctx context.Context, h *harness, frameID shared.UUID) shared.UUID {
+	t.Helper()
+	var rootScope shared.UUID
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		frameRow, err := h.persist.Frames().GetForObservability(ctx, frameID, tx)
+		if err != nil {
+			return err
+		}
+		require.NotNil(t, frameRow)
+		rootScope = frameRow.RootRunScopeID
+		return nil
+	}))
+	return rootScope
+}
+
+func TestDebugOverride_InvalidateNodePausedFrameRunIsLegalTarget(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID := newInstanceForMessages(t, h, "debug-mut-paused-frame")
+	instUUID := mustParseUUID(t, instID)
+	pauseInstanceForTest(t, h, instUUID)
+
+	rootNode := findNodeIDByType(t, h, instUUID, "root")
+	currentFrameID, _ := seedFrameForTest(t, ctx, h, instUUID, "test/debug-mut-held")
+	rootScope := rootRunScopeForFrame(t, ctx, h, currentFrameID)
+	heldRunID := seedRunInActiveFrame(ctx, t, h, rootNode.ID, currentFrameID, rootScope, cascade.NodeStateHeld)
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
+		"action":    "invalidate_node",
+		"node_type": "root",
+	})
+	require.Equal(t, http.StatusOK, status, out)
+	require.EqualValues(t, 1, out["runs_mutated"],
+		"a held (paused) run in the active frame must remain a legal invalidate target")
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		if err != nil {
+			return err
+		}
+		require.NotNil(t, latest)
+		require.NotEqual(t, heldRunID, latest.NodeRunID,
+			"invalidate_node must create a new run rather than mutating the held run in place")
+		require.Equal(t, cascade.NodeStateStale, latest.State)
+		require.Equal(t, currentFrameID, latest.FrameID)
+		require.Equal(t, rootScope, latest.RunScopeID)
+		return nil
+	}))
+}
+
+func TestDebugOverride_SetAttributePausedFrameRunIsLegalTarget(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID := newInstanceForMessages(t, h, "debug-attr-paused-frame")
+	instUUID := mustParseUUID(t, instID)
+	pauseInstanceForTest(t, h, instUUID)
+
+	rootNode := findNodeIDByType(t, h, instUUID, "root")
+	currentFrameID, _ := seedFrameForTest(t, ctx, h, instUUID, "test/debug-attr-parked")
+	rootScope := rootRunScopeForFrame(t, ctx, h, currentFrameID)
+	parkedRunID := seedRunInActiveFrame(ctx, t, h, rootNode.ID, currentFrameID, rootScope, cascade.NodeStateParked)
 
 	status, out := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
 		"action":          "set_attribute",
@@ -510,16 +632,76 @@ func TestDebugOverride_SetAttributeRewritesPriorFrameTerminalRow(t *testing.T) {
 		"attribute_value": "override_value",
 	})
 	require.Equal(t, http.StatusOK, status, out)
+	require.EqualValues(t, 1, out["runs_mutated"],
+		"a parked (paused) run in the active frame must remain a legal set_attribute target")
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := h.persist.NodeAttributes().GetByRun(ctx, priorRunID, tx)
+		row, err := h.persist.NodeAttributes().GetByRun(ctx, parkedRunID, tx)
 		if err != nil {
 			return err
 		}
-		require.NotNil(t, row,
-			"set_attribute must write into the prior frame's terminal run row, since no run exists yet in the current frame")
-		require.Equal(t, "override_value", row.Data["override_key"])
-		require.Equal(t, "prior", row.Data["seed"])
+		require.NotNil(t, row)
+		require.Equal(t, "override_value", row.Data["override_key"],
+			"a non-terminal run in the active frame accepts a direct attribute write, no redirect needed")
+		return nil
+	}))
+}
+
+func TestDebugOverride_SetAttributeNeverMutatesInFrameTerminalRun(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID := newInstanceForMessages(t, h, "debug-attr-terminal-in-frame")
+	instUUID := mustParseUUID(t, instID)
+	pauseInstanceForTest(t, h, instUUID)
+
+	rootNode := findNodeIDByType(t, h, instUUID, "root")
+	currentFrameID, _ := seedFrameForTest(t, ctx, h, instUUID, "test/debug-attr-terminal")
+	rootScope := rootRunScopeForFrame(t, ctx, h, currentFrameID)
+	terminalRunID := seedRunInActiveFrame(ctx, t, h, rootNode.ID, currentFrameID, rootScope, cascade.NodeStateFresh)
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.NodeAttributes().Upsert(ctx, terminalRunID, rootNode.ID, map[string]any{"seed": "terminal"}, tx)
+	}))
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
+		"action":          "set_attribute",
+		"node_type":       "root",
+		"attribute_key":   "override_key",
+		"attribute_value": "override_value",
+	})
+	require.Equal(t, http.StatusOK, status, out)
+	require.EqualValues(t, 1, out["runs_mutated"])
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		terminalRow, err := h.persist.NodeAttributes().GetByRun(ctx, terminalRunID, tx)
+		if err != nil {
+			return err
+		}
+		require.NotNil(t, terminalRow)
+		require.NotContains(t, terminalRow.Data, "override_key",
+			"a terminal run must never be mutated by set_attribute, even inside the active frame")
+
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		if err != nil {
+			return err
+		}
+		require.NotNil(t, latest)
+		require.NotEqual(t, terminalRunID, latest.NodeRunID)
+		require.Equal(t, cascade.NodeStateStale, latest.State)
+		require.Equal(t, currentFrameID, latest.FrameID)
+		require.Equal(t, rootScope, latest.RunScopeID)
+
+		freshRow, err := h.persist.NodeAttributes().GetByRun(ctx, latest.NodeRunID, tx)
+		if err != nil {
+			return err
+		}
+		require.NotNil(t, freshRow)
+		require.Equal(t, "override_value", freshRow.Data["override_key"],
+			"set_attribute must land its value on the freshly invalidated node-run")
+		require.Equal(t, "terminal", freshRow.Data["seed"],
+			"the freshly invalidated run must carry forward the terminal run's prior bag")
 		return nil
 	}))
 }

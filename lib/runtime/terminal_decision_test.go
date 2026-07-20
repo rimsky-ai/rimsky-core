@@ -43,8 +43,8 @@ func TestTerminalOutcome_IsAbandonAndCauseString(t *testing.T) {
 	}{
 		{OutcomeCommit, false, ""},
 		{OutcomeAbandon, true, "natural"},
-		{OutcomeAbandonSiblingCancel, true, "sibling_cancel"},
-		{OutcomeAbandonDescendantCancel, true, "descendant_cancel"},
+		{OutcomeAbandonSiblingCancel, true, "sibling_failed"},
+		{OutcomeAbandonDescendantCancel, true, "parent_resolved"},
 	}
 	for _, c := range cases {
 		c := c

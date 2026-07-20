@@ -44,7 +44,8 @@ func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 		if errorClass == "" {
 			continue
 		}
-		if err := args.Queue.ReleaseClaim(ctx, o.ID, prior); err != nil {
+		// @concept: node-run
+		if err := args.Queue.ReleaseClaimWithDisposition(ctx, o.ID, prior, "stale_recovery"); err != nil {
 			log.Warn("tick: release orphaned claim failed",
 				"dispatch_id", o.ID.String(), "error", err.Error())
 			continue

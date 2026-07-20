@@ -117,6 +117,12 @@ type Queue interface {
 
 	ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error
 
+	// @concept: node-run
+	ReleaseClaimWithDisposition(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string, disposition string) error
+
+	// @concept: node-run
+	StampPriorDispatchInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string) error
+
 	ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID) error
 
 	GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (ClaimOwnership, error)
@@ -150,7 +156,7 @@ type Queue interface {
 	ListParkedDiagnostic(ctx context.Context, tx Tx) ([]ParkedDiagnosticRow, error)
 
 	// @concept: run-scope
-	GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*ParkedRow, error)
+	GetParkedByNode(ctx context.Context, tx Tx, nodeID shared.UUID, runScopeID shared.UUID) (*ParkedRow, error)
 
 	ResumeParkedInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (resumed bool, err error)
 

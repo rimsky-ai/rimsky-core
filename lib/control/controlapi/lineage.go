@@ -32,6 +32,7 @@ func registerLineageRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/lineage/runs/{run_id}/descendants", gate(deps, "lineage:read", handleLineageRunDescendants(deps)))
 	r.Get("/lineage/claims/{claim_handle_id}", gate(deps, "lineage:read", handleLineageClaim(deps)))
 	r.Get("/lineage/claims/{claim_handle_id}/ancestors", gate(deps, "lineage:read", handleLineageClaimAncestors(deps)))
+	r.Get("/lineage/claims/{claim_handle_id}/descendants", gate(deps, "lineage:read", handleLineageClaimDescendants(deps)))
 	r.Get("/lineage/by-source/{source_type}/{source_id}", gate(deps, "lineage:read", handleLineageBySource(deps)))
 	r.Get("/lineage/by-producer/{executor_name}", gate(deps, "lineage:read", handleLineageByProducer(deps)))
 	r.Post("/admin/lineage/prune", gate(deps, "lineage:prune", handleLineagePrune(deps)))
@@ -308,6 +309,56 @@ func handleLineageClaim(deps AppDeps) http.HandlerFunc {
 	}
 }
 
+// @concept: lineage-record
+func walkLineageClaims(
+	ctx context.Context, deps AppDeps,
+	seed shared.UUID, depth int, dir lineageWalkDirection,
+) ([]persistence.LineageRow, error) {
+	visited := map[shared.UUID]struct{}{seed: {}}
+	var out []persistence.LineageRow
+	frontier := []shared.UUID{seed}
+	for level := 0; level < depth && len(frontier) > 0; level++ {
+		next := []shared.UUID{}
+		for _, id := range frontier {
+			records, err := deps.Persist.Lineage().GetByClaimHandleID(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range records {
+				out = append(out, r)
+				var rec struct {
+					ParentClaimHandleID *string  `json:"parent_claim_handle_id"`
+					SubClaimHandleIDs   []string `json:"sub_claim_handle_ids"`
+				}
+				if err := json.Unmarshal(r.Record, &rec); err != nil {
+					continue
+				}
+				var neighbors []string
+				switch dir {
+				case lineageWalkDirectionAncestors:
+					if rec.ParentClaimHandleID != nil {
+						neighbors = []string{*rec.ParentClaimHandleID}
+					}
+				case lineageWalkDirectionDescendants:
+					neighbors = rec.SubClaimHandleIDs
+				}
+				for _, n := range neighbors {
+					if u, err := uuid.Parse(n); err == nil {
+						uu := shared.UUID(u)
+						if _, seen := visited[uu]; !seen {
+							visited[uu] = struct{}{}
+							next = append(next, uu)
+						}
+					}
+				}
+			}
+		}
+		frontier = next
+	}
+	return out, nil
+}
+
+// @concept: lineage-record
 func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		claimID, err := uuid.Parse(chi.URLParam(req, "claim_handle_id"))
@@ -316,39 +367,10 @@ func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		depth := parseDepth(req)
-		var (
-			out      []persistence.LineageRow
-			visited  = map[shared.UUID]struct{}{shared.UUID(claimID): {}}
-			frontier = []shared.UUID{shared.UUID(claimID)}
-		)
-		for level := 0; level < depth && len(frontier) > 0; level++ {
-			next := []shared.UUID{}
-			for _, id := range frontier {
-				records, err := deps.Persist.Lineage().GetByClaimHandleID(req.Context(), id)
-				if err != nil {
-					writeError(w, err)
-					return
-				}
-				for _, r := range records {
-					out = append(out, r)
-					var rec struct {
-						SubClaimHandleIDs []string `json:"sub_claim_handle_ids"`
-					}
-					if err := json.Unmarshal(r.Record, &rec); err != nil {
-						continue
-					}
-					for _, sub := range rec.SubClaimHandleIDs {
-						if u, err := uuid.Parse(sub); err == nil {
-							uu := shared.UUID(u)
-							if _, seen := visited[uu]; !seen {
-								visited[uu] = struct{}{}
-								next = append(next, uu)
-							}
-						}
-					}
-				}
-			}
-			frontier = next
+		out, err := walkLineageClaims(req.Context(), deps, shared.UUID(claimID), depth, lineageWalkDirectionAncestors)
+		if err != nil {
+			writeError(w, err)
+			return
 		}
 		items := make([]lineageRecordItem, 0, len(out))
 		for _, lr := range out {
@@ -357,6 +379,31 @@ func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ancestors": items,
 			"depth":     depth,
+		})
+	}
+}
+
+// @concept: lineage-record
+func handleLineageClaimDescendants(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		claimID, err := uuid.Parse(chi.URLParam(req, "claim_handle_id"))
+		if err != nil {
+			badRequest(w, "invalid claim_handle_id")
+			return
+		}
+		depth := parseDepth(req)
+		out, err := walkLineageClaims(req.Context(), deps, shared.UUID(claimID), depth, lineageWalkDirectionDescendants)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		items := make([]lineageRecordItem, 0, len(out))
+		for _, lr := range out {
+			items = append(items, toLineageItem(lr))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"descendants": items,
+			"depth":       depth,
 		})
 	}
 }

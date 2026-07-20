@@ -17,9 +17,20 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
+
+// @concept: frame
+const frameStateCaseSQL = `CASE
+    WHEN f.ended_at IS NULL THEN 'running'
+    WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed'
+                 AND (r.settling_signal_type IS NULL OR r.settling_signal_type <> '` + cascade.SettlingSignalInstanceKilled + `')) THEN 'failed'
+    WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed'
+                 AND r.settling_signal_type = '` + cascade.SettlingSignalInstanceKilled + `') THEN 'terminated'
+    ELSE 'completed'
+END`
 
 func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx persistence.Tx) ([]persistence.FramePending, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
@@ -95,6 +106,24 @@ func (s *framesImpl) MarkFrameEnded(
 		return false, err
 	}
 	return n == 1, nil
+}
+
+func (s *framesImpl) MarkOpenFramesEndedForInstance(
+	ctx context.Context, instanceID shared.UUID, tx persistence.Tx,
+) (int, error) {
+	res, err := s.q(tx).ExecContext(ctx, `
+        UPDATE rimsky_frames
+        SET ended_at = ?
+        WHERE instance_id = ? AND ended_at IS NULL
+    `, nowUTC(), instanceID.String())
+	if err != nil {
+		return 0, fmt.Errorf("frames.MarkOpenFramesEndedForInstance: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }
 
 func (s *framesImpl) EndFrameIfSettled(
@@ -395,11 +424,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT f.frame_id, f.instance_id,
-		        CASE
-		            WHEN f.ended_at IS NULL THEN 'running'
-		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		            ELSE 'completed'
-		        END AS state,
+		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at
 		   FROM rimsky_frames f
 		  WHERE (? IS NULL OR f.instance_id = ?)
@@ -550,11 +575,7 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 	var state string
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT f.frame_id, f.instance_id,
-		        CASE
-		            WHEN f.ended_at IS NULL THEN 'running'
-		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		            ELSE 'completed'
-		        END AS state,
+		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at
 		   FROM rimsky_frames f WHERE f.frame_id = ?`,
 		frameID.String(),
@@ -626,11 +647,7 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 	var state string
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT f.frame_id, f.instance_id,
-		        CASE
-		            WHEN f.ended_at IS NULL THEN 'running'
-		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		            ELSE 'completed'
-		        END AS state,
+		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at,
 		        m.type, m.sender, m.sender_kind
@@ -729,11 +746,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT f.frame_id, f.instance_id,
-		        CASE
-		            WHEN f.ended_at IS NULL THEN 'running'
-		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		            ELSE 'completed'
-		        END AS state,
+		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at,
 		        m.type, m.sender, m.sender_kind

@@ -138,6 +138,41 @@ func TestNoTopLevelCompatShimDirectories(t *testing.T) {
 	}
 }
 
+func TestNoInternalOpsPackage(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	skipDirs := map[string]bool{
+		".git":        true,
+		".ok-planner": true,
+		"vendor":      true,
+		"bin":         true,
+		"tmp":         true,
+	}
+
+	err := filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != repoRoot && skipDirs[d.Name()] {
+			return filepath.SkipDir
+		}
+		if d.Name() == "ops" && filepath.Base(filepath.Dir(path)) == "internal" {
+			rel, rerr := filepath.Rel(repoRoot, path)
+			if rerr != nil {
+				rel = path
+			}
+			t.Errorf("found %s; internal/ops was deleted (not relocated) as dead weight "+
+				"after the services split and must not exist", filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", repoRoot, err)
+	}
+}
+
 func TestNoStandaloneConformanceBinary(t *testing.T) {
 	repoRoot := findRepoRoot(t)
 	cmdRoot := filepath.Join(repoRoot, "cmd")

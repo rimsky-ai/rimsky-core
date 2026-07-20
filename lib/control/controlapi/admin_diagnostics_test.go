@@ -279,6 +279,12 @@ func (f *fakeDiagnosticQueue) ForceRemoveForNodeInTx(context.Context, shared.UUI
 func (f *fakeDiagnosticQueue) ListOrphanedClaims(context.Context) ([]persistence.DispatchRow, error) {
 	return nil, nil
 }
+func (f *fakeDiagnosticQueue) StampPriorDispatchInTx(context.Context, persistence.Tx, shared.UUID, shared.UUID, string) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) ReleaseClaimWithDisposition(context.Context, shared.UUID, string, string) error {
+	return nil
+}
 func (f *fakeDiagnosticQueue) ReleaseClaim(context.Context, shared.UUID, string) error {
 	return nil
 }
@@ -319,7 +325,7 @@ func (f *fakeDiagnosticQueue) ParkActiveInTx(context.Context, persistence.Tx, pe
 func (f *fakeDiagnosticQueue) ListParkedReadyForResume(context.Context, time.Time, int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID, shared.UUID) (*persistence.ParkedRow, error) {
+func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, persistence.Tx, shared.UUID, shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
 func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID) (bool, error) {

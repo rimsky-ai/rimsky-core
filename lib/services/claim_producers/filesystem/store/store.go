@@ -415,6 +415,9 @@ func validateMoveTargetSameFS(storeRoot, policyRoot, target string) error {
 	if policyResolved == targetResolved {
 		return fmt.Errorf("target %q resolves to the same directory as the policy root %q; pop_and_move with target == policy root is a no-op (use pop instead)", target, policyRoot)
 	}
+	if filepath.Dir(policyResolved) != filepath.Dir(targetResolved) {
+		return fmt.Errorf("target %q is not a sibling of the policy root %q; pop_and_move targets must live in the same parent directory as the policy root", target, policyRoot)
+	}
 	policyStat, err := os.Stat(policyResolved)
 	if err != nil {
 		return fmt.Errorf("stat policy root: %w", err)
@@ -426,13 +429,21 @@ func validateMoveTargetSameFS(storeRoot, policyRoot, target string) error {
 	if !targetStat.IsDir() {
 		return fmt.Errorf("target %q is not a directory", target)
 	}
-	policySys, ok1 := policyStat.Sys().(*syscall.Stat_t)
-	targetSys, ok2 := targetStat.Sys().(*syscall.Stat_t)
-	if !ok1 || !ok2 {
-		return errors.New("filesystem device-id query unavailable on this platform")
+	same, err := sameFilesystemDevice(policyStat, targetStat)
+	if err != nil {
+		return err
 	}
-	if policySys.Dev != targetSys.Dev {
+	if !same {
 		return fmt.Errorf("target %q is on a different filesystem than the policy root %q; os.Rename across filesystems is not atomic, refusing to load", target, policyRoot)
 	}
 	return nil
+}
+
+func sameFilesystemDevice(a, b os.FileInfo) (bool, error) {
+	aSys, ok1 := a.Sys().(*syscall.Stat_t)
+	bSys, ok2 := b.Sys().(*syscall.Stat_t)
+	if !ok1 || !ok2 {
+		return false, errors.New("filesystem device-id query unavailable on this platform")
+	}
+	return aSys.Dev == bSys.Dev, nil
 }

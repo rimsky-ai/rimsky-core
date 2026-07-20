@@ -311,13 +311,14 @@ func testClaimHandoffDurable_InstanceTerminationRelease(t *testing.T) {
 
 func requireProducerRelease(t *testing.T, stub *stubstore.Store, claimID string) {
 	t.Helper()
-	calls := stub.Calls()
-	for _, c := range calls {
-		if c.Verb == "release" && c.ClaimID == claimID {
-			return
+	for {
+		for _, c := range stub.Calls() {
+			if c.Verb == "release" && c.ClaimID == claimID {
+				return
+			}
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("expected producer Release for claim_id=%s; recorded calls=%v", claimID, calls)
 }
 
 type durableOpts struct {

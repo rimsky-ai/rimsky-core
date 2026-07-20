@@ -137,6 +137,10 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		args = append(args, filter.Type)
 		where += fmt.Sprintf(" AND type = $%d", len(args))
 	}
+	if filter.Sender != "" {
+		args = append(args, filter.Sender)
+		where += fmt.Sprintf(" AND sender = $%d", len(args))
+	}
 	if filter.SenderKind != "" {
 		args = append(args, filter.SenderKind)
 		where += fmt.Sprintf(" AND sender_kind = $%d", len(args))

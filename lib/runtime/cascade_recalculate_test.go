@@ -93,7 +93,14 @@ func (f *invTestQueue) ListOrphanedClaims(_ context.Context) ([]persistence.Disp
 	return nil, nil
 }
 func (f *invTestQueue) ReleaseClaim(_ context.Context, _ shared.UUID, _ string) error { return nil }
-func (f *invTestQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error      { return nil }
+func (f *invTestQueue) ReleaseClaimWithDisposition(_ context.Context, _ shared.UUID, _ string, _ string) error {
+	return nil
+}
+func (f *invTestQueue) StampPriorDispatchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID, _ string) error {
+	return nil
+}
+
+func (f *invTestQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error { return nil }
 func (f *invTestQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
@@ -136,7 +143,7 @@ func (f *invTestQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ per
 func (f *invTestQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
+func (f *invTestQueue) GetParkedByNode(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
 func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (bool, error) {

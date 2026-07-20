@@ -147,6 +147,9 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 	require.False(t, out.Ran,
 		"verify-before-run must bail (Ran=false) when the claim was stolen between commit and the verify-read")
 
+	_, ferr := runtime.FlushProducerVerbOutbox(h.Ctx, args)
+	require.NoError(t, ferr)
+
 	callsA := storeA.Calls()
 	require.Equal(t, 1, countCalls(callsA, "open"),
 		"store-a must have been Open'd exactly once")

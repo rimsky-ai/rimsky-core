@@ -38,7 +38,7 @@ func TestParkedFrameHold_InstanceStaysNonTerminalUntilFrameEnds(t *testing.T) {
 
 	h.WaitForNodeState(worker.ID, cascade.NodeStateParked)
 
-	require.NoError(t, frame.RunTick(h.Ctx, h.Persist, h.Queue, shared.SilentLogger{}),
+	require.NoError(t, frame.RunTick(h.Ctx, h.Persist, h.Queue, shared.SilentLogger{}, nil),
 		"forcing a frame-settlement sweep while the node is parked must not error")
 
 	runningFrames := getJSONMapInst(t, h.ControlBase+"/v1/instances/"+iid.String()+"/frames?state=running")

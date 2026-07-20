@@ -17,6 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 func emitAttributeChangesForRunInTx(
@@ -36,6 +37,12 @@ func emitAttributeChangesForRunInTx(
 	prior, err := args.Persist.NodeAttributes().GetPriorRunData(ctx, tx, runID)
 	if err != nil {
 		return fmt.Errorf("emitAttributeChangesForRunInTx: load prior attrs: %w", err)
+	}
+	if prior == nil {
+		prior, err = firstRunAttributeBaseline(ctx, args, tx, instanceID, nodeType)
+		if err != nil {
+			return fmt.Errorf("emitAttributeChangesForRunInTx: first-run baseline: %w", err)
+		}
 	}
 	changes := diffAttributesData(prior, current.Data)
 	if len(changes) == 0 {
@@ -59,6 +66,42 @@ func emitAttributeChangesForRunInTx(
 		}
 	}
 	return nil
+}
+
+func firstRunAttributeBaseline(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	instanceID foundationshared.UUID, nodeType string,
+) (map[string]any, error) {
+	tmpl, err := loadTemplateSpec(ctx, args, tx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("firstRunAttributeBaseline: load template: %w", err)
+	}
+	nodeDef := lookupNodeDef(tmpl, nodeType)
+	if nodeDef == nil {
+		return map[string]any{}, nil
+	}
+	var nodeSchema map[string]any
+	if nodeDef.Attributes != nil {
+		nodeSchema = nodeDef.Attributes.Schema
+	}
+	var execSchema map[string]any
+	if args.ExpectedAttributesSchemaFor != nil && nodeDef.Executor != "" {
+		if raw, ok := args.ExpectedAttributesSchemaFor(nodeDef.Executor); ok && len(raw) > 0 {
+			if err := json.Unmarshal(raw, &execSchema); err != nil {
+				if args.Logger != nil {
+					args.Logger.Warn("firstRunAttributeBaseline: executor schema unmarshal failed",
+						"executor", nodeDef.Executor, "error", err.Error())
+				}
+				execSchema = nil
+			}
+		}
+	}
+	l1Defaults := templateAttributeDefaultsFor(tmpl, nodeDef.Executor)
+	if execSchema == nil && nodeSchema == nil {
+		return map[string]any{}, nil
+	}
+	effectiveSchema := node.MergeAttributeDefaults(execSchema, l1Defaults, nodeSchema)
+	return mergeSchemaDefaultsForDispatch(effectiveSchema, map[string]any{}), nil
 }
 
 func diffAttributesData(prior, current map[string]any) map[string]any {

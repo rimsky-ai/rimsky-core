@@ -62,14 +62,13 @@ message ExecuteRequest {
   map<string, ClaimProducerHandle> claim_producers = 7;
 
   // HTTP+JSON callback URL the executor may POST to for async handoff,
-  // incremental attribute writes, scratch writes, and keepalive bumps.
+  // incremental attribute writes, and keepalive bumps.
   // Populated by the supervisor; empty string if the supervisor did not
   // configure a callback endpoint.
   string callback_url = 8;
 
   // Token the supervisor watches for cancellation requests, also used as the
-  // bearer token on incremental attribute, scratch, keepalive, and async
-  // terminal callbacks.
+  // bearer token on incremental attribute and keepalive callbacks.
   string cancel_token = 9;
 
   // Reserved (was: bool resumed = 10). Under stores-redesign-v2 resume

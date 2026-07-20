@@ -23,12 +23,17 @@ type MetricsHook interface {
 	ObserveFrameDuration(seconds float64)
 }
 
-func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger, metrics ...MetricsHook) error {
+// @concept: run-scope
+type RunScopeTerminalFanout func(ctx context.Context, tx persistence.Tx, instanceID, runScopeID shared.UUID, terminalReason string)
+
+const settledScopeTerminalReason = "frame_settled"
+
+func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger, scopeFanout RunScopeTerminalFanout, metrics ...MetricsHook) error {
 	var m MetricsHook
 	if len(metrics) > 0 {
 		m = metrics[0]
 	}
-	if err := runFrameEndDetection(ctx, store, logger, m); err != nil {
+	if err := runFrameEndDetection(ctx, store, logger, scopeFanout, m); err != nil {
 		return fmt.Errorf("frame.RunTick: frame-end: %w", err)
 	}
 	if err := runOpenNewFrames(ctx, store, queue, logger); err != nil {
@@ -40,7 +45,7 @@ func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Qu
 	return nil
 }
 
-func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger Logger, metrics MetricsHook) error {
+func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger Logger, scopeFanout RunScopeTerminalFanout, metrics MetricsHook) error {
 	var pendings []persistence.FramePending
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ps, err := store.Frames().ListRunningFramesNoPendingNodes(ctx, tx)
@@ -54,7 +59,7 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 	}
 
 	for _, p := range pendings {
-		if err := transitionFrameEnd(ctx, store, p.FrameID, p.InstanceID, logger, metrics); err != nil {
+		if err := transitionFrameEnd(ctx, store, p.FrameID, p.InstanceID, logger, scopeFanout, metrics); err != nil {
 			logger.Warn("frame.end.transition_failed",
 				"frame_id", p.FrameID,
 				"instance_id", p.InstanceID,
@@ -65,7 +70,7 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 	return nil
 }
 
-func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, instanceID shared.UUID, logger Logger, metrics MetricsHook) error {
+func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, instanceID shared.UUID, logger Logger, scopeFanout RunScopeTerminalFanout, metrics MetricsHook) error {
 	var transitioned bool
 	var finalState string
 	var startedAt, endedAt *time.Time
@@ -92,6 +97,11 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 			now := time.Now()
 			endedAt = &now
 		}
+		if moved && row != nil && row.RootRunScopeID != (shared.UUID{}) {
+			if err := closeSettledFrameScopeTree(ctx, store, tx, row.RootRunScopeID, frameID, instanceID, logger, scopeFanout); err != nil {
+				return err
+			}
+		}
 		return nil
 	}); err != nil {
 		return err
@@ -103,6 +113,37 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 			"final_state", finalState)
 		if metrics != nil && startedAt != nil && endedAt != nil {
 			metrics.ObserveFrameDuration(endedAt.Sub(*startedAt).Seconds())
+		}
+	}
+	return nil
+}
+
+// @concept: run-scope
+// @concept: frame
+func closeSettledFrameScopeTree(
+	ctx context.Context, store persistence.Tables, tx persistence.Tx,
+	rootRunScopeID, frameID, instanceID shared.UUID,
+	logger Logger, scopeFanout RunScopeTerminalFanout,
+) error {
+	tree, err := store.RunScopes().ListTreeDeepestFirst(ctx, tx, rootRunScopeID)
+	if err != nil {
+		return fmt.Errorf("list run-scope tree for settled frame %s: %w", frameID, err)
+	}
+	for _, scope := range tree {
+		if scope.ClosedAt == nil {
+			if scope.ID != rootRunScopeID {
+				logger.Warn("frame.end.orphan_child_scope_closed_at_settlement",
+					"frame_id", frameID,
+					"instance_id", instanceID,
+					"run_scope_id", scope.ID,
+					"root_run_scope_id", rootRunScopeID)
+			}
+			if err := store.RunScopes().Close(ctx, tx, scope.ID); err != nil {
+				return fmt.Errorf("close run scope %s for settled frame %s: %w", scope.ID, frameID, err)
+			}
+		}
+		if scopeFanout != nil {
+			scopeFanout(ctx, tx, instanceID, scope.ID, settledScopeTerminalReason)
 		}
 	}
 	return nil

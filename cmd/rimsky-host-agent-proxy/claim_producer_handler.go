@@ -47,7 +47,7 @@ func (h *claimProducerHandler) Capabilities(_ context.Context, _ *genv1.Capabili
 			genv1.WriteSemantics_WRITE_SEMANTICS_BLOCKING_ASYNC,
 			genv1.WriteSemantics_WRITE_SEMANTICS_READ_ONLY,
 		},
-		SupportsSplitScope:     true,
+		SupportsSplitScope:     false,
 		SupportsScopesConflict: false,
 	}, nil
 }
@@ -141,7 +141,6 @@ func (h *claimProducerHandler) Release(ctx context.Context, req *genv1.ReleaseRe
 	if err := proto.Unmarshal(respBytes, &resp); err != nil {
 		return nil, claimProducerStatus(&resolveError{class: errClassExecutorCrashed, msg: "unmarshal release response: " + err.Error()})
 	}
-	h.state.dropClaimRoute(req.GetClaimId())
 	return &resp, nil
 }
 

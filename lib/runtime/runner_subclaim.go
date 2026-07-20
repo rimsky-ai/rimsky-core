@@ -202,6 +202,57 @@ func AcquireSubClaims(
 	return out, nil
 }
 
+// @concept: fan-out
+// @concept: claim-tree
+// @story: sub-claim-payload-substitution
+func reuseLinkedSubClaim(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	claimSpec claimproducer.ClaimSpec, cand persistence.Candidate,
+	producer claimproducer.ClaimProducer, acquired []AcquiredLock, livenessInterval time.Duration,
+) (AcquiredLock, bool, error) {
+	rows, err := args.ClaimHandles.ListByNodeRun(ctx, cand.NodeRunID, tx)
+	if err != nil {
+		return AcquiredLock{}, false, fmt.Errorf("reuseLinkedSubClaim: ListByNodeRun: %w", err)
+	}
+	inRun := make(map[shared.UUID]bool, len(rows))
+	for i := range rows {
+		inRun[rows[i].ID] = true
+	}
+	for i := range rows {
+		row := rows[i]
+		if row.ParentClaimHandleID == nil || inRun[*row.ParentClaimHandleID] {
+			continue
+		}
+		if row.State != spec.ClaimHandleStateActive || row.LockKind != persistence.LockKindScope {
+			continue
+		}
+		if row.ProducerName == nil || *row.ProducerName != claimSpec.ProducerName {
+			continue
+		}
+		if lockAlreadyReused(acquired, row.ID) {
+			continue
+		}
+		if err := renewReusedRunExpiry(ctx, args, tx, cand.NodeRunID, livenessInterval); err != nil {
+			return AcquiredLock{}, false, err
+		}
+		return AcquiredLock{
+			Spec:          claimSpec,
+			ClaimHandleID: row.ID,
+			ClaimResult: claimproducer.ClaimResult{
+				ClaimScope:             json.RawMessage(row.ClaimScopeData),
+				Address:                json.RawMessage(row.Address),
+				Payload:                json.RawMessage(row.Payload),
+				RealizedWriteSemantics: claimproducer.WriteSemantics(row.RealizedWriteSemantics),
+			},
+			Producer:                producer,
+			Alias:                   claimSpec.Alias,
+			IsHeld:                  row.IsHeld,
+			ProducerCandidateHandle: row.ProducerCandidateHandle,
+		}, true, nil
+	}
+	return AcquiredLock{}, false, nil
+}
+
 func emitSubclaimBeginCandidate(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	parentID, subID shared.UUID, producerName string, candidateHandleSize int,

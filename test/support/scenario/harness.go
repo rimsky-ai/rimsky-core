@@ -618,7 +618,7 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	h.T.Helper()
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger)
+	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil)
 	// @decision: empty-message-as-root-trigger
 	_ = runtime.SweepDeliverMessagesForRunningFrames(h.Ctx, h.Persist,
 		shared.SilentLogger{}, time.Now())
@@ -626,7 +626,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 		Persist: h.Persist, Queue: h.Queue, Clock: shared.SystemClock{},
 		Logger: shared.SilentLogger{},
 	})
-	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger)
+	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil)
 	var (
 		rows           []persistence.NodeRow
 		runningFrameID *shared.UUID

@@ -115,77 +115,26 @@ func RunPublisherSubscriptionReconciler(ctx context.Context, deps PublisherLifec
 	if interval <= 0 {
 		interval = DefaultPublisherSubscriptionReconcileInterval
 	}
-	reconcileMountingSubscriptionsOnce(ctx, deps)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	runPublisherSubscriptionReconcilerLoop(ctx, deps, ticker.C)
+}
+
+func runPublisherSubscriptionReconcilerLoop(ctx context.Context, deps PublisherLifecycleDeps, tick <-chan time.Time) {
+	reconcilePublisherSubscriptionsOnce(ctx, deps)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			reconcileMountingSubscriptionsOnce(ctx, deps)
+		case <-tick:
+			reconcilePublisherSubscriptionsOnce(ctx, deps)
 		}
 	}
 }
 
-func reconcileMountingSubscriptionsOnce(ctx context.Context, deps PublisherLifecycleDeps) {
-	rows, err := deps.Persist.PublisherSubscriptions().ListByState(ctx, persistence.PublisherSubscriptionStateMounting)
-	if err != nil {
-		deps.Logger.Warn("publisher.subscribe.reconcile_list_failed", "error", err.Error())
-		return
-	}
-	goneMemo := map[shared.UUID]bool{}
-	for _, s := range rows {
-		if ctx.Err() != nil {
-			return
-		}
-		gone, err := instanceTerminatedOrMissingMemo(ctx, deps, s.InstanceID, goneMemo)
-		if err != nil {
-			deps.Logger.Warn("publisher.subscribe.instance_read_failed",
-				"publisher_name", s.PublisherName,
-				"instance_id", s.InstanceID.String(),
-				"publisher_subscription_id", s.ID.String(),
-				"error", err.Error())
-			continue
-		}
-		if gone {
-			deps.Logger.Info("publisher.subscribe.instance_terminated_skip",
-				"publisher_name", s.PublisherName,
-				"instance_id", s.InstanceID.String(),
-				"publisher_subscription_id", s.ID.String())
-			markSubscriptionStopped(ctx, deps, s.ID, persistence.PublisherSubscriptionStateMounting)
-			continue
-		}
-		client, ok := publisherFromRegistry(deps, s.PublisherName)
-		if !ok {
-			deps.Logger.Warn("publisher.subscribe.unknown_publisher",
-				"publisher_name", s.PublisherName,
-				"instance_id", s.InstanceID.String(),
-				"publisher_subscription_id", s.ID.String())
-			markSubscriptionFailed(ctx, deps, s.ID, unknownPublisherReason(s.PublisherName))
-			continue
-		}
-		req := SubscribeRequest{
-			PublisherSubscriptionID: s.ID,
-			InstanceID:              s.InstanceID,
-			Kind:                    s.Kind,
-			ResolvedConfig:          s.ResolvedConfig,
-			MessageType:             s.MessageType,
-		}
-		attemptCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
-		err = client.Subscribe(attemptCtx, req)
-		cancel()
-		if err != nil {
-			deps.Logger.Warn("publisher.subscribe.rpc_failed",
-				"publisher_name", s.PublisherName,
-				"instance_id", s.InstanceID.String(),
-				"publisher_subscription_id", s.ID.String(),
-				"error", err.Error())
-			continue
-		}
-		if !markSubscriptionActive(ctx, deps, s.ID) {
-			unsubscribeIfRowStopped(ctx, deps, client, s.ID)
-		}
+func reconcilePublisherSubscriptionsOnce(ctx context.Context, deps PublisherLifecycleDeps) {
+	if err := ResyncPublisherSubscriptions(ctx, deps); err != nil {
+		deps.Logger.Warn("publisher.subscribe.reconcile_failed", "error", err.Error())
 	}
 }
 
@@ -566,23 +515,6 @@ func splitDots(s string) []string {
 		out = append(out, cur)
 	}
 	return out
-}
-
-func markSubscriptionFailed(ctx context.Context, deps PublisherLifecycleDeps, subID shared.UUID, reason string) {
-	flipped, err := deps.Persist.PublisherSubscriptions().CompareAndSetState(ctx, subID,
-		persistence.PublisherSubscriptionStateMounting,
-		persistence.PublisherSubscriptionStateFailed, reason)
-	if err != nil && deps.Logger != nil {
-		deps.Logger.Warn("publisher.markSubscriptionFailed.update_failed",
-			"publisher_subscription_id", subID.String(),
-			"error", err.Error())
-		return
-	}
-	if flipped && deps.Logger != nil {
-		deps.Logger.Warn("publisher.subscribe.failed",
-			"publisher_subscription_id", subID.String(),
-			"reason", reason)
-	}
 }
 
 func markSubscriptionActive(ctx context.Context, deps PublisherLifecycleDeps, subID shared.UUID) bool {

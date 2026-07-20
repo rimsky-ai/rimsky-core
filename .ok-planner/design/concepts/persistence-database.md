@@ -30,7 +30,7 @@ Owns: the top-level database container interface, the per-row-type accessor umbr
 
 ## Invariants
 
-- The SQLite driver is safe for multiple rimsky processes sharing one local database file: its read-then-write operations are transactional (immediate-mode transactions hold the writer slot), so cross-process atomicity holds. Separate database files per process and network filesystems are unsupported and undetectable from inside a process. There is no startup gate — the platform defaults to Postgres outside the all-in-one deployment, and an operator overriding to SQLite is presumed to have chosen deliberately.
+- The SQLite driver is safe for multiple rimsky processes sharing one local database file: its read-then-write operations are transactional (immediate-mode transactions hold the writer slot), so cross-process atomicity holds. Separate database files per process and network filesystems are unsupported and undetectable from inside a process. There is no startup gate — the platform defaults to Postgres outside the all-in-one deployment, and an operator overriding to SQLite is presumed to have chosen deliberately; loading the SQLite driver outside the unified topology logs an informational warning naming the shared-local-file precondition, without blocking startup.
 - The memory blob backend IS gate-rejected outside the unified single-process role.
 - The raw-Postgres-driver isolation rule restricts direct driver use to the Postgres adapter, its test helpers, the binary entrypoints, the scenario harness, the bundled services, and the smoke-test harness — graph and control code go through the database interface.
 - Pre-v1 migration discipline: filenames are append-only; SQL inside is free to drop+recreate.

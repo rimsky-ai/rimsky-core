@@ -64,6 +64,7 @@ func (s *AuthState) emitDenied(
 	paramsInvalid bool,
 	status int,
 	reason auth.DenialReason,
+	mode *auth.Mode,
 ) {
 	elapsed := s.Clock.Now().Sub(start).Milliseconds()
 	p := auth.AccessDeniedPayload{
@@ -73,6 +74,7 @@ func (s *AuthState) emitDenied(
 		RequestParams:        requestParams,
 		RequestParamsInvalid: paramsInvalid,
 		ResponseStatus:       status,
+		Mode:                 mode,
 		Executed:             false,
 		DurationMS:           elapsed,
 		ClientIP:             clientIP(r),

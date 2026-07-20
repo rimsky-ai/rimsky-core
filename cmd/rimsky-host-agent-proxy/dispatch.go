@@ -27,6 +27,7 @@ const (
 	errClassSpawnFailed           = "spawn_failed"
 	errClassHostAgentDisconnected = "host_agent_disconnected"
 	errClassExecutorCrashed       = "executor_crashed"
+	errClassContractMismatch      = "contract_mismatch"
 )
 
 const serviceNameHeader = "x-rimsky-service-name"
@@ -116,12 +117,25 @@ func resolveAndSpawn(
 		return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
 	}
 
-	spawnID, rerr := spawnChild(agent, binding, entry, name, scopeID, expectedProtocols, spawnTimeout)
-	if rerr != nil {
-		return nil, rerr
+	spawnKey := scopeID + "\x00" + name
+	v, err, _ := state.spawnGroup.Do(spawnKey, func() (any, error) {
+		if spawnID, ok := state.lookupSpawnByRunScopeBinding(scopeID, name); ok {
+			return spawnID, nil
+		}
+		spawnID, capabilities, rerr := spawnChild(agent, binding, entry, name, scopeID, expectedProtocols, spawnTimeout)
+		if rerr != nil {
+			return nil, rerr
+		}
+		state.recordSpawn(spawnID, agent.apiKeyID, scopeID, name, capabilities, originalCallback)
+		return spawnID, nil
+	})
+	if err != nil {
+		if rerr, ok := err.(*resolveError); ok {
+			return nil, rerr
+		}
+		return nil, &resolveError{class: errClassSpawnFailed, msg: err.Error()}
 	}
-	state.recordSpawn(spawnID, agent.apiKeyID, scopeID, name, nil, originalCallback)
-	return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
+	return &resolved{agent: agent, spawnID: v.(string), scopeID: scopeID}, nil
 }
 
 func spawnChild(
@@ -131,7 +145,7 @@ func spawnChild(
 	bindingName, scopeID string,
 	expectedProtocols []string,
 	timeout time.Duration,
-) (string, *resolveError) {
+) (string, map[string][]byte, *resolveError) {
 	spawnID := uuid.NewString()
 	ackCh := agent.registerSpawnPending(spawnID)
 	defer agent.clearSpawnPending(spawnID)
@@ -156,7 +170,7 @@ func spawnChild(
 		ExpectedProtocols:   expectedProtocols,
 		ReadyTimeoutSeconds: readyTimeout,
 	}}}) {
-		return "", &resolveError{class: errClassHostAgentDisconnected, msg: "agent connection closed before spawn"}
+		return "", nil, &resolveError{class: errClassHostAgentDisconnected, msg: "agent connection closed before spawn"}
 	}
 
 	select {
@@ -166,13 +180,13 @@ func spawnChild(
 			if e := ack.GetError(); e != nil {
 				msg = e.GetMessage()
 			}
-			return "", &resolveError{class: errClassSpawnFailed, msg: msg}
+			return "", nil, &resolveError{class: errClassSpawnFailed, msg: msg}
 		}
-		return spawnID, nil
+		return spawnID, ack.GetCapabilities(), nil
 	case <-time.After(effectiveTimeout):
-		return "", &resolveError{class: errClassSpawnFailed, msg: "spawn ack timed out"}
+		return "", nil, &resolveError{class: errClassSpawnFailed, msg: "spawn ack timed out"}
 	case <-agent.closed:
-		return "", &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected during spawn"}
+		return "", nil, &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected during spawn"}
 	}
 }
 

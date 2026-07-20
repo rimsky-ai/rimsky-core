@@ -49,21 +49,32 @@ func newKeepaliveRouter(c *CallbackServer) http.Handler {
 	return r
 }
 
+func keepaliveRequest(runID string, token string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID+"/keepalive", nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req
+}
+
+func cancelTokenFor(supervisorID string, runID uuid.UUID) string {
+	return supervisorID + ":" + runID.String()
+}
+
 func TestKeepalive_InvalidRunID(t *testing.T) {
 	t.Parallel()
 	c := &CallbackServer{Logger: shared.SilentLogger{}, SupervisorID: "sup-1"}
 	router := newKeepaliveRouter(c)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/not-a-uuid/keepalive", nil)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	router.ServeHTTP(rec, keepaliveRequest("not-a-uuid", "sup-1:not-a-uuid"))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestKeepalive_NoneModeNeedsNoAuth(t *testing.T) {
+func TestKeepalive_MissingCancelTokenRejected(t *testing.T) {
 	t.Parallel()
 	queue := &keepaliveStubQueue{found: true}
 	c := &CallbackServer{
@@ -75,12 +86,57 @@ func TestKeepalive_NoneModeNeedsNoAuth(t *testing.T) {
 	router := newKeepaliveRouter(c)
 
 	runID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	router.ServeHTTP(rec, keepaliveRequest(runID.String(), ""))
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204 (none mode is unauthenticated); body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (keepalive requires the cancel_token); body=%s", rec.Code, rec.Body.String())
+	}
+	if len(queue.calls) != 0 {
+		t.Fatalf("BumpLastProgressAt calls = %d, want 0 (no bump without auth)", len(queue.calls))
+	}
+}
+
+func TestKeepalive_WrongCancelTokenRejected(t *testing.T) {
+	t.Parallel()
+	queue := &keepaliveStubQueue{found: true}
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		Persist:      keepaliveStubTables{},
+		Queue:        queue,
+	}
+	router := newKeepaliveRouter(c)
+
+	runID := uuid.New()
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, keepaliveRequest(runID.String(), cancelTokenFor("sup-1", uuid.New())))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (cancel_token bound to a different run); body=%s", rec.Code, rec.Body.String())
+	}
+	if len(queue.calls) != 0 {
+		t.Fatalf("BumpLastProgressAt calls = %d, want 0 (no bump without auth)", len(queue.calls))
+	}
+}
+
+func TestKeepalive_WrongSupervisorTokenRejected(t *testing.T) {
+	t.Parallel()
+	queue := &keepaliveStubQueue{found: true}
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		Persist:      keepaliveStubTables{},
+		Queue:        queue,
+	}
+	router := newKeepaliveRouter(c)
+
+	runID := uuid.New()
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, keepaliveRequest(runID.String(), cancelTokenFor("sup-other", runID)))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (cancel_token minted by a different supervisor); body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -94,9 +150,8 @@ func TestKeepalive_MTLSRejectsMissingClientCert(t *testing.T) {
 	router := newKeepaliveRouter(c)
 
 	runID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	router.ServeHTTP(rec, keepaliveRequest(runID.String(), cancelTokenFor("sup-1", runID)))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401 (mtls without client cert)", rec.Code)
@@ -116,7 +171,7 @@ func TestKeepalive_MTLSAcceptsVerifiedPrincipal(t *testing.T) {
 	router := newKeepaliveRouter(c)
 
 	runID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
+	req := keepaliveRequest(runID.String(), cancelTokenFor("sup-1", runID))
 	leaf := leafForPrincipal(t, "executor-7")
 	req.TLS = &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{leaf},
@@ -140,7 +195,7 @@ func TestKeepalive_MTLSRejectsCertWithoutPrincipal(t *testing.T) {
 	router := newKeepaliveRouter(c)
 
 	runID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
+	req := keepaliveRequest(runID.String(), cancelTokenFor("sup-1", runID))
 	req.TLS = &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{{}},
 		VerifiedChains:   [][]*x509.Certificate{{{}}},
@@ -165,9 +220,8 @@ func TestKeepalive_UnknownRun(t *testing.T) {
 	router := newKeepaliveRouter(c)
 
 	runID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	router.ServeHTTP(rec, keepaliveRequest(runID.String(), cancelTokenFor("sup-1", runID)))
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
@@ -192,9 +246,8 @@ func TestKeepalive_Success(t *testing.T) {
 	router := newKeepaliveRouter(c)
 
 	runID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	router.ServeHTTP(rec, keepaliveRequest(runID.String(), cancelTokenFor("sup-1", runID)))
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())

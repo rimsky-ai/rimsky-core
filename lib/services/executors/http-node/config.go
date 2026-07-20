@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
@@ -27,7 +28,7 @@ const DefaultErrorClassField = "error_class"
 
 func LoadOptsFromEnv() (Opts, error) {
 	opts := Opts{Host: env("RIMSKY_EXECUTOR_HTTP_NODE_HOST", "0.0.0.0")}
-	opts.GRPCPort = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_PORT", "9091"))
+	opts.GRPCPort = agentport.Resolve("RIMSKY_EXECUTOR_HTTP_NODE_PORT", 9091)
 	opts.HTTPPort = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT", strconv.Itoa(opts.GRPCPort+1)))
 	opts.TimeoutMs = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS", "60000"))
 	opts.MaxBodyBytes = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", "10485760"))

@@ -9,13 +9,16 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 )
 
 func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath, changed bool) signalpkg.Signal {
@@ -211,6 +214,7 @@ func PropagateIfChildAfterTerminal(
 	}
 	var actions []CancelAction
 	var settlements []ParentSettlement
+	var postCommit postCommitFn
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		outActions, outSettlements, err := PropagateFromChildState(ctx, PropagationArgs{
 			NodeRunTree: rt,
@@ -221,6 +225,12 @@ func PropagateIfChildAfterTerminal(
 		if err != nil {
 			return err
 		}
+		// @concept: cancel-siblings
+		cancelPC, err := executeCancelActions(ctx, args, tx, rt, actions)
+		if err != nil {
+			return fmt.Errorf("PropagateIfChildAfterTerminal: execute cancel actions: %w", err)
+		}
+		postCommit = chainPostCommit(postCommit, cancelPC)
 		// @concept: cascade
 		// @concept: run-scope
 		for _, s := range settlements {
@@ -243,7 +253,7 @@ func PropagateIfChildAfterTerminal(
 			}
 			// @concept: signal
 			parentSig := parentSettlementSignal(s.NewState, s.NewSettlingSignalType, s.NewChanged)
-			if err := cascadeSubscribersStaleInTx(
+			if err := emitSignalInTxOnce(
 				ctx, args, tx,
 				s.ParentNodeID,
 				nodeRow.NodeType,
@@ -267,10 +277,161 @@ func PropagateIfChildAfterTerminal(
 			if err := drainWaitSetOnSettled(ctx, args, tx, s.FrameID, s.ParentNodeRunID); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: drain wait-set for parent %s: %w", s.ParentNodeRunID, err)
 			}
+			pc, err := resolveSettledDelegateCallerClaimsInTx(ctx, args, tx, s, nodeRow)
+			if err != nil {
+				return fmt.Errorf("PropagateIfChildAfterTerminal: resolve delegate caller claims for %s: %w", s.ParentNodeRunID, err)
+			}
+			postCommit = chainPostCommit(postCommit, pc)
 		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
+	if postCommit != nil {
+		postCommit(ctx)
+	}
 	return actions, nil
+}
+
+// @concept: cancel-siblings
+func executeCancelActions(
+	ctx context.Context, args RunArgs, tx persistence.Tx, rt persistence.RunTreeTable,
+	actions []CancelAction,
+) (postCommitFn, error) {
+	var post postCommitFn
+	for _, action := range actions {
+		if action.Kind != AggregateActionCancelNonWinners {
+			continue
+		}
+		for _, child := range action.Children {
+			pc, err := cancelInFlightRunTreeSubtree(ctx, args, tx, rt, child.NodeRunID)
+			if err != nil {
+				return nil, fmt.Errorf("executeCancelActions: cancel %s under parent %s: %w",
+					child.NodeRunID, action.ParentNodeRunID, err)
+			}
+			post = chainPostCommit(post, pc)
+		}
+	}
+	return post, nil
+}
+
+// @concept: cancel-siblings
+func cancelInFlightRunTreeSubtree(
+	ctx context.Context, args RunArgs, tx persistence.Tx, rt persistence.RunTreeTable, runID shared.UUID,
+) (postCommitFn, error) {
+	current, err := args.Persist.Nodes().GetRunForGate(ctx, tx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("cancelInFlightRunTreeSubtree: GetRunForGate %s: %w", runID, err)
+	}
+	if current == nil || cascade.IsTerminal(current.State) {
+		return nil, nil
+	}
+	post, err := cancelInFlightRunTreeChild(ctx, args, tx, current)
+	if err != nil {
+		return nil, err
+	}
+	children, err := rt.ListChildren(ctx, tx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("cancelInFlightRunTreeSubtree: ListChildren %s: %w", runID, err)
+	}
+	for _, c := range children {
+		childPost, err := cancelInFlightRunTreeSubtree(ctx, args, tx, rt, c.NodeRunID)
+		if err != nil {
+			return nil, err
+		}
+		post = chainPostCommit(post, childPost)
+	}
+	return post, nil
+}
+
+// @concept: cancel-siblings
+func cancelInFlightRunTreeChild(
+	ctx context.Context, args RunArgs, tx persistence.Tx, current *persistence.NodeRunForGate,
+) (postCommitFn, error) {
+	sig := cascade.SettlingSignalSiblingFailed
+	if err := args.Persist.Nodes().UpdateState(ctx, current.NodeRunID,
+		cascade.NodeStateFailed, cascade.ReasonSiblingCancelled, &sig, tx); err != nil {
+		if errors.Is(err, cascade.ErrIllegalTransition) {
+			if args.Logger != nil {
+				args.Logger.Warn("cancelInFlightRunTreeChild: raced with the sibling's own natural terminal transition; leaving its outcome as-is",
+					"node_run_id", current.NodeRunID.String(), "error", err.Error())
+			}
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cancelInFlightRunTreeChild: UpdateState %s: %w", current.NodeRunID, err)
+	}
+	var instanceID shared.UUID
+	nodeRow, err := args.Persist.Nodes().Get(ctx, current.NodeID, tx)
+	if err != nil {
+		return nil, fmt.Errorf("cancelInFlightRunTreeChild: load node %s: %w", current.NodeID, err)
+	}
+	if nodeRow != nil {
+		instanceID = nodeRow.InstanceID
+	}
+	auditSig := signalpkg.Signal{
+		Type:    signalpkg.TypePath(cascade.SettlingSignalSiblingFailed),
+		Payload: map[string]any{"error_class": "sibling_failed"},
+	}
+	var now time.Time
+	if args.Clock != nil {
+		now = args.Clock.Now()
+	}
+	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
+		instanceID, current.NodeID, auditSig, now, tx); err != nil && args.Logger != nil {
+		args.Logger.Warn("cancelInFlightRunTreeChild: terminal signal audit failed; cancellation stands",
+			"node_run_id", current.NodeRunID.String(), "error", err.Error())
+	}
+	if err := drainWaitSetOnSettled(ctx, args, tx, current.FrameID, current.NodeRunID); err != nil && args.Logger != nil {
+		args.Logger.Warn("cancelInFlightRunTreeChild: wait-set drain failed; cancellation stands",
+			"node_run_id", current.NodeRunID.String(), "error", err.Error())
+	}
+	if current.State == cascade.NodeStateHeld {
+		failHeldCoHolderRows(ctx, args, tx, current.NodeRunID)
+	}
+	run := persistence.NodeRunLatest{
+		NodeRunID:  current.NodeRunID,
+		NodeID:     current.NodeID,
+		RunScopeID: current.RunScopeID,
+		FrameID:    current.FrameID,
+		State:      current.State,
+	}
+	post := abandonRunClaimsThroughProducers(ctx, args, tx, instanceID, run)
+	runID := current.NodeRunID
+	propagate := func(pctx context.Context) {
+		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID,
+			cascade.NodeStateFailed, &sig); err != nil && args.Logger != nil {
+			args.Logger.Warn("cancelInFlightRunTreeChild: run-tree propagation failed",
+				"run_id", runID.String(), "error", err.Error())
+		}
+	}
+	return chainPostCommit(post, propagate), nil
+}
+
+func resolveSettledDelegateCallerClaimsInTx(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	s ParentSettlement, parentNode *persistence.NodeRow,
+) (postCommitFn, error) {
+	tmplSpec, err := loadTemplateSpec(ctx, args, tx, parentNode.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	if tmplSpec == nil {
+		return nil, nil
+	}
+	def := lookupNodeDef(tmplSpec, parentNode.NodeType)
+	if def == nil || def.Delegate == "" {
+		return nil, nil
+	}
+	parentRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, s.ParentNodeRunID)
+	if err != nil {
+		return nil, err
+	}
+	if parentRun == nil {
+		return nil, nil
+	}
+	outcome := OutcomeAbandon
+	if s.NewState == cascade.NodeStateFresh {
+		outcome = OutcomeCommit
+	}
+	return resolveDelegateCallerClaimsInTx(ctx, args, tx, *parentRun, parentNode.InstanceID, outcome)
 }

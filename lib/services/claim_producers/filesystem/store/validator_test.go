@@ -307,3 +307,52 @@ func errsString(errs []error) string {
 	}
 	return strings.Join(parts, "; ")
 }
+
+func TestValidator_RejectsNestedMoveTarget(t *testing.T) {
+	root, sub := validatorTestRoot(t)
+	must(t, os.MkdirAll(filepath.Join(root, sub, "nested"), 0o755))
+	must(t, os.MkdirAll(filepath.Join(root, "other", "deep"), 0o755))
+	for _, target := range []string{filepath.Join(sub, "nested"), filepath.Join("other", "deep")} {
+		pp := newValidPolicy(root, sub)
+		pp.OnCommit = action.Action{Kind: action.PopAndMove, MoveTarget: target}
+		pp.SyncStrategy = "on_open"
+		res := validatePickPolicy(root, "@r", pp)
+		if res.OK() {
+			t.Fatalf("expected validation error for non-sibling target %q", target)
+		}
+		joined := errsString(res.Errors)
+		if !strings.Contains(joined, "not a sibling") {
+			t.Errorf("target %q: expected 'not a sibling' error; got %q", target, joined)
+		}
+	}
+}
+
+type fakeStatFileInfo struct{ sys any }
+
+func (f fakeStatFileInfo) Name() string       { return "fake" }
+func (f fakeStatFileInfo) Size() int64        { return 0 }
+func (f fakeStatFileInfo) Mode() os.FileMode  { return os.ModeDir }
+func (f fakeStatFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeStatFileInfo) IsDir() bool        { return true }
+func (f fakeStatFileInfo) Sys() any           { return f.sys }
+
+func TestSameFilesystemDevice_ComparesStatDeviceIDs(t *testing.T) {
+	devA := &syscall.Stat_t{}
+	devA.Dev = 1
+	devASibling := &syscall.Stat_t{}
+	devASibling.Dev = 1
+	devB := &syscall.Stat_t{}
+	devB.Dev = 2
+
+	same, err := sameFilesystemDevice(fakeStatFileInfo{sys: devA}, fakeStatFileInfo{sys: devASibling})
+	if err != nil || !same {
+		t.Fatalf("equal device ids must compare same-filesystem: same=%v err=%v", same, err)
+	}
+	same, err = sameFilesystemDevice(fakeStatFileInfo{sys: devA}, fakeStatFileInfo{sys: devB})
+	if err != nil || same {
+		t.Fatalf("differing device ids must compare cross-filesystem: same=%v err=%v", same, err)
+	}
+	if _, err := sameFilesystemDevice(fakeStatFileInfo{sys: nil}, fakeStatFileInfo{sys: devA}); err == nil {
+		t.Fatal("a platform without Stat_t must fail closed, not guess")
+	}
+}

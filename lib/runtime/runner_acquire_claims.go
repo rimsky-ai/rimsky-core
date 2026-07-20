@@ -47,6 +47,14 @@ func acquireClaim(
 		metricsOf(args).ObserveClaimAcquisitionLatency(spec.ProducerName, args.Clock.Now().Sub(acquireStart).Seconds())
 		return al, openResultAcquired, nil
 	}
+	// @concept: fan-out
+	if al, reused, rErr := reuseLinkedSubClaim(ctx, args, tx, spec, cand, s, acquired, livenessInterval); rErr != nil {
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: %w", rErr)
+	} else if reused {
+		metricsOf(args).IncClaimAcquisition(spec.ProducerName, "acquired")
+		metricsOf(args).ObserveClaimAcquisitionLatency(spec.ProducerName, args.Clock.Now().Sub(acquireStart).Seconds())
+		return al, openResultAcquired, nil
+	}
 	// @story: claim-handoff-durable
 	conflicted, persistent, err := evaluateClaimScopeConflict(ctx, args, tx, s, spec, cand)
 	if err != nil {
@@ -87,6 +95,14 @@ func acquireClaim(
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Insert: %w", err)
 	}
 
+	// @concept: terminal-resolution
+	if err := producerVerbOutboxBarrier(ctx, args, tx, s, spec.ProducerName, scopeInitial); err != nil {
+		var pcErr *peer.ProducerCallError
+		if errors.As(err, &pcErr) {
+			return AcquiredLock{}, openResultErrored, pcErr
+		}
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: %w", err)
+	}
 	claimID := claimproducer.ClaimID(rowID.String())
 	openCtx := peer.WithServiceName(ctx, spec.ProducerName)
 	outcome, err := s.Open(openCtx, claimID, spec)

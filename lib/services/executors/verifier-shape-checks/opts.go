@@ -6,7 +6,8 @@ package verifiershapechecks
 
 import (
 	"os"
-	"strconv"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
 
 type Opts struct {
@@ -18,7 +19,7 @@ type Opts struct {
 func LoadOptsFromEnv() (Opts, error) {
 	return Opts{
 		Host:     envOr("RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST", "0.0.0.0"),
-		Port:     atoiOr("RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT", 9095),
+		Port:     agentport.Resolve("RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT", 9095),
 		StubMode: os.Getenv("RIMSKY_EXECUTOR_STUB_MODE") == "1",
 	}, nil
 }
@@ -28,16 +29,4 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func atoiOr(k string, def int) int {
-	v := os.Getenv(k)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
 }

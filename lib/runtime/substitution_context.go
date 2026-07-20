@@ -15,6 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
@@ -104,6 +105,9 @@ func populateSubscribedSenderDeps(
 	for _, t := range senderTypes {
 		senderTypeSet[t] = struct{}{}
 	}
+	if err := populateEntryAliasDepsViaCallingNode(ctx, tx, args, rec, edges, receiverNode.NodeType, out); err != nil {
+		return err
+	}
 	pinned, err := pinnedSenderRunsForReceiver(ctx, tx, args, rec.FrameID, receiverNodeRunID)
 	if err != nil {
 		return err
@@ -135,6 +139,41 @@ func populateSubscribedSenderDeps(
 			return rawErr
 		}
 		out[n.NodeType] = raw
+	}
+	return nil
+}
+
+// @concept: attribute
+// @concept: node-run
+func populateEntryAliasDepsViaCallingNode(
+	ctx context.Context, tx persistence.Tx, args RunArgs,
+	rec *persistence.NodeRunForGate, edges *node.SubscriptionEdgeMap,
+	receiverNodeType string, out map[string]json.RawMessage,
+) error {
+	aliasSenders := edges.CallingNodeSenderTypesForReceiver(receiverNodeType)
+	if len(aliasSenders) == 0 {
+		return nil
+	}
+	scope, err := args.Persist.RunScopes().GetByID(ctx, tx, rec.RunScopeID)
+	if err != nil {
+		return fmt.Errorf("populateEntryAliasDepsViaCallingNode: load run scope: %w", err)
+	}
+	if scope == nil || scope.ParentNodeRunID == nil {
+		return nil
+	}
+	callerRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, *scope.ParentNodeRunID)
+	if err != nil {
+		return fmt.Errorf("populateEntryAliasDepsViaCallingNode: load calling node run: %w", err)
+	}
+	if callerRun == nil {
+		return nil
+	}
+	for _, alias := range aliasSenders {
+		raw, err := senderAttrsRaw(ctx, tx, args, callerRun.NodeRunID, alias)
+		if err != nil {
+			return err
+		}
+		out[alias] = raw
 	}
 	return nil
 }

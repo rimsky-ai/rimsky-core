@@ -17,13 +17,46 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/cmd/internal/bundledwire"
 	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 const shutdownDeadline = 30 * time.Second
 
-var roles = []string{"rimsky-scheduler", "rimsky-supervisor", "rimsky-control-api"}
+type Role string
+
+const (
+	RoleScheduler  Role = "rimsky-scheduler"
+	RoleSupervisor Role = "rimsky-supervisor"
+	RoleControlAPI Role = "rimsky-control-api"
+)
+
+func (r Role) OwnsMigration() bool { return r == RoleControlAPI }
+
+var roles = []string{string(RoleScheduler), string(RoleSupervisor), string(RoleControlAPI)}
 
 var binaryDir = "/usr/local/bin"
+
+type LaunchPlan struct {
+	Roles        []string
+	Topology     persistence.Topology
+	MigrateOwner bool
+}
+
+func newLaunchPlan(args []string) (LaunchPlan, error) {
+	selected, err := selectRoles(args)
+	if err != nil {
+		return LaunchPlan{}, err
+	}
+	migrateOwner, err := shouldMigrate(selected)
+	if err != nil {
+		return LaunchPlan{}, err
+	}
+	topology := persistence.TopologySplit
+	if len(args) == 0 {
+		topology = persistence.TopologyUnified
+	}
+	return LaunchPlan{Roles: selected, Topology: topology, MigrateOwner: migrateOwner}, nil
+}
 
 func selectRoles(args []string) ([]string, error) {
 	if len(args) == 0 {
@@ -55,7 +88,7 @@ func shouldMigrate(selected []string) (bool, error) {
 	if len(selected) == len(roles) {
 		return true, nil
 	}
-	return len(selected) == 1 && selected[0] == "rimsky-control-api", nil
+	return len(selected) == 1 && Role(selected[0]).OwnsMigration(), nil
 }
 
 func main() {
@@ -65,35 +98,30 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
 	args := os.Args[1:]
-	selected, err := selectRoles(args)
+	plan, err := newLaunchPlan(args)
 	if err != nil {
-		slog.Error("invalid role argument", "err", err)
+		slog.Error("invalid launch arguments", "err", err)
 		os.Exit(2)
 	}
-	slog.Info("selected roles", "roles", selected)
+	slog.Info("selected roles", "roles", plan.Roles)
 
-	if len(args) == 0 {
-		if err := os.Setenv("RIMSKY_PROCESS_ROLE", "unified"); err != nil {
+	if plan.Topology.Unified() {
+		if err := os.Setenv(persistence.ProcessRoleEnv, string(persistence.TopologyUnified)); err != nil {
 			slog.Error("set RIMSKY_PROCESS_ROLE", "err", err)
 			os.Exit(1)
 		}
-		runMigrateIfOwned(selected, sigCh)
+		runMigrateIfOwned(plan, sigCh)
 		runUnified(sigCh)
 		return
 	}
 
-	runMigrateIfOwned(selected, sigCh)
-	runSingleRole(selected[0], sigCh)
+	runMigrateIfOwned(plan, sigCh)
+	runSingleRole(plan.Roles[0], sigCh)
 }
 
-func runMigrateIfOwned(selected []string, sigCh <-chan os.Signal) {
-	migrate, err := shouldMigrate(selected)
-	if err != nil {
-		slog.Error("invalid migrate override", "err", err)
-		os.Exit(2)
-	}
-	if !migrate {
-		slog.Info("skipping migrations for this role", "roles", selected)
+func runMigrateIfOwned(plan LaunchPlan, sigCh <-chan os.Signal) {
+	if !plan.MigrateOwner {
+		slog.Info("skipping migrations for this role", "roles", plan.Roles)
 		return
 	}
 	slog.Info("running migrations")
@@ -226,8 +254,9 @@ func shutdownChild(cmd *exec.Cmd, exitCh chan childExit) {
 func envWithoutProcessRole() []string {
 	env := os.Environ()
 	out := make([]string, 0, len(env))
+	prefix := persistence.ProcessRoleEnv + "="
 	for _, kv := range env {
-		if strings.HasPrefix(kv, "RIMSKY_PROCESS_ROLE=") {
+		if strings.HasPrefix(kv, prefix) {
 			continue
 		}
 		out = append(out, kv)

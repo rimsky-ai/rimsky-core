@@ -121,6 +121,7 @@ func reclaimDispatchRowShortTx(ctx context.Context, args RunArgs, cand persisten
 
 // @concept: terminal-resolution
 func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLock) {
+	outbox := ProducerVerbOutboxOf(args)
 	for _, lk := range partial {
 		if lk.Producer == nil {
 			continue
@@ -128,10 +129,30 @@ func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLo
 		abandonBegunCandidate(ctx, args, lk)
 		scope := claimScope(lk)
 		address := claimAddress(lk)
+		if outbox != nil && args.Clock != nil {
+			now := args.Clock.Now()
+			if err := outbox.Enqueue(ctx, persistence.ProducerVerbOutboxInsertInput{
+				ClaimHandleID:  lk.ClaimHandleID,
+				ProducerName:   producerNameForSpec(lk.Spec),
+				Verb:           persistence.ProducerVerbAbandon,
+				ClaimScopeData: scope,
+				Address:        address,
+				SupervisorID:   args.SupervisorID,
+				NextAttemptAt:  now,
+				EnqueuedAt:     now,
+			}, nil); err != nil {
+				args.Logger.Warn("abandonPartialLocks: enqueue Abandon failed",
+					"producer", producerNameForSpec(lk.Spec), "error", err.Error())
+			}
+			continue
+		}
 		if err := abandonOpenedClaim(ctx, lk.Producer, lk.ClaimHandleID, scope, address); err != nil {
 			args.Logger.Warn("abandonPartialLocks: Abandon failed",
 				"producer", producerNameForSpec(lk.Spec), "error", err.Error())
 		}
+	}
+	if len(partial) > 0 && args.ProducerVerbKick != nil {
+		args.ProducerVerbKick()
 	}
 }
 

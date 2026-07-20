@@ -139,6 +139,10 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		args = append(args, filter.Type)
 		conds = append(conds, "type = ?")
 	}
+	if filter.Sender != "" {
+		args = append(args, filter.Sender)
+		conds = append(conds, "sender = ?")
+	}
 	if filter.SenderKind != "" {
 		args = append(args, filter.SenderKind)
 		conds = append(conds, "sender_kind = ?")

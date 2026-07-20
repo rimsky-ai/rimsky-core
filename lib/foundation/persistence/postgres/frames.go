@@ -15,9 +15,20 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
+
+// @concept: frame
+const frameStateCaseSQL = `CASE
+    WHEN f.ended_at IS NULL THEN 'running'
+    WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed'
+                 AND (r.settling_signal_type IS NULL OR r.settling_signal_type <> '` + cascade.SettlingSignalInstanceKilled + `')) THEN 'failed'
+    WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed'
+                 AND r.settling_signal_type = '` + cascade.SettlingSignalInstanceKilled + `') THEN 'terminated'
+    ELSE 'completed'
+END`
 
 func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx persistence.Tx) ([]persistence.FramePending, error) {
 	rows, err := s.q(tx).Query(ctx, `
@@ -78,6 +89,20 @@ func (s *framesImpl) MarkFrameEnded(
 		return false, fmt.Errorf("frames.MarkFrameEnded: %w", err)
 	}
 	return cmd.RowsAffected() == 1, nil
+}
+
+func (s *framesImpl) MarkOpenFramesEndedForInstance(
+	ctx context.Context, instanceID shared.UUID, tx persistence.Tx,
+) (int, error) {
+	cmd, err := s.q(tx).Exec(ctx, `
+        UPDATE rimsky_frames
+        SET ended_at = now()
+        WHERE instance_id = $1 AND ended_at IS NULL
+    `, instanceID)
+	if err != nil {
+		return 0, fmt.Errorf("frames.MarkOpenFramesEndedForInstance: %w", err)
+	}
+	return int(cmd.RowsAffected()), nil
 }
 
 func (s *framesImpl) EndFrameIfSettled(
@@ -254,11 +279,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	}
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT f.frame_id, f.instance_id,
-		        CASE
-		            WHEN f.ended_at IS NULL THEN 'running'
-		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		            ELSE 'completed'
-		        END AS state,
+		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at,
 		        f.last_progress_at
 		   FROM rimsky_frames f
@@ -432,11 +453,7 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 	var r persistence.FrameRow
 	err := s.q(tx).QueryRow(ctx,
 		`SELECT f.frame_id, f.instance_id,
-		        CASE
-		            WHEN f.ended_at IS NULL THEN 'running'
-		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		            ELSE 'completed'
-		        END AS state,
+		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id, f.started_at, f.ended_at, f.last_progress_at
 		   FROM rimsky_frames f WHERE f.frame_id = $1`,
 		frameID,
@@ -459,11 +476,7 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 	)
 	err := s.q(tx).QueryRow(ctx,
 		`SELECT f.frame_id, f.instance_id,
-		        CASE
-		            WHEN f.ended_at IS NULL THEN 'running'
-		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		            ELSE 'completed'
-		        END AS state,
+		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at,
 		        m.type, m.sender, m.sender_kind
@@ -526,11 +539,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	}
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT f.frame_id, f.instance_id,
-		        CASE
-		            WHEN f.ended_at IS NULL THEN 'running'
-		            WHEN EXISTS (SELECT 1 FROM rimsky_node_runs r WHERE r.frame_id = f.frame_id AND r.state = 'failed') THEN 'failed'
-		            ELSE 'completed'
-		        END AS state,
+		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at,
 		        m.type, m.sender, m.sender_kind

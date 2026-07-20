@@ -14,6 +14,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/store"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
 
 const ConfigEnv = "STORE_FILESYSTEM_CONFIG"
@@ -111,7 +112,7 @@ func LoadOptsFromEnv() (Opts, error) {
 		SweepInterval: sweepInterval,
 		HTTPBridgeURL: cfg.HTTPBridgeURL,
 		Host:          host,
-		GRPCPort:      cfg.GRPCPort,
+		GRPCPort:      agentport.Override(cfg.GRPCPort),
 		HTTPPort:      cfg.HTTPPort,
 		AdminPort:     cfg.AdminPort,
 	}, nil

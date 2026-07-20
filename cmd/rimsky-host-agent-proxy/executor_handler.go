@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -45,6 +47,10 @@ func (h *executorHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest
 		h.spawnTimeout,
 	)
 	if rerr != nil {
+		return executorTerminalError(rerr.class, rerr.msg), nil
+	}
+
+	if rerr := h.checkContract(res, req); rerr != nil {
 		return executorTerminalError(rerr.class, rerr.msg), nil
 	}
 
@@ -95,6 +101,39 @@ func (h *executorHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest
 		}
 		return &outcome, nil
 	}
+}
+
+func (h *executorHandler) checkContract(res *resolved, req *genv1.ExecuteRequest) *resolveError {
+	sp, ok := h.state.lookupSpawn(res.spawnID)
+	if !ok {
+		return nil
+	}
+	raw, ok := sp.capabilities[protocolExecutor]
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	var caps genv1.ObservabilityCapabilities
+	if err := proto.Unmarshal(raw, &caps); err != nil {
+		return nil
+	}
+	schemaBytes := caps.GetExpectedAttributesSchema()
+	if len(schemaBytes) == 0 {
+		return nil
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		return &resolveError{
+			class: errClassContractMismatch,
+			msg:   "spawned binary's expected_attributes_schema is not valid JSON: " + err.Error(),
+		}
+	}
+	if err := attributes.Validate(schema, req.GetAttributes().AsMap(), attributes.PhaseDispatch); err != nil {
+		return &resolveError{
+			class: errClassContractMismatch,
+			msg:   "resolved attributes do not satisfy the spawned binary's declared schema: " + err.Error(),
+		}
+	}
+	return nil
 }
 
 func executorTerminalError(class, message string) *genv1.Outcome {

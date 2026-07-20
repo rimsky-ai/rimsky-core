@@ -19,7 +19,15 @@ type WakeReason string
 
 const (
 	WakeDeadlineElapsed WakeReason = "deadline_elapsed"
+	WakeUpstreamCascade WakeReason = "upstream_cascade"
 )
+
+func transitionReasonForWake(reason WakeReason) cascade.TransitionReason {
+	if reason == WakeUpstreamCascade {
+		return cascade.ReasonCascadeResume
+	}
+	return cascade.ReasonDeadlineResume
+}
 
 type WakeParkedArgs struct {
 	Persist      persistence.Tables
@@ -74,7 +82,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 	if targetRunScopeID == (shared.UUID{}) {
 		return nil
 	}
-	parked, err := args.Queue.GetParkedByNode(ctx, target.ID, targetRunScopeID)
+	parked, err := args.Queue.GetParkedByNode(ctx, nil, target.ID, targetRunScopeID)
 	if err != nil {
 		return fmt.Errorf("wakeParkedNode: GetParkedByNode: %w", err)
 	}
@@ -86,26 +94,40 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 		return nil
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.NodeRunID)
-		if err != nil {
-			return err
-		}
-		if !resumed {
-			return nil
-		}
-		if err := args.Persist.Nodes().UpdateState(ctx, parked.NodeRunID,
-			cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
-			return err
-		}
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &target.ID, InstanceID: &target.InstanceID,
-			Kind: events.KindParkedResumeStarted(),
-			Payload: map[string]any{
-				"resume_reason": string(reason),
-				"supervisor_id": args.SupervisorID,
-			},
-		}, tx)
+		_, err := resumeParkedRunInTx(ctx, args.Persist, args.Queue, tx,
+			parked.NodeRunID, target.ID, target.InstanceID, args.SupervisorID, reason)
+		return err
 	})
+}
+
+// @concept: parked-state
+// @concept: wait-set
+func resumeParkedRunInTx(
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue, tx persistence.Tx,
+	parkedRunID, nodeID, instanceID shared.UUID, supervisorID string, reason WakeReason,
+) (bool, error) {
+	resumed, err := queue.ResumeParkedInTx(ctx, tx, parkedRunID)
+	if err != nil {
+		return false, err
+	}
+	if !resumed {
+		return false, nil
+	}
+	if err := persist.Nodes().UpdateState(ctx, parkedRunID,
+		cascade.NodeStateStale, transitionReasonForWake(reason), nil, tx); err != nil {
+		return false, err
+	}
+	if err := persist.Events().Append(ctx, persistence.EventAppendInput{
+		NodeID: &nodeID, InstanceID: &instanceID,
+		Kind: events.KindParkedResumeStarted(),
+		Payload: map[string]any{
+			"resume_reason": string(reason),
+			"supervisor_id": supervisorID,
+		},
+	}, tx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func loadTargetNode(ctx context.Context, persist persistence.Tables, id shared.UUID) (*persistence.NodeRow, error) {

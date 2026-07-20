@@ -22,7 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
@@ -57,6 +56,8 @@ type createInstanceRequest struct {
 	AttributeOverrides map[string]any  `json:"attribute_overrides,omitempty"`
 	Paused             bool            `json:"paused,omitempty"`
 	ServiceBindings    json.RawMessage `json:"service_bindings,omitempty"`
+	// @concept: instance
+	MessageQueueMode string `json:"message_queue_mode,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -79,6 +80,8 @@ type instanceItem struct {
 	ServiceBindings               json.RawMessage            `json:"service_bindings,omitempty"`
 	CreatedByAPIKeyID             string                     `json:"created_by_api_key_id,omitempty"`
 	Subscriptions                 []instanceSubscriptionItem `json:"subscriptions,omitempty"`
+	// @concept: instance
+	MessageQueueMode string `json:"message_queue_mode"`
 }
 
 type instanceSubscriptionItem struct {
@@ -93,13 +96,14 @@ type instanceSubscriptionItem struct {
 
 func toInstanceItem(r persistence.InstanceRow, redact []string, matchCounts []int64) instanceItem {
 	out := instanceItem{
-		ID:           r.ID.String(),
-		TemplateHash: r.TemplateHash,
-		InstanceKey:  r.InstanceKey,
-		Params:       ApplyParamsRedact(r.Params, redact),
-		Paused:       r.Paused,
-		CreatedAt:    r.CreatedAt,
-		TerminatedAt: r.TerminatedAt,
+		ID:               r.ID.String(),
+		TemplateHash:     r.TemplateHash,
+		InstanceKey:      r.InstanceKey,
+		Params:           ApplyParamsRedact(r.Params, redact),
+		Paused:           r.Paused,
+		CreatedAt:        r.CreatedAt,
+		TerminatedAt:     r.TerminatedAt,
+		MessageQueueMode: r.MessageQueueMode,
 	}
 	if len(r.AttributeOverrides) > 0 {
 		out.AttributeOverrides = r.AttributeOverrides
@@ -238,6 +242,12 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "template is required (tag or hash)")
 			return
 		}
+		switch body.MessageQueueMode {
+		case "", "backlog", "coalesce":
+		default:
+			badRequest(w, fmt.Sprintf("message_queue_mode = %q; want one of backlog | coalesce", body.MessageQueueMode))
+			return
+		}
 		hash, err := resolveTagOrHash(req.Context(), deps, body.Template)
 		if err != nil {
 			writeError(w, err)
@@ -310,6 +320,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				Paused:             body.Paused,
 				ServiceBindings:    body.ServiceBindings,
 				CreatedByAPIKeyID:  ident.KeyID,
+				MessageQueueMode:   body.MessageQueueMode,
 			})
 			if err != nil {
 				return err
@@ -563,7 +574,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				terminatedAtMs = inst.TerminatedAt.UnixMilli()
 			}
-			if err := CloseAndFanOutFrameRootRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_deleted"); err != nil && deps.Logger != nil {
+			if err := CloseAndFanOutRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_deleted"); err != nil && deps.Logger != nil {
 				deps.Logger.Warn("handleDeleteInstance: run-scope fan-out failed",
 					"instance_id", inst.ID.String(), "error", err.Error())
 			}
@@ -657,15 +668,9 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		reason := body.Reason
 
-		killStates := []cascade.NodeState{
-			cascade.NodeStateRunning,
-			cascade.NodeStateParked,
-			cascade.NodeStateHeld,
-		}
-
 		var toFail []persistence.NodeRunLatest
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, inst.ID, killStates)
+			runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, inst.ID, cascade.InFlightStates)
 			if err != nil {
 				return err
 			}
@@ -689,21 +694,20 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
+		var killPostCommit func(context.Context)
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, inst.ID, killStates)
+			post, err := runtime.ForceFailInFlightRunsForInstance(ctx, terminateRunArgs(deps), tx, inst.ID)
 			if err != nil {
 				return err
 			}
-			for _, r := range runs {
-				sig := "terminal/error/instance_killed"
-				if err := deps.Persist.Nodes().UpdateState(ctx, r.NodeRunID,
-					cascade.NodeStateFailed, cascade.ReasonInstanceKilled, &sig, tx); err != nil {
-					return err
-				}
-				if r.State == cascade.NodeStateHeld {
-					failHeldHolderClaims(ctx, deps, r.NodeRunID, tx)
-				}
-				abandonInFlightClaims(ctx, deps, r.NodeID, tx)
+			killPostCommit = post
+			// @concept: message
+			if _, err := deps.Persist.Messages().CancelPendingForInstance(ctx, tx, inst.ID); err != nil {
+				return err
+			}
+			// @concept: frame
+			if _, err := deps.Persist.Frames().MarkOpenFramesEndedForInstance(ctx, inst.ID, tx); err != nil {
+				return err
 			}
 			if err := deps.Persist.Instances().MarkTerminated(ctx, inst.ID, tx); err != nil {
 				return err
@@ -716,6 +720,9 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}); err != nil {
 			writeError(w, err)
 			return
+		}
+		if killPostCommit != nil {
+			killPostCommit(req.Context())
 		}
 
 		if err := runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
@@ -740,7 +747,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 					"instance_id", inst.ID.String(), "error", err.Error())
 			}
 		} else if tpl != nil {
-			if err := CloseAndFanOutFrameRootRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil && deps.Logger != nil {
+			if err := CloseAndFanOutRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil && deps.Logger != nil {
 				deps.Logger.Warn("handleTerminateInstance: run-scope fan-out failed",
 					"instance_id", inst.ID.String(), "error", err.Error())
 			}
@@ -759,57 +766,17 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// @concept: claim-handle
-// @decision: held-as-state-not-phase
-func failHeldHolderClaims(ctx context.Context, deps AppDeps, holderNodeRunID foundationshared.UUID, tx persistence.Tx) {
-	if deps.Persist.ClaimHolders() == nil {
-		return
-	}
-	holders, err := deps.Persist.ClaimHolders().ListByHolderRun(ctx, holderNodeRunID, tx)
-	if err != nil {
-		if deps.Logger != nil {
-			deps.Logger.Warn("handleTerminateInstance: list claim holders for held kill failed",
-				"holder_run_id", holderNodeRunID.String(), "error", err.Error())
-		}
-		return
-	}
-	for _, h := range holders {
-		handle, err := deps.Persist.ClaimHandles().Get(ctx, h.ClaimHandleID, tx)
-		if err != nil {
-			if deps.Logger != nil {
-				deps.Logger.Warn("handleTerminateInstance: load claim handle for held kill failed",
-					"claim_handle_id", h.ClaimHandleID.String(), "error", err.Error())
-			}
-			continue
-		}
-		if handle == nil || handle.HolderSupervisorID == nil {
-			continue
-		}
-		if err := deps.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ClaimHandleID, *handle.HolderSupervisorID, tx); err != nil && deps.Logger != nil {
-			deps.Logger.Warn("handleTerminateInstance: fail active holders failed",
-				"claim_handle_id", h.ClaimHandleID.String(), "error", err.Error())
-		}
-	}
-}
-
-func abandonInFlightClaims(ctx context.Context, deps AppDeps, nodeID foundationshared.UUID, tx persistence.Tx) {
-	handles, err := deps.Persist.ClaimHandles().ListByHolderNode(ctx, nodeID, tx)
-	if err != nil {
-		if deps.Logger != nil {
-			deps.Logger.Warn("handleTerminateInstance: list claim handles for force-fail failed",
-				"node_id", nodeID.String(), "error", err.Error())
-		}
-		return
-	}
-	for _, h := range handles {
-		if h.State != spec.ClaimHandleStateActive || h.HolderSupervisorID == nil {
-			continue
-		}
-		if err := deps.Persist.ClaimHandles().Promote(ctx, h.ID, *h.HolderSupervisorID,
-			spec.ClaimHandleStateAbandoned, tx); err != nil && deps.Logger != nil {
-			deps.Logger.Warn("handleTerminateInstance: abandon in-flight claim failed",
-				"node_id", nodeID.String(), "claim_id", h.ID.String(), "error", err.Error())
-		}
+// @concept: terminal-resolution
+func terminateRunArgs(deps AppDeps) runtime.RunArgs {
+	return runtime.RunArgs{
+		Persist:        deps.Persist,
+		Queue:          deps.Queue,
+		ClaimHandles:   deps.Persist.ClaimHandles(),
+		StoreRegistry:  deps.ClaimProducers,
+		DataProcessors: deps.DataProcessors,
+		Clock:          deps.Clock,
+		Logger:         deps.Logger,
+		SupervisorID:   "control-api-terminate",
 	}
 }
 
@@ -874,6 +841,8 @@ type provisionArgs struct {
 	Paused             bool
 	ServiceBindings    json.RawMessage
 	CreatedByAPIKeyID  *foundationshared.UUID
+	// @concept: instance
+	MessageQueueMode string
 }
 
 func provisionInstanceTx(
@@ -887,6 +856,10 @@ func provisionInstanceTx(
 	queueMode := tpl.Spec.MessageQueueMode
 	if queueMode == "" {
 		queueMode = "backlog"
+	}
+	// @concept: instance
+	if args.MessageQueueMode != "" {
+		queueMode = args.MessageQueueMode
 	}
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID:                 instanceID,

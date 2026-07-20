@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -82,6 +83,42 @@ func (f *fakeRunScopeTable) ListChildScopes(_ context.Context, _ persistence.Tx,
 			out = append(out, *r)
 		}
 	}
+	return out, nil
+}
+
+func (f *fakeRunScopeTable) ListTreeDeepestFirst(_ context.Context, _ persistence.Tx, rootRunScopeID shared.UUID) ([]persistence.RunScopeRow, error) {
+	depthOf := func(id shared.UUID) int {
+		d := 0
+		cur := id
+		for {
+			row, ok := f.rows[cur]
+			if !ok || row.ParentRunScopeID == nil {
+				return d
+			}
+			cur = *row.ParentRunScopeID
+			d++
+		}
+	}
+	inTree := func(id shared.UUID) bool {
+		cur := id
+		for {
+			if cur == rootRunScopeID {
+				return true
+			}
+			row, ok := f.rows[cur]
+			if !ok || row.ParentRunScopeID == nil {
+				return false
+			}
+			cur = *row.ParentRunScopeID
+		}
+	}
+	var out []persistence.RunScopeRow
+	for id, r := range f.rows {
+		if inTree(id) {
+			out = append(out, *r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return depthOf(out[i].ID) > depthOf(out[j].ID) })
 	return out, nil
 }
 
@@ -421,4 +458,52 @@ func TestParentSettlementSignal_ParkedStatePanics(t *testing.T) {
 		signalpkg.TypePath("transient/park"),
 		false,
 	)
+}
+
+func TestPropagateFromChildState_SettledParentReprojectedByLateChildTransition(t *testing.T) {
+	rt, scopes := newFakes()
+	frame := newUUID()
+	rootScope := scopes.makeRootScope("main", newUUID())
+	parent := newUUID()
+	c1, c2 := newUUID(), newUUID()
+	ctx := context.Background()
+
+	_ = rt.CreateRootNodeRun(ctx, nil, persistence.CreateRootNodeRunInput{
+		NodeRunID:         parent,
+		NodeID:            newUUID(),
+		FrameID:           frame,
+		RunScopeID:        rootScope,
+		AggregationPolicy: spec.AggregationPolicy{Kind: "strict"},
+	})
+	childScope := scopes.makeChildScope(rootScope, parent, "", "worker")
+	_ = rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: c1, NodeID: newUUID(), FrameID: frame, RunScopeID: childScope,
+	})
+	_ = rt.CreateChildNodeRun(ctx, nil, persistence.CreateChildNodeRunInput{
+		NodeRunID: c2, NodeID: newUUID(), FrameID: frame, RunScopeID: childScope,
+	})
+
+	successSig := strPtr("terminal/success")
+	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, successSig)
+	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFresh, successSig)
+	_ = rt.UpdateStateAndOutcome(ctx, nil, parent, cascade.NodeStateFresh, successSig)
+
+	failedSig := strPtr("terminal/error/late_failure")
+	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFailed, failedSig)
+	_, settlements, err := PropagateFromChildState(ctx, PropagationArgs{NodeRunTree: rt, RunScopes: scopes}, nil,
+		c2, cascade.NodeStateFailed, failedSig)
+	if err != nil {
+		t.Fatalf("PropagateFromChildState after late child failure: %v", err)
+	}
+	parentRow, _ := rt.GetByID(ctx, nil, parent)
+	if parentRow.State != cascade.NodeStateFailed {
+		t.Fatalf("a settled (fresh) parent must be re-projected by a late child transition under "+
+			"parent aggregation (terminal parents admit child_transitioned); got %s", parentRow.State)
+	}
+	if parentRow.SettlingSignalType == nil || *parentRow.SettlingSignalType != "terminal/error/aggregate/strict_failed" {
+		t.Fatalf("re-projected parent must carry the strict_failed aggregate signal; got %v", parentRow.SettlingSignalType)
+	}
+	if len(settlements) != 1 {
+		t.Fatalf("re-projection must append a parent settlement (cascade bridge + claim resolution feed off it); got %d", len(settlements))
+	}
 }

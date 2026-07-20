@@ -59,6 +59,40 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 	require.NoError(t, h.Shutdown(shutdownCtx))
 }
 
+func TestSupervisor_StartFailsFastOnWildcardBindWithoutAdvertise(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+
+	_, err := runtime.Start(runtime.Config{
+		SupervisorID:      "test-sv-wildcard-advertise",
+		Persist:           d.Tables(),
+		Queue:             d.Queue(),
+		AdvisoryLocker:    d.AdvisoryLocker(),
+		Clock:             shared.SystemClock{},
+		Logger:            shared.SilentLogger{},
+		Concurrency:       1,
+		LivenessInterval:  200 * time.Millisecond,
+		ClaimPollInterval: 200 * time.Millisecond,
+		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
+		StoreRegistry:     locks.NewRegistry(),
+		CallbackHost:      "0.0.0.0",
+		CallbackPort:      0,
+	})
+	require.Error(t, err,
+		"a wildcard callback bind without an advertise host must refuse startup rather than stamping http://0.0.0.0 into callback URLs")
+	require.Contains(t, err.Error(), "callback.advertise_host")
+	require.Contains(t, err.Error(), "RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST")
+
+	var rec *persistence.SupervisorRow
+	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, gerr := d.Tables().Supervisors().Get(ctx, "test-sv-wildcard-advertise", tx)
+		rec = r
+		return gerr
+	}))
+	require.Nil(t, rec, "a supervisor refused at startup must not register itself")
+}
+
 func TestSupervisor_StartRequiresStoreRegistry(t *testing.T) {
 	t.Parallel()
 	_, err := runtime.Start(runtime.Config{

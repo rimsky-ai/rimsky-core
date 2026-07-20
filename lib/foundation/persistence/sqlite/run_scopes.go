@@ -147,6 +147,38 @@ func (b *runScopesImpl) ListParentChain(ctx context.Context, tx persistence.Tx, 
 	return out, nil
 }
 
+func (b *runScopesImpl) ListTreeDeepestFirst(ctx context.Context, tx persistence.Tx, rootRunScopeID shared.UUID) ([]persistence.RunScopeRow, error) {
+	rows, err := b.q(tx).QueryContext(ctx,
+		`WITH RECURSIVE tree AS (
+		     SELECT `+sqliteRunScopeCols+`, 0 AS depth FROM rimsky_run_scopes WHERE id = ?
+		   UNION ALL
+		     SELECT rs.id, rs.parent_run_scope_id, rs.parent_run_id, rs.graph_name,
+		            rs.partition_key, rs.instance_id, rs.created_at, rs.closed_at,
+		            tree.depth + 1
+		       FROM rimsky_run_scopes rs
+		       JOIN tree ON rs.parent_run_scope_id = tree.id
+		 )
+		 SELECT `+sqliteRunScopeCols+` FROM tree
+		  ORDER BY depth DESC, created_at DESC, id DESC`,
+		rootRunScopeID.String())
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.runScopes.ListTreeDeepestFirst: %w", err)
+	}
+	defer rows.Close()
+	var out []persistence.RunScopeRow
+	for rows.Next() {
+		r, err := scanSqliteRunScopeRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.runScopes.ListTreeDeepestFirst scan: %w", err)
+		}
+		out = append(out, *r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite.runScopes.ListTreeDeepestFirst iter: %w", err)
+	}
+	return out, nil
+}
+
 func scanSqliteRunScopeRow(s scannable) (*persistence.RunScopeRow, error) {
 	var (
 		idStr               string

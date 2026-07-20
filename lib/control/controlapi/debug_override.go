@@ -38,6 +38,19 @@ type DebugOverrideRequest struct {
 
 var errInstanceNotDebuggable = errors.New("instance not in debuggable state")
 
+type debugCrossFrameRunError struct {
+	NodeID        shared.UUID
+	NodeType      string
+	ActiveFrameID shared.UUID
+	RunFrameID    shared.UUID
+}
+
+func (e *debugCrossFrameRunError) Error() string {
+	return fmt.Sprintf(
+		"node %s (type %q) latest run belongs to frame %s, not the active frame %s",
+		e.NodeID, e.NodeType, e.RunFrameID, e.ActiveFrameID)
+}
+
 func registerDebugOverrideRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/instances/{id}/debug/override", gate(deps, "instance:debug-override", handleDebugOverride(deps)))
 }
@@ -156,6 +169,17 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
+		var crossFrameErr *debugCrossFrameRunError
+		if errors.As(txErr, &crossFrameErr) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":           crossFrameErr.Error(),
+				"node_id":         crossFrameErr.NodeID.String(),
+				"node_type":       crossFrameErr.NodeType,
+				"active_frame_id": crossFrameErr.ActiveFrameID.String(),
+				"run_frame_id":    crossFrameErr.RunFrameID.String(),
+			})
+			return
+		}
 		if txErr != nil {
 			writeError(w, txErr)
 			return
@@ -188,31 +212,28 @@ func applyDebugOverride(
 		if n.NodeType != body.NodeType {
 			continue
 		}
-		touched := false
-		if body.Action == debugActionSetAttribute {
-			wrote, err := setNodeAttributeForDebugOverride(ctx, deps, tx, n, body)
-			if err != nil {
-				return mutated, err
-			}
-			if wrote {
-				touched = true
-			}
+		inFrameLatest, err := resolveActiveFrameLatestRun(ctx, deps, tx, n, frameID)
+		if err != nil {
+			return mutated, err
 		}
-		if frameID != nil {
-			latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
+		touched := false
+		switch body.Action {
+		case debugActionSetAttribute:
+			wrote, err := setNodeAttributeForDebugOverride(ctx, deps, tx, n, frameID, inFrameLatest, body)
 			if err != nil {
 				return mutated, err
 			}
-			if latest != nil {
-				_, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+			touched = wrote
+		case debugActionInvalidateNode:
+			if inFrameLatest != nil {
+				if _, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
 					NodeID:         n.ID,
-					RunScopeID:     latest.RunScopeID,
+					RunScopeID:     inFrameLatest.RunScopeID,
 					FrameID:        *frameID,
 					ExecutorName:   n.Executor,
 					EnqueuedAt:     time.Now().UTC(),
 					CreationReason: cascade.CreationReasonOperatorInvalidate,
-				})
-				if err != nil {
+				}); err != nil {
 					return mutated, err
 				}
 				touched = true
@@ -225,33 +246,90 @@ func applyDebugOverride(
 	return mutated, nil
 }
 
+func resolveActiveFrameLatestRun(
+	ctx context.Context,
+	deps AppDeps,
+	tx persistence.Tx,
+	n persistence.NodeRow,
+	frameID *shared.UUID,
+) (*persistence.NodeRunLatest, error) {
+	latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
+	if err != nil {
+		return nil, err
+	}
+	if latest == nil || frameID == nil {
+		return nil, nil
+	}
+	if latest.FrameID != *frameID {
+		return nil, &debugCrossFrameRunError{
+			NodeID:        n.ID,
+			NodeType:      n.NodeType,
+			ActiveFrameID: *frameID,
+			RunFrameID:    latest.FrameID,
+		}
+	}
+	return latest, nil
+}
+
 func setNodeAttributeForDebugOverride(
 	ctx context.Context,
 	deps AppDeps,
 	tx persistence.Tx,
 	n persistence.NodeRow,
+	frameID *shared.UUID,
+	inFrameLatest *persistence.NodeRunLatest,
 	body DebugOverrideRequest,
 ) (bool, error) {
-	delta := map[string]any{body.AttributeKey: body.AttributeValue}
-	latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
-	if err != nil {
-		return false, err
-	}
-	if latest == nil {
+	if inFrameLatest == nil {
 		return false, nil
 	}
-	existing, err := deps.Persist.NodeAttributes().GetByRun(ctx, latest.NodeRunID, tx)
+	targetRunID := inFrameLatest.NodeRunID
+	if cascade.IsTerminal(inFrameLatest.State) {
+		newRunID, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+			NodeID:         n.ID,
+			RunScopeID:     inFrameLatest.RunScopeID,
+			FrameID:        *frameID,
+			ExecutorName:   n.Executor,
+			EnqueuedAt:     time.Now().UTC(),
+			CreationReason: cascade.CreationReasonOperatorInvalidate,
+		})
+		if err != nil {
+			return false, err
+		}
+		targetRunID = newRunID
+	}
+	delta := map[string]any{body.AttributeKey: body.AttributeValue}
+	existing, err := deps.Persist.NodeAttributes().GetByRun(ctx, targetRunID, tx)
 	if err != nil {
 		return false, err
 	}
 	if existing == nil {
-		if err := deps.Persist.NodeAttributes().Upsert(ctx, latest.NodeRunID, n.ID, delta, tx); err != nil {
+		if err := deps.Persist.NodeAttributes().Upsert(ctx, targetRunID, n.ID, delta, tx); err != nil {
 			return false, err
 		}
-		return true, nil
-	}
-	if err := deps.Persist.NodeAttributes().MergeDelta(ctx, latest.NodeRunID, delta, tx); err != nil {
+	} else if err := deps.Persist.NodeAttributes().MergeDelta(ctx, targetRunID, delta, tx); err != nil {
 		return false, err
 	}
+	if isDispatchedInFlight(inFrameLatest.State) {
+		// @story: operator-invalidate-queues-during-flight
+		if _, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+			NodeID:         n.ID,
+			RunScopeID:     inFrameLatest.RunScopeID,
+			FrameID:        *frameID,
+			ExecutorName:   n.Executor,
+			EnqueuedAt:     time.Now().UTC(),
+			CreationReason: cascade.CreationReasonOperatorInvalidate,
+		}); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
+}
+
+func isDispatchedInFlight(state cascade.NodeState) bool {
+	switch state {
+	case cascade.NodeStateRunning, cascade.NodeStateHeld, cascade.NodeStateParked:
+		return true
+	}
+	return false
 }

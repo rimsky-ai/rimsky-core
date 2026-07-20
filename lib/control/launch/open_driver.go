@@ -24,6 +24,9 @@ func OpenDriverFromEnv(ctx context.Context, logger *slog.Logger) (persistence.Da
 		logger.Error("load rimsky config", "error", err.Error(), "path", configPath)
 		return nil, nil, fmt.Errorf("load rimsky config %q: %w", configPath, err)
 	}
+	for _, w := range cfg.Warnings {
+		logger.Warn(w)
+	}
 	driver, err := persistence.Open(ctx, cfg.Persistence)
 	if err != nil {
 		logger.Error("persistence.Open", "error", err.Error())

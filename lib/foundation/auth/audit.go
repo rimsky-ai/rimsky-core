@@ -79,7 +79,6 @@ type KeyRevokedReason string
 const (
 	RevokeReasonManual        KeyRevokedReason = "manual"
 	RevokeReasonRotationGrace KeyRevokedReason = "rotation_grace"
-	RevokeReasonExpired       KeyRevokedReason = "expired"
 )
 
 type KeyRevokedPayload struct {

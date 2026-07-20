@@ -286,7 +286,7 @@ func FanOutRunScopeEvent(
 
 // @concept: run-scope
 // @concept: frame
-func CloseAndFanOutFrameRootRunScopesForInstance(
+func CloseAndFanOutRunScopesForInstance(
 	ctx context.Context,
 	deps AppDeps,
 	tplSpec node.TemplateSpec,
@@ -307,7 +307,7 @@ func CloseAndFanOutFrameRootRunScopesForInstance(
 			return err
 		}); err != nil {
 			if logger != nil {
-				logger.Warn("CloseAndFanOutFrameRootRunScopesForInstance: list frames failed",
+				logger.Warn("CloseAndFanOutRunScopesForInstance: list frames failed",
 					"instance_id", instanceID.String(),
 					"error", err.Error())
 			}
@@ -317,52 +317,16 @@ func CloseAndFanOutFrameRootRunScopesForInstance(
 			return firstErr
 		}
 		for _, f := range page.Rows {
-			scope := f.RootRunScopeID
-			if scope == (shared.UUID{}) {
+			root := f.RootRunScopeID
+			if root == (shared.UUID{}) {
 				continue
 			}
-			if _, dup := seen[scope]; dup {
+			if _, dup := seen[root]; dup {
 				continue
 			}
-			seen[scope] = struct{}{}
-			if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return deps.Persist.RunScopes().Close(ctx, tx, scope)
-			}); err != nil {
-				if logger != nil {
-					logger.Warn("CloseAndFanOutFrameRootRunScopesForInstance: close run-scope failed",
-						"instance_id", instanceID.String(),
-						"frame_id", f.FrameID.String(),
-						"root_run_scope_id", scope.String(),
-						"error", err.Error())
-				}
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			_, perPeerErr, err := FanOutRunScopeEvent(ctx, deps, tplSpec, scope, instanceID, terminalReason, nil)
-			if err != nil {
-				if logger != nil {
-					logger.Warn("CloseAndFanOutFrameRootRunScopesForInstance: run-scope fan-out failed",
-						"instance_id", instanceID.String(),
-						"root_run_scope_id", scope.String(),
-						"error", err.Error())
-				}
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			if len(perPeerErr) > 0 {
-				if logger != nil {
-					logger.Warn("CloseAndFanOutFrameRootRunScopesForInstance: run-scope fan-out partial failure",
-						"instance_id", instanceID.String(),
-						"root_run_scope_id", scope.String(),
-						"failed_peer_count", len(perPeerErr))
-				}
-				if firstErr == nil {
-					firstErr = fmt.Errorf("run-scope %s: %d peer(s) failed on_run_scope_terminal", scope.String(), len(perPeerErr))
-				}
+			seen[root] = struct{}{}
+			if err := closeAndFanOutScopeTree(ctx, deps, tplSpec, instanceID, f.FrameID, root, terminalReason); err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 		if page.NextCursor == "" {
@@ -370,6 +334,75 @@ func CloseAndFanOutFrameRootRunScopesForInstance(
 		}
 		pag.Cursor = page.NextCursor
 	}
+}
+
+// @concept: run-scope
+func closeAndFanOutScopeTree(
+	ctx context.Context,
+	deps AppDeps,
+	tplSpec node.TemplateSpec,
+	instanceID, frameID, rootRunScopeID shared.UUID,
+	terminalReason string,
+) error {
+	logger := deps.Logger
+	var treeDeepestFirst []persistence.RunScopeRow
+	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := deps.Persist.RunScopes().ListTreeDeepestFirst(ctx, tx, rootRunScopeID)
+		treeDeepestFirst = rows
+		return err
+	}); err != nil {
+		if logger != nil {
+			logger.Warn("CloseAndFanOutRunScopesForInstance: list run-scope tree failed",
+				"instance_id", instanceID.String(),
+				"frame_id", frameID.String(),
+				"root_run_scope_id", rootRunScopeID.String(),
+				"error", err.Error())
+		}
+		return err
+	}
+	var firstErr error
+	for _, scope := range treeDeepestFirst {
+		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return deps.Persist.RunScopes().Close(ctx, tx, scope.ID)
+		}); err != nil {
+			if logger != nil {
+				logger.Warn("CloseAndFanOutRunScopesForInstance: close run-scope failed",
+					"instance_id", instanceID.String(),
+					"frame_id", frameID.String(),
+					"run_scope_id", scope.ID.String(),
+					"error", err.Error())
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		_, perPeerErr, err := FanOutRunScopeEvent(ctx, deps, tplSpec, scope.ID, instanceID, terminalReason, nil)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("CloseAndFanOutRunScopesForInstance: run-scope fan-out failed",
+					"instance_id", instanceID.String(),
+					"run_scope_id", scope.ID.String(),
+					"error", err.Error())
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if len(perPeerErr) > 0 {
+			if logger != nil {
+				logger.Warn("CloseAndFanOutRunScopesForInstance: run-scope fan-out partial failure",
+					"instance_id", instanceID.String(),
+					"run_scope_id", scope.ID.String(),
+					"failed_peer_count", len(perPeerErr))
+			}
+			if firstErr == nil {
+				firstErr = fmt.Errorf("run-scope %s: %d peer(s) failed on_run_scope_terminal", scope.ID.String(), len(perPeerErr))
+			}
+		}
+	}
+	return firstErr
 }
 
 func dispatchTemplateEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID string, payload TemplatePayload) error {

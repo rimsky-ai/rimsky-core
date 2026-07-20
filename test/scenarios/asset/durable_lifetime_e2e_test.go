@@ -110,6 +110,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		StoreRegistry: reg,
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-E2E",
+		Clock:         shared.SystemClock{},
 	}
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -120,6 +121,8 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	if post != nil {
 		post(ctx)
 	}
+	_, ferr := runtime.FlushProducerVerbOutbox(ctx, args)
+	require.NoError(t, ferr)
 
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -153,6 +156,9 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.Equal(t, 1, report.Attempted)
 	require.Equal(t, 1, report.Succeeded)
 	require.Empty(t, report.Failures)
+
+	_, rferr := runtime.FlushProducerVerbOutbox(ctx, args)
+	require.NoError(t, rferr)
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, claimHandleID, tx)

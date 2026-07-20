@@ -80,6 +80,7 @@ func TestSettleFromFanoutChild_ChildOwnAttributesNeverAggregateOntoParentBag(t *
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-no-agg",
 	}
+	args = withSyncVerbFlush(args)
 
 	parentID := shared.UUID(uuid.New())
 	childID := shared.UUID(uuid.New())

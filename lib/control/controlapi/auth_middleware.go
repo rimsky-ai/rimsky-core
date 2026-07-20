@@ -91,7 +91,7 @@ func (s *AuthState) IdentityResolver() func(http.Handler) http.Handler {
 			}
 			if denial != "" {
 				skin := protocolSkinFromContext(r.Context())
-				s.emitDenied(r.Context(), r, start, ident, "", skin, nil, false, http.StatusUnauthorized, denial)
+				s.emitDenied(r.Context(), r, start, ident, "", skin, nil, false, http.StatusUnauthorized, denial, nil)
 				writeJSON(w, http.StatusUnauthorized, map[string]any{
 					"error": "unauthorized", "denial_reason": string(denial),
 				})
@@ -200,13 +200,17 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 				paramsInvalid = true
 			}
 		}
+		requestedMode := auth.ModeExecute
+		if r.URL.Query().Get("dry_run") == "true" {
+			requestedMode = auth.ModeDryRun
+		}
 		if !res.Allowed {
-			s.emitDenied(r.Context(), r, start, ident, action, skin, params, paramsInvalid, http.StatusForbidden, auth.DenialPermissionDenied)
+			s.emitDenied(r.Context(), r, start, ident, action, skin, params, paramsInvalid, http.StatusForbidden, auth.DenialPermissionDenied, &requestedMode)
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "permission denied"})
 			return
 		}
-		mode := auth.ModeExecute
-		if res.Mode == auth.ModeDryRun || r.URL.Query().Get("dry_run") == "true" {
+		mode := requestedMode
+		if res.Mode == auth.ModeDryRun {
 			mode = auth.ModeDryRun
 		}
 		ctx := context.WithValue(r.Context(), ctxKeyMode{}, mode)

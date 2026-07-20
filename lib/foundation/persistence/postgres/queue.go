@@ -377,7 +377,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, exp
 	_, err := q.pool.Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
-		  WHERE id = $1 AND claimed_by = $2`,
+		  WHERE id = $1 AND claimed_by = $2 AND state NOT IN ('fresh', 'failed')`,
 		nodeRunID, expectedClaimedBy,
 	)
 	return err
@@ -391,6 +391,47 @@ func (q *queueImpl) ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID
 		nodeRunID,
 	)
 	return err
+}
+
+// @concept: node-run
+func (q *queueImpl) ReleaseClaimWithDisposition(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string, disposition string) error {
+	if disposition == "" {
+		return errors.New("postgres.ReleaseClaimWithDisposition: disposition required")
+	}
+	_, err := q.pool.Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale',
+		        prior_dispatch_id = id, prior_dispatch_disposition = $1
+		  WHERE id = $2 AND claimed_by = $3 AND state NOT IN ('fresh', 'failed')`,
+		disposition, nodeRunID, expectedClaimedBy,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres.ReleaseClaimWithDisposition: %w", err)
+	}
+	return nil
+}
+
+// @concept: node-run
+func (q *queueImpl) StampPriorDispatchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string) error {
+	if tx == nil {
+		return errors.New("postgres.StampPriorDispatchInTx: tx required")
+	}
+	if disposition == "" {
+		return errors.New("postgres.StampPriorDispatchInTx: disposition required")
+	}
+	cmd, err := q.q(tx).Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET prior_dispatch_id = $1, prior_dispatch_disposition = $2
+		  WHERE id = $3`,
+		priorNodeRunID, disposition, nodeRunID,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres.StampPriorDispatchInTx: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("postgres.StampPriorDispatchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+	}
+	return nil
 }
 
 func (q *queueImpl) GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {

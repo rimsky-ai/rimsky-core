@@ -113,6 +113,46 @@ type RemotePublishersConfig struct {
 	Publishers map[string]PublisherEntry
 }
 
+type ValidatorEntry struct {
+	Endpoint              string
+	TLS                   string
+	Protocols             []string
+	ObservabilityEndpoint string
+}
+
+func (e ValidatorEntry) HasProtocol(p string) bool {
+	for _, declared := range e.Protocols {
+		if declared == p {
+			return true
+		}
+	}
+	return false
+}
+
+type RemoteValidatorsConfig struct {
+	Validators map[string]ValidatorEntry
+}
+
+type DataProcessorEntry struct {
+	Endpoint              string
+	TLS                   string
+	Protocols             []string
+	ObservabilityEndpoint string
+}
+
+func (e DataProcessorEntry) HasProtocol(p string) bool {
+	for _, declared := range e.Protocols {
+		if declared == p {
+			return true
+		}
+	}
+	return false
+}
+
+type RemoteDataProcessorsConfig struct {
+	DataProcessors map[string]DataProcessorEntry
+}
+
 func (c ExecutorsConfig) Validate() error {
 	for name, e := range c.Executors {
 		if e.Transport == "" {
@@ -141,9 +181,13 @@ type RimskyConfig struct {
 	NamedLocks             locks.NamedLocksConfig
 	Executors              ExecutorsConfig
 	Publishers             RemotePublishersConfig
+	Validators             RemoteValidatorsConfig
+	DataProcessors         RemoteDataProcessorsConfig
 	Retention              runtime.RetentionConfig
 	LateBindServiceProxies map[string]string
 	PeerAuth               string
+	Topology               persistence.Topology
+	Warnings               []string
 }
 
 func ParsePeerAuth(raw string) (string, error) {
@@ -188,6 +232,18 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Protocols             []string `yaml:"protocols"`
 		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
 	}
+	type yamlValidatorEntry struct {
+		Endpoint              string   `yaml:"endpoint"`
+		TLS                   string   `yaml:"tls"`
+		Protocols             []string `yaml:"protocols"`
+		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
+	}
+	type yamlDataProcessorEntry struct {
+		Endpoint              string   `yaml:"endpoint"`
+		TLS                   string   `yaml:"tls"`
+		Protocols             []string `yaml:"protocols"`
+		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
+	}
 	type yamlBlob struct {
 		Backend             string `yaml:"backend"`
 		SpillThresholdBytes int    `yaml:"spill_threshold_bytes"`
@@ -221,6 +277,8 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		NamedLocks             map[string]locks.NamedLockConfig  `yaml:"named_locks"`
 		Executors              map[string]yamlExecutorEntry      `yaml:"executors"`
 		Publishers             map[string]yamlPublisherEntry     `yaml:"publishers"`
+		Validators             map[string]yamlValidatorEntry     `yaml:"validators"`
+		DataProcessors         map[string]yamlDataProcessorEntry `yaml:"data_processors"`
 		Retention              *yamlRetention                    `yaml:"retention"`
 		LateBindServiceProxies map[string]string                 `yaml:"late_bind_service_proxies"`
 		PeerAuth               string                            `yaml:"peer_auth"`
@@ -341,6 +399,66 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
 		}
 	}
+	validatorsCfg := RemoteValidatorsConfig{Validators: make(map[string]ValidatorEntry, len(wrapper.Validators))}
+	for name, e := range wrapper.Validators {
+		protocols := e.Protocols
+		if len(protocols) == 0 {
+			protocols = []string{claimproducer.ProtocolValidation}
+		}
+		if err := validateProtocols(name, protocols); err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+		}
+		hasValidation := false
+		for _, p := range protocols {
+			if p == claimproducer.ProtocolValidation {
+				hasValidation = true
+			}
+		}
+		if !hasValidation {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: validators[%q]: protocols must include %q", path, name, claimproducer.ProtocolValidation)
+		}
+		tlsMode, err := parseTLSMode("validators", name, e.TLS)
+		if err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+		}
+		validatorsCfg.Validators[name] = ValidatorEntry{
+			Endpoint:              e.Endpoint,
+			TLS:                   tlsMode,
+			Protocols:             protocols,
+			ObservabilityEndpoint: e.ObservabilityEndpoint,
+		}
+	}
+	dataProcessorsCfg := RemoteDataProcessorsConfig{DataProcessors: make(map[string]DataProcessorEntry, len(wrapper.DataProcessors))}
+	for name, e := range wrapper.DataProcessors {
+		protocols := e.Protocols
+		if len(protocols) == 0 {
+			protocols = []string{claimproducer.ProtocolDataProcessing}
+		}
+		if err := validateProtocols(name, protocols); err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+		}
+		hasDataProcessing := false
+		for _, p := range protocols {
+			if p == claimproducer.ProtocolDataProcessing {
+				hasDataProcessing = true
+			}
+		}
+		if !hasDataProcessing {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: data_processors[%q]: protocols must include %q", path, name, claimproducer.ProtocolDataProcessing)
+		}
+		tlsMode, err := parseTLSMode("data_processors", name, e.TLS)
+		if err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+		}
+		dataProcessorsCfg.DataProcessors[name] = DataProcessorEntry{
+			Endpoint:              e.Endpoint,
+			TLS:                   tlsMode,
+			Protocols:             protocols,
+			ObservabilityEndpoint: e.ObservabilityEndpoint,
+		}
+	}
+	topology := persistence.TopologyFromEnv()
+
 	pcfg := persistence.Config{Driver: wrapper.Persistence.Driver}
 	if wrapper.Persistence.Postgres != nil {
 		pcfg.Postgres = &persistence.PostgresConfig{
@@ -355,6 +473,10 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	}
 	if err := pcfg.Validate(); err != nil {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence: %w", path, err)
+	}
+	var warnings []string
+	if msg, warn := persistence.SQLiteReplicaWarning(pcfg.Driver, topology); warn {
+		warnings = append(warnings, msg)
 	}
 
 	bcfg := persistence.DefaultBlobConfig()
@@ -380,7 +502,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			}
 		}
 	}
-	if err := persistence.ValidateBlobConfig(bcfg); err != nil {
+	if err := persistence.ValidateBlobConfig(bcfg, topology); err != nil {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence.blob: %w", path, err)
 	}
 
@@ -406,9 +528,13 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		NamedLocks:             locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
 		Executors:              executors,
 		Publishers:             publishersCfg,
+		Validators:             validatorsCfg,
+		DataProcessors:         dataProcessorsCfg,
 		Retention:              retentionCfg,
 		LateBindServiceProxies: wrapper.LateBindServiceProxies,
 		PeerAuth:               peerAuth,
+		Topology:               topology,
+		Warnings:               warnings,
 	}, nil
 }
 

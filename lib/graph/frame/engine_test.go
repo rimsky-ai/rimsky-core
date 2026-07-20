@@ -67,7 +67,7 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 }
 
 func runTickAgainstDriver(ctx context.Context, d persistence.Database, log frame.Logger) error {
-	return frame.RunTick(ctx, d.Tables(), d.Queue(), log)
+	return frame.RunTick(ctx, d.Tables(), d.Queue(), log, nil)
 }
 
 func quietLogger() *slog.Logger {
@@ -195,6 +195,47 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 		    END
 		   FROM rimsky_frames f WHERE frame_id = $1`, []any{frameID}, &state)
 	require.Equal(t, "failed", state)
+}
+
+// @concept: run-scope
+func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	d := pgtest.OpenDriver(ctx, t)
+
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
+	src := uuid.New()
+	now := time.Now()
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
+	seedNode(t, ctx, d, instanceID, src, "fresh", &frameID)
+
+	var rootScope uuid.UUID
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{frameID}, &rootScope)
+	parentRunID := uuid.New()
+	pgtest.ExecForTest(ctx, t, d, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+        VALUES ($1, $2, NULL, ARRAY[]::text[], NOW(), 'fresh', 2, 'cascade', $3, $4)
+    `, parentRunID, src, frameID, rootScope)
+	childScope := uuid.New()
+	pgtest.ExecForTest(ctx, t, d, `
+        INSERT INTO rimsky_run_scopes (id, parent_run_scope_id, parent_run_id, graph_name, instance_id, partition_key)
+        VALUES ($1, $2, $3, 'sub-flow', $4, '')
+    `, childScope, rootScope, parentRunID, instanceID)
+
+	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
+
+	for _, scope := range []uuid.UUID{childScope, rootScope} {
+		var closed *time.Time
+		pgtest.QueryRowForTest(ctx, t, d,
+			`SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`,
+			[]any{scope}, &closed)
+		require.NotNil(t, closed,
+			"frame settlement must close every open scope in the frame's tree (scope %s), not defer to instance teardown", scope)
+	}
 }
 
 func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {

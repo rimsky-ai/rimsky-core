@@ -11,8 +11,36 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
+
+// @concept: run-scope
+func FrameRunScopeTerminalFanout(
+	persist persistence.Tables,
+	lifecycleSubs *locks.LifecycleRegistry,
+	peersForSpec func(tplSpec node.TemplateSpec) []string,
+) frame.RunScopeTerminalFanout {
+	if lifecycleSubs == nil || peersForSpec == nil {
+		return nil
+	}
+	return func(ctx context.Context, tx persistence.Tx, instanceID, runScopeID shared.UUID, terminalReason string) {
+		inst, err := persist.Instances().Get(ctx, instanceID, tx)
+		if err != nil || inst == nil {
+			slog.Warn("FrameRunScopeTerminalFanout: instance lookup failed; peers not notified",
+				"instance_id", instanceID.String(), "run_scope_id", runScopeID.String(), "error", err)
+			return
+		}
+		tpl, err := persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+		if err != nil || tpl == nil {
+			slog.Warn("FrameRunScopeTerminalFanout: template lookup failed; peers not notified",
+				"instance_id", instanceID.String(), "run_scope_id", runScopeID.String(), "error", err)
+			return
+		}
+		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec,
+			tpl.Spec, runScopeID, instanceID, terminalReason, tx)
+	}
+}
 
 func FanOutRunScopeEvent(
 	ctx context.Context,

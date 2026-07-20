@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
@@ -73,13 +74,12 @@ func TestMetricsPortFor(t *testing.T) {
 		t.Setenv("RIMSKY_METRICS_PORT_SCHEDULER", "")
 		t.Setenv("RIMSKY_METRICS_PORT_SUPERVISOR", "")
 		t.Setenv("RIMSKY_METRICS_PORT_CONTROL_API", "")
-		t.Setenv("RIMSKY_PROCESS_ROLE", "")
 	}
 
 	t.Run("default disabled when nothing is set", func(t *testing.T) {
 		clearEnv(t)
 		for _, role := range []string{"scheduler", "supervisor", "control-api"} {
-			port, err := metricsPortFor(role)
+			port, err := metricsPortFor(role, persistence.TopologySplit)
 			if err != nil {
 				t.Fatalf("metricsPortFor(%q): %v", role, err)
 			}
@@ -93,7 +93,7 @@ func TestMetricsPortFor(t *testing.T) {
 		clearEnv(t)
 		t.Setenv("RIMSKY_METRICS_PORT", "9100")
 		for _, role := range []string{"scheduler", "supervisor", "control-api"} {
-			port, err := metricsPortFor(role)
+			port, err := metricsPortFor(role, persistence.TopologySplit)
 			if err != nil {
 				t.Fatalf("metricsPortFor(%q): %v", role, err)
 			}
@@ -107,7 +107,7 @@ func TestMetricsPortFor(t *testing.T) {
 		clearEnv(t)
 		for _, base := range []string{"0", "-1"} {
 			t.Setenv("RIMSKY_METRICS_PORT", base)
-			port, err := metricsPortFor("scheduler")
+			port, err := metricsPortFor("scheduler", persistence.TopologySplit)
 			if err != nil {
 				t.Fatalf("metricsPortFor with base %q: %v", base, err)
 			}
@@ -122,14 +122,14 @@ func TestMetricsPortFor(t *testing.T) {
 		t.Setenv("RIMSKY_METRICS_PORT", "9100")
 		t.Setenv("RIMSKY_METRICS_PORT_CONTROL_API", "9200")
 
-		port, err := metricsPortFor("control-api")
+		port, err := metricsPortFor("control-api", persistence.TopologySplit)
 		if err != nil {
 			t.Fatalf("metricsPortFor(control-api): %v", err)
 		}
 		if port != 9200 {
 			t.Errorf("metricsPortFor(control-api) = %d, want per-role override 9200", port)
 		}
-		port, err = metricsPortFor("scheduler")
+		port, err = metricsPortFor("scheduler", persistence.TopologySplit)
 		if err != nil {
 			t.Fatalf("metricsPortFor(scheduler): %v", err)
 		}
@@ -141,13 +141,12 @@ func TestMetricsPortFor(t *testing.T) {
 	t.Run("unified mode offsets the shared base per role", func(t *testing.T) {
 		clearEnv(t)
 		t.Setenv("RIMSKY_METRICS_PORT", "9100")
-		t.Setenv("RIMSKY_PROCESS_ROLE", "unified")
 		for role, want := range map[string]int{
 			"scheduler":   9100,
 			"supervisor":  9101,
 			"control-api": 9102,
 		} {
-			port, err := metricsPortFor(role)
+			port, err := metricsPortFor(role, persistence.TopologyUnified)
 			if err != nil {
 				t.Fatalf("metricsPortFor(%q): %v", role, err)
 			}
@@ -160,10 +159,9 @@ func TestMetricsPortFor(t *testing.T) {
 	t.Run("per-role override ignores the unified offset", func(t *testing.T) {
 		clearEnv(t)
 		t.Setenv("RIMSKY_METRICS_PORT", "9100")
-		t.Setenv("RIMSKY_PROCESS_ROLE", "unified")
 		t.Setenv("RIMSKY_METRICS_PORT_SUPERVISOR", "9500")
 
-		port, err := metricsPortFor("supervisor")
+		port, err := metricsPortFor("supervisor", persistence.TopologyUnified)
 		if err != nil {
 			t.Fatalf("metricsPortFor(supervisor): %v", err)
 		}
@@ -175,7 +173,7 @@ func TestMetricsPortFor(t *testing.T) {
 	t.Run("non-numeric base is a startup-fatal error", func(t *testing.T) {
 		clearEnv(t)
 		t.Setenv("RIMSKY_METRICS_PORT", "ninety")
-		_, err := metricsPortFor("scheduler")
+		_, err := metricsPortFor("scheduler", persistence.TopologySplit)
 		if err == nil {
 			t.Fatal("non-numeric RIMSKY_METRICS_PORT should error, not silently disable metrics")
 		}
@@ -187,7 +185,7 @@ func TestMetricsPortFor(t *testing.T) {
 	t.Run("non-numeric per-role override is a startup-fatal error", func(t *testing.T) {
 		clearEnv(t)
 		t.Setenv("RIMSKY_METRICS_PORT_CONTROL_API", "oops")
-		_, err := metricsPortFor("control-api")
+		_, err := metricsPortFor("control-api", persistence.TopologySplit)
 		if err == nil {
 			t.Fatal("non-numeric RIMSKY_METRICS_PORT_CONTROL_API should error")
 		}

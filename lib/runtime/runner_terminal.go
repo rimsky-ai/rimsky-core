@@ -519,6 +519,16 @@ func cascadeSubscribersStaleInTxWithVisited(
 				}
 				_ = existingID
 			}
+			// @concept: parked-state
+			// @concept: wait-set
+			if parked, perr := probeParkedReceiver(ctx, args, tx, r.ID, receiverRunScopeID); perr != nil {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: parked probe %s: %w", r.ID, perr)
+			} else if parked != nil {
+				if _, werr := resumeParkedRunInTx(ctx, args.Persist, args.Queue, tx,
+					parked.NodeRunID, r.ID, r.InstanceID, args.SupervisorID, WakeUpstreamCascade); werr != nil {
+					return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked receiver %s: %w", r.ID, werr)
+				}
+			}
 			receiverNodeRunID, hasReceiver, err := resolveReceiverRunForCascade(
 				ctx, args, tx,
 				r.ID, receiverRunScopeID, senderFrameID, senderID, senderNodeRunID,
@@ -545,6 +555,17 @@ func cascadeSubscribersStaleInTxWithVisited(
 		}
 	}
 	return nil
+}
+
+// @concept: parked-state
+func probeParkedReceiver(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	receiverNodeID, runScopeID foundationshared.UUID,
+) (*persistence.ParkedRow, error) {
+	if args.Queue == nil {
+		return nil, nil
+	}
+	return args.Queue.GetParkedByNode(ctx, tx, receiverNodeID, runScopeID)
 }
 
 // @concept: cascade

@@ -4,12 +4,15 @@
 
 // @decision: async-callback-persistent-registry
 // @decision: three-dispatch-deadlines
+// @decision: keepalive-endpoint
 
 package runtime
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +22,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+func (c *CallbackServer) authorizeCancelToken(r *http.Request, runID shared.UUID) bool {
+	auth := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return false
+	}
+	presented := strings.TrimPrefix(auth, prefix)
+	expected := c.SupervisorID + ":" + runID.String()
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) == 1
+}
+
+// @decision: keepalive-endpoint
 func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request) {
 	if authErr := c.authorizePeer(r); authErr != nil {
 		c.Logger.Warn("keepalive: unauthorized",
@@ -33,6 +48,12 @@ func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	runID := shared.UUID(parsed)
+	if !c.authorizeCancelToken(r, runID) {
+		c.Logger.Warn("keepalive: cancel_token rejected",
+			"run_id", runID.String())
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
 
 	var found bool
 	if txErr := c.Persist.Transaction(r.Context(), func(ctx context.Context, tx persistence.Tx) error {

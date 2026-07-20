@@ -78,6 +78,7 @@ type fakeAgent struct {
 	spawnObserver   func(*genv1.Spawn)
 	dispatchCount   int
 	crashOnDispatch int
+	capabilities    map[string][]byte
 }
 
 func connectFakeAgent(t *testing.T, ts *proxyTestServer, apiKey, localBase string, handler dispatchHandler) *fakeAgent {
@@ -124,6 +125,12 @@ func (fa *fakeAgent) setCrashOnDispatch(n int) {
 	fa.mu.Unlock()
 }
 
+func (fa *fakeAgent) setCapabilities(caps map[string][]byte) {
+	fa.mu.Lock()
+	fa.capabilities = caps
+	fa.mu.Unlock()
+}
+
 func (fa *fakeAgent) loop(t *testing.T) {
 	for {
 		frame, err := fa.stream.Recv()
@@ -132,18 +139,16 @@ func (fa *fakeAgent) loop(t *testing.T) {
 		}
 		switch body := frame.GetBody().(type) {
 		case *genv1.ServerFrame_Spawn:
-			fa.handleSpawn(body.Spawn)
+			go fa.handleSpawn(body.Spawn)
 		case *genv1.ServerFrame_DispatchFrame:
 			if fa.handleDispatch(body.DispatchFrame) {
 				return
 			}
 		case *genv1.ServerFrame_Reap:
-			fa.mu.Lock()
-			_ = fa.stream.Send(&genv1.ClientFrame{Body: &genv1.ClientFrame_Reaped{Reaped: &genv1.Reaped{
+			fa.sendLocked(&genv1.ClientFrame{Body: &genv1.ClientFrame_Reaped{Reaped: &genv1.Reaped{
 				SpawnId: body.Reap.GetSpawnId(),
 				Clean:   true,
 			}}})
-			fa.mu.Unlock()
 			select {
 			case fa.reaped <- body.Reap.GetSpawnId():
 			default:
@@ -157,6 +162,7 @@ func (fa *fakeAgent) handleSpawn(sp *genv1.Spawn) {
 	fail := fa.spawnFail
 	delay := fa.spawnDelay
 	observer := fa.spawnObserver
+	caps := fa.capabilities
 	fa.mu.Unlock()
 	if observer != nil {
 		observer(sp)
@@ -164,12 +170,12 @@ func (fa *fakeAgent) handleSpawn(sp *genv1.Spawn) {
 	if delay > 0 {
 		time.Sleep(delay)
 	}
-	ack := &genv1.SpawnAck{SpawnId: sp.GetSpawnId(), Status: genv1.SpawnAck_SPAWN_STATUS_READY}
+	ack := &genv1.SpawnAck{SpawnId: sp.GetSpawnId(), Status: genv1.SpawnAck_SPAWN_STATUS_READY, Capabilities: caps}
 	if fail {
 		ack.Status = genv1.SpawnAck_SPAWN_STATUS_FAILED
 		ack.Error = &genv1.HostAgentError{Class: "exec_failed", Message: "binary not found"}
 	}
-	_ = fa.stream.Send(&genv1.ClientFrame{Body: &genv1.ClientFrame_SpawnAck{SpawnAck: ack}})
+	fa.sendLocked(&genv1.ClientFrame{Body: &genv1.ClientFrame_SpawnAck{SpawnAck: ack}})
 }
 
 func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
@@ -192,7 +198,7 @@ func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
 		return true
 	}
 	if crash {
-		_ = fa.stream.Send(&genv1.ClientFrame{Body: &genv1.ClientFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
+		fa.sendLocked(&genv1.ClientFrame{Body: &genv1.ClientFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
 			SpawnId:  df.GetSpawnId(),
 			Protocol: df.GetProtocol(),
 			StreamId: df.GetStreamId(),
@@ -206,8 +212,13 @@ func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
 	if handler == nil {
 		return false
 	}
+	go fa.runHandler(handler, df)
+	return false
+}
+
+func (fa *fakeAgent) runHandler(handler dispatchHandler, df *genv1.DispatchFrame) {
 	for _, payload := range handler(df.GetProtocol(), df.GetPayload()) {
-		_ = fa.stream.Send(&genv1.ClientFrame{Body: &genv1.ClientFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
+		fa.sendLocked(&genv1.ClientFrame{Body: &genv1.ClientFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
 			SpawnId:  df.GetSpawnId(),
 			Protocol: df.GetProtocol(),
 			Payload:  payload,
@@ -215,7 +226,12 @@ func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
 			Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA,
 		}}})
 	}
-	return false
+}
+
+func (fa *fakeAgent) sendLocked(frame *genv1.ClientFrame) {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	_ = fa.stream.Send(frame)
 }
 
 func callCtx(name string) context.Context {

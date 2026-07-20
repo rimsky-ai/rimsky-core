@@ -461,15 +461,12 @@ func evaluateBeforeDispatchBreakpoints(
 	})
 	if bpErr != nil {
 		var infraErr *BreakpointInfraError
-		if errors.As(bpErr, &infraErr) {
-			if args.Logger != nil {
-				args.Logger.Warn("runner_dispatch: breakpoint infra failure; dispatching with pre-breakpoint bag",
-					"node_id", acq.NodeID.String(),
-					"dispatch_id", acq.NodeRunID.String(),
-					"phase", infraErr.Phase,
-					"error", bpErr.Error())
-			}
-			return merged, nil
+		if errors.As(bpErr, &infraErr) && args.Logger != nil {
+			args.Logger.Warn("runner_dispatch: breakpoint infra failure on the pause path; failing closed, dispatch blocked",
+				"node_id", acq.NodeID.String(),
+				"dispatch_id", acq.NodeRunID.String(),
+				"phase", infraErr.Phase,
+				"error", bpErr.Error())
 		}
 		return nil, bpErr
 	}

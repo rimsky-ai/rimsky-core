@@ -129,6 +129,13 @@ func Start(cfg Config) (*Handle, error) {
 
 	lockHolders := cfg.Persist.ClaimHandles()
 
+	var verbDispatcher *ProducerVerbDispatcher
+	if p, ok := cfg.Persist.(producerVerbOutboxProvider); ok {
+		verbDispatcher = NewProducerVerbDispatcher(
+			p.ProducerVerbOutbox(), cfg.Persist,
+			cfg.StoreRegistry, cfg.Clock, cfg.Logger)
+	}
+
 	callbackReg := NewCallbackRegistry()
 	baseSchemaHook := cfg.ExpectedAttributesSchemaFor
 	cfg.ExpectedAttributesSchemaFor = func(name string) ([]byte, bool) {
@@ -172,6 +179,7 @@ func Start(cfg Config) (*Handle, error) {
 		PeerAuth:                    cfg.PeerAuth,
 		ServerIdentity:              cfg.ServerIdentity,
 		ClientCAs:                   cfg.ClientCAs,
+		ProducerVerbKick:            verbDispatcher.Kick,
 	}
 	addr, err := callbackSrv.Start(cfg.CallbackHost, cfg.CallbackPort)
 	if err != nil {
@@ -206,7 +214,11 @@ func Start(cfg Config) (*Handle, error) {
 		}
 	}
 
-	host, port := effectiveCallbackHostPort(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
+	host, port, err := effectiveCallbackHostPort(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
+	if err != nil {
+		_ = callbackSrv.Close(context.Background())
+		return nil, err
+	}
 	accepted := cfg.Resolver.AcceptedNames()
 	acceptedClaimProducers := storeRegistryNames(cfg.StoreRegistry)
 	if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
@@ -237,9 +249,9 @@ func Start(cfg Config) (*Handle, error) {
 		return hctx
 	})
 	clientPool := executor.NewClientPoolWithInProcess(inprocReg, newHctx)
-	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort, cfg.PeerAuth)
+	advertised := advertisedCallbackURL(host, port, cfg.PeerAuth)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
-	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, lockHolders)
+	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, lockHolders, verbDispatcher)
 	return h, nil
 }
 
@@ -273,19 +285,32 @@ func storeRegistryNames(reg *locks.Registry) []string {
 	return out
 }
 
-func effectiveCallbackHostPort(listenerAddr, advertiseHost string, advertisePort int) (string, int) {
-	bindHost, bindPort := splitHostPort(listenerAddr)
-	if advertiseHost == "" {
-		return bindHost, bindPort
+func isWildcardHost(host string) bool {
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return true
 	}
-	if advertisePort == 0 {
-		return advertiseHost, bindPort
-	}
-	return advertiseHost, advertisePort
+	return false
 }
 
-func advertisedCallbackURL(listenerAddr, advertiseHost string, advertisePort int, peerAuth string) string {
-	host, port := effectiveCallbackHostPort(listenerAddr, advertiseHost, advertisePort)
+// @concept: supervisor
+func effectiveCallbackHostPort(listenerAddr, advertiseHost string, advertisePort int) (string, int, error) {
+	bindHost, bindPort := splitHostPort(listenerAddr)
+	if advertiseHost == "" {
+		if isWildcardHost(bindHost) {
+			return "", 0, fmt.Errorf(
+				"supervisor: callback advertise host is unset while the callback listener binds the wildcard address %q — refusing to stamp an unreachable callback URL; set callback.advertise_host (or RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST) to a hostname executors can reach this supervisor at",
+				bindHost)
+		}
+		return bindHost, bindPort, nil
+	}
+	if advertisePort == 0 {
+		return advertiseHost, bindPort, nil
+	}
+	return advertiseHost, advertisePort, nil
+}
+
+func advertisedCallbackURL(host string, port int, peerAuth string) string {
 	scheme := "http://"
 	if peerAuth == peer.PeerAuthMTLS {
 		scheme = "https://"
@@ -302,12 +327,19 @@ func runLoop(
 	accepted []string,
 	acceptedClaimProducers []string,
 	lockHolders persistence.ClaimHandleTable,
+	verbDispatcher *ProducerVerbDispatcher,
 ) {
 	defer close(h.done)
 	cfg.Logger.Info("supervisor started",
 		"supervisor_id", cfg.SupervisorID,
 		"accepts", accepted,
 		"concurrency", cfg.Concurrency)
+
+	dispatchCtx, cancelDispatch := context.WithCancel(context.Background())
+	defer cancelDispatch()
+	if verbDispatcher != nil {
+		go verbDispatcher.Run(dispatchCtx)
+	}
 
 	var activeMu sync.Mutex
 	activeCount := 0
@@ -354,6 +386,7 @@ func runLoop(
 				LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
 				LateBindServiceProxies:      cfg.LateBindServiceProxies,
 				DataProcessors:              cfg.DataProcessors,
+				ProducerVerbKick:            verbDispatcher.Kick,
 			}, reg.Register)
 			if runErr != nil {
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())

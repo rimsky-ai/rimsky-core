@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 	"time"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 type fakeMessagesTable struct {
@@ -121,11 +124,97 @@ func (f *fakeMessagesTable) List(_ context.Context, filter persistence.MessageLi
 
 type enqueueDepsStub struct {
 	inst persistence.InstanceTable
+	tpls persistence.TemplateTable
 	msgs persistence.MessagesTable
 }
 
 func (d *enqueueDepsStub) Instances() persistence.InstanceTable { return d.inst }
+func (d *enqueueDepsStub) Templates() persistence.TemplateTable { return d.tpls }
 func (d *enqueueDepsStub) Messages() persistence.MessagesTable  { return d.msgs }
+
+type nilTemplatesTable struct{}
+
+func (n *nilTemplatesTable) Insert(context.Context, persistence.TemplateInsertInput, persistence.Tx) error {
+	return nil
+}
+func (n *nilTemplatesTable) GetByHash(context.Context, string, persistence.Tx) (*persistence.TemplateRow, error) {
+	return nil, nil
+}
+func (n *nilTemplatesTable) List(context.Context, persistence.TemplateListFilter, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.TemplateRow], error) {
+	return persistence.PaginatedListResult[persistence.TemplateRow]{}, nil
+}
+func (n *nilTemplatesTable) UpdateState(context.Context, string, persistence.TemplateState, persistence.Tx) error {
+	return nil
+}
+func (n *nilTemplatesTable) DeleteByHash(context.Context, string, persistence.Tx) error { return nil }
+func (n *nilTemplatesTable) LockForUpdate(context.Context, string, persistence.Tx) (*persistence.TemplateRow, error) {
+	return nil, nil
+}
+
+type fixedInstanceTable struct {
+	row *persistence.InstanceRow
+}
+
+func (f *fixedInstanceTable) Create(context.Context, persistence.InstanceCreateInput, persistence.Tx) (persistence.InstanceRow, error) {
+	return persistence.InstanceRow{}, nil
+}
+func (f *fixedInstanceTable) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.InstanceRow, error) {
+	if f.row == nil || f.row.ID != id {
+		return nil, nil
+	}
+	cp := *f.row
+	return &cp, nil
+}
+func (f *fixedInstanceTable) GetByInstanceKey(context.Context, string, string, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fixedInstanceTable) FindAnyByInstanceKey(context.Context, string, persistence.Tx) (*persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fixedInstanceTable) List(context.Context, persistence.InstanceListFilter, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.InstanceRow], error) {
+	return persistence.PaginatedListResult[persistence.InstanceRow]{}, nil
+}
+func (f *fixedInstanceTable) Delete(context.Context, shared.UUID, persistence.Tx) error { return nil }
+func (f *fixedInstanceTable) MarkTerminated(context.Context, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (f *fixedInstanceTable) CountActiveByTemplate(context.Context, string, persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (f *fixedInstanceTable) ListTerminatedWithLifecycleRows(context.Context, int, persistence.Tx) ([]persistence.InstanceRow, error) {
+	return nil, nil
+}
+func (f *fixedInstanceTable) CountByActive(context.Context, persistence.Tx) (int, int, error) {
+	return 0, 0, nil
+}
+func (f *fixedInstanceTable) SetPaused(context.Context, shared.UUID, bool, persistence.Tx) (bool, error) {
+	return false, nil
+}
+
+type fixedTemplateTable struct {
+	row *persistence.TemplateRow
+}
+
+func (f *fixedTemplateTable) Insert(context.Context, persistence.TemplateInsertInput, persistence.Tx) error {
+	return nil
+}
+func (f *fixedTemplateTable) GetByHash(_ context.Context, hash string, _ persistence.Tx) (*persistence.TemplateRow, error) {
+	if f.row == nil || f.row.ID != hash {
+		return nil, nil
+	}
+	cp := *f.row
+	return &cp, nil
+}
+func (f *fixedTemplateTable) List(context.Context, persistence.TemplateListFilter, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.TemplateRow], error) {
+	return persistence.PaginatedListResult[persistence.TemplateRow]{}, nil
+}
+func (f *fixedTemplateTable) UpdateState(context.Context, string, persistence.TemplateState, persistence.Tx) error {
+	return nil
+}
+func (f *fixedTemplateTable) DeleteByHash(context.Context, string, persistence.Tx) error { return nil }
+func (f *fixedTemplateTable) LockForUpdate(context.Context, string, persistence.Tx) (*persistence.TemplateRow, error) {
+	return nil, nil
+}
 
 type nilInstancesTable struct{}
 
@@ -163,7 +252,7 @@ func (n *nilInstancesTable) SetPaused(context.Context, shared.UUID, bool, persis
 
 func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	m := newFakeMessages()
-	deps := &enqueueDepsStub{inst: &nilInstancesTable{}, msgs: m}
+	deps := &enqueueDepsStub{inst: &nilInstancesTable{}, tpls: &nilTemplatesTable{}, msgs: m}
 	ctx := context.Background()
 	good := persistence.EnqueueMessageRequest{
 		ID: shared.UUID(uuid.New()), InstanceID: shared.UUID(uuid.New()),
@@ -182,6 +271,61 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	bad.SenderKind = "bogus"
 	if err := EnqueueMessage(ctx, nil, deps, bad); err == nil {
 		t.Fatal("EnqueueMessage(bogus sender_kind): expected error")
+	}
+}
+
+// @concept: message-schema
+func TestEnqueueMessage_RejectsBodySchemaViolation(t *testing.T) {
+	m := newFakeMessages()
+	instanceID := shared.UUID(uuid.New())
+	instRow := &persistence.InstanceRow{ID: instanceID, TemplateHash: "tpl-1"}
+	tplRow := &persistence.TemplateRow{
+		ID: "tpl-1",
+		Spec: spec.TemplateSpec{
+			Name: "t", Version: "v1",
+			Messages: []spec.MessageSchema{
+				{
+					Type:       "ping/recheck",
+					BodySchema: []byte(`{"type":"object","properties":{"pong_status":{"type":"string"}},"required":["pong_status"]}`),
+				},
+			},
+		},
+	}
+	deps := &enqueueDepsStub{
+		inst: &fixedInstanceTable{row: instRow},
+		tpls: &fixedTemplateTable{row: tplRow},
+		msgs: m,
+	}
+	ctx := context.Background()
+
+	violating := persistence.EnqueueMessageRequest{
+		ID: shared.UUID(uuid.New()), InstanceID: instanceID,
+		Type: "ping/recheck", Sender: "op-A", SenderKind: "operator",
+		Payload: []byte(`{}`),
+	}
+	err := EnqueueMessage(ctx, nil, deps, violating)
+	if err == nil {
+		t.Fatal("EnqueueMessage(body violating body_schema): expected error, got nil")
+	}
+	var schemaErr *node.MessageBodySchemaViolation
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("EnqueueMessage error must unwrap to *node.MessageBodySchemaViolation, got %T: %v", err, err)
+	}
+	if schemaErr.Type != "ping/recheck" {
+		t.Fatalf("schemaErr.Type = %q, want %q", schemaErr.Type, "ping/recheck")
+	}
+	if _, ok := m.rows[violating.ID]; ok {
+		t.Fatal("a body-schema-rejected message must not be inserted into the ledger")
+	}
+
+	compliant := violating
+	compliant.ID = shared.UUID(uuid.New())
+	compliant.Payload = []byte(`{"pong_status":"ok"}`)
+	if err := EnqueueMessage(ctx, nil, deps, compliant); err != nil {
+		t.Fatalf("EnqueueMessage(body matching body_schema): %v", err)
+	}
+	if _, ok := m.rows[compliant.ID]; !ok {
+		t.Fatal("a schema-compliant message must be inserted into the ledger")
 	}
 }
 

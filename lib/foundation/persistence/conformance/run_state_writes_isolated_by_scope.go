@@ -298,14 +298,14 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 		t.Fatalf("seed park B: %v", err)
 	}
 
-	parkedA, err := q.GetParkedByNode(ctx, f.fix.NodeID, f.scopeA)
+	parkedA, err := q.GetParkedByNode(ctx, nil, f.fix.NodeID, f.scopeA)
 	if err != nil {
 		t.Fatalf("GetParkedByNode(A): %v", err)
 	}
 	if parkedA != nil {
 		t.Fatalf("GetParkedByNode(A) returned a row for un-parked scope A: %+v", parkedA)
 	}
-	parkedB, err := q.GetParkedByNode(ctx, f.fix.NodeID, f.scopeB)
+	parkedB, err := q.GetParkedByNode(ctx, nil, f.fix.NodeID, f.scopeB)
 	if err != nil {
 		t.Fatalf("GetParkedByNode(B): %v", err)
 	}

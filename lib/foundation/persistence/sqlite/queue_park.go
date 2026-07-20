@@ -138,8 +138,8 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx)
 }
 
 // @concept: run-scope
-func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
-	row := q.db.QueryRowContext(ctx,
+func (q *queueImpl) GetParkedByNode(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
+	row := q.q(tx).QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
 		        d.parked_at, d.resume_at, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d

@@ -70,6 +70,11 @@ func DispatchChildren(
 	if parentScope == nil {
 		return nil, fmt.Errorf("DispatchChildren: parent run scope %s not found", in.ParentRunScopeID)
 	}
+	if in.EntryAbsorbed {
+		if err := rejectDelegateRecursionInChain(ctx, args.Persist.RunScopes(), tx, parentScope.ID, in.ChildGraphName); err != nil {
+			return nil, fmt.Errorf("DispatchChildren: %w", err)
+		}
+	}
 	out := make([]DispatchedChild, 0, len(in.Partitions)*len(in.Children))
 	for _, p := range in.Partitions {
 		if p.SubClaimHandleID != (shared.UUID{}) && len(in.Children) != 1 {
@@ -127,6 +132,26 @@ func DispatchChildren(
 		}
 	}
 	return out, nil
+}
+
+// @concept: sub-graph
+// @concept: run-scope
+func rejectDelegateRecursionInChain(
+	ctx context.Context, scopes persistence.RunScopeTable, tx persistence.Tx,
+	parentRunScopeID shared.UUID, childGraphName string,
+) error {
+	chain, err := scopes.ListParentChain(ctx, tx, parentRunScopeID)
+	if err != nil {
+		return fmt.Errorf("rejectDelegateRecursionInChain: walk parent chain of %s: %w", parentRunScopeID, err)
+	}
+	for _, s := range chain {
+		if s.GraphName == childGraphName {
+			return fmt.Errorf(
+				"rejectDelegateRecursionInChain: sub-graph %q is already open in the run-scope ancestor chain (scope %s); recursive delegation is rejected at dispatch",
+				childGraphName, s.ID)
+		}
+	}
+	return nil
 }
 
 type DelegateSettlementInput struct {
@@ -221,7 +246,7 @@ func SettleFromDelegate(
 	}
 	// @concept: claim-handle
 	// @concept: claim-tree
-	callerClaimsPC, err := resolveDelegateCallerClaimsInTx(ctx, args, tx, *parent, in.InstanceID)
+	callerClaimsPC, err := resolveDelegateCallerClaimsInTx(ctx, args, tx, *parent, in.InstanceID, OutcomeCommit)
 	if err != nil {
 		return nil, fmt.Errorf("SettleFromDelegate: resolve calling node's own claims: %w", err)
 	}
@@ -277,6 +302,7 @@ func SettleFromDelegate(
 func resolveDelegateCallerClaimsInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	parent persistence.NodeRunTreeRow, instanceID shared.UUID,
+	outcome TerminalOutcome,
 ) (postCommitFn, error) {
 	if args.ClaimHandles == nil {
 		return nil, nil
@@ -317,7 +343,7 @@ func resolveDelegateCallerClaimsInTx(
 			ClaimHandleID:       row.ID,
 			SupervisorID:        args.SupervisorID,
 			Source:              ActiveTerminal,
-			Outcome:             OutcomeCommit,
+			Outcome:             outcome,
 			Producer:            producer,
 			Scope:               []byte(row.ClaimScopeData),
 			Address:             []byte(row.Address),

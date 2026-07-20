@@ -337,6 +337,7 @@ var v1Actions = []ActionEntry{
 			{Method: "GET", Path: "/v1/lineage/runs/{run_id}/descendants"},
 			{Method: "GET", Path: "/v1/lineage/claims/{claim_handle_id}"},
 			{Method: "GET", Path: "/v1/lineage/claims/{claim_handle_id}/ancestors"},
+			{Method: "GET", Path: "/v1/lineage/claims/{claim_handle_id}/descendants"},
 			{Method: "GET", Path: "/v1/lineage/by-source/{source_type}/{source_id}"},
 			{Method: "GET", Path: "/v1/lineage/by-producer/{executor_name}"},
 		},

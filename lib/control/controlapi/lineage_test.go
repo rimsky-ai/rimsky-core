@@ -467,12 +467,13 @@ func TestLineageEndpoints_ClaimReturnsMostRecent(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-func TestLineageEndpoints_ClaimAncestorsWalksSubClaimChain(t *testing.T) {
+// @concept: lineage-record
+func TestLineageEndpoints_ClaimDescendantsWalksSubClaimChain(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	instID, frameID := seedLineageInstance(t, h, "lin-ep-claimanc")
+	instID, frameID := seedLineageInstance(t, h, "lin-ep-claimdesc")
 	parentClaim := uuid.New()
 	subA := uuid.New()
 	subB := uuid.New()
@@ -488,7 +489,57 @@ func TestLineageEndpoints_ClaimAncestorsWalksSubClaimChain(t *testing.T) {
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
 		map[string]any{"claim_handle_id": subB.String(), "version_id": "sub-b"}, base.Add(2*time.Second), persistence.LineageOutcomeCommitted)
 
-	status, out := h.httpJSON(t, "GET", "/v1/lineage/claims/"+parentClaim.String()+"/ancestors?depth=2", nil)
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/claims/"+parentClaim.String()+"/descendants?depth=2", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	descendants, _ := out["descendants"].([]any)
+
+	gotClaims := map[string]bool{}
+	for _, a := range descendants {
+		item := a.(map[string]any)
+		rec, _ := item["record"].(map[string]any)
+		if ch, ok := rec["claim_handle_id"].(string); ok {
+			gotClaims[ch] = true
+		}
+	}
+	require.True(t, gotClaims[parentClaim.String()], "parent claim_terminal present: %v", gotClaims)
+	require.True(t, gotClaims[subA.String()], "sub-claim A reached via sub_claim_handle_ids: %v", gotClaims)
+	require.True(t, gotClaims[subB.String()], "sub-claim B reached via sub_claim_handle_ids: %v", gotClaims)
+
+	status, out = h.httpJSON(t, "GET", "/v1/lineage/claims/"+subA.String()+"/ancestors?depth=2", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	ancestorsOfSubA, _ := out["ancestors"].([]any)
+	require.Len(t, ancestorsOfSubA, 1,
+		"descendants-shaped data must not be reachable via the ancestors route (routes are not aliases of each other)")
+}
+
+// @concept: lineage-record
+func TestLineageEndpoints_ClaimAncestorsWalksParentChain(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID, frameID := seedLineageInstance(t, h, "lin-ep-claimanc")
+	grandparent := uuid.New()
+	parent := uuid.New()
+	child := uuid.New()
+	base := time.Now().UTC()
+
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{"claim_handle_id": grandparent.String(), "version_id": "gp"}, base, persistence.LineageOutcomeCommitted)
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{
+			"claim_handle_id":        parent.String(),
+			"parent_claim_handle_id": grandparent.String(),
+			"version_id":             "p",
+		}, base.Add(time.Second), persistence.LineageOutcomeCommitted)
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{
+			"claim_handle_id":        child.String(),
+			"parent_claim_handle_id": parent.String(),
+			"version_id":             "c",
+		}, base.Add(2*time.Second), persistence.LineageOutcomeCommitted)
+
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/claims/"+child.String()+"/ancestors?depth=3", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	ancestors, _ := out["ancestors"].([]any)
 
@@ -500,9 +551,15 @@ func TestLineageEndpoints_ClaimAncestorsWalksSubClaimChain(t *testing.T) {
 			gotClaims[ch] = true
 		}
 	}
-	require.True(t, gotClaims[parentClaim.String()], "parent claim_terminal present: %v", gotClaims)
-	require.True(t, gotClaims[subA.String()], "sub-claim A reached via sub_claim_handle_ids: %v", gotClaims)
-	require.True(t, gotClaims[subB.String()], "sub-claim B reached via sub_claim_handle_ids: %v", gotClaims)
+	require.True(t, gotClaims[child.String()], "seed claim_terminal present: %v", gotClaims)
+	require.True(t, gotClaims[parent.String()], "immediate parent reached via parent_claim_handle_id: %v", gotClaims)
+	require.True(t, gotClaims[grandparent.String()], "grandparent reached by walking parent_claim_handle_id transitively: %v", gotClaims)
+
+	status, out = h.httpJSON(t, "GET", "/v1/lineage/claims/"+grandparent.String()+"/descendants?depth=3", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	descendantsOfGrandparent, _ := out["descendants"].([]any)
+	require.Len(t, descendantsOfGrandparent, 1,
+		"parent-chain data must not be reachable via the descendants route (routes are not aliases of each other)")
 }
 
 func TestLineageEndpoints_BySourceReverseLookup(t *testing.T) {

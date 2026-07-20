@@ -39,6 +39,14 @@ func (r *validationRegistryImpl) Get(name string) (runtime.ValidationClient, boo
 	return c, ok
 }
 
+func (r *validationRegistryImpl) All() []runtime.ValidationClient {
+	out := make([]runtime.ValidationClient, 0, len(r.clients))
+	for _, c := range r.clients {
+		out = append(out, c)
+	}
+	return out
+}
+
 type dataProcessingRegistryImpl struct {
 	clients map[string]runtime.DataProcessingClient
 }
@@ -50,6 +58,7 @@ func (r *dataProcessingRegistryImpl) Get(name string) (runtime.DataProcessingCli
 
 func DialPublisherAndValidationRegistries(
 	ctx context.Context, stores RemoteClaimProducersConfig, execs ExecutorsConfig, publishers RemotePublishersConfig,
+	validatorsCfg RemoteValidatorsConfig, dataProcessorsCfg RemoteDataProcessorsConfig,
 ) (
 	publisherReg runtime.PublisherRegistry,
 	validators runtime.ValidationRegistry,
@@ -185,6 +194,38 @@ func DialPublisherAndValidationRegistries(
 				dpClients[p.name] = c
 			}
 		}
+	}
+	for name, e := range validatorsCfg.Validators {
+		if _, already := validationClients[name]; already {
+			continue
+		}
+		supportedRoles := make([]string, 0, len(e.Protocols))
+		for _, p := range e.Protocols {
+			if p != claimproducer.ProtocolValidation {
+				supportedRoles = append(supportedRoles, p)
+			}
+		}
+		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
+		c, dErr := peer.DialValidation(dialCtx, name, e.Endpoint, e.TLS, supportedRoles)
+		cancel()
+		if dErr != nil {
+			closeAll()
+			return nil, nil, nil, nil, fmt.Errorf("DialPublisherAndValidationRegistries: validators[%q]: %w", name, dErr)
+		}
+		validationClients[name] = c
+	}
+	for name, e := range dataProcessorsCfg.DataProcessors {
+		if _, already := dpClients[name]; already {
+			continue
+		}
+		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
+		c, dErr := peer.DialDataProcessing(dialCtx, name, e.Endpoint, e.TLS)
+		cancel()
+		if dErr != nil {
+			closeAll()
+			return nil, nil, nil, nil, fmt.Errorf("DialPublisherAndValidationRegistries: data_processors[%q]: %w", name, dErr)
+		}
+		dpClients[name] = c
 	}
 	closers = append(closers, closeAll)
 	return &publisherRegistryImpl{clients: publisherClients},

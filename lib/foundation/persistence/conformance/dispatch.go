@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -135,5 +136,45 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		if r.NodeID == fix.NodeID {
 			t.Fatalf("sync-mode dispatch row leaked into the async-orphan sweep")
 		}
+	}
+}
+
+// @concept: node-run
+func testDispatchReleaseClaimSkipsTerminalRun(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	q := d.Queue()
+	supID := "supervisor-terminal-race"
+	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, supID)
+
+	sig := "terminal/error/test_failure"
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return d.Tables().Nodes().UpdateState(ctx, nodeRunID,
+			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &sig, tx)
+	}); err != nil {
+		t.Fatalf("settle run terminal ahead of a delayed release race: %v", err)
+	}
+
+	if err := q.ReleaseClaim(ctx, nodeRunID, supID); err != nil {
+		t.Fatalf("ReleaseClaim on a terminal run must no-op, not error: %v", err)
+	}
+	if err := q.ReleaseClaimWithDisposition(ctx, nodeRunID, supID, "stale_recovery"); err != nil {
+		t.Fatalf("ReleaseClaimWithDisposition on a terminal run must no-op, not error: %v", err)
+	}
+
+	var gate *persistence.NodeRunForGate
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		g, err := d.Tables().Nodes().GetRunForGate(ctx, tx, nodeRunID)
+		gate = g
+		return err
+	}); err != nil {
+		t.Fatalf("GetRunForGate: %v", err)
+	}
+	if gate == nil {
+		t.Fatalf("run %s vanished", nodeRunID)
+	}
+	if gate.State != cascade.NodeStateFailed {
+		t.Fatalf("a delayed duplicate-acquisition release must not revert an already-terminal run: "+
+			"got state=%s want=%s", gate.State, cascade.NodeStateFailed)
 	}
 }

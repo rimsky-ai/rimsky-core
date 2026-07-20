@@ -450,7 +450,8 @@ func newInstanceWithMessageSchema(t *testing.T, h *harness, tag string) string {
 	return id
 }
 
-func TestCreateMessage_AdmitsPayloadFailingBodySchema(t *testing.T) {
+// @concept: message-schema
+func TestCreateMessage_RejectsPayloadFailingBodySchema(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -464,9 +465,17 @@ func TestCreateMessage_AdmitsPayloadFailingBodySchema(t *testing.T) {
 			"payload": map[string]any{},
 		},
 		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
-	require.Equal(t, http.StatusCreated, resp.status, resp.body)
-	msgID, _ := resp.body["message_id"].(string)
-	require.NotEmpty(t, msgID)
+	require.Equal(t, http.StatusBadRequest, resp.status, resp.body)
+	errText := fmt.Sprint(resp.body["error"])
+	require.Contains(t, errText, "ping/recheck",
+		"rejection must name the offending message type; body: %v", resp.body)
+	require.Contains(t, errText, "pong_status",
+		"rejection must name the offending field; body: %v", resp.body)
+
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	rows, _ := out["messages"].([]any)
+	require.Empty(t, rows, "a body-schema-rejected message must not be persisted to the ledger")
 }
 
 func TestCreateMessage_AcceptsPayloadMatchingBodySchema(t *testing.T) {
@@ -720,6 +729,47 @@ func TestMessages_ListFilteredBySenderKind(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ = out["messages"].([]any)
 	require.Empty(t, msgs, "sender_kind filter must exclude non-matching senders")
+}
+
+// @concept: observability
+func TestMessages_ListFilteredBySenderName(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "sender-name")
+	subA := insertPublisherSubscription(t, h, instID, "publisher-a", persistence.PublisherSubscriptionStateActive)
+	subB := insertPublisherSubscription(t, h, instID, "publisher-b", persistence.PublisherSubscriptionStateActive)
+
+	respA := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
+		"type":                      "system/invalidate",
+		"publisher_subscription_id": subA,
+	}, map[string]string{"Idempotency-Key": "key-a-" + uuid.NewString()})
+	require.Equal(t, http.StatusCreated, respA.status, respA.body)
+	msgAID, _ := respA.body["message_id"].(string)
+
+	respB := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
+		"type":                      "system/invalidate",
+		"publisher_subscription_id": subB,
+	}, map[string]string{"Idempotency-Key": "key-b-" + uuid.NewString()})
+	require.Equal(t, http.StatusCreated, respB.status, respB.body)
+
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?sender=publisher-a", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Len(t, msgs, 1,
+		"?sender= must narrow to one specific publisher, not the whole sender_kind=publisher class")
+	got := msgs[0].(map[string]any)
+	require.Equal(t, msgAID, got["id"])
+	require.Equal(t, "publisher-a", got["sender"])
+	require.NotEmpty(t, got["received_at"])
+
+	status, out = h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?sender=publisher-nonexistent", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ = out["messages"].([]any)
+	require.Empty(t, msgs, "an unknown sender name must yield an empty result, not an error")
 }
 
 func TestDedupSenderKind_AnonymousBucketDistinctFromOperatorAndPublisher(t *testing.T) {

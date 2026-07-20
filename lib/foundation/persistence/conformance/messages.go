@@ -177,3 +177,63 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		t.Fatalf("ListDeliveredForFrame(unknown) = %d rows, want 0", len(deliveredUnknown))
 	}
 }
+
+// @concept: observability
+func testMessagesListBySender(t *testing.T, d persistence.Database) {
+	t.Helper()
+	defer d.Close()
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	insert := func(sender, senderKind string) shared.UUID {
+		t.Helper()
+		id := shared.UUID(uuid.New())
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+				ID:         id,
+				InstanceID: fix.InstanceID,
+				Type:       "fixture/message",
+				Sender:     sender,
+				SenderKind: senderKind,
+				ReceivedAt: time.Now().UTC(),
+			})
+		}); err != nil {
+			t.Fatalf("Messages.Insert(sender=%s): %v", sender, err)
+		}
+		return id
+	}
+
+	msgA := insert("publisher-a", "publisher")
+	msgB := insert("publisher-b", "publisher")
+	insert("operator", "operator")
+
+	list := func(f persistence.MessageListFilter) []persistence.MessageRow {
+		t.Helper()
+		res, err := store.Messages().List(ctx, f, persistence.ListPagination{Limit: 50})
+		if err != nil {
+			t.Fatalf("Messages.List: %v", err)
+		}
+		return res.Rows
+	}
+
+	gotA := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, Sender: "publisher-a"})
+	if len(gotA) != 1 || gotA[0].ID != msgA {
+		t.Fatalf("Sender(publisher-a) = %v, want exactly [%s]", gotA, msgA)
+	}
+
+	gotB := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, Sender: "publisher-b"})
+	if len(gotB) != 1 || gotB[0].ID != msgB {
+		t.Fatalf("Sender(publisher-b) = %v, want exactly [%s]", gotB, msgB)
+	}
+
+	gotUnknown := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, Sender: "publisher-nonexistent"})
+	if len(gotUnknown) != 0 {
+		t.Fatalf("Sender(publisher-nonexistent) = %d rows, want 0", len(gotUnknown))
+	}
+
+	gotKindOnly := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID, SenderKind: "publisher"})
+	if len(gotKindOnly) != 2 {
+		t.Fatalf("SenderKind(publisher) = %d rows, want 2 (both publisher-a and publisher-b)", len(gotKindOnly))
+	}
+}

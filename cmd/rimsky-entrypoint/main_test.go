@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 func writeFixtureBinary(t *testing.T, dir, name, body string) string {
@@ -91,7 +94,11 @@ func TestRunMigrateIfOwned_SignalInterrupts(t *testing.T) {
 		binaryDir = dir
 		sigCh := make(chan os.Signal, 1)
 		sigCh <- syscall.SIGTERM
-		runMigrateIfOwned([]string{"rimsky-control-api"}, sigCh)
+		plan, err := newLaunchPlan([]string{"rimsky-control-api"})
+		if err != nil {
+			os.Exit(2)
+		}
+		runMigrateIfOwned(plan, sigCh)
 		os.Exit(99)
 	}
 
@@ -362,6 +369,81 @@ func TestShouldMigrate(t *testing.T) {
 	})
 }
 
+func TestRoleOwnsMigration(t *testing.T) {
+	for _, tc := range []struct {
+		role Role
+		want bool
+	}{
+		{RoleScheduler, false},
+		{RoleSupervisor, false},
+		{RoleControlAPI, true},
+	} {
+		if got := tc.role.OwnsMigration(); got != tc.want {
+			t.Errorf("Role(%q).OwnsMigration() = %v, want %v", tc.role, got, tc.want)
+		}
+	}
+}
+
+func TestNewLaunchPlan(t *testing.T) {
+	t.Run("no args: unified topology, all roles, migrate owner", func(t *testing.T) {
+		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "")
+		plan, err := newLaunchPlan(nil)
+		if err != nil {
+			t.Fatalf("newLaunchPlan(nil): %v", err)
+		}
+		if plan.Topology != persistence.TopologyUnified {
+			t.Errorf("Topology = %q, want %q", plan.Topology, persistence.TopologyUnified)
+		}
+		if !equalStrings(plan.Roles, []string{"rimsky-scheduler", "rimsky-supervisor", "rimsky-control-api"}) {
+			t.Errorf("Roles = %v, want all three", plan.Roles)
+		}
+		if !plan.MigrateOwner {
+			t.Error("MigrateOwner = false, want true for the all-in-one plan")
+		}
+	})
+
+	t.Run("single control-api arg: split topology, migrate owner", func(t *testing.T) {
+		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "")
+		plan, err := newLaunchPlan([]string{"rimsky-control-api"})
+		if err != nil {
+			t.Fatalf("newLaunchPlan: %v", err)
+		}
+		if plan.Topology != persistence.TopologySplit {
+			t.Errorf("Topology = %q, want %q", plan.Topology, persistence.TopologySplit)
+		}
+		if !plan.MigrateOwner {
+			t.Error("MigrateOwner = false, want true for the control-api role")
+		}
+	})
+
+	t.Run("single scheduler arg: split topology, not migrate owner", func(t *testing.T) {
+		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "")
+		plan, err := newLaunchPlan([]string{"rimsky-scheduler"})
+		if err != nil {
+			t.Fatalf("newLaunchPlan: %v", err)
+		}
+		if plan.Topology != persistence.TopologySplit {
+			t.Errorf("Topology = %q, want %q", plan.Topology, persistence.TopologySplit)
+		}
+		if plan.MigrateOwner {
+			t.Error("MigrateOwner = true, want false for the scheduler-only role")
+		}
+	})
+
+	t.Run("unknown role propagates the selectRoles error", func(t *testing.T) {
+		if _, err := newLaunchPlan([]string{"bogus"}); err == nil {
+			t.Fatal("newLaunchPlan([\"bogus\"]) = nil error, want error")
+		}
+	})
+
+	t.Run("invalid migrate override propagates the shouldMigrate error", func(t *testing.T) {
+		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "yes")
+		if _, err := newLaunchPlan([]string{"rimsky-control-api"}); err == nil {
+			t.Fatal("newLaunchPlan with an invalid override = nil error, want error")
+		}
+	})
+}
+
 func TestRunMigrateIfOwned_InvalidOverrideExitsNonZero(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fixtures unavailable on windows")
@@ -369,7 +451,12 @@ func TestRunMigrateIfOwned_InvalidOverrideExitsNonZero(t *testing.T) {
 	if os.Getenv("ENTRYPOINT_TEST_MIGRATE_INVALID") == "1" {
 		binaryDir = os.Getenv("ENTRYPOINT_TEST_FIXTURE_DIR")
 		sigCh := make(chan os.Signal, 1)
-		runMigrateIfOwned([]string{"rimsky-control-api"}, sigCh)
+		plan, err := newLaunchPlan([]string{"rimsky-control-api"})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid migrate override: %v\n", err)
+			os.Exit(2)
+		}
+		runMigrateIfOwned(plan, sigCh)
 		os.Exit(0)
 	}
 

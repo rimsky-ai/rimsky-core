@@ -243,7 +243,8 @@ func (f *queryableFakeLineageTable) QueryByParentNodeRunID(_ context.Context, pa
 }
 
 type emitFakePersist struct {
-	lt persistence.LineageTable
+	lt     persistence.LineageTable
+	frames persistence.FrameTable
 }
 
 func (f *emitFakePersist) Templates() persistence.TemplateTable       { return nil }
@@ -258,7 +259,7 @@ func (f *emitFakePersist) NodeAttributes() persistence.NodeAttributeTable       
 func (f *emitFakePersist) ClaimHolders() persistence.ClaimHolderTable                { return nil }
 func (f *emitFakePersist) Events() persistence.EventTable                            { return nil }
 func (f *emitFakePersist) Supervisors() persistence.SupervisorTable                  { return nil }
-func (f *emitFakePersist) Frames() persistence.FrameTable                            { return nil }
+func (f *emitFakePersist) Frames() persistence.FrameTable                            { return f.frames }
 func (f *emitFakePersist) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
 func (f *emitFakePersist) WaitSet() persistence.WaitSetTable                         { return nil }
 func (f *emitFakePersist) Messages() persistence.MessagesTable                       { return nil }
@@ -347,6 +348,141 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 				rec.ParentNodeRunID, parent.String())
 		}
 	})
+}
+
+type fakeFrameTableWithMessage struct {
+	row *persistence.FrameRowWithMessage
+}
+
+func (f *fakeFrameTableWithMessage) ListRunningFramesNoPendingNodes(context.Context, persistence.Tx) ([]persistence.FramePending, error) {
+	return nil, nil
+}
+func (f *fakeFrameTableWithMessage) HasFailedNode(context.Context, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
+	return false, nil
+}
+func (f *fakeFrameTableWithMessage) MarkFrameEnded(context.Context, shared.UUID, persistence.Tx) (bool, error) {
+	return false, nil
+}
+func (f *fakeFrameTableWithMessage) MarkOpenFramesEndedForInstance(context.Context, shared.UUID, persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (f *fakeFrameTableWithMessage) EndFrameIfSettled(context.Context, shared.UUID, persistence.Tx) (bool, error) {
+	return false, nil
+}
+func (f *fakeFrameTableWithMessage) GetRunningFrameID(context.Context, shared.UUID, persistence.Tx) (*shared.UUID, error) {
+	return nil, nil
+}
+func (f *fakeFrameTableWithMessage) MarkSourceNodeStale(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
+	return false, nil
+}
+func (f *fakeFrameTableWithMessage) ListOrphanFrameDispatches(context.Context, persistence.Tx) ([]persistence.OrphanFrameDispatch, error) {
+	return nil, nil
+}
+func (f *fakeFrameTableWithMessage) InsertRunningFrame(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) (shared.UUID, error) {
+	return shared.UUID{}, nil
+}
+func (f *fakeFrameTableWithMessage) ListForObservabilityWithMessage(context.Context, persistence.FrameListFilter, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.FrameRowWithMessage], error) {
+	return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, nil
+}
+func (f *fakeFrameTableWithMessage) GetForObservabilityWithMessage(_ context.Context, frameID shared.UUID, _ persistence.Tx) (*persistence.FrameRowWithMessage, error) {
+	if f.row == nil || f.row.FrameID != frameID {
+		return nil, nil
+	}
+	return f.row, nil
+}
+func (f *fakeFrameTableWithMessage) ListForObservability(context.Context, persistence.FrameListFilter, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.FrameRow], error) {
+	return persistence.PaginatedListResult[persistence.FrameRow]{}, nil
+}
+func (f *fakeFrameTableWithMessage) GetForObservability(context.Context, shared.UUID, persistence.Tx) (*persistence.FrameRow, error) {
+	return nil, nil
+}
+func (f *fakeFrameTableWithMessage) RefreshProgress(context.Context, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (f *fakeFrameTableWithMessage) CountHeldFrames(context.Context, persistence.Tx) (int, error) {
+	return 0, nil
+}
+func (f *fakeFrameTableWithMessage) PruneTraceForRetention(context.Context, int, time.Time) (int, error) {
+	return 0, nil
+}
+
+func TestEmitLeafRunLineage_PopulatesFrameTriggerFields(t *testing.T) {
+	ctx := context.Background()
+	inst := shared.UUID(uuid.New())
+	frame := shared.UUID(uuid.New())
+	triggeringMessageID := shared.UUID(uuid.New())
+
+	lt := &fakeLineageTable{}
+	frames := &fakeFrameTableWithMessage{
+		row: &persistence.FrameRowWithMessage{
+			FrameRow: persistence.FrameRow{
+				FrameID:             frame,
+				InstanceID:          inst,
+				TriggeringMessageID: triggeringMessageID,
+			},
+			MessageSenderKind: "operator",
+		},
+	}
+	args := RunArgs{
+		Persist: &emitFakePersist{lt: lt, frames: frames},
+		Clock:   shared.SystemClock{},
+	}
+	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		InstanceID:         inst,
+		FrameID:            frame,
+		NodeRunID:          shared.UUID(uuid.New()),
+		NodeID:             shared.UUID(uuid.New()),
+		State:              string(cascade.NodeStateFresh),
+		SettlingSignalType: "terminal/success",
+	})
+	if len(lt.rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(lt.rows))
+	}
+	var rec LeafRunRecord
+	if err := json.Unmarshal(lt.rows[0].Record, &rec); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if rec.FrameTriggerKind != "operator" {
+		t.Fatalf("FrameTriggerKind got %q want %q", rec.FrameTriggerKind, "operator")
+	}
+	if rec.TriggerMessageID != triggeringMessageID.String() {
+		t.Fatalf("TriggerMessageID got %q want %q", rec.TriggerMessageID, triggeringMessageID.String())
+	}
+}
+
+func TestEmitLeafRunLineage_FrameLookupUnavailableOmitsTriggerFields(t *testing.T) {
+	ctx := context.Background()
+	inst := shared.UUID(uuid.New())
+	frame := shared.UUID(uuid.New())
+
+	lt := &fakeLineageTable{}
+	args := RunArgs{
+		Persist: &emitFakePersist{lt: lt, frames: nil},
+		Clock:   shared.SystemClock{},
+	}
+	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		InstanceID:         inst,
+		FrameID:            frame,
+		NodeRunID:          shared.UUID(uuid.New()),
+		NodeID:             shared.UUID(uuid.New()),
+		State:              string(cascade.NodeStateFresh),
+		SettlingSignalType: "terminal/success",
+	})
+	if len(lt.rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(lt.rows))
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(lt.rows[0].Record, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := raw["frame_trigger_kind"]; ok {
+		t.Fatalf("expected frame_trigger_kind omitted when frame lookup is unavailable; payload was %s",
+			string(lt.rows[0].Record))
+	}
+	if _, ok := raw["trigger_message_id"]; ok {
+		t.Fatalf("expected trigger_message_id omitted when frame lookup is unavailable; payload was %s",
+			string(lt.rows[0].Record))
+	}
 }
 
 func TestHashHelpers_Stable(t *testing.T) {

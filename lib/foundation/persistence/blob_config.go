@@ -7,7 +7,6 @@ package persistence
 import (
 	"errors"
 	"fmt"
-	"os"
 	"time"
 )
 
@@ -52,7 +51,7 @@ const ProcessRoleEnv = "RIMSKY_PROCESS_ROLE"
 
 var ErrInvalidBlobConfig = errors.New("persistence: invalid blob config")
 
-func ValidateBlobConfig(cfg BlobConfig) error {
+func ValidateBlobConfig(cfg BlobConfig, topology Topology) error {
 	switch cfg.Backend {
 	case "", "inline", "pg-largeobject", "filesystem", "memory":
 	default:
@@ -65,8 +64,8 @@ func ValidateBlobConfig(cfg BlobConfig) error {
 		return errInvalidBlobConfigf("filesystem backend requires filesystem.root")
 	}
 	// @decision: process-role-unified-message-covers-rimsky-run
-	if cfg.Backend == "memory" && os.Getenv(ProcessRoleEnv) != "unified" {
-		return errInvalidBlobConfigf("memory backend is dev-only and requires the single-process mode: all roles in one process sharing one in-process blob map, marked by %s=unified (set only by rimsky-entrypoint's no-command all-in-one path, by rimsky compose run, and by rimsky run in self-host mode); a per-role process cannot share an in-process map with the other roles", ProcessRoleEnv)
+	if cfg.Backend == "memory" && !topology.Unified() {
+		return errInvalidBlobConfigf("memory backend is dev-only and requires the single-process mode: all roles in one process sharing one in-process blob map, marked by %s=%s (set only by rimsky-entrypoint's no-command all-in-one path, by rimsky compose run, and by rimsky run in self-host mode); a per-role process cannot share an in-process map with the other roles", ProcessRoleEnv, TopologyUnified)
 	}
 	return nil
 }

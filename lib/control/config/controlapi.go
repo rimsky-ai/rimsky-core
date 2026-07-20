@@ -39,6 +39,8 @@ type ControlAPIConfig struct {
 	NamedLocks             locks.NamedLocksConfig
 	Executors              ExecutorsConfig
 	Publishers             RemotePublishersConfig
+	Validators             RemoteValidatorsConfig
+	DataProcessors         RemoteDataProcessorsConfig
 	Metrics                runtime.MetricsHook
 	LateBindServiceProxies map[string]string
 	PeerAuth               string
@@ -173,7 +175,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
 	go disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger)
-	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
+	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers, cfg.Validators, cfg.DataProcessors)
 	if err != nil {
 		cancelDiscovery()
 		registry.Close()

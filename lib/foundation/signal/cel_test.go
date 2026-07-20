@@ -117,6 +117,40 @@ func TestCompileWhen_AttributesDeltaOnError(t *testing.T) {
 	}
 }
 
+func TestCompileWhenWithBodyFields_RejectsAttributesDeltaFieldNotInBodySchema(t *testing.T) {
+	_, err := CompileWhenWithBodyFields("terminal/error/agent/rate_limited",
+		"'transient' in payload.attributes_delta && payload.attributes_delta.unlisted_field == 'x'",
+		map[string]struct{}{"transient": {}})
+	if err == nil {
+		t.Fatalf("CompileWhenWithBodyFields: expected rejection of a payload.attributes_delta field absent from the declared body schema")
+	}
+	if !strings.Contains(err.Error(), "unlisted_field") {
+		t.Fatalf("CompileWhenWithBodyFields error should name the offending field; got %v", err)
+	}
+}
+
+func TestCompileWhenWithBodyFields_AcceptsDeclaredAttributesDeltaField(t *testing.T) {
+	p, err := CompileWhenWithBodyFields("terminal/error/agent/rate_limited",
+		"payload.attributes_delta.transient == true",
+		map[string]struct{}{"transient": {}})
+	if err != nil {
+		t.Fatalf("CompileWhenWithBodyFields: %v", err)
+	}
+	ok, err := p.Eval(Signal{
+		Type: "terminal/error/agent/rate_limited",
+		Payload: map[string]any{
+			"error_class":      "agent/rate_limited",
+			"attributes_delta": map[string]any{"transient": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	if !ok {
+		t.Fatalf("Eval: expected true for a declared attributes_delta field")
+	}
+}
+
 func TestCompileWhen_PrefixBindsDyn(t *testing.T) {
 	p, err := CompileWhen("terminal/*", "payload.error_class == 'x'")
 	if err != nil {

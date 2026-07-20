@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -21,6 +23,8 @@ type proxyState struct {
 	runScopeBindings map[runScopeBindingKey]string
 	instances        map[string]*instanceCacheEntry
 	claimRoutes      map[string]claimRoute
+
+	spawnGroup singleflight.Group
 }
 
 type claimRoute struct {
@@ -355,10 +359,4 @@ func (s *proxyState) lookupClaimRoute(claimID string) (claimRoute, bool) {
 	defer s.mu.RUnlock()
 	r, ok := s.claimRoutes[claimID]
 	return r, ok
-}
-
-func (s *proxyState) dropClaimRoute(claimID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.claimRoutes, claimID)
 }

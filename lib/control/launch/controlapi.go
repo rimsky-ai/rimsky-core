@@ -38,13 +38,13 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 		}
 	}
 
-	metricsPort, err := metricsPortFor("control-api")
+	metricsPort, err := metricsPortFor("control-api", rimskyCfg.Topology)
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
 		return nil, nil, err
 	}
 
-	if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver); err != nil {
+	if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology); err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
 		return nil, nil, err
 	}
@@ -61,6 +61,8 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 		NamedLocks:     rimskyCfg.NamedLocks,
 		Executors:      rimskyCfg.Executors,
 		Publishers:     rimskyCfg.Publishers,
+		Validators:     rimskyCfg.Validators,
+		DataProcessors: rimskyCfg.DataProcessors,
 		Metrics:        observability.MetricsHookOf(mreg),
 
 		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,

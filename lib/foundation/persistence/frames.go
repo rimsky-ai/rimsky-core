@@ -53,6 +53,9 @@ type FrameTable interface {
 
 	MarkFrameEnded(ctx context.Context, frameID shared.UUID, tx Tx) (transitioned bool, err error)
 
+	// @concept: frame
+	MarkOpenFramesEndedForInstance(ctx context.Context, instanceID shared.UUID, tx Tx) (int, error)
+
 	EndFrameIfSettled(ctx context.Context, frameID shared.UUID, tx Tx) (transitioned bool, err error)
 
 	GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx Tx) (*shared.UUID, error)

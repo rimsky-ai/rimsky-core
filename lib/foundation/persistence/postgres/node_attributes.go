@@ -353,7 +353,7 @@ func (s *nodeAttributesImpl) GetPriorRunData(
 		return nil, err
 	}
 	if prior == nil {
-		return map[string]any{}, nil
+		return nil, nil
 	}
 	if prior.Data == nil {
 		return map[string]any{}, nil

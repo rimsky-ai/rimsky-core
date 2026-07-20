@@ -66,7 +66,14 @@ func (f *fakeQueue) ListOrphanedClaims(_ context.Context) ([]persistence.Dispatc
 	return nil, nil
 }
 func (f *fakeQueue) ReleaseClaim(_ context.Context, _ shared.UUID, _ string) error { return nil }
-func (f *fakeQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error      { return nil }
+func (f *fakeQueue) ReleaseClaimWithDisposition(_ context.Context, _ shared.UUID, _ string, _ string) error {
+	return nil
+}
+func (f *fakeQueue) StampPriorDispatchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID, _ string) error {
+	return nil
+}
+
+func (f *fakeQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error { return nil }
 func (f *fakeQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
@@ -99,7 +106,7 @@ func (f *fakeQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persis
 func (f *fakeQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
+func (f *fakeQueue) GetParkedByNode(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
 func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (bool, error) {

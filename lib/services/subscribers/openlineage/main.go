@@ -11,12 +11,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
 func main() {
-	ops.Setup(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	log := slog.Default()
 
 	cfg, err := LoadConfig()

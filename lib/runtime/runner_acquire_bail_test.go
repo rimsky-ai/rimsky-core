@@ -173,6 +173,9 @@ func TestTryAcquire_TransientConflictBailAbandonsAlreadyOpenedLocks(t *testing.T
 	if ok {
 		t.Fatalf("acquisition must fail on the transient conflict, got ok=true (acq=%+v)", acq)
 	}
+	if _, err := FlushProducerVerbOutbox(ctx, args); err != nil {
+		t.Fatalf("flush producer verb outbox: %v", err)
+	}
 
 	countVerb := func(f *storetest.Fake, verb string) int {
 		n := 0

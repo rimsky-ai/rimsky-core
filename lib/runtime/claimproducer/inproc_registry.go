@@ -116,6 +116,18 @@ func (v validationView) Get(name string) (clientiface.ValidationClient, bool) {
 	return reg.Validation, true
 }
 
+func (v validationView) All() []clientiface.ValidationClient {
+	v.r.mu.RLock()
+	defer v.r.mu.RUnlock()
+	out := make([]clientiface.ValidationClient, 0, len(v.r.entries))
+	for _, reg := range v.r.entries {
+		if reg.Validation != nil {
+			out = append(out, reg.Validation)
+		}
+	}
+	return out
+}
+
 type dataProcessingView struct{ r *InProcessRegistry }
 
 func (v dataProcessingView) Get(name string) (clientiface.DataProcessingClient, bool) {

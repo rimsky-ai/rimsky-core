@@ -107,6 +107,7 @@ type SensorService struct {
 	mu             sync.Mutex
 	watches        map[string]*Watch
 	pathToWatch    map[string]*Watch
+	watermarkCache map[string]string
 	router         *chi.Mux
 	rimskyEndpoint string
 	httpClient     *http.Client
@@ -117,8 +118,23 @@ type SensorService struct {
 
 func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.state = state
+	s.mu.Unlock()
+	if state == nil {
+		return
+	}
+	rows, err := state.ListWatermarks(context.Background())
+	if err != nil {
+		s.logger.Warn("sensor-webhook.attach_state_db.list_failed", "error", err.Error())
+		return
+	}
+	s.mu.Lock()
+	for _, r := range rows {
+		s.watermarkCache[r.SubscriptionID] = r.LastIdempotency
+	}
+	restored := len(rows)
+	s.mu.Unlock()
+	s.logger.Info("sensor-webhook.watermarks_restored", "count", restored)
 }
 
 type logger interface {
@@ -137,6 +153,7 @@ func NewSensorService(rimskyEndpoint string, router *chi.Mux, log logger) *Senso
 	s := &SensorService{
 		watches:        make(map[string]*Watch),
 		pathToWatch:    make(map[string]*Watch),
+		watermarkCache: make(map[string]string),
 		router:         router,
 		rimskyEndpoint: rimskyEndpoint,
 		httpClient:     &http.Client{Timeout: 10 * time.Second},
@@ -223,8 +240,12 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	}
 	s.mu.Lock()
 	state := s.state
+	cachedWatermark, hasCachedWatermark := s.watermarkCache[w.SubscriptionID]
 	s.mu.Unlock()
-	if state != nil {
+	switch {
+	case hasCachedWatermark:
+		w.LastIdempotency = cachedWatermark
+	case state != nil:
 		if key, err := state.GetLastIdempotency(ctx, w.SubscriptionID); err != nil {
 			s.logger.Warn("sensor-webhook.subscribe.state_get_failed",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
@@ -243,6 +264,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	}
 	s.watches[w.SubscriptionID] = w
 	s.pathToWatch[w.PathPrefix] = w
+	delete(s.watermarkCache, w.SubscriptionID)
 	s.mu.Unlock()
 	s.logger.Info("sensor-webhook.subscribe",
 		"publisher_subscription_id", w.SubscriptionID,
