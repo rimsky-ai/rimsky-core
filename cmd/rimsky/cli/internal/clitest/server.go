@@ -796,7 +796,8 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		cursorOccurred, cursorID, hasCursor = oc, id, true
 	}
 
-	events := s.State.EventsPage(instanceID, since, until, cursorOccurred, cursorID, hasCursor, limit)
+	kind := q.Get("kind")
+	events := s.State.EventsPage(instanceID, since, until, kind, cursorOccurred, cursorID, hasCursor, limit)
 
 	nextCursor := ""
 	if len(events) == limit && len(events) > 0 {

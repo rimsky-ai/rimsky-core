@@ -71,6 +71,51 @@ func TestRunWatch_Chronological(t *testing.T) {
 	}
 }
 
+func TestRunWatch_KindFlagFiltersServerSide(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+
+	t1 := "2026-06-07T00:00:01Z"
+	t2 := "2026-06-07T00:00:02Z"
+	t3 := "2026-06-07T00:00:03Z"
+
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_started", OccurredAt: t1, Payload: map[string]any{}})
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_completed", OccurredAt: t2, Payload: map[string]any{}})
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_started", OccurredAt: t3, Payload: map[string]any{}})
+
+	terminatedAt, err := time.Parse(time.RFC3339, "2026-06-07T00:00:04Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.State.SetInstanceTerminated(inst.ID, &terminatedAt)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", "--kind", "work_started", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit promptly on a terminal instance")
+		}
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+
+	startedCount := strings.Count(out, "\twork_started\t")
+	completedCount := strings.Count(out, "\twork_completed\t")
+	if startedCount != 2 {
+		t.Fatalf("watch --kind work_started rendered %d work_started lines, want 2 (server-side kind filter not threaded through); output:\n%s", startedCount, out)
+	}
+	if completedCount != 0 {
+		t.Fatalf("watch --kind work_started rendered %d work_completed lines, want 0 (the --kind filter must exclude other kinds); output:\n%s", completedCount, out)
+	}
+}
+
 func TestRunWatch_DrainsFullBacklogAcrossMultiplePagesInChronologicalOrder(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")

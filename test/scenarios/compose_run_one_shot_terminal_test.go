@@ -226,6 +226,71 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 }
 
+func TestComposeRunOneShotTerminal_QueryableWithStockSqlite3CLI(t *testing.T) {
+	sqlite3Path, err := exec.LookPath("sqlite3")
+	if err != nil {
+		t.Skip("sqlite3 not on PATH; cannot verify the durable artifact is queryable with the stock CLI")
+	}
+
+	binDir := t.TempDir()
+	rimskyBin := filepath.Join(binDir, "rimsky")
+	stubBin := filepath.Join(binDir, "stub-executor")
+	buildRepoBinary(t, "./cmd/rimsky", rimskyBin)
+	buildComposeStubExecutorBinary(t, stubBin)
+
+	work := t.TempDir()
+	copyComposeSampleManifest(t, work)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, rimskyBin,
+		"compose", "run",
+		"--service", fmt.Sprintf("stub=%s", stubBin),
+		"./rimsky-compose.yml",
+	)
+	cmd.Dir = work
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("rimsky compose run fork-level failure: %v\nstderr:\n%s", err, stderr.String())
+		}
+	}
+
+	rimskyDir := filepath.Join(work, ".rimsky")
+	latestTarget, lerr := os.Readlink(filepath.Join(rimskyDir, "latest"))
+	if lerr != nil {
+		t.Fatalf(".rimsky/latest symlink missing or unreadable: %v", lerr)
+	}
+	runDir := latestTarget
+	if !filepath.IsAbs(runDir) {
+		runDir = filepath.Clean(filepath.Join(rimskyDir, latestTarget))
+	}
+	dbPath := filepath.Join(runDir, "state.db")
+
+	out, sErr := exec.CommandContext(ctx, sqlite3Path, dbPath,
+		"SELECT COUNT(*) FROM rimsky_instances;").CombinedOutput()
+	if sErr != nil {
+		t.Fatalf("stock sqlite3 CLI could not query state.db (not a valid stock-sqlite3-readable file): %v\noutput:\n%s", sErr, out)
+	}
+	if strings.TrimSpace(string(out)) != "2" {
+		t.Fatalf("stock sqlite3 CLI reported %q instances, want 2; output:\n%s", strings.TrimSpace(string(out)), out)
+	}
+
+	out, sErr = exec.CommandContext(ctx, sqlite3Path, dbPath,
+		"SELECT COUNT(*) FROM rimsky_events;").CombinedOutput()
+	if sErr != nil {
+		t.Fatalf("stock sqlite3 CLI could not query rimsky_events in state.db: %v\noutput:\n%s", sErr, out)
+	}
+	if n := strings.TrimSpace(string(out)); n == "0" || n == "" {
+		t.Fatalf("stock sqlite3 CLI reported %q rows in rimsky_events, want > 0 (event log must be queryable from the artifact); output:\n%s", n, out)
+	}
+}
+
 func buildComposeStubExecutorBinary(t *testing.T, binPath string) {
 	t.Helper()
 	cmd := exec.Command("go", "build", "-o", binPath, composeRunStubExecutorPkg)

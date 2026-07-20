@@ -458,12 +458,15 @@ func (s *InMemoryState) BreakpointHitsFor(instanceID string, since int64, limit 
 	return out
 }
 
-func (s *InMemoryState) EventsPage(instanceID string, since, until *time.Time, cursorOccurred time.Time, cursorID int64, hasCursor bool, limit int) []cli.Event {
+func (s *InMemoryState) EventsPage(instanceID string, since, until *time.Time, kind string, cursorOccurred time.Time, cursorID int64, hasCursor bool, limit int) []cli.Event {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	filtered := []cli.Event{}
 	for _, e := range s.events {
 		if instanceID != "" && e.InstanceID != instanceID {
+			continue
+		}
+		if kind != "" && e.Kind != kind {
 			continue
 		}
 		occurred := eventOccurredAt(e)

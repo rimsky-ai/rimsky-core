@@ -80,7 +80,7 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 - node:invalidate covering parked wake (2026-05-15, artifact) → operator invalidate retired entirely (2026-06-15).
 - 2026-06-08 corpus promises of operator force-invalidate and in-cascade invalidate → superseded by the messaging-only model and breakpoint-gated debug channel (2026-06-15..16, transcript).
 - node/reset as reset-plus-wake → narrowed to pure retry-budget clear (2026-06-16).
-- GET /nodes/{id} settling_signal_type field (2026-06-06, artifact) → removed with the derived-state sweep; signal data is per-run (2026-06-20..21, transcript).
+- GET /nodes/{id} settling_signal_type field (2026-06-06, artifact) → briefly removed with the derived-state sweep, then restored the next day (2026-06-22, 2250e8aa) as a per-run projection, not a synthesized node state; it remains on the response today, distinct from the retired generic `state` field (2026-06-06..2026-06-22, corpus-bootstrap/derived-state-sweep, artifact).
 - Message emission as a node dispatch mode via emits_message: declaration (2026-06-14, transcript) → reimplemented as the rimsky.emit_message utility node with the sugar canonicalized away (2026-06-19); the emits_message mechanism itself later appears on the excision list (2026-07-07, recorded under frame/signal concepts).
 - The proposed default empty-type root message node injection sketch (2026-06-15, 91ec93d1, transcript) — captured as a deferred sketch, not a landed promise.
 
