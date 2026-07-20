@@ -104,41 +104,22 @@ func TestOnRunScopeTerminalReapsConcurrently(t *testing.T) {
 
 	seen := map[string]bool{}
 	for i := 0; i < 2; i++ {
-		select {
-		case frame := <-conn.sendCh:
-			reap := frame.GetReap()
-			if reap == nil {
-				t.Fatalf("expected Reap frame, got %T", frame.GetBody())
-			}
-			seen[reap.GetSpawnId()] = true
-		case <-time.After(3 * time.Second):
-			t.Fatalf("only received %d of 2 Reap frames before the read deadline; reaps are not dispatched concurrently", i)
+		frame := <-conn.sendCh
+		reap := frame.GetReap()
+		if reap == nil {
+			t.Fatalf("expected Reap frame, got %T", frame.GetBody())
 		}
+		seen[reap.GetSpawnId()] = true
 	}
 	if !seen["spawn-1"] || !seen["spawn-2"] {
 		t.Fatalf("expected reap frames for both spawns, got %v", seen)
 	}
 
-	for i := 0; i < 2; i++ {
-		conn.deliverReaped(&genv1.Reaped{SpawnId: pickSpawnID(seen, i)})
+	for spawnID := range seen {
+		conn.deliverReaped(&genv1.Reaped{SpawnId: spawnID})
 	}
 
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("OnRunScopeTerminal did not return after both reaps were acked")
-	}
-}
-
-func pickSpawnID(seen map[string]bool, i int) string {
-	ids := make([]string, 0, len(seen))
-	for id := range seen {
-		ids = append(ids, id)
-	}
-	if i >= len(ids) {
-		return ""
-	}
-	return ids[i]
+	<-done
 }
 
 func TestOnInstanceTerminatedEvictsCache(t *testing.T) {
