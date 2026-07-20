@@ -59,8 +59,10 @@ func TestBundledSensorsShipDockerfilesAndMakefileImageEntries(t *testing.T) {
 		if !strings.Contains(serviceImagesBlock, sensor.dockerfileRel) {
 			t.Errorf("%s: `service-images` target has no docker build line referencing %s", sensor.name, sensor.dockerfileRel)
 		}
-		if !strings.Contains(serviceImagesBlock, sensor.image+":$(VERSION)") {
-			t.Errorf("%s: `service-images` target has no %s:$(VERSION) tag", sensor.name, sensor.image)
+		if !strings.Contains(serviceImagesBlock, sensor.image+":$(VERSION)") &&
+			!strings.Contains(serviceImagesBlock, ","+sensor.image+")") {
+			t.Errorf("%s: `service-images` target neither tags %s:$(VERSION) directly nor builds it via $(call build-image,...,%s)",
+				sensor.name, sensor.image, sensor.image)
 		}
 		if !strings.Contains(pushImagesBlock, sensor.dockerfileRel) {
 			t.Errorf("%s: `push-images` target has no build line referencing %s", sensor.name, sensor.dockerfileRel)
