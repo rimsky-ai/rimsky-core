@@ -28,6 +28,9 @@ const (
 	DenialExpiredToken     DenialReason = "expired_token"
 	DenialRevokedToken     DenialReason = "revoked_token"
 	DenialPermissionDenied DenialReason = "permission_denied"
+	DenialInvalidDryRun    DenialReason = "invalid_dry_run"
+	DenialBodyUnreadable   DenialReason = "body_unreadable"
+	DenialBodyTooLarge     DenialReason = "body_too_large"
 )
 
 type AccessAttemptedPayload struct {

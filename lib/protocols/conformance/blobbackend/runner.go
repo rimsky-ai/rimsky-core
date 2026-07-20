@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/check"
@@ -35,6 +36,7 @@ func Run(ctx context.Context, be Backend) []CheckResult {
 		{"round-trip 1KB", checkRoundtripSmall},
 		{"round-trip 10MB", checkRoundtripLarge},
 		{"range read", checkReadRange},
+		{"range read out of bounds returns io.ErrUnexpectedEOF", checkReadRangeOutOfBounds},
 		{"delete then read returns ErrBlobNotFound", checkDeleteThenRead},
 		{"idempotent delete", checkIdempotentDelete},
 		{"concurrent writes", checkConcurrentWrites},
@@ -91,6 +93,19 @@ func checkReadRange(ctx context.Context, be Backend) error {
 	}
 	if string(got) != "56789" {
 		return fmt.Errorf("range mismatch: got %q", got)
+	}
+	return be.Delete(ctx, h)
+}
+
+func checkReadRangeOutOfBounds(ctx context.Context, be Backend) error {
+	payload := []byte("0123456789abcdef")
+	h, err := be.Write(ctx, "range-oob", payload)
+	if err != nil {
+		return err
+	}
+	if _, err := be.ReadRange(ctx, h, 0, int64(len(payload))+100); !errors.Is(err, io.ErrUnexpectedEOF) {
+		_ = be.Delete(ctx, h)
+		return fmt.Errorf("range read past end of blob: want io.ErrUnexpectedEOF, got %v", err)
 	}
 	return be.Delete(ctx, h)
 }

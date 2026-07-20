@@ -12,8 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/rimsky-ai/rimsky-core/lib/control/config"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -26,33 +25,24 @@ func main() {
 		slogLogger = slogLogger.With("binary", name)
 	}
 	slog.SetDefault(slogLogger)
-	logger := shared.NewSlogLogger(slogLogger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := run(ctx, logger); err != nil {
+	if err := run(ctx, slogLogger); err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-migrate: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, logger shared.Logger) error {
-	cfgPath := os.Getenv("RIMSKY_CONFIG")
-	if cfgPath == "" {
-		cfgPath = "/etc/rimsky/rimsky.yml"
-	}
-	cfg, err := config.LoadRimskyConfigYAML(cfgPath)
+func run(ctx context.Context, slogLogger *slog.Logger) error {
+	driver, _, err := launch.OpenDriverFromEnv(ctx, slogLogger)
 	if err != nil {
-		return fmt.Errorf("load rimsky config: %w", err)
-	}
-
-	driver, err := persistence.Open(ctx, cfg.Persistence)
-	if err != nil {
-		return fmt.Errorf("persistence.Open: %w", err)
+		return err
 	}
 	defer func() { _ = driver.Close() }()
 
+	logger := shared.NewSlogLogger(slogLogger)
 	if err := driver.Migrate(ctx, logger); err != nil {
 		return fmt.Errorf("driver.Migrate: %w", err)
 	}

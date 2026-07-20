@@ -173,14 +173,16 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 		dryRunRaw := r.URL.Query().Get("dry_run")
 		if dryRunRaw != "" && dryRunRaw != "true" && dryRunRaw != "false" {
 			s.Logger.Warn("auth.gate.invalid_dry_run", "action", action, "dry_run", dryRunRaw)
+			s.emitDenied(r, start, ident, action, skin, nil, false, http.StatusBadRequest, auth.DenialInvalidDryRun, nil)
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error":   "invalid dry_run value",
 				"dry_run": dryRunRaw,
 			})
 			return
 		}
-		handlerBody, auditBody, rejected := captureBody(r, w, s.Logger)
-		if rejected {
+		handlerBody, auditBody, rejectStatus := captureBody(r, w, s.Logger)
+		if rejectStatus != 0 {
+			s.emitDenied(r, start, ident, action, skin, nil, false, rejectStatus, bodyRejectDenialReason(rejectStatus), nil)
 			return
 		}
 		// @concept: permission
@@ -260,9 +262,9 @@ const auditBodyCapBytes = 4 * 1024 * 1024
 
 const auditBodyHandlerMaxBytes = 64 * 1024 * 1024
 
-func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared.Logger) (handlerBody, auditBytes []byte, handlerRejected bool) {
+func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared.Logger) (handlerBody, auditBytes []byte, rejectStatus int) {
 	if r.Body == nil || r.ContentLength == 0 {
-		return nil, nil, false
+		return nil, nil, 0
 	}
 	limited := io.LimitReader(r.Body, auditBodyHandlerMaxBytes+1)
 	body, err := io.ReadAll(limited)
@@ -273,7 +275,7 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": "failed to read request body",
 		})
-		return nil, nil, true
+		return nil, nil, http.StatusBadRequest
 	}
 	if len(body) > auditBodyHandlerMaxBytes {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -286,7 +288,7 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 			"max_bytes":         auditBodyHandlerMaxBytes,
 			"observed_at_least": len(body),
 		})
-		return nil, nil, true
+		return nil, nil, http.StatusRequestEntityTooLarge
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if len(body) > auditBodyCapBytes {
@@ -297,11 +299,18 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 		}
 		marker, err := json.Marshal(auditTruncatedMarker{Truncated: true, ObservedBytes: len(body)})
 		if err != nil {
-			return body, nil, false
+			return body, nil, 0
 		}
-		return body, marker, false
+		return body, marker, 0
 	}
-	return body, body, false
+	return body, body, 0
+}
+
+func bodyRejectDenialReason(status int) auth.DenialReason {
+	if status == http.StatusRequestEntityTooLarge {
+		return auth.DenialBodyTooLarge
+	}
+	return auth.DenialBodyUnreadable
 }
 
 type auditTruncatedMarker struct {

@@ -12,8 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 func TestRun_HonorsCanceledContext(t *testing.T) {
@@ -29,12 +27,23 @@ func TestRun_HonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	logger := shared.NewSlogLogger(slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	err := run(ctx, logger)
 	if err == nil {
 		t.Fatal("run() with an already-canceled context should fail, not silently migrate")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("run() error = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+func TestRun_MissingConfigSurfacesLoadError(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "does-not-exist.yml")
+	t.Setenv("RIMSKY_CONFIG", cfgPath)
+
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	err := run(context.Background(), logger)
+	if err == nil {
+		t.Fatal("run() with a missing config path should fail, not silently migrate")
 	}
 }

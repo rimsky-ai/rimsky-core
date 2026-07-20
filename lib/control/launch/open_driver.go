@@ -16,11 +16,15 @@ import (
 
 const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
 
-func OpenDriverFromEnv(ctx context.Context, logger *slog.Logger) (persistence.Database, *config.RimskyConfig, error) {
-	configPath := os.Getenv("RIMSKY_CONFIG")
-	if configPath == "" {
-		configPath = defaultRimskyConfigPath
+func resolveConfigPath(envValue string) string {
+	if envValue == "" {
+		return defaultRimskyConfigPath
 	}
+	return envValue
+}
+
+func OpenDriverFromEnv(ctx context.Context, logger *slog.Logger) (persistence.Database, *config.RimskyConfig, error) {
+	configPath := resolveConfigPath(os.Getenv("RIMSKY_CONFIG"))
 	cfg, err := config.LoadRimskyConfigYAML(configPath)
 	if err != nil {
 		logger.Error("load rimsky config", "error", err.Error(), "path", configPath)

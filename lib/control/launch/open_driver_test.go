@@ -62,6 +62,18 @@ func TestOpenDriverFromEnv_OpensSqliteDriverAtConfiguredPath(t *testing.T) {
 	}
 }
 
+func TestResolveConfigPath_DefaultsWhenEnvEmpty(t *testing.T) {
+	if got, want := resolveConfigPath(""), defaultRimskyConfigPath; got != want {
+		t.Fatalf("resolveConfigPath(\"\") = %q, want %q", got, want)
+	}
+}
+
+func TestResolveConfigPath_UsesEnvValueWhenSet(t *testing.T) {
+	if got, want := resolveConfigPath("/custom/rimsky.yml"), "/custom/rimsky.yml"; got != want {
+		t.Fatalf("resolveConfigPath(%q) = %q, want %q", "/custom/rimsky.yml", got, want)
+	}
+}
+
 func TestOpenDriverFromEnv_MissingConfigSurfacesError(t *testing.T) {
 	t.Setenv("RIMSKY_CONFIG", filepath.Join(t.TempDir(), "does-not-exist.yml"))
 	driver, parsed, err := OpenDriverFromEnv(context.Background(), testLogger(t))

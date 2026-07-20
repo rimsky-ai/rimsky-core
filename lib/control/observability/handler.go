@@ -687,9 +687,10 @@ func handleGetClaimHandle(deps Deps) http.HandlerFunc {
 				return nil
 			}
 			h, err := deps.Tables.ClaimHolders().ListByClaimHandleID(ctx, id, tx)
-			if err == nil {
-				holders = h
+			if err != nil {
+				return err
 			}
+			holders = h
 			return nil
 		}); err != nil {
 			internalErr(w, err)

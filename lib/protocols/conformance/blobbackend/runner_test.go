@@ -7,6 +7,7 @@ package blobbackend
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 )
@@ -51,7 +52,7 @@ func (m *memoryBackend) ReadRange(ctx context.Context, h Handle, offset, length 
 		return nil, err
 	}
 	if offset < 0 || offset+length > int64(len(data)) {
-		return nil, fmt.Errorf("blobbackend/test: range [%d:%d) out of bounds for %d-byte blob", offset, offset+length, len(data))
+		return nil, io.ErrUnexpectedEOF
 	}
 	return data[offset : offset+length], nil
 }
@@ -96,6 +97,30 @@ func TestRun_CorruptingReadFailsRoundtripChecks(t *testing.T) {
 	}
 	if !found {
 		t.Fatal(`Run did not report a "round-trip 1KB" row`)
+	}
+}
+
+type wrongErrorOnOutOfBoundsBackend struct {
+	*memoryBackend
+}
+
+func (w *wrongErrorOnOutOfBoundsBackend) ReadRange(ctx context.Context, h Handle, offset, length int64) ([]byte, error) {
+	data, err := w.Read(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	if offset < 0 || offset+length > int64(len(data)) {
+		return nil, fmt.Errorf("out of range")
+	}
+	return data[offset : offset+length], nil
+}
+
+func TestRun_WrongOutOfBoundsErrorFailsReadRangeOutOfBoundsCheck(t *testing.T) {
+	be := &wrongErrorOnOutOfBoundsBackend{memoryBackend: newMemoryBackend()}
+	results := Run(context.Background(), be)
+	r := findBlobRow(t, results, "range read out of bounds returns io.ErrUnexpectedEOF")
+	if r.Err == nil {
+		t.Fatal("range-read-out-of-bounds check must fail when ReadRange does not return io.ErrUnexpectedEOF past the blob end")
 	}
 }
 

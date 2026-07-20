@@ -328,6 +328,14 @@ func TestGate_InvalidDryRunValueRejected(t *testing.T) {
 	if handlerRan {
 		t.Fatalf("handler ran despite an invalid dry_run value; the request must be rejected before dispatch")
 	}
+
+	payload := lastDeniedRow(t, h.tables)
+	if reason, _ := payload["denial_reason"].(string); reason != string(auth.DenialInvalidDryRun) {
+		t.Fatalf("denial_reason: got %q want %q", reason, auth.DenialInvalidDryRun)
+	}
+	if status, _ := payload["response_status"].(float64); int(status) != http.StatusBadRequest {
+		t.Fatalf("response_status: got %v want %d", payload["response_status"], http.StatusBadRequest)
+	}
 }
 
 func TestGate_FalseDryRunExecutes(t *testing.T) {
@@ -371,9 +379,9 @@ func TestCaptureBody_LogsAndRejectsOnReadError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	logger := shared.NewCapturingLogger()
 
-	handlerBody, auditBytes, rejected := captureBody(req, rec, logger)
-	if !rejected {
-		t.Fatalf("rejected: got false want true (body read failed)")
+	handlerBody, auditBytes, rejectStatus := captureBody(req, rec, logger)
+	if rejectStatus != http.StatusBadRequest {
+		t.Fatalf("rejectStatus: got %d want %d (body read failed)", rejectStatus, http.StatusBadRequest)
 	}
 	if handlerBody != nil || auditBytes != nil {
 		t.Fatalf("body: got non-nil want nil on reject")
@@ -430,9 +438,9 @@ func TestCaptureBody_TruncatesAuditMarkerButKeepsFullHandlerBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	handlerBody, auditBytes, rejected := captureBody(req, rec, shared.SilentLogger{})
-	if rejected {
-		t.Fatalf("rejected: got true want false (body is under the handler cap)")
+	handlerBody, auditBytes, rejectStatus := captureBody(req, rec, shared.SilentLogger{})
+	if rejectStatus != 0 {
+		t.Fatalf("rejectStatus: got %d want 0 (body is under the handler cap)", rejectStatus)
 	}
 	if !bytes.Equal(handlerBody, body) {
 		t.Fatalf("handlerBody: got %d bytes want %d bytes untouched", len(handlerBody), len(body))
@@ -460,9 +468,9 @@ func TestCaptureBody_RejectsBodyOverHandlerMax(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	handlerBody, auditBytes, rejected := captureBody(req, rec, shared.SilentLogger{})
-	if !rejected {
-		t.Fatalf("rejected: got false want true (body exceeds handler cap)")
+	handlerBody, auditBytes, rejectStatus := captureBody(req, rec, shared.SilentLogger{})
+	if rejectStatus != http.StatusRequestEntityTooLarge {
+		t.Fatalf("rejectStatus: got %d want %d (body exceeds handler cap)", rejectStatus, http.StatusRequestEntityTooLarge)
 	}
 	if handlerBody != nil {
 		t.Fatalf("handlerBody: got %d bytes want nil on reject", len(handlerBody))
@@ -479,6 +487,15 @@ func TestCaptureBody_RejectsBodyOverHandlerMax(t *testing.T) {
 	}
 	if maxBytes, ok := out["max_bytes"].(float64); !ok || int(maxBytes) != auditBodyHandlerMaxBytes {
 		t.Fatalf("response max_bytes: got %v want %d", out["max_bytes"], auditBodyHandlerMaxBytes)
+	}
+}
+
+func TestBodyRejectDenialReason(t *testing.T) {
+	if got, want := bodyRejectDenialReason(http.StatusRequestEntityTooLarge), auth.DenialBodyTooLarge; got != want {
+		t.Fatalf("bodyRejectDenialReason(413): got %q want %q", got, want)
+	}
+	if got, want := bodyRejectDenialReason(http.StatusBadRequest), auth.DenialBodyUnreadable; got != want {
+		t.Fatalf("bodyRejectDenialReason(400): got %q want %q", got, want)
 	}
 }
 
@@ -514,6 +531,14 @@ func TestGate_OversizedBodyRejectedBeforeHandlerRuns(t *testing.T) {
 	}
 	if handlerRan {
 		t.Fatalf("handler ran despite an oversized body; captureBody's early-return contract is broken")
+	}
+
+	payload := lastDeniedRow(t, h.tables)
+	if reason, _ := payload["denial_reason"].(string); reason != string(auth.DenialBodyTooLarge) {
+		t.Fatalf("denial_reason: got %q want %q", reason, auth.DenialBodyTooLarge)
+	}
+	if status, _ := payload["response_status"].(float64); int(status) != http.StatusRequestEntityTooLarge {
+		t.Fatalf("response_status: got %v want %d", payload["response_status"], http.StatusRequestEntityTooLarge)
 	}
 }
 
