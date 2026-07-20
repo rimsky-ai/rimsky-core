@@ -217,10 +217,10 @@ func TestResources_Read_PollingCursorFlow(t *testing.T) {
 		}
 		cursor = body.NextSince
 		if !body.Truncated {
-			require.Equal(t, page, 2, "expected the final page to be page index 2 (third iteration)")
+			require.Equal(t, 2, page, "expected the final page to be page index 2 (third iteration)")
 			break
 		}
-		require.Equal(t, page, page)
+		require.Less(t, page, 2, "a truncated (non-final) page must come before the final page index")
 		require.Equal(t, 2, len(body.Hits), "truncated pages should be full")
 	}
 	require.Equal(t, seeded, collected, "polling loop should drain every seeded hit in seq order")

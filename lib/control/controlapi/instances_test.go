@@ -336,11 +336,7 @@ func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("inst-subs-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
-	tplID, _ := out["template_id"].(string)
-	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
-	require.Equal(t, http.StatusOK, deployStatus)
+	tplID := registerAndDeployBody(t, h, tplBody)
 
 	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template": tplID,

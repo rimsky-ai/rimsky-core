@@ -29,7 +29,6 @@ type fanOutFixture struct {
 	driver    persistence.Database
 	alpha     *storetest.Fake
 	beta      *storetest.Fake
-	registry  *locks.Registry
 	lifecycle *locks.LifecycleRegistry
 }
 
@@ -55,7 +54,7 @@ func newFanOutFixture(t *testing.T) *fanOutFixture {
 		LifecycleSubs:  lcReg,
 	}
 	return &fanOutFixture{
-		deps: deps, driver: d, alpha: alpha, beta: beta, registry: reg, lifecycle: lcReg,
+		deps: deps, driver: d, alpha: alpha, beta: beta, lifecycle: lcReg,
 	}
 }
 
@@ -335,7 +334,7 @@ func TestFanOutRunScopeEvent_SkipsAlreadyTerminalPeer(t *testing.T) {
 		}, tx)
 	}))
 
-	peers, perPeerErr, err := FanOutRunScopeEvent(ctx, f.deps, twoStoreSpec(), scopeID, instanceID, "instance_terminated", nil)
+	peers, perPeerErr, err := fanOutRunScopeEventForPeers(ctx, f.deps, LifecyclePeersForSpec(f.deps, twoStoreSpec()), scopeID, instanceID, "instance_terminated", nil)
 	require.NoError(t, err)
 	require.Empty(t, perPeerErr)
 	require.Equal(t, []string{"alpha", "beta"}, peers)
@@ -361,7 +360,7 @@ func TestFanOutRunScopeEvent_ContinuesPastPeerFailureNilErrorWithPerPeerErr(t *t
 		return nil
 	}
 
-	_, perPeerErr, err := FanOutRunScopeEvent(ctx, f.deps, twoStoreSpec(), scopeID, instanceID, "instance_terminated", nil)
+	_, perPeerErr, err := fanOutRunScopeEventForPeers(ctx, f.deps, LifecyclePeersForSpec(f.deps, twoStoreSpec()), scopeID, instanceID, "instance_terminated", nil)
 	require.NoError(t, err,
 		"a per-peer dispatch failure must not fail the overall call; only perPeerErr carries it (continue-on-error contract)")
 	require.Len(t, perPeerErr, 1)
@@ -403,7 +402,7 @@ func TestFanOutRunScopeEvent_ConcurrentCallsDeliverExactlyOnce(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			defer wg.Done()
-			_, _, _ = FanOutRunScopeEvent(ctx, f.deps, twoStoreSpec(), scopeID, instanceID, "instance_terminated", nil)
+			_, _, _ = fanOutRunScopeEventForPeers(ctx, f.deps, LifecyclePeersForSpec(f.deps, twoStoreSpec()), scopeID, instanceID, "instance_terminated", nil)
 		}()
 	}
 	wg.Wait()

@@ -7,7 +7,6 @@ package controlapi
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -15,8 +14,6 @@ import (
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
-
-var errStaticConfigViolation = errors.New("instantiation static-config validation failed")
 
 type staticConfigGateError struct {
 	NodeType string
@@ -33,7 +30,7 @@ func (e *staticConfigGateError) Error() string {
 func (e *staticConfigGateError) Unwrap() error { return e.Cause }
 
 func (e *staticConfigGateError) Is(target error) bool {
-	return target == errStaticConfigViolation || target == foundationshared.ErrTemplateValidation
+	return target == foundationshared.ErrTemplateValidation
 }
 
 func (e *staticConfigGateError) validationErrorEntry() map[string]string {
@@ -63,7 +60,7 @@ func validateStaticConfigAgainstExecutorSchemas(
 		if len(bag) == 0 {
 			continue
 		}
-		schemaForStatic := schemaWithoutTopLevelRequiredLocal(execSchema)
+		schemaForStatic := nodepkg.SchemaWithoutTopLevelRequired(execSchema)
 		if err := attributes.Validate(schemaForStatic, bag, attributes.PhaseDispatch); err != nil {
 			return &staticConfigGateError{
 				NodeType: n.Type,
@@ -117,21 +114,4 @@ func composeStaticConfigBag(n nodepkg.TemplateNodeDef, defaults *nodepkg.Templat
 		}
 	}
 	return bag
-}
-
-func schemaWithoutTopLevelRequiredLocal(schema map[string]any) map[string]any {
-	if schema == nil {
-		return nil
-	}
-	if _, hasRequired := schema["required"]; !hasRequired {
-		return schema
-	}
-	out := make(map[string]any, len(schema))
-	for k, v := range schema {
-		if k == "required" {
-			continue
-		}
-		out[k] = v
-	}
-	return out
 }

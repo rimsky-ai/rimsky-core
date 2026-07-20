@@ -95,7 +95,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	hasBody := false
 	switch route.Method {
 	case "GET", "DELETE":
-		q := url4QueryFromRemaining(remaining)
+		q := urlQueryFromRemaining(remaining)
 		if q != "" {
 			if strings.Contains(path, "?") {
 				path += "&" + q
@@ -197,7 +197,7 @@ func substitutePathParams(pattern string, args map[string]json.RawMessage) (stri
 	return out, remaining, nil
 }
 
-func url4QueryFromRemaining(m map[string]json.RawMessage) string {
+func urlQueryFromRemaining(m map[string]json.RawMessage) string {
 	values := url.Values{}
 	for k, v := range m {
 		trim := strings.TrimSpace(string(v))

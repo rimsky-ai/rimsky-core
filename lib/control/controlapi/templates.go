@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -53,8 +52,6 @@ func readAllBody(req *http.Request) ([]byte, error) {
 	return io.ReadAll(req.Body)
 }
 
-func bytesReader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
-
 type templateRegisterRequest struct {
 	Spec   *node.TemplateSpec `json:"spec,omitempty"`
 	Tag    string             `json:"tag,omitempty"`
@@ -85,7 +82,7 @@ type templateGetResponse struct {
 }
 
 func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
-	r.Post("/templates", gate(deps, "template:register", handleDeployTemplate(deps)))
+	r.Post("/templates", gate(deps, "template:register", handleRegisterTemplate(deps)))
 	r.Post("/templates/validate", gate(deps, "template:validate", handleValidateTemplate(deps)))
 	r.Get("/templates", gate(deps, "template:read", handleListTemplates(deps)))
 	r.Get("/templates/{id}", gate(deps, "template:read", handleGetTemplate(deps)))
@@ -194,10 +191,8 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 	return hooks
 }
 
-func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
+func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		t0 := time.Now()
-		log := slog.With("path", "/templates")
 		raw, err := readAllBody(req)
 		if err != nil {
 			badRequest(w, "read body: "+err.Error())
@@ -218,9 +213,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		}
 
 		spec := *specBody
-		tValidate := time.Now()
 		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
-		log.Debug("register.validate.done", "elapsed_ms", time.Since(tValidate).Milliseconds())
 		if !res.Ok() {
 			entries := make([]map[string]any, 0, len(res.Errors)+len(res.StructuredErrors))
 			for _, e := range res.Errors {
@@ -243,16 +236,13 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		}
 		node.CanonicalizeAggregationPolicyDefault(&spec)
 
-		tHash := time.Now()
 		hash, err := canonical.CanonicalSpecHash(spec)
-		log.Debug("register.hash.done", "elapsed_ms", time.Since(tHash).Milliseconds())
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 
 		warningsAsErrors := req.URL.Query().Get("warnings_as_errors") == "true"
-		tValidatePipeline := time.Now()
 		var execSchemaLookup runtime.ExpectedAttributesSchemaLookup
 		if deps.ExecutorCapabilities != nil {
 			execSchemaLookup = func(executor string) ([]byte, bool) {
@@ -266,11 +256,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		outcome, vErr := runtime.RunValidationPipeline(
 			req.Context(), deps.Validators, spec, hash, deps.UnreachableValidatorPolicy, execSchemaLookup,
 		)
-		log.Debug("register.validate_pipeline.done",
-			"elapsed_ms", time.Since(tValidatePipeline).Milliseconds(),
-			"errors", len(outcome.Errors),
-			"warnings", len(outcome.Warnings),
-			"err", vErr)
 		if vErr != nil {
 			writeError(w, vErr)
 			return
@@ -295,14 +280,12 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		tGetByHash := time.Now()
 		var existing *persistence.TemplateRow
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.Templates().GetByHash(ctx, hash, tx)
 			existing = r
 			return err
 		})
-		log.Debug("register.getbyhash.done", "elapsed_ms", time.Since(tGetByHash).Milliseconds())
 		if err != nil {
 			writeError(w, err)
 			return
@@ -336,7 +319,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		tTx := time.Now()
 		var fanOutErr error
 		var fanOutDetails map[string]error
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -361,7 +343,6 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			}
 			return nil
 		})
-		log.Debug("register.tx.done", "elapsed_ms", time.Since(tTx).Milliseconds(), "total_ms", time.Since(t0).Milliseconds(), "err", err)
 		if errors.Is(err, errTagMoveForbidden) {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": errTagMoveForbidden.Error()})
 			return
@@ -513,7 +494,7 @@ func handleListTemplates(deps AppDeps) http.HandlerFunc {
 			items = append(items, templateListItem{
 				ID:           r.ID,
 				State:        string(r.State),
-				RegisteredAt: r.RegisteredAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+				RegisteredAt: r.RegisteredAt.UTC().Format(time.RFC3339),
 				Source:       r.Source,
 				Tags:         tagsForTemplate(req.Context(), deps, r.ID),
 			})
@@ -552,7 +533,7 @@ func handleGetTemplate(deps AppDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, templateGetResponse{
 			ID:           row.ID,
 			State:        string(row.State),
-			RegisteredAt: row.RegisteredAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+			RegisteredAt: row.RegisteredAt.UTC().Format(time.RFC3339),
 			Source:       row.Source,
 			Tags:         tagsForTemplate(req.Context(), deps, row.ID),
 			Spec:         row.Spec,
@@ -688,10 +669,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 
 func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		t0 := time.Now()
-		log := slog.With("path", "/templates/deploy", "request_id", req.Header.Get("X-Request-Id"))
 		hash, err := resolveTagOrHash(req.Context(), deps, chi.URLParam(req, "id"))
-		log.Debug("deploy.resolve.done", "elapsed_ms", time.Since(t0).Milliseconds(), "err", err)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -701,19 +679,15 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
+		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		var (
 			outState      string
 			noOp          bool
 			fanOutErr     error
 			fanOutDetails map[string]error
 		)
-		txStart := time.Now()
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			tBegin := time.Now()
-			log.Debug("deploy.tx.begin", "elapsed_ms", time.Since(txStart).Milliseconds())
 			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
-			log.Debug("deploy.lockforupdate.done", "elapsed_ms", time.Since(tBegin).Milliseconds(), "err", err)
 			if err != nil {
 				return err
 			}
@@ -733,9 +707,7 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			if isDryRun {
 				return errDryRunOK
 			}
-			tListTags := time.Now()
 			tagRows, err := deps.Persist.TemplateTags().ListByTemplate(ctx, hash, tx)
-			log.Debug("deploy.listtags.done", "elapsed_ms", time.Since(tListTags).Milliseconds(), "tags", len(tagRows), "err", err)
 			if err != nil {
 				return err
 			}
@@ -743,24 +715,18 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			for _, t := range tagRows {
 				tags = append(tags, t.Tag)
 			}
-			tFanOut := time.Now()
-			peers, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec, TemplatePayload{Tags: tags}, tx)
-			log.Debug("deploy.fanout.done", "elapsed_ms", time.Since(tFanOut).Milliseconds(), "peers", len(peers), "err", ferr)
+			_, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec, TemplatePayload{Tags: tags}, tx)
 			if ferr != nil {
 				fanOutErr = ferr
 				fanOutDetails = perStore
 				return ferr
 			}
-			tUpdate := time.Now()
 			if err := deps.Persist.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, tx); err != nil {
-				log.Debug("deploy.updatestate.err", "elapsed_ms", time.Since(tUpdate).Milliseconds(), "err", err)
 				return err
 			}
-			log.Debug("deploy.updatestate.done", "elapsed_ms", time.Since(tUpdate).Milliseconds())
 			outState = "deployed"
 			return nil
 		})
-		log.Debug("deploy.tx.done", "elapsed_ms", time.Since(txStart).Milliseconds(), "err", err)
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_deployed", map[string]any{
 				"template_hash": hash,
@@ -806,7 +772,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
+		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		var (
 			outState      string
 			noOp          bool
@@ -895,7 +861,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 
 func decodeRegisterRequest(body []byte) (specOut *node.TemplateSpec, tag, source string, err error) {
 	var wrap templateRegisterRequest
-	dec := json.NewDecoder(bytesReader(body))
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&wrap); err != nil {
 		return nil, "", "", fmt.Errorf("invalid JSON body: %w", err)

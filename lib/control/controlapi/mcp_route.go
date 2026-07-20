@@ -82,7 +82,7 @@ func builtinSchemas() map[string][]byte {
 		"node_get":   []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		"node_reset": []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 
-		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Omit to have the server synthesize a random one"}},"required":["id","type"]}`),
+		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string","description":"ignored; the server derives sender from the caller's identity or publisher_subscription_id"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Omit to have the server synthesize a random one"}},"required":["id","type"]}`),
 		"message_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"message_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"message id"}},"required":["id"]}`),
 
@@ -140,7 +140,6 @@ func (a actionRegistryAdapter) EntryForTool(name string) (mcp.RegistryEntry, boo
 	}
 	return mcp.RegistryEntry{
 		Action:      e.Action,
-		IsWrite:     e.IsWrite,
 		Routes:      routes,
 		Description: e.Description,
 	}, true

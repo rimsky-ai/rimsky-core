@@ -9,7 +9,6 @@ package controlapi
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
@@ -116,7 +115,7 @@ func (r *ActionRegistry) ValidateGrantScope(grant auth.Grant) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for i, e := range grant {
-		if e.Action == "*" || strings.HasSuffix(e.Action, ":*") || strings.HasPrefix(e.Action, "*:") {
+		if auth.IsWildcardAction(e.Action) {
 			continue
 		}
 		entry, ok := r.entries[e.Action]
@@ -362,7 +361,7 @@ var v1Actions = []ActionEntry{
 		Description: "List wait-set entries (sender/receiver edges)."},
 
 	{Action: "claim-holders:read", IsWrite: false,
-		Routes:      []Route{{Method: "GET", Path: "/v1/lock-holders/{claim_handle_id}/claim-holders"}},
+		Routes:      []Route{{Method: "GET", Path: "/v1/claim-handles/{claim_handle_id}/holders"}},
 		MCPTools:    []string{"claim_holders_list"},
 		Description: "List claim-holder rows for a claim handle."},
 

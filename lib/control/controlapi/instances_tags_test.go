@@ -8,70 +8,57 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestInstanceCreate_TagSubstitution(t *testing.T) {
+	t.Parallel()
+
 	t.Run("static tag passes through", func(t *testing.T) {
+		t.Parallel()
 		got, err := resolveNodeTags([]string{"setup", "recurring"}, nil)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
-		if len(got) != 2 || got[0] != "setup" || got[1] != "recurring" {
-			t.Fatalf("got %v", got)
-		}
+		require.NoError(t, err)
+		require.Equal(t, []string{"setup", "recurring"}, got)
 	})
 
 	t.Run("embedded mode with string param", func(t *testing.T) {
+		t.Parallel()
 		params := json.RawMessage(`{"domain": "alpha.example.com"}`)
 		got, err := resolveNodeTags([]string{"domain:{{params.domain}}"}, params)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
-		if got[0] != "domain:alpha.example.com" {
-			t.Fatalf("got %q", got[0])
-		}
+		require.NoError(t, err)
+		require.Equal(t, "domain:alpha.example.com", got[0])
 	})
 
 	t.Run("whole-directive lift with string param", func(t *testing.T) {
+		t.Parallel()
 		params := json.RawMessage(`{"region": "us-west"}`)
 		got, err := resolveNodeTags([]string{"{{params.region}}"}, params)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
-		if got[0] != "us-west" {
-			t.Fatalf("got %q", got[0])
-		}
+		require.NoError(t, err)
+		require.Equal(t, "us-west", got[0])
 	})
 
 	t.Run("whole-directive lift with non-string param fails", func(t *testing.T) {
+		t.Parallel()
 		params := json.RawMessage(`{"config": {"a": 1}}`)
 		_, err := resolveNodeTags([]string{"{{params.config}}"}, params)
-		if err == nil {
-			t.Fatal("expected error for non-string lifted tag value")
-		}
-		if !strings.Contains(err.Error(), "non-string") {
-			t.Fatalf("error should mention non-string: %v", err)
-		}
+		require.Error(t, err, "expected error for non-string lifted tag value")
+		require.Contains(t, err.Error(), "non-string")
 	})
 
 	t.Run("missing param fails", func(t *testing.T) {
+		t.Parallel()
 		got, err := resolveNodeTags([]string{"{{params.missing}}"}, json.RawMessage(`{}`))
-		if err == nil {
-			t.Fatalf("expected error for missing param, got %v", got)
-		}
-		if !strings.Contains(err.Error(), "missing") && !strings.Contains(err.Error(), "param") {
-			t.Fatalf("error should reference the missing source: %v", err)
-		}
+		require.Error(t, err, "expected error for missing param, got %v", got)
+		require.True(t, strings.Contains(err.Error(), "missing") || strings.Contains(err.Error(), "param"),
+			"error should reference the missing source: %v", err)
 	})
 
 	t.Run("embedded mode with numeric param stringifies", func(t *testing.T) {
+		t.Parallel()
 		params := json.RawMessage(`{"version": 7}`)
 		got, err := resolveNodeTags([]string{"v{{params.version}}"}, params)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
-		if got[0] != "v7" {
-			t.Fatalf("got %q", got[0])
-		}
+		require.NoError(t, err)
+		require.Equal(t, "v7", got[0])
 	})
 }

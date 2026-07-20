@@ -143,7 +143,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 
 	claimHandleID := waitForHeldClaimHandle(t, h, iid)
 
-	holdersURL := h.ControlBase + "/v1/lock-holders/" + claimHandleID.String() + "/claim-holders"
+	holdersURL := h.ControlBase + "/v1/claim-handles/" + claimHandleID.String() + "/holders"
 	resp3, err := http.Get(holdersURL)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp3.StatusCode,
@@ -159,7 +159,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&holdersBody))
 	resp3.Body.Close()
 	require.NotEmpty(t, holdersBody.Holders,
-		"GET /v1/lock-holders/{id}/claim-holders must list the holder(s) the supervisor is tracking; "+
+		"GET /v1/claim-handles/{id}/holders must list the holder(s) the supervisor is tracking; "+
 			"an empty list would hide the wedge from the operator")
 	holderClaimMatch := false
 	for _, holder := range holdersBody.Holders {

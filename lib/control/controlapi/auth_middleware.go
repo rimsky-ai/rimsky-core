@@ -140,7 +140,7 @@ func (s *AuthState) resolveIdentity(ctx context.Context, r *http.Request) (auth.
 	if row.ExpiresAt != nil && !row.ExpiresAt.After(now) {
 		return rowIdentity(row), auth.DenialExpiredToken, nil
 	}
-	if row.RevokeAt != nil && !row.RevokeAt.After(now) {
+	if !row.ActiveAt(now) {
 		return rowIdentity(row), auth.DenialRevokedToken, nil
 	}
 	return rowIdentity(row), "", nil
@@ -295,33 +295,18 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 				"cap_bytes", auditBodyCapBytes,
 				"observed_bytes", len(body))
 		}
-		marker := []byte(`{"_audit_truncated":true,"_audit_observed_bytes":` +
-			intToString(len(body)) + `}`)
+		marker, err := json.Marshal(auditTruncatedMarker{Truncated: true, ObservedBytes: len(body)})
+		if err != nil {
+			return body, nil, false
+		}
 		return body, marker, false
 	}
 	return body, body, false
 }
 
-func intToString(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if negative {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
+type auditTruncatedMarker struct {
+	Truncated     bool `json:"_audit_truncated"`
+	ObservedBytes int  `json:"_audit_observed_bytes"`
 }
 
 type capturingWriter struct {

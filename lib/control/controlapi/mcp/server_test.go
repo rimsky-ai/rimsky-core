@@ -33,11 +33,7 @@ func (f *fakeCatalog) Invoke(r *http.Request, name string, args json.RawMessage)
 	}
 	f.calls[name] = args
 	f.called = name
-	isError := f.isErrorBy[name]
-	if v, ok := f.calls[name+"_result"]; ok {
-		return v, isError, nil
-	}
-	return map[string]any{"name": name}, isError, nil
+	return map[string]any{"name": name}, f.isErrorBy[name], nil
 }
 
 func TestMCPInitialize(t *testing.T) {
@@ -294,9 +290,9 @@ func TestCatalogFiltered(t *testing.T) {
 	reg := &fakeRegistry{
 		tools: []string{"a_read", "a_write", "b_read"},
 		entries: map[string]mcp.RegistryEntry{
-			"a_read":  {Action: "a:read", IsWrite: false, Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/a"}}},
-			"a_write": {Action: "a:write", IsWrite: true, Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/a"}}},
-			"b_read":  {Action: "b:read", IsWrite: false, Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/b"}}},
+			"a_read":  {Action: "a:read", Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/a"}}},
+			"a_write": {Action: "a:write", Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/a"}}},
+			"b_read":  {Action: "b:read", Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/b"}}},
 		},
 	}
 	cat := &mcp.Catalog{
@@ -307,8 +303,8 @@ func TestCatalogFiltered(t *testing.T) {
 	}
 	got := cat.Filtered(httptest.NewRequest("GET", "/", nil))
 	names := []string{}
-	for _, t := range got {
-		names = append(names, t.Name)
+	for _, tool := range got {
+		names = append(names, tool.Name)
 	}
 	wantSet := map[string]bool{"a_read": true, "b_read": true}
 	if len(names) != len(wantSet) {

@@ -10,6 +10,10 @@ import (
 	"strings"
 )
 
+func IsWildcardAction(action string) bool {
+	return action == "*" || strings.HasSuffix(action, ":*") || strings.HasPrefix(action, "*:")
+}
+
 func ActionMatches(entryAction, requestAction string) bool {
 	if entryAction == "*" {
 		return true

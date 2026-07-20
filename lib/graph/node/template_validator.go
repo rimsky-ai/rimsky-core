@@ -1266,7 +1266,7 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 	if len(defaultsBag) == 0 {
 		return
 	}
-	schemaForDefaults := schemaWithoutTopLevelRequired(execSchema)
+	schemaForDefaults := SchemaWithoutTopLevelRequired(execSchema)
 	if err := validateAgainstSchema(schemaForDefaults, defaultsBag); err != nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fmt.Sprintf("%s.defaults", sbase),
@@ -1277,7 +1277,7 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 	}
 }
 
-func schemaWithoutTopLevelRequired(schema map[string]any) map[string]any {
+func SchemaWithoutTopLevelRequired(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
 	}

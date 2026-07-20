@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -60,7 +61,7 @@ func handleLineagePrune(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "before must be RFC3339 timestamp: "+err.Error())
 			return
 		}
-		if ModeFromContext(req.Context()) == authModeDryRun {
+		if ModeFromContext(req.Context()) == auth.ModeDryRun {
 			n, err := deps.Persist.Lineage().CountOlderThan(req.Context(), cutoff)
 			if err != nil {
 				writeError(w, err)

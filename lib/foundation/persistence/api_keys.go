@@ -27,6 +27,12 @@ type APIKey struct {
 	RevokedAt      *time.Time
 }
 
+func (k APIKey) ActiveAt(now time.Time) bool {
+	return k.RevokedAt == nil &&
+		(k.ExpiresAt == nil || k.ExpiresAt.After(now)) &&
+		(k.RevokeAt == nil || k.RevokeAt.After(now))
+}
+
 var (
 	ErrAPIKeyNameTaken = errors.New("persistence: api-key name already taken")
 

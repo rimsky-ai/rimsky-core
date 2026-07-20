@@ -82,23 +82,7 @@ func seedTerminalRunWithSignalType(
 	inst persistence.InstanceRow, nodeID shared.UUID, signalType string,
 ) uuid.UUID {
 	t.Helper()
-	mainScopeID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver, `
-        INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
-        VALUES ($1, 'main', $2, '', now())
-    `, uuid.UUID(mainScopeID), inst.ID)
-	msgID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
-        INSERT INTO rimsky_messages
-            (id, instance_id, type, sender_kind, sender, payload, received_at)
-        VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
-    `, msgID, inst.ID)
-	frameID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
-        INSERT INTO rimsky_frames
-            (frame_id, instance_id, ended_at, triggering_message_id, root_run_scope_id)
-        VALUES ($1, $2, now(), $3, $4)
-    `, frameID, inst.ID, msgID, mainScopeID)
+	mainScopeID, _, frameID := seedRunScopeMessageFrame(ctx, t, h, uuid.UUID(inst.ID), true)
 
 	runID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `

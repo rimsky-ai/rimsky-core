@@ -48,7 +48,6 @@ type Registry interface {
 
 type RegistryEntry struct {
 	Action      string
-	IsWrite     bool
 	Routes      []RegistryRoute
 	Description string
 }

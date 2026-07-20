@@ -13,8 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
-const authModeDryRun = auth.ModeDryRun
-
 var errDryRunOK = errors.New("dry-run validation passed; mutation skipped")
 
 func WriteDryRunResponse(w http.ResponseWriter, r *http.Request, intent string, details map[string]any) bool {

@@ -38,8 +38,8 @@ func TestCatalogInvoke_BodylessRequestDoesNotPanic(t *testing.T) {
 	reg := &fakeRegistry{
 		tools: []string{"thing_create", "thing_list"},
 		entries: map[string]mcp.RegistryEntry{
-			"thing_create": {Action: "thing:create", IsWrite: true, Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/things"}}},
-			"thing_list":   {Action: "thing:list", IsWrite: false, Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/things"}}},
+			"thing_create": {Action: "thing:create", Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/things"}}},
+			"thing_list":   {Action: "thing:list", Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/things"}}},
 		},
 	}
 	cat := &mcp.Catalog{Registry: reg, Router: r}
@@ -77,7 +77,7 @@ func TestCatalogInvoke_CallerSuppliedIdempotencyKeyThreadsToHeaderAndDropsFromBo
 	reg := &fakeRegistry{
 		tools: []string{"thing_create"},
 		entries: map[string]mcp.RegistryEntry{
-			"thing_create": {Action: "thing:create", IsWrite: true, Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/things"}}},
+			"thing_create": {Action: "thing:create", Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/things"}}},
 		},
 	}
 	cat := &mcp.Catalog{Registry: reg, Router: r}

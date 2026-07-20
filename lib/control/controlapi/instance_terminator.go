@@ -6,7 +6,6 @@ package controlapi
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -23,7 +22,7 @@ const terminatorFailureLogEvery = 10
 type InstanceTerminator struct {
 	deps         AppDeps
 	pollInterval time.Duration
-	logger       *slog.Logger
+	logger       shared.Logger
 
 	mu       sync.Mutex
 	stop     chan struct{}
@@ -39,10 +38,14 @@ func NewInstanceTerminator(deps AppDeps, pollInterval time.Duration) *InstanceTe
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
 	}
+	logger := deps.Logger
+	if logger == nil {
+		logger = shared.SilentLogger{}
+	}
 	return &InstanceTerminator{
 		deps:         deps,
 		pollInterval: pollInterval,
-		logger:       slog.Default(),
+		logger:       logger,
 		stop:         make(chan struct{}),
 		done:         make(chan struct{}),
 	}

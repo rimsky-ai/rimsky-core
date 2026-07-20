@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -17,12 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
 type fakeValidator struct {
@@ -99,41 +93,11 @@ type validatorHarness struct {
 
 func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeValidator, policy runtime.UnreachableValidatorPolicy) (*validatorHarness, func()) {
 	t.Helper()
-	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
-
-	reg := locks.NewRegistry()
-	contentFake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
-	reg.Add("content", contentFake)
-	lcReg := locks.NewLifecycleRegistry()
-	lcReg.Add("content", contentFake)
-
-	capLog := shared.NewCapturingLogger()
-	app := NewApp(AppDeps{
-		Persist:        d.Tables(),
-		Queue:          d.Queue(),
-		Clock:          shared.SystemClock{},
-		Logger:         capLog,
-		ClaimProducers: reg,
-		LifecycleSubs:  lcReg,
-		Executors: map[string]ExecutorEntry{
-			"worker": {Transport: "grpc", Endpoint: "localhost:0"},
-		},
-		Validators:                 vr,
-		UnreachableValidatorPolicy: policy,
-		AuthState: &AuthState{
-			Tables:   d.Tables(),
-			Registry: BuildV1Registry(),
-			Clock:    shared.SystemClock{},
-			Logger:   capLog,
-		},
+	h, teardown := newAppHarness(t, func(deps *AppDeps) {
+		deps.Validators = vr
+		deps.UnreachableValidatorPolicy = policy
 	})
-	srv := httptest.NewServer(app)
-	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
-	vh := &validatorHarness{harness: h, validator: vfake}
-	return vh, func() {
-		srv.Close()
-	}
+	return &validatorHarness{harness: h, validator: vfake}, teardown
 }
 
 func TestValidationPipeline_RejectsOnError(t *testing.T) {

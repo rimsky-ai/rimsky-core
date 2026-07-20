@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -94,7 +95,7 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 		}
 		instUUID := shared.UUID(instanceID)
 		actor := requestingKeyID(req.Context())
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
+		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 
 		var (
 			gateState   string

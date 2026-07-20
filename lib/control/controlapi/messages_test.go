@@ -133,29 +133,6 @@ func TestMessages_ListByFrameID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
-func TestMessages_PostRejectsMissingIdempotencyKey(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	tplBody := validTemplateBody("msg-bad-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
-	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
-	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
-		"template":     tplID,
-		"instance_key": "msg-bad-ck-" + uuid.NewString(),
-	})
-	require.Equal(t, http.StatusCreated, status, out)
-	instID, _ := out["instance_id"].(string)
-
-	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"type": "some-other-kind",
-	})
-	require.Equal(t, http.StatusBadRequest, status)
-}
-
 func TestMessages_TargetTerminatedInstanceConflict(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -355,7 +332,7 @@ func TestCreateMessage_MissingIdempotencyKeyRejected(t *testing.T) {
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?type=system/invalidate", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ := out["messages"].([]any)
-	require.Empty(t, msgs, "a rejected keyless emit must persist no invalidate envelope")
+	require.Empty(t, msgs, "a rejected keyless send must persist no invalidate envelope")
 }
 
 func TestCreateMessage_RejectsRetiredPayloadTemplateField(t *testing.T) {
@@ -640,7 +617,7 @@ func TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry(t *testing.T) {
 	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	beforeMsgs, _ := out["messages"].([]any)
-	require.Empty(t, beforeMsgs, "instance creation is idle; ledger must be empty before the empty-type emit")
+	require.Empty(t, beforeMsgs, "instance creation is idle; ledger must be empty before the empty-type send")
 
 	resp := h.httpJSONWithHeaders(t, "POST",
 		fmt.Sprintf("/v1/instances/%s/messages", instID),
@@ -660,7 +637,7 @@ func TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry(t *testing.T) {
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ := out["messages"].([]any)
-	require.Len(t, msgs, 1, "the empty-typed emit must persist exactly one envelope")
+	require.Len(t, msgs, 1, "the empty-typed send must persist exactly one envelope")
 	first := msgs[0].(map[string]any)
 	require.Equal(t, "", first["type"], "the GET projection must echo type=\"\"")
 
@@ -669,7 +646,7 @@ func TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry(t *testing.T) {
 	status, framesOut := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/frames", instID), nil)
 	require.Equal(t, http.StatusOK, status, framesOut)
 	frames, _ := framesOut["frames"].([]any)
-	require.GreaterOrEqual(t, len(frames), 1, "the empty-typed emit must open at least one frame")
+	require.GreaterOrEqual(t, len(frames), 1, "the empty-typed send must open at least one frame")
 	frame := frames[0].(map[string]any)
 	require.Equal(t, msgID, frame["triggering_message_id"],
 		"the frame's triggering_message_id must point at the empty-typed envelope")

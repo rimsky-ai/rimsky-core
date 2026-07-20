@@ -2,7 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//
 // @concept: api-key
 
 package controlapi
@@ -77,7 +76,7 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		for _, e := range body.Permissions {
-			if e.Action == "*" || strings.HasSuffix(e.Action, ":*") || strings.HasPrefix(e.Action, "*:") {
+			if auth.IsWildcardAction(e.Action) {
 				continue
 			}
 			if !deps.AuthState.Registry.IsKnownAction(e.Action) {
@@ -227,10 +226,7 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 				writeError(w, err)
 				return
 			}
-			thisRowActive := row.RevokedAt == nil &&
-				(row.ExpiresAt == nil || row.ExpiresAt.After(now)) &&
-				(row.RevokeAt == nil || row.RevokeAt.After(now))
-			if thisRowActive && active <= 1 && !force {
+			if row.ActiveAt(now) && active <= 1 && !force {
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error":             "would leave zero active keys (anonymous mode); pass ?force_leave_anonymous=true to confirm",
 					"active_keys_after": 0,
@@ -331,10 +327,7 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 				writeError(w, err)
 				return
 			}
-			thisRowActive := oldRow.RevokedAt == nil &&
-				(oldRow.ExpiresAt == nil || oldRow.ExpiresAt.After(now)) &&
-				(oldRow.RevokeAt == nil || oldRow.RevokeAt.After(now))
-			if thisRowActive && active <= 1 {
+			if oldRow.ActiveAt(now) && active <= 1 {
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error": "rotating the deployment's only active API key would inherit its expiry and risks a silent return to anonymous mode when it lapses; pass ?force_expiring_key=true to confirm",
 				})
@@ -394,7 +387,6 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			KeyName:        oldRow.Name,
 			OldKeyID:       oldRow.ID,
 			NewKeyID:       newRow.ID,
-			Name:           oldRow.Name,
 			RevokeAt:       revokeAt,
 			RotatedByKeyID: rotatedBy,
 		})
@@ -425,13 +417,7 @@ func handleAuthStatus(deps AppDeps) http.HandlerFunc {
 		}
 		admins := 0
 		for _, row := range rows {
-			if row.RevokedAt != nil {
-				continue
-			}
-			if row.ExpiresAt != nil && !row.ExpiresAt.After(now) {
-				continue
-			}
-			if row.RevokeAt != nil && !row.RevokeAt.After(now) {
+			if !row.ActiveAt(now) {
 				continue
 			}
 			var grant auth.Grant

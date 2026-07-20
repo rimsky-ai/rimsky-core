@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -269,7 +270,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			params = map[string]any{}
 		}
 
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
+		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		var (
 			tplSpec           nodepkg.TemplateSpec
 			respOut           createInstanceResponse
@@ -612,10 +613,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if tpl != nil {
-			var terminatedAtMs int64
-			if inst.TerminatedAt != nil {
-				terminatedAtMs = inst.TerminatedAt.UnixMilli()
-			}
+			terminatedAtMs := inst.TerminatedAt.UnixMilli()
 			if err := CloseAndFanOutRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_deleted"); err != nil && deps.Logger != nil {
 				deps.Logger.Warn("handleDeleteInstance: run-scope fan-out failed",
 					"instance_id", inst.ID.String(), "error", err.Error())
@@ -765,7 +763,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		reason := body.Reason
 
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
+		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		if isDryRun {
 			var toFail []persistence.NodeRunLatest
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {

@@ -569,7 +569,17 @@ func TestRegisterTemplate_ReferenceValidationStrict(t *testing.T) {
 	})
 }
 
-func warningsContainAdvisory(t *testing.T, out map[string]any) bool {
+func registerWarningsContainAdvisory(t *testing.T, out map[string]any) bool {
+	t.Helper()
+	return warningsContainAdvisoryByKey(t, out, "message")
+}
+
+func validateWarningsContainAdvisory(t *testing.T, out map[string]any) bool {
+	t.Helper()
+	return warningsContainAdvisoryByKey(t, out, "msg")
+}
+
+func warningsContainAdvisoryByKey(t *testing.T, out map[string]any, msgKey string) bool {
 	t.Helper()
 	warns, ok := out["validation_warnings"].([]any)
 	if !ok {
@@ -580,10 +590,7 @@ func warningsContainAdvisory(t *testing.T, out map[string]any) bool {
 		if !ok {
 			continue
 		}
-		msg, _ := entry["msg"].(string)
-		if msg == "" {
-			msg, _ = entry["message"].(string)
-		}
+		msg, _ := entry[msgKey].(string)
 		if strings.Contains(msg, "acquire/unavailable") {
 			return true
 		}
@@ -618,7 +625,7 @@ func TestTemplateRegister_StaticWarningSurfaced(t *testing.T) {
 	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
 	require.NotEmpty(t, out["template_id"])
-	require.True(t, warningsContainAdvisory(t, out),
+	require.True(t, registerWarningsContainAdvisory(t, out),
 		"register response must surface the static validator's acquire/unavailable advisory in validation_warnings; got: %v", out)
 }
 
@@ -637,7 +644,7 @@ func TestTemplateRegister_StaticWarningAsErrorsRejects(t *testing.T) {
 	status, out := h.httpJSON(t, "POST", "/v1/templates?warnings_as_errors=true", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Equal(t, true, out["warnings_as_errors"])
-	require.True(t, warningsContainAdvisory(t, out),
+	require.True(t, registerWarningsContainAdvisory(t, out),
 		"rejection body must carry the static advisory in validation_warnings; got: %v", out)
 
 	_, listAfter := h.httpJSON(t, "GET", "/v1/templates", nil)
@@ -658,12 +665,12 @@ func TestTemplateValidate_StaticWarningSurfaced(t *testing.T) {
 	status, out := h.httpJSON(t, "POST", "/v1/templates/validate", body)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["ok"], "warnings alone must not flip ok without the flag: %v", out)
-	require.True(t, warningsContainAdvisory(t, out),
+	require.True(t, validateWarningsContainAdvisory(t, out),
 		"validate response must surface the static advisory in validation_warnings; got: %v", out)
 
 	status, out = h.httpJSON(t, "POST", "/v1/templates/validate?warnings_as_errors=true", body)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, false, out["ok"],
 		"warnings_as_errors=true must flip the validate verdict on a static advisory: %v", out)
-	require.True(t, warningsContainAdvisory(t, out), "advisory must still be listed: %v", out)
+	require.True(t, validateWarningsContainAdvisory(t, out), "advisory must still be listed: %v", out)
 }

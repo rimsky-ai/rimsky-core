@@ -27,89 +27,19 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
-	ctx := context.Background()
 
-	tplBody := validTemplateBody("lin-desc-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
-	tplID, _ := out["template_id"].(string)
-	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
-	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
-		"template":     tplID,
-		"instance_key": "lin-desc-ck-" + uuid.NewString(),
-	})
-	require.Equal(t, http.StatusCreated, status, out)
-	instID, _ := out["instance_id"].(string)
-	instUUID, err := uuid.Parse(instID)
-	require.NoError(t, err)
-
-	var frameID uuid.UUID
-	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(instUUID))
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instUUID), tx)
-		if err != nil || len(nodes) == 0 {
-			return err
-		}
-		msgID := shared.UUID(uuid.New())
-		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
-			ID:         msgID,
-			InstanceID: shared.UUID(instUUID),
-			Type:       "test/seed",
-			Sender:     "test",
-			SenderKind: "operator",
-		}); err != nil {
-			return err
-		}
-		_ = nodes
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, tx)
-		if err != nil {
-			return err
-		}
-		frameID = fid
-		return nil
-	}))
-	require.NotEqual(t, uuid.Nil, frameID)
+	instUUID, frameID := seedLineageInstance(t, h, "lin-desc")
 
 	rootRunID := uuid.New()
 	child1RunID := uuid.New()
 	grandchild1RunID := uuid.New()
 
-	insertLeafRun := func(t *testing.T, runID, substitutedFromRunID uuid.UUID, observedAt time.Time) {
-		t.Helper()
-		rec := map[string]any{
-			"run_id":               runID.String(),
-			"frame_id":             frameID.String(),
-			"state":                "fresh",
-			"settling_signal_type": "terminal/success",
-		}
-		if substitutedFromRunID != uuid.Nil {
-			rec["substitution_refs"] = []map[string]any{
-				{
-					"source_kind":          "run",
-					"source_version_or_id": substitutedFromRunID.String(),
-				},
-			}
-		}
-		recBytes, err := json.Marshal(rec)
-		require.NoError(t, err)
-		require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
-				ID:         shared.UUID(uuid.New()),
-				RecordKind: persistence.LineageRecordKindLeafRun,
-				InstanceID: shared.UUID(instUUID),
-				FrameID:    shared.UUID(frameID),
-				ObservedAt: observedAt,
-				Record:     recBytes,
-			})
-		}))
-	}
 	base := time.Now().UTC()
-	insertLeafRun(t, rootRunID, uuid.Nil, base)
-	insertLeafRun(t, child1RunID, rootRunID, base.Add(1*time.Second))
-	insertLeafRun(t, grandchild1RunID, child1RunID, base.Add(2*time.Second))
+	insertLeafRunLineage(t, h, instUUID, frameID, rootRunID, uuid.Nil, base)
+	insertLeafRunLineage(t, h, instUUID, frameID, child1RunID, rootRunID, base.Add(1*time.Second))
+	insertLeafRunLineage(t, h, instUUID, frameID, grandchild1RunID, child1RunID, base.Add(2*time.Second))
 
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=2", rootRunID.String()), nil)
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=2", rootRunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.EqualValues(t, 2, out["depth"])
 	require.Equal(t, false, out["truncated"], "a walk within the scan page budget must not report truncated")
@@ -139,83 +69,19 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
-	ctx := context.Background()
 
-	tplBody := validTemplateBody("lin-anc-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
-	tplID, _ := out["template_id"].(string)
-	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
-	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
-		"template":     tplID,
-		"instance_key": "lin-anc-ck-" + uuid.NewString(),
-	})
-	require.Equal(t, http.StatusCreated, status, out)
-	instID, _ := out["instance_id"].(string)
-	instUUID, err := uuid.Parse(instID)
-	require.NoError(t, err)
-
-	var frameID uuid.UUID
-	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(instUUID))
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instUUID), tx)
-		if err != nil || len(nodes) == 0 {
-			return err
-		}
-		msgID := shared.UUID(uuid.New())
-		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{ID: msgID, InstanceID: shared.UUID(instUUID), Type: "test/seed", Sender: "test", SenderKind: "operator"}); err != nil {
-			return err
-		}
-		_ = nodes
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, tx)
-		if err != nil {
-			return err
-		}
-		frameID = fid
-		return nil
-	}))
-	require.NotEqual(t, uuid.Nil, frameID)
+	instUUID, frameID := seedLineageInstance(t, h, "lin-anc")
 
 	rootRunID := uuid.New()
 	child1RunID := uuid.New()
 	grandchild1RunID := uuid.New()
 
-	insertLeafRun := func(t *testing.T, runID uuid.UUID, parentNodeRunID uuid.UUID, observedAt time.Time) {
-		t.Helper()
-		rec := map[string]any{
-			"run_id":               runID.String(),
-			"frame_id":             frameID.String(),
-			"state":                "fresh",
-			"settling_signal_type": "terminal/success",
-		}
-		if parentNodeRunID != uuid.Nil {
-			rec["substitution_refs"] = []map[string]any{
-				{
-					"source_kind":          "run",
-					"source_version_or_id": parentNodeRunID.String(),
-				},
-			}
-		}
-		recBytes, err := json.Marshal(rec)
-		require.NoError(t, err)
-		require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
-				ID:         shared.UUID(uuid.New()),
-				RecordKind: persistence.LineageRecordKindLeafRun,
-				InstanceID: shared.UUID(instUUID),
-				FrameID:    shared.UUID(frameID),
-				ObservedAt: observedAt,
-				Record:     recBytes,
-			})
-		}))
-	}
 	base := time.Now().UTC()
-	insertLeafRun(t, rootRunID, uuid.Nil, base)
-	insertLeafRun(t, child1RunID, rootRunID, base.Add(1*time.Second))
-	insertLeafRun(t, grandchild1RunID, child1RunID, base.Add(2*time.Second))
+	insertLeafRunLineage(t, h, instUUID, frameID, rootRunID, uuid.Nil, base)
+	insertLeafRunLineage(t, h, instUUID, frameID, child1RunID, rootRunID, base.Add(1*time.Second))
+	insertLeafRunLineage(t, h, instUUID, frameID, grandchild1RunID, child1RunID, base.Add(2*time.Second))
 
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=2", grandchild1RunID.String()), nil)
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=2", grandchild1RunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.EqualValues(t, 2, out["depth"])
 	ancestors, _ := out["ancestors"].([]any)
@@ -244,74 +110,17 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
-	ctx := context.Background()
 
-	tplBody := validTemplateBody("lin-prune-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
-	tplID, _ := out["template_id"].(string)
-	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
-	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
-		"template":     tplID,
-		"instance_key": "lin-prune-ck-" + uuid.NewString(),
-	})
-	require.Equal(t, http.StatusCreated, status, out)
-	instID, _ := out["instance_id"].(string)
-	instUUID, err := uuid.Parse(instID)
-	require.NoError(t, err)
-
-	var frameID uuid.UUID
-	rootScope := mainRunScopeIDForInstance(t, h, shared.UUID(instUUID))
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instUUID), tx)
-		if err != nil || len(nodes) == 0 {
-			return err
-		}
-		msgID := shared.UUID(uuid.New())
-		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{ID: msgID, InstanceID: shared.UUID(instUUID), Type: "test/seed", Sender: "test", SenderKind: "operator"}); err != nil {
-			return err
-		}
-		_ = nodes
-		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, tx)
-		if err != nil {
-			return err
-		}
-		frameID = fid
-		return nil
-	}))
-	require.NotEqual(t, uuid.Nil, frameID)
-
-	insertLeafRun := func(t *testing.T, observedAt time.Time) {
-		t.Helper()
-		rec := map[string]any{
-			"run_id":               uuid.NewString(),
-			"frame_id":             frameID.String(),
-			"state":                "fresh",
-			"settling_signal_type": "terminal/success",
-		}
-		recBytes, err := json.Marshal(rec)
-		require.NoError(t, err)
-		require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
-				ID:         shared.UUID(uuid.New()),
-				RecordKind: persistence.LineageRecordKindLeafRun,
-				InstanceID: shared.UUID(instUUID),
-				FrameID:    shared.UUID(frameID),
-				ObservedAt: observedAt,
-				Record:     recBytes,
-			})
-		}))
-	}
+	instUUID, frameID := seedLineageInstance(t, h, "lin-prune")
 
 	now := time.Now().UTC()
 	cutoff := now.Add(-1 * time.Hour)
 	before := cutoff.Format(time.RFC3339)
 
-	insertLeafRun(t, now.Add(-4*time.Hour))
-	insertLeafRun(t, now.Add(-3*time.Hour))
-	insertLeafRun(t, now.Add(-2*time.Hour))
-	insertLeafRun(t, now.Add(-1*time.Minute))
+	insertLeafRunLineage(t, h, instUUID, frameID, uuid.New(), uuid.Nil, now.Add(-4*time.Hour))
+	insertLeafRunLineage(t, h, instUUID, frameID, uuid.New(), uuid.Nil, now.Add(-3*time.Hour))
+	insertLeafRunLineage(t, h, instUUID, frameID, uuid.New(), uuid.Nil, now.Add(-2*time.Hour))
+	insertLeafRunLineage(t, h, instUUID, frameID, uuid.New(), uuid.Nil, now.Add(-1*time.Minute))
 	wantPrunable := 3
 
 	deps := AppDeps{
@@ -383,7 +192,6 @@ func seedLineageInstance(t *testing.T, h *harness, prefix string) (instID uuid.U
 		if err != nil || len(nodes) == 0 {
 			return err
 		}
-		_ = nodes
 		msgID := shared.UUID(uuid.New())
 		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
@@ -421,6 +229,25 @@ func insertLineageRow(t *testing.T, h *harness, instID, frameID uuid.UUID, recor
 			Outcome:    outcome,
 		})
 	}))
+}
+
+func insertLeafRunLineage(t *testing.T, h *harness, instID, frameID, runID, substitutionSourceRunID uuid.UUID, observedAt time.Time) {
+	t.Helper()
+	rec := map[string]any{
+		"run_id":               runID.String(),
+		"frame_id":             frameID.String(),
+		"state":                "fresh",
+		"settling_signal_type": "terminal/success",
+	}
+	if substitutionSourceRunID != uuid.Nil {
+		rec["substitution_refs"] = []map[string]any{
+			{
+				"source_kind":          "run",
+				"source_version_or_id": substitutionSourceRunID.String(),
+			},
+		}
+	}
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun, rec, observedAt, "")
 }
 
 func TestLineageEndpoints_RunReturnsMostRecent(t *testing.T) {

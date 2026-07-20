@@ -67,17 +67,14 @@ func handleListInstanceFrames(deps AppDeps) http.HandlerFunc {
 			tmUUID := shared.UUID(parsed)
 			filter.TriggeringMessageID = &tmUUID
 		}
-		pag := persistence.ListPagination{Cursor: q.Get("cursor")}
 		if l := q.Get("limit"); l != "" {
 			n, perr := strconv.Atoi(l)
 			if perr != nil || n < 0 {
 				badRequest(w, "invalid limit")
 				return
 			}
-			if n > 0 {
-				pag.Limit = n
-			}
 		}
+		pag := persistence.ListPagination{Cursor: q.Get("cursor"), Limit: parseLimit(req, 50)}
 
 		ctx := req.Context()
 		var (

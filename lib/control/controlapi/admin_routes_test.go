@@ -79,11 +79,11 @@ func TestClaimHoldersRoute(t *testing.T) {
 	}
 	router := buildRouter(registerClaimsRoutes, deps)
 
-	status, _ := doJSON(t, router, http.MethodGet, "/v1/lock-holders/not-a-uuid/claim-holders", nil)
+	status, _ := doJSON(t, router, http.MethodGet, "/v1/claim-handles/not-a-uuid/holders", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 
 	emptyID := uuid.New().String()
-	status, body := doJSON(t, router, http.MethodGet, "/v1/lock-holders/"+emptyID+"/claim-holders", nil)
+	status, body := doJSON(t, router, http.MethodGet, "/v1/claim-handles/"+emptyID+"/holders", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	var emptyResp struct {
 		Holders []map[string]any `json:"holders"`
@@ -103,7 +103,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 		}, tx)
 	}))
 
-	status, body = doJSON(t, router, http.MethodGet, "/v1/lock-holders/"+lockHolderID.String()+"/claim-holders", nil)
+	status, body = doJSON(t, router, http.MethodGet, "/v1/claim-handles/"+lockHolderID.String()+"/holders", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	var resp struct {
 		Holders []map[string]any `json:"holders"`

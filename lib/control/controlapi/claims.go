@@ -34,7 +34,7 @@ func toClaimHolderResponse(r persistence.ClaimHolderRow) claimHolderResponse {
 }
 
 func registerClaimsRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/lock-holders/{claim_handle_id}/claim-holders", gate(deps, "claim-holders:read", handleListClaimHolders(deps)))
+	r.Get("/claim-handles/{claim_handle_id}/holders", gate(deps, "claim-holders:read", handleListClaimHolders(deps)))
 }
 
 func handleListClaimHolders(deps AppDeps) http.HandlerFunc {

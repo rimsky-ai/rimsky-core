@@ -34,6 +34,11 @@ func sortedOperationalKinds() []string {
 	return kinds
 }
 
+type listEventsResponse struct {
+	Events     []eventResponseItem `json:"events"`
+	NextCursor string              `json:"next_cursor,omitempty"`
+}
+
 func registerEventsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/events", gate(deps, "event:read", handleListEvents(deps)))
 }
@@ -118,9 +123,6 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 			}
 			out = append(out, item)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"events":      out,
-			"next_cursor": page.NextCursor,
-		})
+		writeJSON(w, http.StatusOK, listEventsResponse{Events: out, NextCursor: page.NextCursor})
 	}
 }

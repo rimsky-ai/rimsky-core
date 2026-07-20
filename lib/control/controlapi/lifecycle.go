@@ -9,10 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"log/slog"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -102,27 +100,21 @@ func FanOutTemplateEvent(
 	deletesRow := event == EventTemplateDeregistered
 	scopeKind := persistence.LifecycleIdempotencyScopeTemplate
 
-	flog := slog.With("event", fmt.Sprintf("%v", event), "template_hash", templateHash, "peers", len(peerNames))
 	perPeerErr := map[string]error{}
 	for _, name := range peerNames {
-		tPeer := time.Now()
 		var row *persistence.LifecycleIdempotencyRow
 		if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
 			r, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, templateHash, useTx)
 			row = r
 			return err
 		}); err != nil {
-			flog.Debug("fanout.peer.lookup", "peer", name, "elapsed_ms", time.Since(tPeer).Milliseconds(), "err", err)
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: lifecycle row lookup for %q: %w", name, err)
 		}
-		flog.Debug("fanout.peer.lookup", "peer", name, "elapsed_ms", time.Since(tPeer).Milliseconds())
 		if !deletesRow && row != nil && row.State == target {
-			flog.Debug("fanout.peer.skip", "peer", name, "reason", "already_at_target")
 			continue
 		}
 		if deletesRow && row == nil {
-			flog.Debug("fanout.peer.skip", "peer", name, "reason", "delete_no_row")
 			continue
 		}
 		if deps.LifecycleSubs == nil {
@@ -131,12 +123,9 @@ func FanOutTemplateEvent(
 		}
 		s, ok := deps.LifecycleSubs.Get(name)
 		if !ok {
-			flog.Debug("fanout.peer.skip", "peer", name, "reason", "not_subscribed")
 			continue
 		}
-		tDispatch := time.Now()
 		if err := dispatchTemplateEvent(ctx, s, event, templateHash, payload); err != nil {
-			flog.Debug("fanout.peer.dispatch.err", "peer", name, "elapsed_ms", time.Since(tDispatch).Milliseconds(), "err", err)
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: peer %q: %w", name, err)
 		}
@@ -270,19 +259,6 @@ func fanOutInstancePeer(
 		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: upsert lifecycle row %q: %w", name, err)
 	}
 	return fanOutContinue, nil
-}
-
-func FanOutRunScopeEvent(
-	ctx context.Context,
-	deps AppDeps,
-	tplSpec node.TemplateSpec,
-	runScopeID shared.UUID,
-	instanceID shared.UUID,
-	terminalReason string,
-	tx persistence.Tx,
-) ([]string, map[string]error, error) {
-	peers := LifecyclePeersForSpec(deps, tplSpec)
-	return fanOutRunScopeEventForPeers(ctx, deps, peers, runScopeID, instanceID, terminalReason, tx)
 }
 
 func fanOutRunScopeEventForPeers(

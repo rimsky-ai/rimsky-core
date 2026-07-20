@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/matcher"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -145,11 +146,8 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
-		var (
-			created persistence.BreakpointRow
-			bpID    foundationshared.UUID
-		)
+		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
+		var created persistence.BreakpointRow
 		txErr := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			tpl, err := deps.Persist.Templates().LockForUpdate(ctx, inst.TemplateHash, tx)
 			if err != nil {
@@ -180,7 +178,6 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			bpID = id
 			fresh, err := deps.Persist.Breakpoints().Get(ctx, id, tx)
 			if err != nil {
 				return err
@@ -207,7 +204,6 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			writeError(w, txErr)
 			return
 		}
-		_ = bpID
 		writeJSON(w, http.StatusCreated, toBreakpointItem(created))
 	}
 }
@@ -301,7 +297,7 @@ func handleDeleteBreakpoint(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "breakpoint_id must be a UUID")
 			return
 		}
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
+		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			bp, err := deps.Persist.Breakpoints().Get(ctx, bpID, tx)
 			if err != nil {
@@ -475,7 +471,7 @@ func breakpointMatcherRefs(tpl spec.TemplateSpec, executors map[string]ExecutorE
 func requestingKeyID(ctx context.Context) string {
 	ident, ok := IdentityFromContextOK(ctx)
 	if !ok || ident.KeyID == nil {
-		return "anonymous"
+		return auth.AnonymousKeyName
 	}
 	return ident.KeyID.String()
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -131,7 +132,7 @@ func handleListTags(deps AppDeps) http.HandlerFunc {
 			items = append(items, tagItem{
 				Tag:        r.Tag,
 				TemplateID: r.TemplateID,
-				UpdatedAt:  r.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+				UpdatedAt:  r.UpdatedAt.UTC().Format(time.RFC3339),
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

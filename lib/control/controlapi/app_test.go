@@ -36,7 +36,7 @@ type harness struct {
 	logger  *shared.CapturingLogger
 }
 
-func newHarness(t *testing.T) (*harness, func()) {
+func newAppHarness(t *testing.T, configure func(*AppDeps)) (*harness, func()) {
 	t.Helper()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -52,7 +52,7 @@ func newHarness(t *testing.T) (*harness, func()) {
 	lcReg.Add("topics-ring", topicsFake)
 
 	capLog := shared.NewCapturingLogger()
-	app := NewApp(AppDeps{
+	deps := AppDeps{
 		Persist:        d.Tables(),
 		Queue:          d.Queue(),
 		Clock:          shared.SystemClock{},
@@ -74,13 +74,22 @@ func newHarness(t *testing.T) (*harness, func()) {
 			Clock:    shared.SystemClock{},
 			Logger:   capLog,
 		},
-	})
+	}
+	if configure != nil {
+		configure(&deps)
+	}
+	app := NewApp(deps)
 	srv := httptest.NewServer(app)
 
 	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
 	return h, func() {
 		srv.Close()
 	}
+}
+
+func newHarness(t *testing.T) (*harness, func()) {
+	t.Helper()
+	return newAppHarness(t, nil)
 }
 
 func (h *harness) tickFrameEngine(t *testing.T) {
@@ -96,7 +105,7 @@ func (silentFrameLogger) Debug(string, ...any) {}
 func (silentFrameLogger) Info(string, ...any)  {}
 func (silentFrameLogger) Warn(string, ...any)  {}
 
-func (h *harness) httpJSON(t *testing.T, method, path string, body any) (int, map[string]any) {
+func doHTTPRequest(t *testing.T, baseURL, method, path string, body any, headers map[string]string) (int, map[string]any) {
 	t.Helper()
 	var reqBody io.Reader
 	if body != nil {
@@ -104,35 +113,7 @@ func (h *harness) httpJSON(t *testing.T, method, path string, body any) (int, ma
 		require.NoError(t, err)
 		reqBody = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, h.srv.URL+path, reqBody)
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	out := map[string]any{}
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &out)
-	}
-	return resp.StatusCode, out
-}
-
-type httpResponse struct {
-	status int
-	body   map[string]any
-}
-
-func (h *harness) httpJSONWithHeaders(t *testing.T, method, path string, body any, headers map[string]string) httpResponse {
-	t.Helper()
-	var reqBody io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		require.NoError(t, err)
-		reqBody = bytes.NewReader(b)
-	}
-	req, err := http.NewRequest(method, h.srv.URL+path, reqBody)
+	req, err := http.NewRequest(method, baseURL+path, reqBody)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
@@ -147,7 +128,23 @@ func (h *harness) httpJSONWithHeaders(t *testing.T, method, path string, body an
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &out)
 	}
-	return httpResponse{status: resp.StatusCode, body: out}
+	return resp.StatusCode, out
+}
+
+func (h *harness) httpJSON(t *testing.T, method, path string, body any) (int, map[string]any) {
+	t.Helper()
+	return doHTTPRequest(t, h.srv.URL, method, path, body, nil)
+}
+
+type httpResponse struct {
+	status int
+	body   map[string]any
+}
+
+func (h *harness) httpJSONWithHeaders(t *testing.T, method, path string, body any, headers map[string]string) httpResponse {
+	t.Helper()
+	status, out := doHTTPRequest(t, h.srv.URL, method, path, body, headers)
+	return httpResponse{status: status, body: out}
 }
 
 func validTemplateBody(name string) map[string]any {
@@ -443,23 +440,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	require.Equal(t, http.StatusConflict, status)
 
 	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1`, nodeRow.ID)
-	mainScopeID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver, `
-        INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
-        VALUES ($1, 'main', $2, '', now())
-    `, uuid.UUID(mainScopeID), inst.ID)
-	msgID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
-        INSERT INTO rimsky_messages
-            (id, instance_id, type, sender_kind, sender, payload, received_at)
-        VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
-    `, msgID, inst.ID)
-	frameID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
-        INSERT INTO rimsky_frames
-            (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id)
-        VALUES ($1, $2, now(), $3, $4)
-    `, frameID, inst.ID, msgID, mainScopeID)
+	mainScopeID, _, frameID := seedRunScopeMessageFrame(ctx, t, h, uuid.UUID(inst.ID), false)
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
@@ -563,7 +544,7 @@ func TestClaimHoldersRoute_EmptyList(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	status, out := h.httpJSON(t, "GET", "/v1/lock-holders/"+uuid.NewString()+"/claim-holders", nil)
+	status, out := h.httpJSON(t, "GET", "/v1/claim-handles/"+uuid.NewString()+"/holders", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	holders, _ := out["holders"].([]any)
 	require.Empty(t, holders)
@@ -592,6 +573,36 @@ func seedInstance(t *testing.T, h *harness, tplName string) persistence.Instance
 	}))
 	require.NotNil(t, inst)
 	return *inst
+}
+
+func seedRunScopeMessageFrame(ctx context.Context, t *testing.T, h *harness, instanceID uuid.UUID, frameEnded bool) (mainScopeID shared.UUID, msgID, frameID uuid.UUID) {
+	t.Helper()
+	mainScopeID = shared.UUID(uuid.New())
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
+        VALUES ($1, 'main', $2, '', now())
+    `, uuid.UUID(mainScopeID), instanceID)
+	msgID = uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_messages
+            (id, instance_id, type, sender_kind, sender, payload, received_at)
+        VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
+    `, msgID, instanceID)
+	frameID = uuid.New()
+	if frameEnded {
+		pgtest.ExecForTest(ctx, t, h.driver, `
+            INSERT INTO rimsky_frames
+                (frame_id, instance_id, ended_at, triggering_message_id, root_run_scope_id)
+            VALUES ($1, $2, now(), $3, $4)
+        `, frameID, instanceID, msgID, mainScopeID)
+	} else {
+		pgtest.ExecForTest(ctx, t, h.driver, `
+            INSERT INTO rimsky_frames
+                (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id)
+            VALUES ($1, $2, now(), $3, $4)
+        `, frameID, instanceID, msgID, mainScopeID)
+	}
+	return mainScopeID, msgID, frameID
 }
 
 func firstNode(t *testing.T, h *harness, inst persistence.InstanceRow) persistence.NodeRow {

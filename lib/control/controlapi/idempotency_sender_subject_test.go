@@ -8,11 +8,9 @@
 package controlapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -142,27 +140,14 @@ func (h *senderSubjectHarness) mintExpiringAPIKey(t *testing.T, name string, per
 
 func (h *senderSubjectHarness) httpPostAs(t *testing.T, path string, body any, bearer, idemKey string) (int, map[string]any) {
 	t.Helper()
-	raw, err := json.Marshal(body)
-	require.NoError(t, err)
-	req, err := http.NewRequest("POST", h.srv.URL+path, bytes.NewReader(raw))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
+	headers := map[string]string{}
 	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
+		headers["Authorization"] = "Bearer " + bearer
 	}
 	if idemKey != "" {
-		req.Header.Set("Idempotency-Key", idemKey)
+		headers["Idempotency-Key"] = idemKey
 	}
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	rawResp, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	out := map[string]any{}
-	if len(rawResp) > 0 {
-		_ = json.Unmarshal(rawResp, &out)
-	}
-	return resp.StatusCode, out
+	return doHTTPRequest(t, h.srv.URL, "POST", path, body, headers)
 }
 
 func (h *senderSubjectHarness) newInstance(t *testing.T, adminKey, tag string) string {
@@ -204,19 +189,12 @@ func messagePayload(label string) json.RawMessage {
 
 func (h *senderSubjectHarness) getMessage(t *testing.T, msgID, bearer string) map[string]any {
 	t.Helper()
-	req, err := http.NewRequest("GET", h.srv.URL+"/v1/messages/"+msgID, nil)
-	require.NoError(t, err)
+	headers := map[string]string{}
 	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
+		headers["Authorization"] = "Bearer " + bearer
 	}
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	rawResp, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode, string(rawResp))
-	out := map[string]any{}
-	require.NoError(t, json.Unmarshal(rawResp, &out))
+	status, out := doHTTPRequest(t, h.srv.URL, "GET", "/v1/messages/"+msgID, nil, headers)
+	require.Equal(t, http.StatusOK, status, out)
 	return out
 }
 

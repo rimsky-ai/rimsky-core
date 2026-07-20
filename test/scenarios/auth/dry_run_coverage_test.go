@@ -131,7 +131,8 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 	assetInstanceID, assetAlias := seedDurableAsset(ctx, t, f)
 
-	debugOverrideInstanceID := seedPausedInstanceForDebugOverride(t, f, tplHash, adminKey)
+	debugOverrideInstanceID := seedPausedInstance(t, f, tplHash, adminKey, "dryrun-debug-override-target")
+	resumeInstanceID := seedPausedInstance(t, f, tplHash, adminKey, "dryrun-resume-target")
 
 	keyStillActive := func(name string, key string) func(t *testing.T) {
 		return func(t *testing.T) {
@@ -260,8 +261,8 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_paused", verifyNoMutation: instancePausedIs(instanceID, false),
 		},
 		"instance:resume": {
-			method: "POST", path: "/v1/instances/" + instanceID + "/resume" + dr,
-			wouldHaveKey: "would_have_resumed", verifyNoMutation: instancePausedIs(instanceID, false),
+			method: "POST", path: "/v1/instances/" + resumeInstanceID + "/resume" + dr,
+			wouldHaveKey: "would_have_resumed", verifyNoMutation: instancePausedIs(resumeInstanceID, true),
 		},
 		"instance:kill": {
 			method: "POST", path: "/v1/instances/" + instanceID + "/terminate" + dr,
@@ -270,7 +271,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 		},
 		"instance:terminate": {
 			method: "DELETE", path: "/v1/instances/" + seedTerminatedInstanceForDelete(ctx, t, f, tplHash, adminKey) + dr,
-			wouldHaveKey: "would_have_terminated",
+			wouldHaveKey: "would_have_deleted_instance",
 		},
 
 		"breakpoint:create": {
@@ -443,18 +444,18 @@ func seedTerminatedInstanceForDelete(ctx context.Context, t *testing.T, f *authF
 	return id.String()
 }
 
-func seedPausedInstanceForDebugOverride(t *testing.T, f *authFixture, tplHash, adminKey string) string {
+func seedPausedInstance(t *testing.T, f *authFixture, tplHash, adminKey, instanceKey string) string {
 	t.Helper()
 	code, resp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{
-		"template": tplHash, "instance_key": "dryrun-debug-override-target",
+		"template": tplHash, "instance_key": instanceKey,
 	})
 	if code != 201 && code != 200 {
-		t.Fatalf("seed debug-override instance: %d %+v", code, resp)
+		t.Fatalf("seed %s instance: %d %+v", instanceKey, code, resp)
 	}
 	id := resp["instance_id"].(string)
 	code, pauseResp := f.request(t, "POST", "/v1/instances/"+id+"/pause", adminKey, nil)
 	if code != 200 {
-		t.Fatalf("pause debug-override instance: %d %+v", code, pauseResp)
+		t.Fatalf("pause %s instance: %d %+v", instanceKey, code, pauseResp)
 	}
 	return id
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -442,7 +443,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		if ModeFromContext(req.Context()) == authModeDryRun {
+		if ModeFromContext(req.Context()) == auth.ModeDryRun {
 			handleDeleteAssetDryRun(deps, w, req, instanceID, nodeType, claimAlias)
 			return
 		}

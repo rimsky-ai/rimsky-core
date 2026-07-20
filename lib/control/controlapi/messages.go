@@ -77,6 +77,11 @@ type messageItem struct {
 	Cancelled   bool            `json:"cancelled,omitempty"`
 }
 
+type listMessagesResponse struct {
+	Messages   []messageItem `json:"messages"`
+	NextCursor string        `json:"next_cursor,omitempty"`
+}
+
 func toMessageItem(r persistence.MessageRow) messageItem {
 	out := messageItem{
 		ID:          r.ID.String(),
@@ -133,7 +138,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
+		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		msgID := shared.UUID(uuid.New())
 		instUUID := shared.UUID(instanceID)
 		ident, _ := IdentityFromContextOK(req.Context())
@@ -352,10 +357,7 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 		for _, r := range page.Rows {
 			items = append(items, toMessageItem(r))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"messages":    items,
-			"next_cursor": page.NextCursor,
-		})
+		writeJSON(w, http.StatusOK, listMessagesResponse{Messages: items, NextCursor: page.NextCursor})
 	}
 }
 

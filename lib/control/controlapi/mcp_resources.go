@@ -64,10 +64,11 @@ func (c *breakpointResourceCatalog) List(r *http.Request) ([]mcp.Resource, error
 		for _, inst := range page.Rows {
 			id := inst.ID.String()
 			out = append(out, mcp.Resource{
-				URI:         "rimsky://instances/" + id + "/breakpoint-hits",
-				Name:        "Breakpoint hits for instance " + id,
-				MimeType:    breakpointHitsMimeType,
-				Description: "Breakpoint hits for instance " + id + ". Read with ?since=<seq> and ?limit=<n>.",
+				URI:      "rimsky://instances/" + id + "/breakpoint-hits",
+				Name:     "Breakpoint hits for instance " + id,
+				MimeType: breakpointHitsMimeType,
+				Description: "Breakpoint hits for instance " + id + ". Read with ?since=<seq> and ?limit=<n>." +
+					" A single breakpoint's hits are also readable directly at rimsky://breakpoints/{breakpoint_id}/hits.",
 			})
 		}
 		if page.NextCursor == "" {
