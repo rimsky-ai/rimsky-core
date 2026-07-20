@@ -23,7 +23,7 @@ later intent supersedes earlier. Part of the drift-remediation intent ledger.
 - The computed-scope pattern is supported: a producer's Open computes a requested view and returns it as payload bytes; templates hoist via `{{claim.<alias>.payload.<field>}}`; address bytes may carry a producer-private data-plane endpoint plus a one-time session token (2026-05-19, crimefinder, artifact).
 - A data-processing conformance surface exists, self-tested against the stub-store extension (2026-05-15, artifact).
 - examples/ ships a minimal data-processing gRPC server with in-process behavioral tests, completing the one-per-protocol promise for all six consumer-implementable protocols (2026-06-06, comprehensive-gap-closure, artifact).
-- Backfill honors partition-selector overrides through the real dispatch and cancel paths (2026-06-08, corpus-bootstrap, artifact-only).
+- ~~Backfill honors partition-selector overrides through the real dispatch and cancel paths (2026-06-08, corpus-bootstrap, artifact-only).~~ STRUCK 2026-07-20, ledger 2497: backfill was retired as a first-class primitive (2026-06-14, bfc9febb, transcript — a backfill is now a message carrying a partition override read via substitution; see message dossier). Verified zero backfill runtime code in the tree (routes, handlers, CLI). The dispatch-honesty principle this promise gestured at survives inherently via message-refire (a re-fire IS a real producing dispatch); see the supervisor dossier.
 
 ## Intentional absences
 

@@ -39,19 +39,40 @@ func newDriveSetup(
 	schema map[string]any, declaredTags func(string) ([]string, bool),
 ) driveSetup {
 	t.Helper()
+	return newDriveSetupWithPartitionKey(ctx, t, supID, schema, declaredTags, "")
+}
+
+func newDriveSetupWithPartitionKey(
+	ctx context.Context, t *testing.T, supID string,
+	schema map[string]any, declaredTags func(string) ([]string, bool),
+	partitionKey string,
+) driveSetup {
+	t.Helper()
 	d := pgtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 	clk := newTickClock(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC))
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{Name: "cbk-validation", Version: "1"})
 	ck := "ck-cbk-val"
-	var mainScopeID shared.UUID
+	var runScopeID shared.UUID
 	var inst persistence.InstanceRow
 	var nd persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
-		mainScopeID = ms
+		runScopeID = ms
+		if partitionKey != "" {
+			childScopeID := shared.UUID(uuid.New())
+			if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+				ID:           childScopeID,
+				GraphName:    "main",
+				InstanceID:   inst.ID,
+				PartitionKey: partitionKey,
+			}); err != nil {
+				return err
+			}
+			runScopeID = childScopeID
+		}
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "leaf", Executor: "stub",
 		}, tx)
@@ -62,7 +83,7 @@ func newDriveSetup(
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, nd.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, nd.ID, runScopeID)
 	nodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), nd.ID, frameID)
 
 	ackID := "ack-cbk-val-" + nodeRunID.String()
@@ -209,6 +230,37 @@ func TestDriveTerminal_RejectedCallbackSkipsAfterTerminalBreakpoint(t *testing.T
 	hitsAfterDuplicate := listHitsForBreakpoint(t, ctx, s.backend, bpID)
 	require.Len(t, hitsAfterDuplicate, 1,
 		"a late/duplicate callback rejected as already-terminal must not mint a phantom after_terminal hit")
+}
+
+func TestDriveTerminal_AsyncCallbackAfterTerminalBreakpoint_ChildKeyRecoveredGraphNameLost(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newDriveSetupWithPartitionKey(ctx, t, "sup-asyncctx-2413", nil, nil, "partition-a")
+
+	bpID := createBreakpointForEval(t, ctx, s.backend, persistence.BreakpointRow{
+		InstanceID:     s.instanceID,
+		Matcher:        map[string]any{},
+		Checkpoint:     persistence.CheckpointAfterTerminal,
+		Mode:           persistence.BreakpointModeNotifyOnly,
+		OverflowPolicy: persistence.OverflowDropOldest,
+		HitTTLSeconds:  300,
+		CreatedByKey:   "test",
+	})
+
+	s.post(ctx, t, `{"success":{"changed":true}}`)
+
+	hits := listHitsForBreakpoint(t, ctx, s.backend, bpID)
+	require.Len(t, hits, 1)
+
+	dispatchContext, ok := hits[0].Snapshot["dispatch_context"].(map[string]any)
+	require.True(t, ok, "hit snapshot must carry a dispatch_context object")
+
+	require.Equal(t, "partition-a", dispatchContext["child_key"],
+		"async-callback after_terminal recovers child_key from the resolved run scope's partition key")
+	require.Equal(t, "", dispatchContext["graph"],
+		"async-callback after_terminal still carries no graph name: AsyncContext has no GraphName field "+
+			"to carry reconstructAcquisition's resolved value through driveTerminal (breakpoint.md, ledger 2413) — "+
+			"a graph-scoped breakpoint can never match this checkpoint on the async path")
 }
 
 func TestCallback_ConcurrentDuplicateCallbacks_AckOutcomeNeverSwapped(t *testing.T) {
