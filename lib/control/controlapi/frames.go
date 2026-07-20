@@ -70,7 +70,11 @@ func handleListInstanceFrames(deps AppDeps) http.HandlerFunc {
 		pag := persistence.ListPagination{Cursor: q.Get("cursor")}
 		if l := q.Get("limit"); l != "" {
 			n, perr := strconv.Atoi(l)
-			if perr == nil && n > 0 {
+			if perr != nil || n < 0 {
+				badRequest(w, "invalid limit")
+				return
+			}
+			if n > 0 {
 				pag.Limit = n
 			}
 		}

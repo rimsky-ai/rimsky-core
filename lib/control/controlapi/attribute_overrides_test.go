@@ -6,6 +6,7 @@ package controlapi
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -540,6 +541,131 @@ func TestValidateAttributeOverrides_ByMatch(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestOverridePresentKeys(t *testing.T) {
+	tests := []struct {
+		name             string
+		overrides        map[string]any
+		wantByExecutor   []string
+		wantByNode       []string
+		wantByMatchCount int
+	}{
+		{
+			name:      "empty overrides",
+			overrides: map[string]any{},
+		},
+		{
+			name: "sorted keys across all three sections",
+			overrides: map[string]any{
+				"by_executor": map[string]any{"zeta": map[string]any{}, "alpha": map[string]any{}},
+				"by_node":     map[string]any{"downstream": map[string]any{}, "aggregator": map[string]any{}},
+				"by_match":    []any{map[string]any{"overlay": map[string]any{}}, map[string]any{"overlay": map[string]any{}}},
+			},
+			wantByExecutor:   []string{"alpha", "zeta"},
+			wantByNode:       []string{"aggregator", "downstream"},
+			wantByMatchCount: 2,
+		},
+		{
+			name: "non-map by_executor value is silently skipped, not counted",
+			overrides: map[string]any{
+				"by_executor": "not-an-object",
+			},
+			wantByExecutor: nil,
+		},
+		{
+			name: "non-map by_node value is silently skipped, not counted",
+			overrides: map[string]any{
+				"by_node": []any{"not", "a", "map"},
+			},
+			wantByNode: nil,
+		},
+		{
+			name: "non-array by_match value yields zero count rather than panicking",
+			overrides: map[string]any{
+				"by_match": map[string]any{"not": "an-array"},
+			},
+			wantByMatchCount: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotExecutor, gotNode, gotMatchCount := overridePresentKeys(tt.overrides)
+			if !reflect.DeepEqual(gotExecutor, tt.wantByExecutor) {
+				t.Fatalf("byExecutor = %v, want %v", gotExecutor, tt.wantByExecutor)
+			}
+			if !reflect.DeepEqual(gotNode, tt.wantByNode) {
+				t.Fatalf("byNode = %v, want %v", gotNode, tt.wantByNode)
+			}
+			if gotMatchCount != tt.wantByMatchCount {
+				t.Fatalf("byMatchCount = %d, want %d", gotMatchCount, tt.wantByMatchCount)
+			}
+		})
+	}
+}
+
+func TestOverridesEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b map[string]any
+		want bool
+	}{
+		{
+			name: "both nil",
+			want: true,
+		},
+		{
+			name: "nil vs empty map both treated as absent",
+			a:    nil,
+			b:    map[string]any{},
+			want: true,
+		},
+		{
+			name: "identical nested maps",
+			a: map[string]any{
+				"by_executor": map[string]any{"claude-agent": map[string]any{"model": "x"}},
+			},
+			b: map[string]any{
+				"by_executor": map[string]any{"claude-agent": map[string]any{"model": "x"}},
+			},
+			want: true,
+		},
+		{
+			name: "different nested value",
+			a: map[string]any{
+				"by_executor": map[string]any{"claude-agent": map[string]any{"model": "x"}},
+			},
+			b: map[string]any{
+				"by_executor": map[string]any{"claude-agent": map[string]any{"model": "y"}},
+			},
+			want: false,
+		},
+		{
+			name: "missing key on one side",
+			a: map[string]any{
+				"by_node": map[string]any{"producer": map[string]any{}},
+			},
+			b:    map[string]any{},
+			want: false,
+		},
+		{
+			name: "JSON-decoded number type mismatch is not equal under DeepEqual",
+			a: map[string]any{
+				"by_node": map[string]any{"producer": map[string]any{"retries": float64(3)}},
+			},
+			b: map[string]any{
+				"by_node": map[string]any{"producer": map[string]any{"retries": 3}},
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := overridesEqual(tt.a, tt.b); got != tt.want {
+				t.Fatalf("overridesEqual(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
 	}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -239,6 +240,15 @@ func ParseUnreachableValidatorPolicy(raw string) (string, error) {
 	}
 }
 
+var bracedEnvRefPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+func expandBracedEnvRefs(raw string) string {
+	return bracedEnvRefPattern.ReplaceAllStringFunc(raw, func(ref string) string {
+		name := ref[2 : len(ref)-1]
+		return os.Getenv(name)
+	})
+}
+
 func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -247,7 +257,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		}
 		return RimskyConfig{}, fmt.Errorf("read rimsky config %q: %w", path, err)
 	}
-	expanded := os.ExpandEnv(string(raw))
+	expanded := expandBracedEnvRefs(string(raw))
 	type yamlClaimProducerEntry struct {
 		Endpoint                     string   `yaml:"endpoint"`
 		TLS                          string   `yaml:"tls"`

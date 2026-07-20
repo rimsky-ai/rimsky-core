@@ -25,6 +25,17 @@ import (
 
 const composeOriginHeaderName = "X-Rimsky-Compose-Origin"
 
+func TestIsComposeOrigin_NoIdentityInContextFailsClosed(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodPost, "/v1/tags", nil)
+	req.Header.Set(composeOriginHeaderName, "1")
+
+	if isComposeOrigin(req) {
+		t.Fatalf("isComposeOrigin: got true want false; a request with no identity in context " +
+			"must not be granted the compose-origin capability")
+	}
+}
+
 func newAuthedComposeHarness(t *testing.T, permissions string) (*harness, string) {
 	t.Helper()
 	ctx := context.Background()

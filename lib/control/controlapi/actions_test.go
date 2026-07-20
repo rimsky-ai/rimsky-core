@@ -370,6 +370,7 @@ func TestRegistryCoversRouter(t *testing.T) {
 		registerLineageRoutes(v1, deps)
 		registerAdminDiagnosticsRoutes(v1, deps)
 		registerAuthRoutes(v1, deps)
+		registerEnrollRoutes(v1, deps)
 		registerMCPRoute(v1, deps)
 	})
 

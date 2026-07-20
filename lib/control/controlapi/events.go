@@ -7,6 +7,7 @@ package controlapi
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +28,12 @@ type eventResponseItem struct {
 	OccurredAt time.Time      `json:"occurred_at"`
 }
 
+func sortedOperationalKinds() []string {
+	kinds := events.AllOperationalKinds()
+	sort.Strings(kinds)
+	return kinds
+}
+
 func registerEventsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/events", gate(deps, "event:read", handleListEvents(deps)))
 }
@@ -39,8 +46,8 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 			if _, err := events.ParseKindString(kindParam); err != nil {
 				badRequest(w, "invalid kind: "+kindParam+
 					" (expected an operational kind from the OperationalKind proto enum"+
-					" or a canonical signal type-path; got: "+
-					strings.Join(events.AllOperationalKinds(), ", ")+
+					" or a canonical signal type-path; one of: "+
+					strings.Join(sortedOperationalKinds(), ", ")+
 					", or terminal/*, transient/*, attribute/*/changed)")
 				return
 			}

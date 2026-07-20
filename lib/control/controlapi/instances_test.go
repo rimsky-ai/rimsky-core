@@ -7,11 +7,15 @@
 package controlapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -70,6 +74,118 @@ func TestTerminateInstance_Idempotent(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out3)
 	events, _ := out3["events"].([]any)
 	require.Len(t, events, 1, "idempotent terminate must not append a second event")
+}
+
+func TestTerminateInstance_ConcurrentCallsAppendExactlyOneEvent(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	inst := seedInstance(t, h, "term-race-"+uuid.NewString())
+
+	const n = 8
+	var wg sync.WaitGroup
+	statuses := make([]int, n)
+	errs := make([]error, n)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			reqBody, merr := json.Marshal(map[string]any{"reason": fmt.Sprintf("racer-%d", i)})
+			if merr != nil {
+				errs[i] = merr
+				return
+			}
+			req, rerr := http.NewRequest("POST", h.srv.URL+"/v1/instances/"+inst.ID.String()+"/terminate", bytes.NewReader(reqBody))
+			if rerr != nil {
+				errs[i] = rerr
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, derr := http.DefaultClient.Do(req)
+			if derr != nil {
+				errs[i] = derr
+				return
+			}
+			defer resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+			statuses[i] = resp.StatusCode
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range statuses {
+		require.NoError(t, errs[i], "racer %d request error", i)
+		require.Equal(t, http.StatusOK, statuses[i], "racer %d must receive 200", i)
+	}
+
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/events?instance_id=%s&kind=instance_terminated", inst.ID.String()), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	events, _ := out["events"].([]any)
+	require.Len(t, events, 1, "concurrent terminate calls racing on the same instance must append exactly one instance_terminated event")
+}
+
+func TestTerminateInstance_DryRunOnAlreadyTerminatedHonorsDryRun(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	inst := seedInstance(t, h, "term-dryrun-"+uuid.NewString())
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate", nil)
+	require.Equal(t, http.StatusOK, status, out)
+
+	status, out = h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate?dry_run=true", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["dry_run"],
+		"terminating an already-terminated instance under dry-run must still return the dry-run envelope, not the real instance item: %v", out)
+	_, hasIntent := out["would_have_terminated"]
+	require.True(t, hasIntent, "expected would_have_terminated intent in dry-run response: %v", out)
+}
+
+func TestPauseInstance_DryRunHonorsAlreadyPausedState(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	inst := seedInstance(t, h, "pause-dryrun-"+uuid.NewString())
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/pause", nil)
+	require.Equal(t, http.StatusOK, status, out)
+
+	status, out = h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/pause?dry_run=true", nil)
+	require.Equal(t, http.StatusConflict, status, out,
+		"dry-run pause on an already-paused instance must report the same 409 the real call would return, not a fake success")
+}
+
+func TestResumeInstance_DryRunHonorsNotPausedState(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	inst := seedInstance(t, h, "resume-dryrun-"+uuid.NewString())
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/resume?dry_run=true", nil)
+	require.Equal(t, http.StatusConflict, status, out,
+		"dry-run resume on a not-paused instance must report the same 409 the real call would return, not a fake success")
+}
+
+func TestListInstances_RejectsUnrecognizedActiveValue(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	status, out := h.httpJSON(t, "GET", "/v1/instances?active=TRUE", nil)
+	require.Equal(t, http.StatusBadRequest, status, out)
+
+	status, out = h.httpJSON(t, "GET", "/v1/instances?active=garbage", nil)
+	require.Equal(t, http.StatusBadRequest, status, out)
+
+	for _, v := range []string{"true", "false", "1", "0"} {
+		status, out = h.httpJSON(t, "GET", "/v1/instances?active="+v, nil)
+		require.Equal(t, http.StatusOK, status, "active=%s must be accepted: %v", v, out)
+	}
 }
 
 func TestTerminateInstance_NotFound(t *testing.T) {
@@ -307,6 +423,130 @@ func TestDeleteInstance_NonTerminatedReturns409(t *testing.T) {
 
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+inst.ID.String(), nil)
 	require.Equal(t, http.StatusOK, status, out, "the rejected delete must not have removed the instance")
+}
+
+func TestDeleteInstance_DryRunUsesDeleteIntent(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	inst := seedInstance(t, h, "del-dryrun-"+uuid.NewString())
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate", nil)
+	require.Equal(t, http.StatusOK, status, out)
+
+	status, out = h.httpJSON(t, "DELETE", "/v1/instances/"+inst.ID.String()+"?dry_run=true", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	_, hasDeleteIntent := out["would_have_deleted_instance"]
+	require.True(t, hasDeleteIntent,
+		"DELETE dry-run must use the would_have_deleted_instance idiom shared with tags/assets/breakpoints: %v", out)
+	_, hasTerminateIntent := out["would_have_terminated"]
+	require.False(t, hasTerminateIntent,
+		"DELETE dry-run must not reuse the terminate handler's would_have_terminated intent: %v", out)
+}
+
+func TestDeleteInstance_PurgesRunScopeLifecycleIdempotencyRows(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	tplID := registerAndDeployBody(t, h, templateWithClaimProducersAndLocks("del-runscope-purge-"+uuid.NewString()))
+	ck := "ck-" + uuid.NewString()
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": ck,
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instID, err := uuid.Parse(out["instance_id"].(string))
+	require.NoError(t, err)
+
+	rootScopeID := uuid.New()
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID: rootScopeID, GraphName: "main", InstanceID: instID,
+		}); err != nil {
+			return err
+		}
+		msgID := uuid.New()
+		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		_, err := h.persist.Frames().InsertRunningFrame(ctx, instID, msgID, rootScopeID, tx)
+		return err
+	}))
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.Instances().MarkTerminated(ctx, instID, tx)
+	}))
+
+	status, out = h.httpJSON(t, "DELETE", "/v1/instances/"+instID.String(), nil)
+	require.Equal(t, http.StatusOK, status, out)
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := h.persist.LifecycleIdempotency().Get(ctx,
+			"topics-ring", persistence.LifecycleIdempotencyScopeRunScope, rootScopeID.String(), tx)
+		require.NoError(t, err)
+		require.Nil(t, row,
+			"run-scope-scoped lifecycle idempotency row must be purged once the owning instance is hard-deleted, "+
+				"otherwise it leaks permanently since the run_scope row itself is cascade-deleted with the instance")
+		return nil
+	}))
+}
+
+func TestCreateInstance_IdempotentRetryFansOutExistingParamsNotRequestParams(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	tplID := registerAndDeployBody(t, h, templateWithClaimProducersAndLocks("create-idem-params-"+uuid.NewString()))
+	ck := "ck-" + uuid.NewString()
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": ck,
+		"params":       map[string]any{"region": "us-east"},
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instID := out["instance_id"].(string)
+
+	cp, ok := h.stores.Get("content")
+	require.True(t, ok)
+	contentFake, ok := cp.(*storetest.Fake)
+	require.True(t, ok)
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.LifecycleIdempotency().Delete(ctx,
+			"content", persistence.LifecycleIdempotencyScopeInstance, instID, tx)
+	}))
+	contentFake.Reset()
+
+	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": ck,
+		"params":       map[string]any{"region": "us-west"},
+	})
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, instID, out["instance_id"])
+
+	calls := contentFake.Calls()
+	var createdCall *storetest.FakeCall
+	for i := range calls {
+		if calls[i].Verb == "on_instance_created" {
+			createdCall = &calls[i]
+		}
+	}
+	require.NotNil(t, createdCall,
+		"the peer with a missing lifecycle row must still receive an OnInstanceCreated re-dispatch on idempotent retry")
+	require.JSONEq(t, `{"region":"us-east"}`, string(createdCall.Params),
+		"the re-dispatch to a peer recovering from a missing lifecycle row must carry the EXISTING instance's "+
+			"stored params, not the retry request's params")
 }
 
 func seedTerminatedInstanceWithoutTemplate(t *testing.T, h *harness, tag string) persistence.InstanceRow {

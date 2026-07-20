@@ -165,6 +165,10 @@ func handlePauseInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
+		if inst.Paused {
+			writeError(w, foundationshared.ErrInstanceAlreadyPaused)
+			return
+		}
 		// @concept: dry-run
 		if WriteDryRunResponse(w, req, "would_have_paused", map[string]any{
 			"instance_id": inst.ID.String(),
@@ -197,6 +201,10 @@ func handleResumeInstance(deps AppDeps) http.HandlerFunc {
 		}
 		if inst == nil {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
+			return
+		}
+		if !inst.Paused {
+			writeError(w, foundationshared.ErrInstanceNotPaused)
 			return
 		}
 		// @concept: dry-run
@@ -267,6 +275,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			respOut           createInstanceResponse
 			existedKey        bool
 			existingOverrides map[string]any
+			existingParams    map[string]any
 			fanOutBindings    json.RawMessage
 			fanOutOwner       *foundationshared.UUID
 		)
@@ -301,6 +310,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				if existing != nil {
 					existedKey = true
 					existingOverrides = existing.AttributeOverrides
+					existingParams = existing.Params
 					fanOutBindings = existing.ServiceBindings
 					fanOutOwner = existing.CreatedByAPIKeyID
 					respOut = createInstanceResponse{
@@ -382,7 +392,11 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		paramsBytes, err := json.Marshal(params)
+		fanOutParams := params
+		if existedKey {
+			fanOutParams = existingParams
+		}
+		paramsBytes, err := json.Marshal(fanOutParams)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -438,8 +452,17 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 			TemplateHash: q.Get("template_hash"),
 		}
 		if v := q.Get("active"); v != "" {
-			b := v == "1" || v == "true"
-			filter.Active = &b
+			switch v {
+			case "1", "true":
+				b := true
+				filter.Active = &b
+			case "0", "false":
+				b := false
+				filter.Active = &b
+			default:
+				badRequest(w, fmt.Sprintf("active = %q; want one of 1 | true | 0 | false", v))
+				return
+			}
 		}
 		pag := persistence.ListPagination{
 			Limit:  parseLimit(req, 100),
@@ -574,7 +597,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		// @concept: dry-run
-		if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
+		if WriteDryRunResponse(w, req, "would_have_deleted_instance", map[string]any{
 			"instance_id": inst.ID.String(),
 		}) {
 			return
@@ -641,10 +664,21 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 					"error", err.Error())
 			}
 		}
+		runScopeIDs, err := collectRunScopeIDsForInstance(req.Context(), deps, inst.ID)
+		if err != nil && deps.Logger != nil {
+			deps.Logger.Warn("handleDeleteInstance: collect run-scope ids for lifecycle purge failed",
+				"instance_id", inst.ID.String(), "error", err.Error())
+		}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.LifecycleIdempotency().DeleteByScope(ctx,
 				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
 				return err
+			}
+			for _, scopeID := range runScopeIDs {
+				if err := deps.Persist.LifecycleIdempotency().DeleteByScope(ctx,
+					persistence.LifecycleIdempotencyScopeRunScope, scopeID.String(), tx); err != nil {
+					return err
+				}
 			}
 			return deps.Persist.Instances().Delete(ctx, inst.ID, tx)
 		}); err != nil {
@@ -652,6 +686,48 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+	}
+}
+
+func collectRunScopeIDsForInstance(ctx context.Context, deps AppDeps, instanceID foundationshared.UUID) ([]foundationshared.UUID, error) {
+	pag := persistence.ListPagination{Limit: 256}
+	filter := persistence.FrameListFilter{InstanceID: &instanceID}
+	seenRoots := map[foundationshared.UUID]struct{}{}
+	var scopeIDs []foundationshared.UUID
+	for {
+		var page persistence.PaginatedListResult[persistence.FrameRow]
+		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			p, err := deps.Persist.Frames().ListForObservability(ctx, filter, pag, tx)
+			page = p
+			return err
+		}); err != nil {
+			return nil, err
+		}
+		for _, f := range page.Rows {
+			root := f.RootRunScopeID
+			if root == (foundationshared.UUID{}) {
+				continue
+			}
+			if _, dup := seenRoots[root]; dup {
+				continue
+			}
+			seenRoots[root] = struct{}{}
+			var tree []persistence.RunScopeRow
+			if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				rows, err := deps.Persist.RunScopes().ListTreeDeepestFirst(ctx, tx, root)
+				tree = rows
+				return err
+			}); err != nil {
+				return nil, err
+			}
+			for _, scope := range tree {
+				scopeIDs = append(scopeIDs, scope.ID)
+			}
+		}
+		if page.NextCursor == "" {
+			return scopeIDs, nil
+		}
+		pag.Cursor = page.NextCursor
 	}
 }
 
@@ -668,6 +744,13 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
 		if inst.TerminatedAt != nil {
+			// @concept: dry-run
+			if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
+				"instance_id":        inst.ID.String(),
+				"already_terminated": true,
+			}) {
+				return
+			}
 			writeJSON(w, http.StatusOK, toInstanceItem(*inst, redact, overrideMatchCountsFor(req.Context(), deps, *inst)))
 			return
 		}
@@ -682,34 +765,50 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		reason := body.Reason
 
-		var toFail []persistence.NodeRunLatest
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
+		if isDryRun {
+			var toFail []persistence.NodeRunLatest
+			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+				runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, inst.ID, cascade.InFlightStates)
+				if err != nil {
+					return err
+				}
+				toFail = runs
+				return nil
+			}); err != nil {
+				writeError(w, err)
+				return
+			}
+			wouldFail := make([]string, 0, len(toFail))
+			for _, r := range toFail {
+				wouldFail = append(wouldFail, r.NodeID.String())
+			}
+			// @concept: dry-run
+			WriteDryRunResponseForced(w, "would_have_terminated", map[string]any{
+				"instance_id":          inst.ID.String(),
+				"reason":               reason,
+				"would_fail_node_runs": wouldFail,
+			})
+			return
+		}
+
+		unlock := lockLifecycleScope(persistence.LifecycleIdempotencyScopeInstance, inst.ID.String())
+		defer unlock()
+
+		var alreadyTerminated bool
+		var killPostCommit func(context.Context)
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, inst.ID, cascade.InFlightStates)
+			fresh, err := deps.Persist.Instances().Get(ctx, inst.ID, tx)
 			if err != nil {
 				return err
 			}
-			toFail = runs
-			return nil
-		}); err != nil {
-			writeError(w, err)
-			return
-		}
-
-		// @concept: dry-run
-		wouldFail := make([]string, 0, len(toFail))
-		for _, r := range toFail {
-			wouldFail = append(wouldFail, r.NodeID.String())
-		}
-		if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
-			"instance_id":          inst.ID.String(),
-			"reason":               reason,
-			"would_fail_node_runs": wouldFail,
-		}) {
-			return
-		}
-
-		var killPostCommit func(context.Context)
-		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			if fresh == nil {
+				return foundationshared.ErrInstanceNotFound
+			}
+			if fresh.TerminatedAt != nil {
+				alreadyTerminated = true
+				return nil
+			}
 			post, err := runtime.ForceFailInFlightRunsForInstance(ctx, terminateRunArgs(deps), tx, inst.ID)
 			if err != nil {
 				return err
@@ -735,35 +834,38 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		if killPostCommit != nil {
-			killPostCommit(req.Context())
-		}
 
-		if err := runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
-			Persist:    deps.Persist,
-			Publishers: deps.Publishers,
-			Clock:      deps.Clock,
-			Logger:     deps.Logger,
-		}, inst.ID); err != nil && deps.Logger != nil {
-			deps.Logger.Warn("handleTerminateInstance: stop publisher subscriptions failed",
-				"instance_id", inst.ID.String(),
-				"error", err.Error())
-		}
-
-		var tpl *persistence.TemplateRow
-		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-			tpl = t
-			return err
-		}); err != nil {
-			if deps.Logger != nil {
-				deps.Logger.Warn("handleTerminateInstance: load template for run-scope fan-out failed",
-					"instance_id", inst.ID.String(), "error", err.Error())
+		if !alreadyTerminated {
+			if killPostCommit != nil {
+				killPostCommit(req.Context())
 			}
-		} else if tpl != nil {
-			if err := CloseAndFanOutRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil && deps.Logger != nil {
-				deps.Logger.Warn("handleTerminateInstance: run-scope fan-out failed",
-					"instance_id", inst.ID.String(), "error", err.Error())
+
+			if err := runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
+				Persist:    deps.Persist,
+				Publishers: deps.Publishers,
+				Clock:      deps.Clock,
+				Logger:     deps.Logger,
+			}, inst.ID); err != nil && deps.Logger != nil {
+				deps.Logger.Warn("handleTerminateInstance: stop publisher subscriptions failed",
+					"instance_id", inst.ID.String(),
+					"error", err.Error())
+			}
+
+			var tpl *persistence.TemplateRow
+			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+				t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+				tpl = t
+				return err
+			}); err != nil {
+				if deps.Logger != nil {
+					deps.Logger.Warn("handleTerminateInstance: load template for run-scope fan-out failed",
+						"instance_id", inst.ID.String(), "error", err.Error())
+				}
+			} else if tpl != nil {
+				if err := CloseAndFanOutRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil && deps.Logger != nil {
+					deps.Logger.Warn("handleTerminateInstance: run-scope fan-out failed",
+						"instance_id", inst.ID.String(), "error", err.Error())
+				}
 			}
 		}
 

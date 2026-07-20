@@ -488,3 +488,28 @@ func TestLifecyclePeersForSpec_NoProxiesWhenSpecHasNoLateBindServices(t *testing
 	require.Equal(t, []string{"beta"}, got,
 		"a spec with no LateBindServices must not pull in any configured proxy peers")
 }
+
+func TestLifecyclePeersForSpec_ProxyOrderDeterministicAcrossMultipleProxies(t *testing.T) {
+	t.Parallel()
+	deps := AppDeps{
+		LateBindServiceProxies: map[string]string{
+			"svc-z": "proxy-z",
+			"svc-a": "proxy-a",
+			"svc-m": "proxy-m",
+		},
+	}
+	spec := node.TemplateSpec{
+		Name: "late-bind-order", Version: "v1",
+		LateBindServices: []string{"svc-a"},
+	}
+
+	want := LifecyclePeersForSpec(deps, spec)
+	require.Equal(t, []string{"proxy-a", "proxy-m", "proxy-z"}, want,
+		"proxies must be appended in sorted service-name order, not random map-iteration order")
+
+	for i := 0; i < 20; i++ {
+		got := LifecyclePeersForSpec(deps, spec)
+		require.Equal(t, want, got,
+			"proxy peer order must be deterministic across repeated calls")
+	}
+}

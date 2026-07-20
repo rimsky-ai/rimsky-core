@@ -72,9 +72,12 @@ func handleHealth(deps AppDeps) http.HandlerFunc {
 			})
 		}
 		countOut := map[string]int{
+			string(cascade.NodeStatePending): counts[cascade.NodeStatePending],
 			string(cascade.NodeStateFresh):   counts[cascade.NodeStateFresh],
 			string(cascade.NodeStateStale):   counts[cascade.NodeStateStale],
 			string(cascade.NodeStateRunning): counts[cascade.NodeStateRunning],
+			string(cascade.NodeStateHeld):    counts[cascade.NodeStateHeld],
+			string(cascade.NodeStateParked):  counts[cascade.NodeStateParked],
 			string(cascade.NodeStateFailed):  counts[cascade.NodeStateFailed],
 		}
 		writeJSON(w, http.StatusOK, healthResponse{

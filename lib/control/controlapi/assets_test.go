@@ -451,6 +451,123 @@ func TestAssetEndpoints_DeleteReleasesAndDeletes(t *testing.T) {
 	require.True(t, releaseFired, "Release must fire on the producer before row delete")
 }
 
+func TestAssetEndpoints_DeleteDryRunReportsWithoutDeleting(t *testing.T) {
+	t.Parallel()
+	ah, teardown := newAssetHarness(t, nil)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, claimID, _, _ := ah.seedAsset(t, "asset-dryrun")
+
+	status, out := ah.harness.httpJSON(t, "DELETE",
+		"/v1/instances/"+instID.String()+"/assets/producer.dataset?dry_run=true", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["dry_run"])
+	summary, ok := out["would_have_deleted_asset"].(map[string]any)
+	require.True(t, ok, "response missing would_have_deleted_asset envelope: %v", out)
+	require.Equal(t, instID.String(), summary["instance_id"])
+	require.Equal(t, "producer.dataset", summary["alias"])
+	require.Equal(t, "producer", summary["node_type"])
+
+	var remaining int
+	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
+		[]any{claimID}, &remaining)
+	require.Equal(t, 1, remaining, "dry-run delete must not touch the asset row")
+
+	for _, c := range ah.content.Calls() {
+		require.NotEqual(t, "release", c.Verb, "dry-run delete must never call producer.Release")
+	}
+}
+
+func TestAssetEndpoints_DeleteDryRunRefusesWithActiveHolder(t *testing.T) {
+	t.Parallel()
+	ah, teardown := newAssetHarness(t, nil)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, claimID, producerNodeID, frameID := ah.seedAsset(t, "asset-dryrun-busy")
+
+	holderNodeRunID := uuid.New()
+	var mainScopeID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{frameID}, &mainScopeID)
+	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+		INSERT INTO rimsky_node_runs
+			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
+	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
+	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
+		VALUES ($1, $2, $3, 'active', $4)
+	`, uuid.New(), claimID, holderNodeRunID, frameID)
+
+	status, out := ah.harness.httpJSON(t, "DELETE",
+		"/v1/instances/"+instID.String()+"/assets/producer.dataset?dry_run=true", nil)
+	require.Equal(t, http.StatusConflict, status, out)
+	require.EqualValues(t, 1, out["active_count"])
+	require.NotContains(t, out, "would_have_deleted_asset")
+
+	var remaining int
+	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
+		[]any{claimID}, &remaining)
+	require.Equal(t, 1, remaining)
+}
+
+func TestAssetEndpoints_ListExcludesRowWithNoResolvableAlias(t *testing.T) {
+	t.Parallel()
+	ah, teardown := newAssetHarness(t, nil)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, _, _, frameID := ah.seedAsset(t, "asset-noalias")
+
+	var downstreamNodeID shared.UUID
+	require.NoError(t, ah.harness.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		nodes, err := ah.harness.persist.Nodes().ListByInstance(ctx, shared.UUID(instID), tx)
+		if err != nil {
+			return err
+		}
+		for _, n := range nodes {
+			if n.NodeType == "downstream" {
+				downstreamNodeID = n.ID
+			}
+		}
+		return nil
+	}))
+	require.NotEqual(t, shared.UUID{}, downstreamNodeID, "template must contain a downstream node with no claim_producers stanza")
+
+	var mainScopeID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{frameID}, &mainScopeID)
+
+	nodeRunID := uuid.New()
+	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+		INSERT INTO rimsky_node_runs
+			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 2)
+	`, nodeRunID, uuid.UUID(downstreamNodeID), frameID, mainScopeID)
+
+	strayClaimID := uuid.New()
+	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+		INSERT INTO rimsky_claim_handles
+			(id, node_run_id, lock_kind, producer_name, claim_scope_data, intent,
+			 holder_node_id, expires_at, lifetime, state, version_id, resolved_at)
+		VALUES ($1, $2, 'claim_scope', 'content', $3::jsonb, 'rw',
+			 $4, now() + interval '1 hour', 'durable', 'committed', 'v-001', now())
+	`, strayClaimID, nodeRunID, `{}`, uuid.UUID(downstreamNodeID))
+
+	status, out := ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	assets, _ := out["assets"].([]any)
+	require.Len(t, assets, 1, "a committed durable claim whose holder node declares no matching claim_producers stanza must not surface as an alias-less asset")
+	item := assets[0].(map[string]any)
+	require.Equal(t, "producer.dataset", item["alias"], "the only listed asset must be the legitimately addressable one")
+}
+
 func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	t.Parallel()
 	ah, teardown := newAssetHarness(t, nil)
@@ -487,4 +604,26 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	for _, c := range ah.content.Calls() {
 		require.NotEqual(t, "release", c.Verb, "Release must not fire when delete is refused")
 	}
+}
+
+func TestWriteAssetDeleteError_ProducerReleasedSurfacesReconciliationFlag(t *testing.T) {
+	t.Parallel()
+
+	w := httptest.NewRecorder()
+	writeAssetDeleteError(w, &assetHasActiveHoldersError{count: -1, producerReleased: true})
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, true, body["producer_released"],
+		"a delete that already released the producer before losing the atomic DB guard must surface that inconsistency, not silently look like an ordinary refusal")
+	require.NotContains(t, body, "active_count", "the sentinel -1 count must not leak as a nonsensical active_count")
+
+	w2 := httptest.NewRecorder()
+	writeAssetDeleteError(w2, &assetHasActiveHoldersError{count: 2})
+	require.Equal(t, http.StatusConflict, w2.Code)
+	var body2 map[string]any
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &body2))
+	require.NotContains(t, body2, "producer_released", "an ordinary pre-release refusal must not claim the producer was released")
+	require.EqualValues(t, 2, body2["active_count"])
 }

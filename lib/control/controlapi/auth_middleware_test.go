@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -293,6 +294,134 @@ func TestGate_DefaultModeIsExecute(t *testing.T) {
 	}
 	if executed, _ := payload["executed"].(bool); !executed {
 		t.Errorf("audit executed: got %v want true", payload["executed"])
+	}
+}
+
+func TestGate_InvalidDryRunValueRejected(t *testing.T) {
+	h := newAuthTestHarness(t)
+
+	var handlerRan bool
+	probe := func(w http.ResponseWriter, r *http.Request) {
+		handlerRan = true
+		w.WriteHeader(http.StatusOK)
+	}
+	r := chi.NewRouter()
+	r.Use(h.state.IdentityResolver())
+	r.Get("/v1/instances", h.state.gateByAction("instance:read", probe))
+
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+
+	for _, dryRun := range []string{"1", "True", "yes"} {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/instances?dry_run="+dryRun, nil)
+		req.Header.Set("Authorization", "Bearer "+h.plaintext)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request (dry_run=%s): %v", dryRun, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status (dry_run=%s): got %d want %d; an unrecognized dry_run value must not silently execute",
+				dryRun, resp.StatusCode, http.StatusBadRequest)
+		}
+	}
+	if handlerRan {
+		t.Fatalf("handler ran despite an invalid dry_run value; the request must be rejected before dispatch")
+	}
+}
+
+func TestGate_FalseDryRunExecutes(t *testing.T) {
+	h := newAuthTestHarness(t)
+
+	var observedMode auth.Mode
+	probe := func(w http.ResponseWriter, r *http.Request) {
+		observedMode = ModeFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}
+	r := chi.NewRouter()
+	r.Use(h.state.IdentityResolver())
+	r.Get("/v1/instances", h.state.gateByAction("instance:read", probe))
+
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/instances?dry_run=false", nil)
+	req.Header.Set("Authorization", "Bearer "+h.plaintext)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want 200", resp.StatusCode)
+	}
+	if observedMode != auth.ModeExecute {
+		t.Fatalf("ModeFromContext: got %q want %q", observedMode, auth.ModeExecute)
+	}
+}
+
+type errReadCloser struct{}
+
+func (errReadCloser) Read([]byte) (int, error) { return 0, errors.New("simulated read failure") }
+func (errReadCloser) Close() error             { return nil }
+
+func TestCaptureBody_LogsAndRejectsOnReadError(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/x", errReadCloser{})
+	req.ContentLength = 10
+	rec := httptest.NewRecorder()
+	logger := shared.NewCapturingLogger()
+
+	handlerBody, auditBytes, rejected := captureBody(req, rec, logger)
+	if !rejected {
+		t.Fatalf("rejected: got false want true (body read failed)")
+	}
+	if handlerBody != nil || auditBytes != nil {
+		t.Fatalf("body: got non-nil want nil on reject")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	found := false
+	for _, r := range logger.Records() {
+		if r.Level == "warn" && r.Msg == "auth.audit_body_read_failed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a warn-level auth.audit_body_read_failed log record, got %+v", logger.Records())
+	}
+}
+
+func TestIsAnonymousMode_InvalidationWinsOverInFlightStaleWrite(t *testing.T) {
+	h := newUnseededAuthTestHarness(t)
+
+	anon, err := h.state.IsAnonymousMode(context.Background())
+	if err != nil {
+		t.Fatalf("IsAnonymousMode (initial): %v", err)
+	}
+	if !anon {
+		t.Fatalf("IsAnonymousMode (initial): got false want true (zero active keys)")
+	}
+
+	staleGen := h.state.anonGen.Load()
+	seedActiveKey(t, h)
+	h.state.InvalidateAnonCache()
+
+	h.state.anonCache.Store(&anonCacheEntry{
+		isAnon: true,
+		until:  h.state.Clock.Now().Add(time.Hour),
+		gen:    staleGen,
+	})
+
+	anon, err = h.state.IsAnonymousMode(context.Background())
+	if err != nil {
+		t.Fatalf("IsAnonymousMode (after stale write race): %v", err)
+	}
+	if anon {
+		t.Fatalf("IsAnonymousMode (after stale write race): got true want false; " +
+			"a cache entry stamped with a superseded generation must not be trusted even though " +
+			"its TTL has not elapsed (check-then-act race between an in-flight read and InvalidateAnonCache)")
 	}
 }
 

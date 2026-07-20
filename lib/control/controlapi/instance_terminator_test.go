@@ -489,6 +489,60 @@ func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 	}
 }
 
+func TestInstanceTerminator_ConcurrentStopDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	f := newTerminatorFixture(t)
+
+	term := NewInstanceTerminator(f.deps, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go term.Run(ctx)
+	for {
+		term.mu.Lock()
+		started := term.started
+		term.mu.Unlock()
+		if started {
+			break
+		}
+		time.Sleep(time.Microsecond)
+	}
+
+	const concurrentStops = 8
+	var wg sync.WaitGroup
+	wg.Add(concurrentStops)
+	for i := 0; i < concurrentStops; i++ {
+		go func() {
+			defer wg.Done()
+			require.NotPanics(t, term.Stop)
+		}()
+	}
+	wg.Wait()
+}
+
+func TestInstanceTerminator_FailureLogCadenceCapsLogSpam(t *testing.T) {
+	t.Parallel()
+	f := newTerminatorFixture(t)
+	term := NewInstanceTerminator(f.deps, time.Hour)
+
+	id := shared.UUID(uuid.New())
+	var loggedAttempts []int
+	for i := 1; i <= terminatorFailureLogEvery*2; i++ {
+		attempt, shouldLog := term.recordFailure(id)
+		require.Equal(t, i, attempt)
+		if shouldLog {
+			loggedAttempts = append(loggedAttempts, attempt)
+		}
+	}
+	require.Equal(t, []int{1, terminatorFailureLogEvery, terminatorFailureLogEvery * 2}, loggedAttempts,
+		"only the first failure and then every Nth must log, to bound log volume for a persistently failing instance")
+
+	term.clearFailure(id)
+	attempt, shouldLog := term.recordFailure(id)
+	require.Equal(t, 1, attempt, "clearFailure must reset the counter so a later failure after a success is logged again")
+	require.True(t, shouldLog)
+}
+
 func TestInstanceTerminator_StopBoundedByBudget(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)

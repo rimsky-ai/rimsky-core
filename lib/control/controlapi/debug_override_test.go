@@ -706,7 +706,7 @@ func TestDebugOverride_SetAttributeNeverMutatesInFrameTerminalRun(t *testing.T) 
 	}))
 }
 
-func TestDebugOverride_UnknownNodeTypeIsNoOpButStillAudited(t *testing.T) {
+func TestDebugOverride_UnknownNodeTypeRejectedWith400AndNotAudited(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -719,11 +719,10 @@ func TestDebugOverride_UnknownNodeTypeIsNoOpButStillAudited(t *testing.T) {
 		"action":    "invalidate_node",
 		"node_type": "nonexistent",
 	})
-	require.Equal(t, http.StatusOK, status, out)
-	require.EqualValues(t, 0, out["runs_mutated"],
-		"an unknown node_type must match no nodes and mutate nothing")
-	require.True(t, hasDebugOverrideAuditEvent(t, h, instUUID),
-		"the no-op must still be audited via debug.override.applied")
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Contains(t, fmt.Sprint(out["error"]), "nonexistent")
+	require.False(t, hasDebugOverrideAuditEvent(t, h, instUUID),
+		"a rejected unknown node_type must never be audited as an applied override")
 }
 
 func TestDebugOverride_TOCTOU_GateAndMutationShareTx(t *testing.T) {

@@ -639,7 +639,13 @@ func LifecyclePeersForSpec(deps AppDeps, spec node.TemplateSpec) []string {
 		for _, p := range peers {
 			seen[p] = struct{}{}
 		}
-		for _, proxyName := range deps.LateBindServiceProxies {
+		proxyServiceNames := make([]string, 0, len(deps.LateBindServiceProxies))
+		for svcName := range deps.LateBindServiceProxies {
+			proxyServiceNames = append(proxyServiceNames, svcName)
+		}
+		sort.Strings(proxyServiceNames)
+		for _, svcName := range proxyServiceNames {
+			proxyName := deps.LateBindServiceProxies[svcName]
 			if proxyName == "" {
 				continue
 			}

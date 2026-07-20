@@ -23,7 +23,7 @@ func isComposeOrigin(r *http.Request) bool {
 	}
 	ident, ok := IdentityFromContextOK(r.Context())
 	if !ok {
-		return true
+		return false
 	}
 	res := auth.CheckGrant(ident.Permissions, composeOriginAction, nil)
 	return res.Allowed

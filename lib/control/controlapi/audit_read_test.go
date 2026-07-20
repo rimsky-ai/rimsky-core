@@ -95,6 +95,17 @@ func TestAuditRoute_NonAuthOperationalKindReturns400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
+func TestAuditRoute_AuthPrefixedNonAllowlistedKindReturns400NotEmptyList(t *testing.T) {
+	h, cleanup := newHarness(t)
+	defer cleanup()
+	seedAuditEvents(t, h)
+	status, body := h.httpJSON(t, http.MethodGet,
+		"/v1/audit?kind=auth.foo/bar", nil)
+	require.Equal(t, http.StatusBadRequest, status, body,
+		"a kind that merely starts with \"auth.\" but is not one of the five allowlisted audit kinds "+
+			"must 400, not silently pass the gate and return a zero-row page")
+}
+
 func TestAuditRoute_UnknownKindReturns400(t *testing.T) {
 	h, cleanup := newHarness(t)
 	defer cleanup()

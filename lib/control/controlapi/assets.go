@@ -111,6 +111,9 @@ func handleListAssets(deps AppDeps) http.HandlerFunc {
 			}
 			node := nodeByID[r.HolderNodeID]
 			claimAlias := lookupClaimAliasForProducer(tplSp, node.NodeType, *r.ProducerName)
+			if node.NodeType == "" || claimAlias == "" {
+				continue
+			}
 			items = append(items, toAssetItem(r, node, claimAlias))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -483,10 +486,24 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			}
 			deleted, err := deps.Persist.ClaimHandles().DeleteResolvedIfNoActiveHolders(ctx, row.ID, tx)
 			if err != nil {
-				return err
+				deps.Logger.Error("asset.delete.inconsistent_after_release",
+					"claim_id", row.ID.String(),
+					"instance_id", instanceID.String(),
+					"producer_name", *row.ProducerName,
+					"node_type", nodeType,
+					"claim_alias", claimAlias,
+					"err", err.Error())
+				return fmt.Errorf("asset delete: producer released but delete failed, manual reconciliation required: %w", err)
 			}
 			if !deleted {
-				return &assetHasActiveHoldersError{count: -1}
+				deps.Logger.Error("asset.delete.inconsistent_after_release",
+					"claim_id", row.ID.String(),
+					"instance_id", instanceID.String(),
+					"producer_name", *row.ProducerName,
+					"node_type", nodeType,
+					"claim_alias", claimAlias,
+					"reason", "active holder registered after producer release; claim handle row retained")
+				return &assetHasActiveHoldersError{count: -1, producerReleased: true}
 			}
 			return nil
 		})
@@ -577,6 +594,10 @@ func writeAssetDeleteError(w http.ResponseWriter, err error) {
 		if activeErr.count >= 0 {
 			body["active_count"] = activeErr.count
 		}
+		if activeErr.producerReleased {
+			body["producer_released"] = true
+			body["error"] = "asset has in-flight holder runs; refuse delete; producer was already released (inconsistent state, needs reconciliation)"
+		}
 		writeJSON(w, http.StatusConflict, body)
 		return
 	}
@@ -584,7 +605,8 @@ func writeAssetDeleteError(w http.ResponseWriter, err error) {
 }
 
 type assetHasActiveHoldersError struct {
-	count int
+	count            int
+	producerReleased bool
 }
 
 func (e *assetHasActiveHoldersError) Error() string {

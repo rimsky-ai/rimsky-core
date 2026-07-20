@@ -34,6 +34,7 @@ type AuthState struct {
 	Logger foundationshared.Logger
 
 	anonCache atomic.Pointer[anonCacheEntry]
+	anonGen   atomic.Uint64
 
 	mcpRouterRef *routerRef
 
@@ -46,26 +47,28 @@ const lastUsedConcurrencyCap = 64
 type anonCacheEntry struct {
 	isAnon bool
 	until  time.Time
+	gen    uint64
 }
 
 const anonCacheTTL = 1 * time.Second
 
 func (s *AuthState) IsAnonymousMode(ctx context.Context) (bool, error) {
 	now := s.Clock.Now()
-	if e := s.anonCache.Load(); e != nil && now.Before(e.until) {
+	gen := s.anonGen.Load()
+	if e := s.anonCache.Load(); e != nil && e.gen == gen && now.Before(e.until) {
 		return e.isAnon, nil
 	}
 	n, err := s.Tables.APIKeys().ActiveCount(ctx, now, nil)
 	if err != nil {
 		return false, err
 	}
-	e := &anonCacheEntry{isAnon: n == 0, until: now.Add(anonCacheTTL)}
-	s.anonCache.Store(e)
-	return e.isAnon, nil
+	isAnon := n == 0
+	s.anonCache.Store(&anonCacheEntry{isAnon: isAnon, until: now.Add(anonCacheTTL), gen: gen})
+	return isAnon, nil
 }
 
 func (s *AuthState) InvalidateAnonCache() {
-	s.anonCache.Store(nil)
+	s.anonGen.Add(1)
 }
 
 func (s *AuthState) OnAuthMutation() {
@@ -167,12 +170,21 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			return
 		}
 		skin := protocolSkinFromContext(r.Context())
+		dryRunRaw := r.URL.Query().Get("dry_run")
+		if dryRunRaw != "" && dryRunRaw != "true" && dryRunRaw != "false" {
+			s.Logger.Warn("auth.gate.invalid_dry_run", "action", action, "dry_run", dryRunRaw)
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":   "invalid dry_run value",
+				"dry_run": dryRunRaw,
+			})
+			return
+		}
 		handlerBody, auditBody, rejected := captureBody(r, w, s.Logger)
 		if rejected {
 			return
 		}
 		// @concept: permission
-		targets := requestTargets(r.Context(), s.Tables, action, handlerBody, r)
+		targets := requestTargets(r.Context(), s.Tables, s.Logger, action, handlerBody, r)
 		// @concept: permission
 		// @concept: dry-run
 		var res auth.CheckResult
@@ -201,7 +213,7 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			}
 		}
 		requestedMode := auth.ModeExecute
-		if r.URL.Query().Get("dry_run") == "true" {
+		if dryRunRaw == "true" {
 			requestedMode = auth.ModeDryRun
 		}
 		if !res.Allowed {
@@ -255,7 +267,13 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 	limited := io.LimitReader(r.Body, auditBodyHandlerMaxBytes+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, nil, false
+		if logger != nil {
+			logger.Warn("auth.audit_body_read_failed", "err", err.Error())
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "failed to read request body",
+		})
+		return nil, nil, true
 	}
 	if len(body) > auditBodyHandlerMaxBytes {
 		_, _ = io.Copy(io.Discard, r.Body)

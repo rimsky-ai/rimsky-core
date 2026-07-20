@@ -112,6 +112,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=2", rootRunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.EqualValues(t, 2, out["depth"])
+	require.Equal(t, false, out["truncated"], "a walk within the scan page budget must not report truncated")
 	descendants, _ := out["descendants"].([]any)
 	require.Len(t, descendants, 2, "expected child1 + grandchild1 in the descendant set")
 
@@ -673,14 +674,15 @@ func TestLineageEndpoints_AncestorsDepthCappedAtMax(t *testing.T) {
 	require.EqualValues(t, lineageWalkMaxDepth, out["depth"], "depth must clamp to the walk max")
 }
 
-func TestLineageEndpoints_AncestorsInvalidDepthFallsBackToDefault(t *testing.T) {
+func TestLineageEndpoints_AncestorsInvalidDepthRejected(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=abc", uuid.NewString()), nil)
-	require.Equal(t, http.StatusOK, status, out)
-	require.EqualValues(t, lineageWalkDefaultDepth, out["depth"], "unparseable depth must fall back to the default")
+	for _, depth := range []string{"abc", "0", "-5"} {
+		status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=%s", uuid.NewString(), depth), nil)
+		require.Equal(t, http.StatusBadRequest, status, "depth=%s must be rejected, not silently defaulted: %v", depth, out)
+	}
 }
 
 func TestLineageRunAncestors_NonRunSourceKindRefsExcluded(t *testing.T) {
@@ -879,6 +881,40 @@ func TestQueryAllLineageRecords_ReportsTruncatedWhenPageBudgetExhausted(t *testi
 	require.NoError(t, err)
 	require.True(t, truncated, "12 rows over a 5-per-page budget with only 2 pages available must exhaust the page budget")
 	require.Len(t, matches, 10, "only the rows covered by the exhausted page budget must be returned")
+}
+
+func TestWalkLineageRunsDescendants_PropagatesTruncatedFromScanBudget(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID, frameID := seedLineageInstance(t, h, "lin-desc-scan-truncate")
+	base := time.Now().UTC()
+
+	seedRunID := uuid.New()
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{"run_id": seedRunID.String()}, base, "")
+
+	const totalChildren = 12
+	for i := 0; i < totalChildren; i++ {
+		insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+			map[string]any{
+				"run_id": uuid.NewString(),
+				"substitution_refs": []map[string]any{
+					{"source_kind": "run", "source_version_or_id": seedRunID.String()},
+				},
+			}, base.Add(time.Duration(i+1)*time.Second), "")
+	}
+
+	deps := AppDeps{Persist: h.persist, Logger: shared.SilentLogger{}}
+	out, truncated, err := walkLineageRunsWithScanBudget(ctx, deps, shared.UUID(seedRunID), 1, lineageWalkDirectionDescendants, 5, 2)
+	require.NoError(t, err)
+	require.True(t, truncated,
+		"a descendants walk whose per-frontier child scan exhausts its page budget must report truncated=true, "+
+			"not silently drop the remaining children with no indicator")
+	require.Less(t, len(out), totalChildren,
+		"a truncated scan must not silently return the full child set")
 }
 
 func instIDPtr(id shared.UUID) *shared.UUID { return &id }

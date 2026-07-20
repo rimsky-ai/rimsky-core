@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,9 +80,33 @@ func TestEventsRoute_UnknownKindReturns400(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
-	status, _ := h.httpJSON(t, http.MethodGet,
+	status, body := h.httpJSON(t, http.MethodGet,
 		"/v1/events?kind=totally_made_up_kind", nil)
 	require.Equal(t, http.StatusBadRequest, status)
+	errMsg := fmt.Sprint(body["error"])
+	require.Contains(t, errMsg, "one of:",
+		"the allowed-kinds vocabulary must be introduced as the allowed set, not as if echoing client input")
+	require.NotContains(t, errMsg, "got: ",
+		"the old wording read as if the allowed-kinds list were an echo of what the client sent")
+}
+
+func TestEventsRoute_UnknownKindListsKindsInSortedOrder(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	status, body := h.httpJSON(t, http.MethodGet,
+		"/v1/events?kind=totally_made_up_kind", nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	errMsg := fmt.Sprint(body["error"])
+
+	start := strings.Index(errMsg, "one of: ")
+	require.GreaterOrEqual(t, start, 0)
+	rest := errMsg[start+len("one of: "):]
+	end := strings.Index(rest, ", or terminal/*")
+	require.GreaterOrEqual(t, end, 0)
+	kindsList := strings.Split(rest[:end], ", ")
+	require.True(t, sort.StringsAreSorted(kindsList),
+		"the operational-kinds vocabulary must render in deterministic sorted order across requests")
 }
 
 func TestEventsRoute_InstanceIDFilterNarrows(t *testing.T) {

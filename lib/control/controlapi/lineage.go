@@ -9,6 +9,7 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -103,19 +104,19 @@ func toLineageItem(r persistence.LineageRow) lineageRecordItem {
 	}
 }
 
-func parseDepth(req *http.Request) int {
+func parseDepth(req *http.Request) (int, error) {
 	s := req.URL.Query().Get("depth")
 	if s == "" {
-		return lineageWalkDefaultDepth
+		return lineageWalkDefaultDepth, nil
 	}
 	n, err := strconv.Atoi(s)
 	if err != nil || n <= 0 {
-		return lineageWalkDefaultDepth
+		return 0, fmt.Errorf("invalid depth: must be a positive integer")
 	}
 	if n > lineageWalkMaxDepth {
-		return lineageWalkMaxDepth
+		return lineageWalkMaxDepth, nil
 	}
-	return n
+	return n, nil
 }
 
 func handleLineageRun(deps AppDeps) http.HandlerFunc {
@@ -145,8 +146,12 @@ func handleLineageRunAncestors(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid run_id")
 			return
 		}
-		depth := parseDepth(req)
-		ancestors, err := walkLineageRuns(req.Context(), deps, shared.UUID(runID), depth, lineageWalkDirectionAncestors)
+		depth, err := parseDepth(req)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		ancestors, _, err := walkLineageRuns(req.Context(), deps, shared.UUID(runID), depth, lineageWalkDirectionAncestors)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -169,8 +174,12 @@ func handleLineageRunDescendants(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid run_id")
 			return
 		}
-		depth := parseDepth(req)
-		descendants, err := walkLineageRuns(req.Context(), deps, shared.UUID(runID), depth, lineageWalkDirectionDescendants)
+		depth, err := parseDepth(req)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		descendants, truncated, err := walkLineageRuns(req.Context(), deps, shared.UUID(runID), depth, lineageWalkDirectionDescendants)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -182,6 +191,7 @@ func handleLineageRunDescendants(deps AppDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"descendants": items,
 			"depth":       depth,
+			"truncated":   truncated,
 		})
 	}
 }
@@ -196,12 +206,20 @@ const (
 func walkLineageRuns(
 	ctx context.Context, deps AppDeps,
 	seed shared.UUID, depth int, dir lineageWalkDirection,
-) ([]persistence.LineageRow, error) {
+) ([]persistence.LineageRow, bool, error) {
+	return walkLineageRunsWithScanBudget(ctx, deps, seed, depth, dir, lineageScanPageSize, lineageScanMaxPages)
+}
+
+func walkLineageRunsWithScanBudget(
+	ctx context.Context, deps AppDeps,
+	seed shared.UUID, depth int, dir lineageWalkDirection,
+	scanPageSize, scanMaxPages int,
+) ([]persistence.LineageRow, bool, error) {
 	var descendantScopeInstanceID *shared.UUID
 	if dir == lineageWalkDirectionDescendants {
 		seedRows, err := deps.Persist.Lineage().GetByRunID(ctx, seed)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(seedRows) > 0 {
 			id := seedRows[len(seedRows)-1].InstanceID
@@ -211,6 +229,7 @@ func walkLineageRuns(
 
 	visited := map[shared.UUID]struct{}{seed: {}}
 	var out []persistence.LineageRow
+	var truncated bool
 	frontier := []shared.UUID{seed}
 	for level := 0; level < depth && len(frontier) > 0; level++ {
 		next := []shared.UUID{}
@@ -219,7 +238,7 @@ func walkLineageRuns(
 			case lineageWalkDirectionAncestors:
 				frontierRecords, err := deps.Persist.Lineage().GetByRunID(ctx, id)
 				if err != nil {
-					return nil, err
+					return nil, false, err
 				}
 				for _, fr := range frontierRecords {
 					for _, refID := range extractSubstitutionRefRunIDs(fr.Record) {
@@ -229,7 +248,7 @@ func walkLineageRuns(
 						visited[refID] = struct{}{}
 						ancestorRows, err := deps.Persist.Lineage().GetByRunID(ctx, refID)
 						if err != nil {
-							return nil, err
+							return nil, false, err
 						}
 						if len(ancestorRows) > 0 {
 							out = append(out, ancestorRows[len(ancestorRows)-1])
@@ -239,12 +258,15 @@ func walkLineageRuns(
 				}
 			case lineageWalkDirectionDescendants:
 				sourceID := id.String()
-				children, _, err := queryAllLineageRecords(ctx, deps,
+				children, childTruncated, err := queryAllLineageRecords(ctx, deps,
 					persistence.LineageQuery{Kind: persistence.LineageRecordKindLeafRun, InstanceID: descendantScopeInstanceID},
 					func(record json.RawMessage) bool { return recordMentionsSource(record, "run", sourceID) },
-					lineageScanPageSize, lineageScanMaxPages)
+					scanPageSize, scanMaxPages)
 				if err != nil {
-					return nil, err
+					return nil, false, err
+				}
+				if childTruncated {
+					truncated = true
 				}
 				for _, r := range children {
 					childRunID := extractRunIDFromRecord(r.Record)
@@ -262,7 +284,7 @@ func walkLineageRuns(
 		}
 		frontier = next
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 func queryAllLineageRecords(
@@ -408,7 +430,11 @@ func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid claim_handle_id")
 			return
 		}
-		depth := parseDepth(req)
+		depth, err := parseDepth(req)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		out, err := walkLineageClaims(req.Context(), deps, shared.UUID(claimID), depth, lineageWalkDirectionAncestors)
 		if err != nil {
 			writeError(w, err)
@@ -433,7 +459,11 @@ func handleLineageClaimDescendants(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid claim_handle_id")
 			return
 		}
-		depth := parseDepth(req)
+		depth, err := parseDepth(req)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		out, err := walkLineageClaims(req.Context(), deps, shared.UUID(claimID), depth, lineageWalkDirectionDescendants)
 		if err != nil {
 			writeError(w, err)

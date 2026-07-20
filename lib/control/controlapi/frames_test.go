@@ -315,6 +315,19 @@ func TestFrames_List_InvalidInstanceIDReturns400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
+func TestFrames_List_InvalidLimitReturns400(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "frames-bad-limit")
+	status, _ := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/frames?limit=not-a-number", instID), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+
+	status, _ = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/frames?limit=-1", instID), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+}
+
 func TestFrames_List_InvalidTriggeringMessageIDReturns400(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

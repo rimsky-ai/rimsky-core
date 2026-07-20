@@ -90,10 +90,11 @@ type KeyRevokedPayload struct {
 }
 
 type KeyRotatedPayload struct {
-	KeyID    shared.UUID `json:"key_id"`
-	KeyName  string      `json:"key_name"`
-	OldKeyID shared.UUID `json:"old_key_id"`
-	NewKeyID shared.UUID `json:"new_key_id"`
-	Name     string      `json:"name"`
-	RevokeAt time.Time   `json:"revoke_at"`
+	KeyID          shared.UUID  `json:"key_id"`
+	KeyName        string       `json:"key_name"`
+	OldKeyID       shared.UUID  `json:"old_key_id"`
+	NewKeyID       shared.UUID  `json:"new_key_id"`
+	Name           string       `json:"name"`
+	RevokeAt       time.Time    `json:"revoke_at"`
+	RotatedByKeyID *shared.UUID `json:"rotated_by_key_id"`
 }

@@ -435,6 +435,10 @@ func TestAdminHeldFrames_GroupsByFrame(t *testing.T) {
 			InstanceID: "i2", NodeID: "n3", FrameID: "f2",
 			ParkedAt: now,
 		},
+		{
+			InstanceID: "i3", NodeID: "n4", FrameID: "",
+			ParkedAt: now,
+		},
 	}
 	deps := AppDeps{
 		Persist: noopStore{},
@@ -462,5 +466,11 @@ func TestAdminHeldFrames_GroupsByFrame(t *testing.T) {
 	}
 	if len(got.Frames) != 2 {
 		t.Fatalf("want 2 frames, got %d (%+v)", len(got.Frames), got.Frames)
+	}
+	if len(got.FramesWithoutFrameID) != 1 {
+		t.Fatalf("want 1 frames_without_frame_id entry, got %d (%+v)", len(got.FramesWithoutFrameID), got.FramesWithoutFrameID)
+	}
+	if got.FramesWithoutFrameID[0].NodeID != "n4" {
+		t.Fatalf("frames_without_frame_id[0].node_id = %q, want n4", got.FramesWithoutFrameID[0].NodeID)
 	}
 }

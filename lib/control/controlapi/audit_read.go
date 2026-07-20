@@ -10,6 +10,7 @@ package controlapi
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,7 +49,7 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 				return
 			}
 			wire := parsed.String()
-			if !strings.HasPrefix(wire, "auth.") {
+			if !slices.Contains(auditKinds, wire) {
 				badRequest(w, "kind not in audit allowlist: "+wire+
 					" (the /audit surface accepts only auth.* kinds; expected one of: "+
 					strings.Join(auditKinds, ", ")+")")

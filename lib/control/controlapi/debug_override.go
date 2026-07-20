@@ -38,6 +38,8 @@ type DebugOverrideRequest struct {
 
 var errInstanceNotDebuggable = errors.New("instance not in debuggable state")
 
+var errDebugOverrideUnknownNodeType = errors.New("node_type does not match any node in this instance")
+
 type debugCrossFrameRunError struct {
 	NodeID        shared.UUID
 	NodeType      string
@@ -169,6 +171,10 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
+		if errors.Is(txErr, errDebugOverrideUnknownNodeType) {
+			badRequest(w, txErr.Error())
+			return
+		}
 		var crossFrameErr *debugCrossFrameRunError
 		if errors.As(txErr, &crossFrameErr) {
 			writeJSON(w, http.StatusConflict, map[string]any{
@@ -206,6 +212,16 @@ func applyDebugOverride(
 	nodes, err := deps.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
 	if err != nil {
 		return 0, err
+	}
+	matchesNodeType := false
+	for _, n := range nodes {
+		if n.NodeType == body.NodeType {
+			matchesNodeType = true
+			break
+		}
+	}
+	if !matchesNodeType {
+		return 0, fmt.Errorf("%w: %q", errDebugOverrideUnknownNodeType, body.NodeType)
 	}
 	mutated := 0
 	for _, n := range nodes {

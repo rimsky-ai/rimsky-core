@@ -99,3 +99,26 @@ persistence:
 		})
 	}
 }
+
+func TestLoadRimskyConfig_DSNLiteralDollarSurvivesEnvExpansion(t *testing.T) {
+	t.Setenv("RIMSKY_TEST_DSN_HOST", "expanded-host")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rimsky.yml")
+	yaml := `
+persistence:
+  driver: postgres
+  postgres:
+    dsn: postgres://u:p$w@${RIMSKY_TEST_DSN_HOST}/db?sslmode=disable
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := LoadRimskyConfigYAML(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := "postgres://u:p$w@expanded-host/db?sslmode=disable"
+	if cfg.Persistence.Postgres.DSN != want {
+		t.Fatalf("dsn = %q, want %q", cfg.Persistence.Postgres.DSN, want)
+	}
+}

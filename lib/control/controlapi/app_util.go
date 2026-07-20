@@ -9,6 +9,8 @@ import (
 	"strconv"
 )
 
+const parseLimitMax = resourceReadMaxLimit
+
 func parseLimit(req *http.Request, dflt int) int {
 	s := req.URL.Query().Get("limit")
 	if s == "" {
@@ -17,6 +19,9 @@ func parseLimit(req *http.Request, dflt int) int {
 	n, err := strconv.Atoi(s)
 	if err != nil || n <= 0 {
 		return dflt
+	}
+	if n > parseLimitMax {
+		return parseLimitMax
 	}
 	return n
 }

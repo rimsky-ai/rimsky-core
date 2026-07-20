@@ -289,12 +289,19 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			Grace string `json:"grace,omitempty"`
 		}
 		var body req
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			badRequest(w, "invalid JSON: "+err.Error())
+			return
+		}
 		grace := 24 * time.Hour
 		if body.Grace != "" {
 			d, err := time.ParseDuration(body.Grace)
 			if err != nil {
 				badRequest(w, "invalid grace duration: "+err.Error())
+				return
+			}
+			if d <= 0 {
+				badRequest(w, "grace must be positive")
 				return
 			}
 			grace = d
@@ -311,6 +318,10 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 		}
 		if oldRow.RevokedAt != nil {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot rotate a revoked key"})
+			return
+		}
+		if oldRow.RevokeAt != nil {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot rotate a key that is already in rotation grace"})
 			return
 		}
 		now := deps.AuthState.Clock.Now()
@@ -341,13 +352,19 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		revokeAt := now.Add(grace)
+		ident, _ := IdentityFromContextOK(ctx)
+		var rotatedBy *shared.UUID
+		if ident.KeyID != nil {
+			rotatedBy = ident.KeyID
+		}
 		newRow := persistence.APIKey{
-			ID:          uuid.New(),
-			KeyHash:     hash[:],
-			Name:        oldRow.Name,
-			Permissions: oldRow.Permissions,
-			CreatedAt:   now,
-			ExpiresAt:   oldRow.ExpiresAt,
+			ID:             uuid.New(),
+			KeyHash:        hash[:],
+			Name:           oldRow.Name,
+			Permissions:    oldRow.Permissions,
+			CreatedAt:      now,
+			CreatedByKeyID: rotatedBy,
+			ExpiresAt:      oldRow.ExpiresAt,
 		}
 		err = deps.AuthState.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			if err := keys.SetRevokeAt(ctx, oldRow.ID, revokeAt, tx); err != nil {
@@ -356,17 +373,30 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			return keys.Insert(ctx, newRow, tx)
 		})
 		if err != nil {
+			if errors.Is(err, persistence.ErrAPIKeyNameTaken) {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "name already in use"})
+				return
+			}
+			if errors.Is(err, persistence.ErrAPIKeyHashCollision) {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":    "api-key key_hash collision",
+					"hint":     "most likely a stale row from a previous deploy; pre-v1 remedy is to drop the conflicting row and retry the mint",
+					"sentinel": "ErrAPIKeyHashCollision",
+				})
+				return
+			}
 			writeError(w, err)
 			return
 		}
 		deps.AuthState.InvalidateAnonCache()
 		deps.AuthState.EmitKeyRotated(ctx, auth.KeyRotatedPayload{
-			KeyID:    newRow.ID,
-			KeyName:  oldRow.Name,
-			OldKeyID: oldRow.ID,
-			NewKeyID: newRow.ID,
-			Name:     oldRow.Name,
-			RevokeAt: revokeAt,
+			KeyID:          newRow.ID,
+			KeyName:        oldRow.Name,
+			OldKeyID:       oldRow.ID,
+			NewKeyID:       newRow.ID,
+			Name:           oldRow.Name,
+			RevokeAt:       revokeAt,
+			RotatedByKeyID: rotatedBy,
 		})
 		writeJSON(w, http.StatusOK, map[string]any{
 			"old_key_id": oldRow.ID,

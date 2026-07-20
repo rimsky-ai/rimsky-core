@@ -15,29 +15,30 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-func requestTargets(ctx context.Context, persist persistence.Tables, action string, body []byte, r *http.Request) []map[string]string {
+func requestTargets(ctx context.Context, persist persistence.Tables, logger foundationshared.Logger, action string, body []byte, r *http.Request) []map[string]string {
 	switch action {
 	case "template:register":
 		if tag := registerRequestTag(body); tag != "" {
 			return []map[string]string{{"template_tag": tag}}
 		}
 	case "template:deploy", "template:undeploy", "template:deregister":
-		return templateIDTargets(ctx, persist, chi.URLParam(r, "id"))
+		return templateIDTargets(ctx, persist, logger, chi.URLParam(r, "id"))
 	case "tag:set", "tag:delete":
 		if tag := chi.URLParam(r, "tag"); tag != "" {
 			return []map[string]string{{"template_tag": tag}}
 		}
 	case "instance:create":
 		if tpl := instanceCreateTemplate(body); tpl != "" {
-			return templateIDTargets(ctx, persist, tpl)
+			return templateIDTargets(ctx, persist, logger, tpl)
 		}
 	}
 	return []map[string]string{{}}
 }
 
-func templateIDTargets(ctx context.Context, persist persistence.Tables, idOrTag string) []map[string]string {
+func templateIDTargets(ctx context.Context, persist persistence.Tables, logger foundationshared.Logger, idOrTag string) []map[string]string {
 	if idOrTag == "" {
 		return []map[string]string{{}}
 	}
@@ -53,7 +54,13 @@ func templateIDTargets(ctx context.Context, persist persistence.Tables, idOrTag 
 		rows = r
 		return err
 	})
-	if err != nil || len(rows) == 0 {
+	if err != nil {
+		if logger != nil {
+			logger.Warn("auth.template_targets_lookup_failed", "template_id", idOrTag, "err", err.Error())
+		}
+		return []map[string]string{{}}
+	}
+	if len(rows) == 0 {
 		return []map[string]string{{}}
 	}
 	out := make([]map[string]string, 0, len(rows))
