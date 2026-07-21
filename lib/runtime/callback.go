@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
@@ -97,7 +98,7 @@ type CallbackServer struct {
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	DeclaredTagsFor             func(executorName string) (tags []string, ok bool)
 	Metrics                     MetricsHook
-	LifecycleSubs               *locks.LifecycleRegistry
+	LifecycleSubs               *lifecycle.Registry
 	LifecyclePeersForSpec       func(tplSpec node.TemplateSpec) []string
 	// @concept: data-processing
 	DataProcessors   DataProcessingRegistry

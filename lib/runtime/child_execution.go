@@ -304,7 +304,8 @@ func fanOutRunScopeEventPostCommit(
 	args RunArgs, tplSpec node.TemplateSpec, runScopeID, instanceID shared.UUID, terminalReason string,
 ) postCommitFn {
 	return func(ctx context.Context) {
-		FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs, args.LifecyclePeersForSpec, tplSpec, runScopeID, instanceID, terminalReason, args.Logger, nil)
+		FanOutRunScopeEvent(ctx, args.Persist, args.AdvisoryLocker, args.LifecycleSubs,
+			args.LifecyclePeersForSpec, tplSpec, runScopeID, instanceID, terminalReason, args.Logger, nil)
 	}
 }
 

@@ -33,4 +33,6 @@ type AdvisoryLocker interface {
 	TakeNamedLock(ctx context.Context, name string, tx Tx) error
 
 	TakeClaimScopeLock(ctx context.Context, claimProducerName string, claimScopeData []byte, tx Tx) error
+
+	TakeLifecycleScopeLock(ctx context.Context, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) error
 }

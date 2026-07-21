@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
@@ -21,7 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-func openLifecycleFanoutTestTables(t *testing.T) persistence.Tables {
+func openLifecycleFanoutTestDB(t *testing.T) persistence.Database {
 	t.Helper()
 	ctx := context.Background()
 	d, err := persistence.Open(ctx, persistence.Config{
@@ -31,26 +31,27 @@ func openLifecycleFanoutTestTables(t *testing.T) persistence.Tables {
 	require.NoError(t, err)
 	require.NoError(t, d.Migrate(ctx, shared.SilentLogger{}))
 	t.Cleanup(func() { _ = d.Close() })
-	return d.Tables()
+	return d
 }
 
 func fanOutRunScopeEventInTx(
-	t *testing.T, persist persistence.Tables, lifecycleSubs *locks.LifecycleRegistry,
+	t *testing.T, d persistence.Database, lifecycleSubs *lifecycle.Registry,
 	peersForSpec func(node.TemplateSpec) []string, tplSpec node.TemplateSpec,
 	runScopeID, instanceID shared.UUID, terminalReason string,
 ) {
 	t.Helper()
+	persist := d.Tables()
 	require.NoError(t, persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec, tplSpec, runScopeID, instanceID, terminalReason, nil, tx)
+		FanOutRunScopeEvent(ctx, persist, d.AdvisoryLocker(), lifecycleSubs, peersForSpec, tplSpec, runScopeID, instanceID, terminalReason, nil, tx)
 		return nil
 	}))
 }
 
 func TestFanOutRunScopeEvent_ReplayIsNoOp(t *testing.T) {
-	persist := openLifecycleFanoutTestTables(t)
+	d := openLifecycleFanoutTestDB(t)
 
 	fake := storetest.NewFake("peer-a", claimproducer.Capabilities{})
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("peer-a", fake)
 	peersForSpec := func(node.TemplateSpec) []string { return []string{"peer-a"} }
 	tplSpec := node.TemplateSpec{Name: "fanout-replay", Version: "v1"}
@@ -58,21 +59,21 @@ func TestFanOutRunScopeEvent_ReplayIsNoOp(t *testing.T) {
 	runScopeID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 
-	fanOutRunScopeEventInTx(t, persist, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit")
+	fanOutRunScopeEventInTx(t, d, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit")
 	require.Len(t, fake.Calls(), 1, "the first fan-out must deliver on_run_scope_terminal exactly once")
 	require.Equal(t, "on_run_scope_terminal", fake.Calls()[0].Verb)
 
-	fanOutRunScopeEventInTx(t, persist, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit")
+	fanOutRunScopeEventInTx(t, d, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit")
 	require.Len(t, fake.Calls(), 1,
 		"replaying a fan-out for the same (peer, run-scope) pair must be a no-op: the idempotency row from "+
 			"the first delivery is already at run-scope-terminal, so no second downstream delivery may occur")
 }
 
 func TestFanOutRunScopeEvent_DistinctRunScopesEachDeliverOnce(t *testing.T) {
-	persist := openLifecycleFanoutTestTables(t)
+	d := openLifecycleFanoutTestDB(t)
 
 	fake := storetest.NewFake("peer-a", claimproducer.Capabilities{})
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("peer-a", fake)
 	peersForSpec := func(node.TemplateSpec) []string { return []string{"peer-a"} }
 	tplSpec := node.TemplateSpec{Name: "fanout-distinct", Version: "v1"}
@@ -81,8 +82,8 @@ func TestFanOutRunScopeEvent_DistinctRunScopesEachDeliverOnce(t *testing.T) {
 	scopeA := shared.UUID(uuid.New())
 	scopeB := shared.UUID(uuid.New())
 
-	fanOutRunScopeEventInTx(t, persist, lcReg, peersForSpec, tplSpec, scopeA, instanceID, "subgraph_exit")
-	fanOutRunScopeEventInTx(t, persist, lcReg, peersForSpec, tplSpec, scopeB, instanceID, "subgraph_exit")
+	fanOutRunScopeEventInTx(t, d, lcReg, peersForSpec, tplSpec, scopeA, instanceID, "subgraph_exit")
+	fanOutRunScopeEventInTx(t, d, lcReg, peersForSpec, tplSpec, scopeB, instanceID, "subgraph_exit")
 
 	require.Len(t, fake.Calls(), 2,
 		"two distinct run scopes for the same peer must each deliver independently; "+
@@ -90,10 +91,10 @@ func TestFanOutRunScopeEvent_DistinctRunScopesEachDeliverOnce(t *testing.T) {
 }
 
 func TestFanOutRunScopeEvent_NilTxCommitsIndependently(t *testing.T) {
-	persist := openLifecycleFanoutTestTables(t)
+	d := openLifecycleFanoutTestDB(t)
 
 	fake := storetest.NewFake("peer-a", claimproducer.Capabilities{})
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("peer-a", fake)
 	peersForSpec := func(node.TemplateSpec) []string { return []string{"peer-a"} }
 	tplSpec := node.TemplateSpec{Name: "fanout-niltx", Version: "v1"}
@@ -101,12 +102,13 @@ func TestFanOutRunScopeEvent_NilTxCommitsIndependently(t *testing.T) {
 	runScopeID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 
-	FanOutRunScopeEvent(context.Background(), persist, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit", nil, nil)
+	FanOutRunScopeEvent(context.Background(), d.Tables(), d.AdvisoryLocker(), lcReg, peersForSpec, tplSpec,
+		runScopeID, instanceID, "subgraph_exit", nil, nil)
 	require.Len(t, fake.Calls(), 1,
 		"a nil tx must still deliver to the peer, managing its own short transactions for the idempotency read/write")
 
-	require.NoError(t, persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		row, err := persist.LifecycleIdempotency().Get(ctx, "peer-a",
+	require.NoError(t, d.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		row, err := d.Tables().LifecycleIdempotency().Get(ctx, "peer-a",
 			persistence.LifecycleIdempotencyScopeRunScope, runScopeID.String(), tx)
 		require.NoError(t, err)
 		require.NotNil(t, row, "the idempotency upsert must be durably committed by the time FanOutRunScopeEvent returns, "+
@@ -117,17 +119,18 @@ func TestFanOutRunScopeEvent_NilTxCommitsIndependently(t *testing.T) {
 }
 
 func TestFanOutRunScopeEventPostCommit_DeliversToPeer(t *testing.T) {
-	persist := openLifecycleFanoutTestTables(t)
+	d := openLifecycleFanoutTestDB(t)
 
 	fake := storetest.NewFake("peer-a", claimproducer.Capabilities{})
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("peer-a", fake)
 	tplSpec := node.TemplateSpec{Name: "fanout-postcommit", Version: "v1"}
 	runScopeID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 
 	args := RunArgs{
-		Persist:               persist,
+		Persist:               d.Tables(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
 		LifecycleSubs:         lcReg,
 		LifecyclePeersForSpec: func(node.TemplateSpec) []string { return []string{"peer-a"} },
 		Logger:                shared.SilentLogger{},

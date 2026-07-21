@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -80,7 +81,7 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 	reg.Add("content", contentFake)
 	reg.Add("topics-ring", topicsFake)
 
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("content", contentFake)
 	lcReg.Add("topics-ring", topicsFake)
 
@@ -90,6 +91,7 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 	capLog := shared.NewCapturingLogger()
 	app := NewApp(AppDeps{
 		Persist:        d.Tables(),
+		AdvisoryLocker: d.AdvisoryLocker(),
 		Queue:          d.Queue(),
 		Clock:          shared.SystemClock{},
 		Logger:         capLog,

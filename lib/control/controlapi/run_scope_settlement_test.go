@@ -49,7 +49,7 @@ func TestFrameSettlement_ClosesRootScopeAndFansOutExactlyOnce(t *testing.T) {
 		return err
 	}))
 
-	scopeFanout := runtime.FrameRunScopeTerminalFanout(f.deps.Persist, f.lifecycle,
+	scopeFanout := runtime.FrameRunScopeTerminalFanout(f.deps.Persist, f.driver.AdvisoryLocker(), f.lifecycle,
 		func(tplSpec node.TemplateSpec) []string { return LifecyclePeersForSpec(f.deps, tplSpec) })
 	require.NotNil(t, scopeFanout)
 

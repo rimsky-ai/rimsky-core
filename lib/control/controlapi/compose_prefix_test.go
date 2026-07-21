@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -47,7 +48,7 @@ func newAuthedComposeHarness(t *testing.T, permissions string) (*harness, string
 	reg.Add("content", contentFake)
 	reg.Add("topics-ring", topicsFake)
 
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("content", contentFake)
 	lcReg.Add("topics-ring", topicsFake)
 
@@ -73,6 +74,7 @@ func newAuthedComposeHarness(t *testing.T, permissions string) (*harness, string
 
 	app := NewApp(AppDeps{
 		Persist:        d.Tables(),
+		AdvisoryLocker: d.AdvisoryLocker(),
 		Queue:          d.Queue(),
 		Clock:          clock,
 		Logger:         capLog,

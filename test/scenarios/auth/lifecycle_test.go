@@ -27,6 +27,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
@@ -78,9 +79,10 @@ func newAuthFixtureOpts(t *testing.T, withObservability bool) *authFixture {
 	deps := controlapi.AppDeps{
 		Persist:        d.Tables(),
 		Queue:          d.Queue(),
+		AdvisoryLocker: d.AdvisoryLocker(),
 		Clock:          clock,
 		Logger:         shared.SilentLogger{},
-		LifecycleSubs:  locks.NewLifecycleRegistry(),
+		LifecycleSubs:  lifecycle.NewRegistry(),
 		ClaimProducers: claimProducers,
 		AuthState:      state,
 	}

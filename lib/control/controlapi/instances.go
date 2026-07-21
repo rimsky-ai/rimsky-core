@@ -789,12 +789,17 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLifecycleScope(persistence.LifecycleIdempotencyScopeInstance, inst.ID.String())
-		defer unlock()
-
+		if deps.AdvisoryLocker == nil {
+			writeError(w, errAdvisoryLockerNotInitialized)
+			return
+		}
 		var alreadyTerminated bool
 		var killPostCommit func(context.Context)
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			if err := deps.AdvisoryLocker.TakeLifecycleScopeLock(ctx,
+				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
+				return err
+			}
 			fresh, err := deps.Persist.Instances().Get(ctx, inst.ID, tx)
 			if err != nil {
 				return err
@@ -884,6 +889,7 @@ func terminateRunArgs(deps AppDeps) runtime.RunArgs {
 	return runtime.RunArgs{
 		Persist:        deps.Persist,
 		Queue:          deps.Queue,
+		AdvisoryLocker: deps.AdvisoryLocker,
 		ClaimHandles:   deps.Persist.ClaimHandles(),
 		StoreRegistry:  deps.ClaimProducers,
 		DataProcessors: deps.DataProcessors,

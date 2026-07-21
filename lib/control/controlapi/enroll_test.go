@@ -96,10 +96,11 @@ func newEnrollHarness(t *testing.T, withEnroll, withEnrollClock bool) enrollHarn
 	}
 	logger := captureLogger{mu: &sync.Mutex{}, events: &[]captureEvent{}}
 	deps := AppDeps{
-		Persist:   d.Tables(),
-		Clock:     clock,
-		Logger:    logger,
-		AuthState: authState,
+		Persist:        d.Tables(),
+		AdvisoryLocker: d.AdvisoryLocker(),
+		Clock:          clock,
+		Logger:         logger,
+		AuthState:      authState,
 	}
 	if withEnroll {
 		ca, err := pki.GenerateCA(clock.Now())

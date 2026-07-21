@@ -22,8 +22,9 @@ const (
 
 	advisoryMigrationLockKey int64 = 5412893270184856212
 
-	namedLockKeyClass      int32 = 1
-	claimScopeLockKeyClass int32 = 2
+	namedLockKeyClass          int32 = 1
+	claimScopeLockKeyClass     int32 = 2
+	lifecycleScopeLockKeyClass int32 = 3
 )
 
 type advisoryLockerImpl struct {
@@ -100,6 +101,18 @@ func (c *advisoryLockerImpl) TakeClaimScopeLock(ctx context.Context, claimProduc
 	key := claimProducerName + ":" + hex.EncodeToString(claimScopeData)
 	if _, err := pgT.Exec(ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", claimScopeLockKeyClass, key); err != nil {
 		return fmt.Errorf("postgres.TakeClaimScopeLock: claim producer %q: %w", claimProducerName, err)
+	}
+	return nil
+}
+
+func (c *advisoryLockerImpl) TakeLifecycleScopeLock(ctx context.Context, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) error {
+	pgT, err := unwrapTx(tx)
+	if err != nil {
+		return fmt.Errorf("postgres.TakeLifecycleScopeLock: %w", err)
+	}
+	key := string(scopeKind) + ":" + scopeID
+	if _, err := pgT.Exec(ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", lifecycleScopeLockKeyClass, key); err != nil {
+		return fmt.Errorf("postgres.TakeLifecycleScopeLock: scope %q: %w", key, err)
 	}
 	return nil
 }

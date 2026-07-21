@@ -16,6 +16,7 @@ import (
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/matcher"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -28,11 +29,12 @@ import (
 type AppDeps struct {
 	Persist        persistence.Tables
 	Queue          persistence.Queue
+	AdvisoryLocker persistence.AdvisoryLocker
 	Clock          foundationshared.Clock
 	Logger         foundationshared.Logger
 	AuthState      *AuthState
 	ClaimProducers *locks.Registry
-	LifecycleSubs  *locks.LifecycleRegistry
+	LifecycleSubs  *lifecycle.Registry
 	NamedLocks     locks.NamedLocksConfig
 	Executors      map[string]ExecutorEntry
 	Observability  ObservabilityRouter

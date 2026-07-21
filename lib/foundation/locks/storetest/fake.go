@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
@@ -69,8 +70,8 @@ func NewFake(name string, caps claimproducer.Capabilities) *Fake {
 }
 
 var (
-	_ locks.ClaimProducer       = (*Fake)(nil)
-	_ locks.LifecycleSubscriber = (*Fake)(nil)
+	_ locks.ClaimProducer  = (*Fake)(nil)
+	_ lifecycle.Subscriber = (*Fake)(nil)
 )
 
 func (f *Fake) Name() string { return f.name }
@@ -195,23 +196,23 @@ func (f *Fake) Reset() {
 	f.calls = nil
 }
 
-func (f *Fake) OnTemplateRegistered(_ context.Context, req locks.OnTemplateRegisteredRequest) error {
+func (f *Fake) OnTemplateRegistered(_ context.Context, req lifecycle.OnTemplateRegisteredRequest) error {
 	return f.recordLifecycle("on_template_registered", req.TemplateHash, "")
 }
 
-func (f *Fake) OnTemplateDeployed(_ context.Context, req locks.OnTemplateDeployedRequest) error {
+func (f *Fake) OnTemplateDeployed(_ context.Context, req lifecycle.OnTemplateDeployedRequest) error {
 	return f.recordLifecycle("on_template_deployed", req.TemplateHash, "")
 }
 
-func (f *Fake) OnTemplateUndeployed(_ context.Context, req locks.OnTemplateUndeployedRequest) error {
+func (f *Fake) OnTemplateUndeployed(_ context.Context, req lifecycle.OnTemplateUndeployedRequest) error {
 	return f.recordLifecycle("on_template_undeployed", req.TemplateHash, "")
 }
 
-func (f *Fake) OnTemplateDeregistered(_ context.Context, req locks.OnTemplateDeregisteredRequest) error {
+func (f *Fake) OnTemplateDeregistered(_ context.Context, req lifecycle.OnTemplateDeregisteredRequest) error {
 	return f.recordLifecycle("on_template_deregistered", req.TemplateHash, "")
 }
 
-func (f *Fake) OnInstanceCreated(_ context.Context, req locks.OnInstanceCreatedRequest) error {
+func (f *Fake) OnInstanceCreated(_ context.Context, req lifecycle.OnInstanceCreatedRequest) error {
 	return f.recordLifecycleCall(FakeCall{
 		Verb:            "on_instance_created",
 		TemplateHash:    req.TemplateHash,
@@ -223,7 +224,7 @@ func (f *Fake) OnInstanceCreated(_ context.Context, req locks.OnInstanceCreatedR
 	})
 }
 
-func (f *Fake) OnInstanceTerminated(_ context.Context, req locks.OnInstanceTerminatedRequest) error {
+func (f *Fake) OnInstanceTerminated(_ context.Context, req lifecycle.OnInstanceTerminatedRequest) error {
 	return f.recordLifecycleCall(FakeCall{
 		Verb:               "on_instance_terminated",
 		TemplateHash:       req.TemplateHash,
@@ -232,7 +233,7 @@ func (f *Fake) OnInstanceTerminated(_ context.Context, req locks.OnInstanceTermi
 	})
 }
 
-func (f *Fake) OnRunScopeTerminal(_ context.Context, req locks.OnRunScopeTerminalRequest) error {
+func (f *Fake) OnRunScopeTerminal(_ context.Context, req lifecycle.OnRunScopeTerminalRequest) error {
 	return f.recordLifecycleCall(FakeCall{
 		Verb:           "on_run_scope_terminal",
 		RunScopeID:     req.RunScopeID,

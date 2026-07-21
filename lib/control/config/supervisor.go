@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -48,7 +49,7 @@ type SupervisorConfig struct {
 
 	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
 
-	LifecycleSubs *locks.LifecycleRegistry
+	LifecycleSubs *lifecycle.Registry
 
 	Executors ExecutorsConfig
 
@@ -237,7 +238,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 type supervisorHandleWithRegistry struct {
 	inner               SupervisorHandle
 	registry            *locks.Registry
-	lifecycleSubs       *locks.LifecycleRegistry
+	lifecycleSubs       *lifecycle.Registry
 	closeDataProcessors func()
 	stopIdentity        func()
 }

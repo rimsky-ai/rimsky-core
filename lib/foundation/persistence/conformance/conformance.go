@@ -37,6 +37,7 @@ func Suite(
 	t.Run("AcquisitionTxAtomicity", func(t *testing.T) { testAcquisitionTxAtomicity(t, factory(t)) })
 	t.Run("ClaimHandleLockForUpdateSerializesConcurrentTx", func(t *testing.T) { testClaimHandleLockForUpdateSerializesConcurrentTx(t, factory(t)) })
 	t.Run("AdvisoryLockConcurrentAcquisitionSmoke", func(t *testing.T) { testAdvisoryLockConcurrentAcquisitionSmoke(t, factory(t)) })
+	t.Run("LifecycleScopeLockSerializesFanOutSection", func(t *testing.T) { testLifecycleScopeLockSerializesFanOutSection(t, factory(t)) })
 	t.Run("PublisherSubscriptionLifecycle", func(t *testing.T) { testPublisherSubscriptionLifecycle(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
 	t.Run("SelectCandidatesSkipsPausedInstances", func(t *testing.T) { testSelectCandidatesSkipsPausedInstances(t, factory(t)) })

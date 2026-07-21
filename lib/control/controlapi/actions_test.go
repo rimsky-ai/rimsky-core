@@ -436,11 +436,12 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 		t.Fatalf("seed key: %v", err)
 	}
 	app := NewApp(AppDeps{
-		Persist:   d.Tables(),
-		Queue:     d.Queue(),
-		Clock:     clock,
-		Logger:    shared.SilentLogger{},
-		AuthState: state,
+		Persist:        d.Tables(),
+		AdvisoryLocker: d.AdvisoryLocker(),
+		Queue:          d.Queue(),
+		Clock:          clock,
+		Logger:         shared.SilentLogger{},
+		AuthState:      state,
 	})
 	srv := httptest.NewServer(app)
 	t.Cleanup(srv.Close)

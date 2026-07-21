@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
@@ -806,8 +807,8 @@ func LookupInstanceBindings(ctx context.Context, persist persistence.Tables, ins
 }
 
 // @concept: lifecycle-subscriber
-func DialLifecycleSubscribers(ctx context.Context, stores RemoteClaimProducersConfig, execs ExecutorsConfig, publishers RemotePublishersConfig) (*locks.LifecycleRegistry, error) {
-	reg := locks.NewLifecycleRegistry()
+func DialLifecycleSubscribers(ctx context.Context, stores RemoteClaimProducersConfig, execs ExecutorsConfig, publishers RemotePublishersConfig) (*lifecycle.Registry, error) {
+	reg := lifecycle.NewRegistry()
 	for name, entry := range stores.ClaimProducers {
 		if !entry.HasProtocol(claimproducer.ProtocolLifecycleSubscriber) {
 			continue

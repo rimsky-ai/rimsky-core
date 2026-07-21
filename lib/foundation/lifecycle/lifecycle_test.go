@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package locks
+package lifecycle
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/lifecycle"
+	protolifecycle "github.com/rimsky-ai/rimsky-core/lib/protocols/lifecycle"
 )
 
 type mockSubscriber struct {
@@ -20,31 +20,31 @@ type mockSubscriber struct {
 
 func (m mockSubscriber) Name() string { return m.name }
 
-func (m mockSubscriber) OnTemplateRegistered(_ context.Context, _ lifecycle.OnTemplateRegisteredRequest) error {
+func (m mockSubscriber) OnTemplateRegistered(_ context.Context, _ protolifecycle.OnTemplateRegisteredRequest) error {
 	return nil
 }
 
-func (m mockSubscriber) OnTemplateDeployed(_ context.Context, _ lifecycle.OnTemplateDeployedRequest) error {
+func (m mockSubscriber) OnTemplateDeployed(_ context.Context, _ protolifecycle.OnTemplateDeployedRequest) error {
 	return nil
 }
 
-func (m mockSubscriber) OnTemplateUndeployed(_ context.Context, _ lifecycle.OnTemplateUndeployedRequest) error {
+func (m mockSubscriber) OnTemplateUndeployed(_ context.Context, _ protolifecycle.OnTemplateUndeployedRequest) error {
 	return nil
 }
 
-func (m mockSubscriber) OnTemplateDeregistered(_ context.Context, _ lifecycle.OnTemplateDeregisteredRequest) error {
+func (m mockSubscriber) OnTemplateDeregistered(_ context.Context, _ protolifecycle.OnTemplateDeregisteredRequest) error {
 	return nil
 }
 
-func (m mockSubscriber) OnInstanceCreated(_ context.Context, _ lifecycle.OnInstanceCreatedRequest) error {
+func (m mockSubscriber) OnInstanceCreated(_ context.Context, _ protolifecycle.OnInstanceCreatedRequest) error {
 	return nil
 }
 
-func (m mockSubscriber) OnInstanceTerminated(_ context.Context, _ lifecycle.OnInstanceTerminatedRequest) error {
+func (m mockSubscriber) OnInstanceTerminated(_ context.Context, _ protolifecycle.OnInstanceTerminatedRequest) error {
 	return nil
 }
 
-func (m mockSubscriber) OnRunScopeTerminal(_ context.Context, _ lifecycle.OnRunScopeTerminalRequest) error {
+func (m mockSubscriber) OnRunScopeTerminal(_ context.Context, _ protolifecycle.OnRunScopeTerminalRequest) error {
 	return nil
 }
 
@@ -60,36 +60,36 @@ type bareMockSubscriber struct {
 
 func (m bareMockSubscriber) Name() string { return m.name }
 
-func (m bareMockSubscriber) OnTemplateRegistered(_ context.Context, _ lifecycle.OnTemplateRegisteredRequest) error {
+func (m bareMockSubscriber) OnTemplateRegistered(_ context.Context, _ protolifecycle.OnTemplateRegisteredRequest) error {
 	return nil
 }
 
-func (m bareMockSubscriber) OnTemplateDeployed(_ context.Context, _ lifecycle.OnTemplateDeployedRequest) error {
+func (m bareMockSubscriber) OnTemplateDeployed(_ context.Context, _ protolifecycle.OnTemplateDeployedRequest) error {
 	return nil
 }
 
-func (m bareMockSubscriber) OnTemplateUndeployed(_ context.Context, _ lifecycle.OnTemplateUndeployedRequest) error {
+func (m bareMockSubscriber) OnTemplateUndeployed(_ context.Context, _ protolifecycle.OnTemplateUndeployedRequest) error {
 	return nil
 }
 
-func (m bareMockSubscriber) OnTemplateDeregistered(_ context.Context, _ lifecycle.OnTemplateDeregisteredRequest) error {
+func (m bareMockSubscriber) OnTemplateDeregistered(_ context.Context, _ protolifecycle.OnTemplateDeregisteredRequest) error {
 	return nil
 }
 
-func (m bareMockSubscriber) OnInstanceCreated(_ context.Context, _ lifecycle.OnInstanceCreatedRequest) error {
+func (m bareMockSubscriber) OnInstanceCreated(_ context.Context, _ protolifecycle.OnInstanceCreatedRequest) error {
 	return nil
 }
 
-func (m bareMockSubscriber) OnInstanceTerminated(_ context.Context, _ lifecycle.OnInstanceTerminatedRequest) error {
+func (m bareMockSubscriber) OnInstanceTerminated(_ context.Context, _ protolifecycle.OnInstanceTerminatedRequest) error {
 	return nil
 }
 
-func (m bareMockSubscriber) OnRunScopeTerminal(_ context.Context, _ lifecycle.OnRunScopeTerminalRequest) error {
+func (m bareMockSubscriber) OnRunScopeTerminal(_ context.Context, _ protolifecycle.OnRunScopeTerminalRequest) error {
 	return nil
 }
 
-func TestLifecycleRegistryAddGet(t *testing.T) {
-	r := NewLifecycleRegistry()
+func TestRegistryAddGet(t *testing.T) {
+	r := NewRegistry()
 	r.Add("alpha", mockSubscriber{name: "alpha"})
 
 	got, ok := r.Get("alpha")
@@ -102,8 +102,8 @@ func TestLifecycleRegistryAddGet(t *testing.T) {
 	}
 }
 
-func TestLifecycleRegistryNames(t *testing.T) {
-	r := NewLifecycleRegistry()
+func TestRegistryNames(t *testing.T) {
+	r := NewRegistry()
 	r.Add("alpha", mockSubscriber{name: "alpha"})
 	r.Add("beta", mockSubscriber{name: "beta"})
 
@@ -120,8 +120,8 @@ func TestLifecycleRegistryNames(t *testing.T) {
 	}
 }
 
-func TestLifecycleRegistrySubscribers(t *testing.T) {
-	r := NewLifecycleRegistry()
+func TestRegistrySubscribers(t *testing.T) {
+	r := NewRegistry()
 	r.Add("alpha", mockSubscriber{name: "alpha"})
 
 	subs := r.Subscribers()
@@ -134,8 +134,8 @@ func TestLifecycleRegistrySubscribers(t *testing.T) {
 	}
 }
 
-func TestLifecycleRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
-	r := NewLifecycleRegistry()
+func TestRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
+	r := NewRegistry()
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -157,9 +157,9 @@ func TestLifecycleRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
 	wg.Wait()
 }
 
-func TestLifecycleRegistryCloseDispatchesToImplementers(t *testing.T) {
+func TestRegistryCloseDispatchesToImplementers(t *testing.T) {
 	var closeCalls int
-	r := NewLifecycleRegistry()
+	r := NewRegistry()
 	r.Add("closable", mockSubscriber{name: "closable", closeCalls: &closeCalls})
 	r.Add("not-closable", bareMockSubscriber{name: "not-closable"})
 

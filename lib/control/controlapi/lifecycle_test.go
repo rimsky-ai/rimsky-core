@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -29,7 +30,7 @@ type fanOutFixture struct {
 	driver    persistence.Database
 	alpha     *storetest.Fake
 	beta      *storetest.Fake
-	lifecycle *locks.LifecycleRegistry
+	lifecycle *lifecycle.Registry
 }
 
 func newFanOutFixture(t *testing.T) *fanOutFixture {
@@ -42,12 +43,13 @@ func newFanOutFixture(t *testing.T) *fanOutFixture {
 	reg.Add("alpha", alpha)
 	reg.Add("beta", beta)
 
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("alpha", alpha)
 	lcReg.Add("beta", beta)
 
 	deps := AppDeps{
 		Persist:        d.Tables(),
+		AdvisoryLocker: d.AdvisoryLocker(),
 		Queue:          d.Queue(),
 		Logger:         shared.SilentLogger{},
 		ClaimProducers: reg,
@@ -413,6 +415,60 @@ func TestFanOutRunScopeEvent_ConcurrentCallsDeliverExactlyOnce(t *testing.T) {
 	require.Len(t, f.beta.Calls(), 1,
 		"two racing fan-outs for the same run-scope must converge to exactly one on_run_scope_terminal "+
 			"delivery per peer, not one per racing caller")
+}
+
+// @concept: lifecycle-subscriber
+func TestFanOutRunScopeEvent_TwoReplicasSharingOneDBDeliverExactlyOnce(t *testing.T) {
+	t.Parallel()
+	f := newFanOutFixture(t)
+	ctx := context.Background()
+
+	replicaAlpha := storetest.NewFake("alpha", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
+	replicaReg := lifecycle.NewRegistry()
+	replicaReg.Add("alpha", replicaAlpha)
+	replicaDeps := AppDeps{
+		Persist:        f.driver.Tables(),
+		AdvisoryLocker: f.driver.AdvisoryLocker(),
+		Queue:          f.driver.Queue(),
+		Logger:         shared.SilentLogger{},
+		ClaimProducers: f.deps.ClaimProducers,
+		LifecycleSubs:  replicaReg,
+	}
+
+	instanceID := shared.UUID(uuid.New())
+	scopeID := shared.UUID(uuid.New())
+	peers := []string{"alpha"}
+
+	const racersPerReplica = 4
+	replicas := []AppDeps{f.deps, replicaDeps}
+	racerErrs := make([]error, racersPerReplica*len(replicas))
+	racerPeerErrs := make([]map[string]error, racersPerReplica*len(replicas))
+	var wg sync.WaitGroup
+	for i := 0; i < racersPerReplica; i++ {
+		for j, deps := range replicas {
+			slot := i*len(replicas) + j
+			deps := deps
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, perPeerErr, err := fanOutRunScopeEventForPeers(ctx, deps, peers, scopeID, instanceID, "instance_terminated", nil)
+				racerErrs[slot] = err
+				racerPeerErrs[slot] = perPeerErr
+			}()
+		}
+	}
+	wg.Wait()
+
+	for slot := range racerErrs {
+		require.NoError(t, racerErrs[slot])
+		require.Empty(t, racerPeerErrs[slot])
+	}
+
+	total := len(f.alpha.Calls()) + len(replicaAlpha.Calls())
+	require.Equal(t, 1, total,
+		"racing fan-outs from two replicas (separate subscriber registries, shared database, no shared "+
+			"process memory) must converge to exactly one on_run_scope_terminal delivery via the "+
+			"DB-level lifecycle scope lock, not one per replica")
 }
 
 func TestCloseAndFanOutRunScopesForInstance_DedupesSharedRootScope(t *testing.T) {

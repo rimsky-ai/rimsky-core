@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
 )
@@ -107,7 +107,7 @@ func TestDialLifecycle_InstallsServiceNameInterceptor(t *testing.T) {
 	t.Cleanup(client.Close)
 
 	ctx := WithServiceName(context.Background(), "core-service")
-	_ = client.OnRunScopeTerminal(ctx, locks.OnRunScopeTerminalRequest{})
+	_ = client.OnRunScopeTerminal(ctx, lifecycle.OnRunScopeTerminalRequest{})
 
 	if got := captured.get("/rimsky.v1.LifecycleSubscriber/OnRunScopeTerminal"); got != "core-service" {
 		t.Fatalf("x-rimsky-service-name header on DialLifecycle's client = %q, want %q", got, "core-service")

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -73,12 +74,13 @@ func newDryRunAppHarness(t *testing.T) *dryRunAppHarness {
 	reg.Add("content", contentFake)
 	reg.Add("topics-ring", topicsFake)
 
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("content", contentFake)
 	lcReg.Add("topics-ring", topicsFake)
 
 	app := NewApp(AppDeps{
 		Persist:        d.Tables(),
+		AdvisoryLocker: d.AdvisoryLocker(),
 		Queue:          d.Queue(),
 		Clock:          clock,
 		Logger:         shared.SilentLogger{},

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -131,7 +132,7 @@ func runAuthSweepLoop(ctx context.Context, tables persistence.Tables, clock shar
 type schedulerHandleWithRegistry struct {
 	inner         SchedulerHandle
 	registry      *locks.Registry
-	lifecycleSubs *locks.LifecycleRegistry
+	lifecycleSubs *lifecycle.Registry
 	sweepCancel   context.CancelFunc
 }
 

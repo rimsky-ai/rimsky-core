@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -20,11 +20,11 @@ type LifecycleClient struct {
 	rpc  genv1.LifecycleSubscriberClient
 }
 
-var _ locks.LifecycleSubscriber = (*LifecycleClient)(nil)
+var _ lifecycle.Subscriber = (*LifecycleClient)(nil)
 
 func (c *LifecycleClient) Name() string { return c.name }
 
-func (c *LifecycleClient) OnTemplateRegistered(ctx context.Context, req locks.OnTemplateRegisteredRequest) error {
+func (c *LifecycleClient) OnTemplateRegistered(ctx context.Context, req lifecycle.OnTemplateRegisteredRequest) error {
 	_, err := c.rpc.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{
 		TemplateHash: req.TemplateHash,
 		Spec:         req.Spec,
@@ -35,7 +35,7 @@ func (c *LifecycleClient) OnTemplateRegistered(ctx context.Context, req locks.On
 	return nil
 }
 
-func (c *LifecycleClient) OnTemplateDeployed(ctx context.Context, req locks.OnTemplateDeployedRequest) error {
+func (c *LifecycleClient) OnTemplateDeployed(ctx context.Context, req lifecycle.OnTemplateDeployedRequest) error {
 	_, err := c.rpc.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{
 		TemplateHash: req.TemplateHash,
 		Tags:         req.Tags,
@@ -46,7 +46,7 @@ func (c *LifecycleClient) OnTemplateDeployed(ctx context.Context, req locks.OnTe
 	return nil
 }
 
-func (c *LifecycleClient) OnTemplateUndeployed(ctx context.Context, req locks.OnTemplateUndeployedRequest) error {
+func (c *LifecycleClient) OnTemplateUndeployed(ctx context.Context, req lifecycle.OnTemplateUndeployedRequest) error {
 	_, err := c.rpc.OnTemplateUndeployed(ctx, &genv1.OnTemplateUndeployedRequest{
 		TemplateHash: req.TemplateHash,
 	})
@@ -56,7 +56,7 @@ func (c *LifecycleClient) OnTemplateUndeployed(ctx context.Context, req locks.On
 	return nil
 }
 
-func (c *LifecycleClient) OnTemplateDeregistered(ctx context.Context, req locks.OnTemplateDeregisteredRequest) error {
+func (c *LifecycleClient) OnTemplateDeregistered(ctx context.Context, req lifecycle.OnTemplateDeregisteredRequest) error {
 	_, err := c.rpc.OnTemplateDeregistered(ctx, &genv1.OnTemplateDeregisteredRequest{
 		TemplateHash: req.TemplateHash,
 	})
@@ -66,7 +66,7 @@ func (c *LifecycleClient) OnTemplateDeregistered(ctx context.Context, req locks.
 	return nil
 }
 
-func (c *LifecycleClient) OnInstanceCreated(ctx context.Context, req locks.OnInstanceCreatedRequest) error {
+func (c *LifecycleClient) OnInstanceCreated(ctx context.Context, req lifecycle.OnInstanceCreatedRequest) error {
 	_, err := c.rpc.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
 		InstanceId:      req.InstanceID,
 		TemplateHash:    req.TemplateHash,
@@ -81,7 +81,7 @@ func (c *LifecycleClient) OnInstanceCreated(ctx context.Context, req locks.OnIns
 	return nil
 }
 
-func (c *LifecycleClient) OnInstanceTerminated(ctx context.Context, req locks.OnInstanceTerminatedRequest) error {
+func (c *LifecycleClient) OnInstanceTerminated(ctx context.Context, req lifecycle.OnInstanceTerminatedRequest) error {
 	_, err := c.rpc.OnInstanceTerminated(ctx, &genv1.OnInstanceTerminatedRequest{
 		InstanceId:         req.InstanceID,
 		TemplateHash:       req.TemplateHash,
@@ -93,7 +93,7 @@ func (c *LifecycleClient) OnInstanceTerminated(ctx context.Context, req locks.On
 	return nil
 }
 
-func (c *LifecycleClient) OnRunScopeTerminal(ctx context.Context, req locks.OnRunScopeTerminalRequest) error {
+func (c *LifecycleClient) OnRunScopeTerminal(ctx context.Context, req lifecycle.OnRunScopeTerminalRequest) error {
 	_, err := c.rpc.OnRunScopeTerminal(ctx, &genv1.OnRunScopeTerminalRequest{
 		RunScopeId:     req.RunScopeID,
 		TerminalReason: req.TerminalReason,

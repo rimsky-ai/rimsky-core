@@ -8,10 +8,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/internal/namedreg"
 )
 
 type Registry struct {
-	reg                    namedRegistry[ClaimProducer]
+	reg                    namedreg.Registry[ClaimProducer]
 	lookupInstanceBindings func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)
 	lateBindServiceProxies map[string]string
 }
@@ -27,7 +29,7 @@ func WithLateBindServiceProxies(m map[string]string) Option {
 }
 
 func NewRegistry(opts ...Option) *Registry {
-	r := &Registry{reg: newNamedRegistry[ClaimProducer]()}
+	r := &Registry{reg: namedreg.New[ClaimProducer]()}
 	for _, opt := range opts {
 		opt(r)
 	}
@@ -43,11 +45,11 @@ func (r *Registry) Add(name string, p ClaimProducer) {
 				"hint", "registration name and producer-internal name should agree; check the wiring path that constructed this producer")
 		}
 	}
-	r.reg.add(name, p)
+	r.reg.Add(name, p)
 }
 
 func (r *Registry) Get(name string) (ClaimProducer, bool) {
-	return r.reg.get(name)
+	return r.reg.Get(name)
 }
 
 func (r *Registry) GetWithContext(ctx context.Context, name string, instanceID string) (ClaimProducer, bool) {
@@ -85,17 +87,13 @@ func (r *Registry) GetWithContext(ctx context.Context, name string, instanceID s
 }
 
 func (r *Registry) Producers() map[string]ClaimProducer {
-	return r.reg.copyMap()
+	return r.reg.CopyMap()
 }
 
 func (r *Registry) Names() []string {
-	return r.reg.names()
-}
-
-type closer interface {
-	Close()
+	return r.reg.Names()
 }
 
 func (r *Registry) Close() {
-	r.reg.closeAll()
+	r.reg.CloseAll()
 }

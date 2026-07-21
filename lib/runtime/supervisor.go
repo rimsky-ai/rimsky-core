@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -53,7 +54,7 @@ type Config struct {
 	DeclaredTagsFor func(executorName string) (tags []string, ok bool)
 	Metrics         MetricsHook
 
-	LifecycleSubs          *locks.LifecycleRegistry
+	LifecycleSubs          *lifecycle.Registry
 	LifecyclePeersForSpec  func(tplSpec node.TemplateSpec) []string
 	LateBindServiceProxies map[string]string
 
@@ -348,26 +349,22 @@ func runLoop(
 		}()
 	}
 
-	var activeMu sync.Mutex
-	activeCount := 0
+	gate := newConcurrencyGate(cfg.Concurrency)
 
 	claimTick := time.NewTicker(cfg.ClaimPollInterval)
 	defer claimTick.Stop()
 
 	tryClaim := func() {
-		activeMu.Lock()
-		if activeCount >= cfg.Concurrency {
-			activeMu.Unlock()
+		if !gate.tryAcquire() {
 			return
 		}
-		activeCount++
-		activeMu.Unlock()
 
 		ctx, cancel := context.WithCancel(context.Background())
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
 			defer cancel()
+			defer gate.release()
 			result, runErr := RunNode(ctx, RunArgs{
 				Persist:                     cfg.Persist,
 				Queue:                       cfg.Queue,
@@ -403,12 +400,6 @@ func runLoop(
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())
 			}
 
-			defer func() {
-				activeMu.Lock()
-				activeCount--
-				activeMu.Unlock()
-			}()
-
 			if result.Async {
 				return
 			}
@@ -434,9 +425,7 @@ func runLoop(
 			select {
 			case <-waitDone:
 			case <-waitCtx.Done():
-				activeMu.Lock()
-				remaining := activeCount
-				activeMu.Unlock()
+				remaining := gate.activeCount()
 				if remaining > 0 {
 					cfg.Logger.Warn("supervisor shutdown timed out with active runs",
 						"active", remaining)

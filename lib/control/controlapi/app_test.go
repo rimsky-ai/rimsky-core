@@ -19,6 +19,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -47,13 +48,14 @@ func newAppHarness(t *testing.T, configure func(*AppDeps)) (*harness, func()) {
 	reg.Add("content", contentFake)
 	reg.Add("topics-ring", topicsFake)
 
-	lcReg := locks.NewLifecycleRegistry()
+	lcReg := lifecycle.NewRegistry()
 	lcReg.Add("content", contentFake)
 	lcReg.Add("topics-ring", topicsFake)
 
 	capLog := shared.NewCapturingLogger()
 	deps := AppDeps{
 		Persist:        d.Tables(),
+		AdvisoryLocker: d.AdvisoryLocker(),
 		Queue:          d.Queue(),
 		Clock:          shared.SystemClock{},
 		Logger:         capLog,

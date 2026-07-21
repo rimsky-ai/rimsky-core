@@ -9,7 +9,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
@@ -165,7 +165,7 @@ func TestFakeScopesConflictFuncOverrideBypassesCapabilityGate(t *testing.T) {
 
 func TestFakeOnRunScopeTerminalRecordsFullRequest(t *testing.T) {
 	f := NewFake("alpha", claimproducer.Capabilities{})
-	req := locks.OnRunScopeTerminalRequest{
+	req := lifecycle.OnRunScopeTerminalRequest{
 		RunScopeID:     "run-9",
 		TerminalReason: "cascade-cancelled",
 		InstanceID:     "inst-9",
@@ -193,7 +193,7 @@ func TestFakeOnRunScopeTerminalRecordsFullRequest(t *testing.T) {
 
 func TestFakeOnInstanceCreatedRecordsFullRequest(t *testing.T) {
 	f := NewFake("alpha", claimproducer.Capabilities{})
-	req := locks.OnInstanceCreatedRequest{
+	req := lifecycle.OnInstanceCreatedRequest{
 		InstanceID:      "inst-1",
 		TemplateHash:    "tmpl-1",
 		InstanceKey:     "inst-key-1",
@@ -233,7 +233,7 @@ func TestFakeOnInstanceCreatedRecordsFullRequest(t *testing.T) {
 
 func TestFakeOnInstanceTerminatedRecordsFullRequest(t *testing.T) {
 	f := NewFake("alpha", claimproducer.Capabilities{})
-	req := locks.OnInstanceTerminatedRequest{
+	req := lifecycle.OnInstanceTerminatedRequest{
 		InstanceID:         "inst-2",
 		TemplateHash:       "tmpl-2",
 		TerminatedAtUnixMs: 1234567890,

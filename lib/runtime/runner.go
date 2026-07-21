@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -72,7 +73,7 @@ type RunArgs struct {
 
 	DataProcessors DataProcessingRegistry
 
-	LifecycleSubs          *locks.LifecycleRegistry
+	LifecycleSubs          *lifecycle.Registry
 	LifecyclePeersForSpec  func(tplSpec node.TemplateSpec) []string
 	LateBindServiceProxies map[string]string
 

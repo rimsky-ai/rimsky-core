@@ -8,7 +8,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
@@ -18,10 +18,11 @@ import (
 // @concept: run-scope
 func FrameRunScopeTerminalFanout(
 	persist persistence.Tables,
-	lifecycleSubs *locks.LifecycleRegistry,
+	advLock persistence.AdvisoryLocker,
+	lifecycleSubs *lifecycle.Registry,
 	peersForSpec func(tplSpec node.TemplateSpec) []string,
 ) frame.RunScopeTerminalFanout {
-	if lifecycleSubs == nil || peersForSpec == nil {
+	if lifecycleSubs == nil || peersForSpec == nil || advLock == nil {
 		return nil
 	}
 	return func(ctx context.Context, instanceID, runScopeID shared.UUID, terminalReason string, tx persistence.Tx) {
@@ -37,7 +38,8 @@ func FrameRunScopeTerminalFanout(
 				"instance_id", instanceID.String(), "run_scope_id", runScopeID.String(), "error", err)
 			return
 		}
-		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec, tpl.Spec, runScopeID, instanceID, terminalReason, nil, tx)
+		FanOutRunScopeEvent(ctx, persist, advLock, lifecycleSubs, peersForSpec,
+			tpl.Spec, runScopeID, instanceID, terminalReason, nil, tx)
 	}
 }
 
@@ -61,47 +63,60 @@ func withOptionalFanOutTx(
 // @concept: run-scope
 // @concept: lifecycle-subscriber
 func FanOutRunScopeEvent(
-	ctx context.Context, persist persistence.Tables, lifecycleSubs *locks.LifecycleRegistry, peersForSpec func(tplSpec node.TemplateSpec) []string, tplSpec node.TemplateSpec, runScopeID shared.UUID, instanceID shared.UUID, terminalReason string, logger shared.Logger, tx persistence.Tx,
+	ctx context.Context,
+	persist persistence.Tables,
+	advLock persistence.AdvisoryLocker,
+	lifecycleSubs *lifecycle.Registry,
+	peersForSpec func(tplSpec node.TemplateSpec) []string,
+	tplSpec node.TemplateSpec,
+	runScopeID shared.UUID,
+	instanceID shared.UUID,
+	terminalReason string,
+	logger shared.Logger,
+	tx persistence.Tx,
 ) {
 	if lifecycleSubs == nil || peersForSpec == nil {
+		return
+	}
+	if advLock == nil {
+		warnFanOut(logger, "FanOutRunScopeEvent: advisory locker not initialized; peers not notified",
+			"run_scope_id", runScopeID.String())
 		return
 	}
 	peers := peersForSpec(tplSpec)
 	scopeID := runScopeID.String()
 
 	for _, name := range peers {
-		var existing *persistence.LifecycleIdempotencyRow
 		if err := withOptionalFanOutTx(ctx, persist, func(ctx context.Context, useTx persistence.Tx) error {
-			r, err := persist.LifecycleIdempotency().Get(
+			if err := advLock.TakeLifecycleScopeLock(ctx,
+				persistence.LifecycleIdempotencyScopeRunScope, scopeID, useTx); err != nil {
+				return err
+			}
+			existing, err := persist.LifecycleIdempotency().Get(
 				ctx, name, persistence.LifecycleIdempotencyScopeRunScope, scopeID, useTx)
-			existing = r
-			return err
-		}, tx); err != nil {
-			warnFanOut(logger, "FanOutRunScopeEvent: lifecycle row lookup failed; skipping peer",
-				"peer", name, "run_scope_id", scopeID, "error", err)
-			continue
-		}
-		if existing != nil && existing.State == persistence.LifecycleIdempotencyStateRunScopeTerminal {
-			continue
-		}
+			if err != nil {
+				return err
+			}
+			if existing != nil && existing.State == persistence.LifecycleIdempotencyStateRunScopeTerminal {
+				return nil
+			}
 
-		sub, ok := lifecycleSubs.Get(name)
-		if !ok {
-			continue
-		}
+			sub, ok := lifecycleSubs.Get(name)
+			if !ok {
+				return nil
+			}
 
-		req := locks.OnRunScopeTerminalRequest{
-			RunScopeID:     scopeID,
-			TerminalReason: terminalReason,
-			InstanceID:     instanceID.String(),
-		}
-		if err := sub.OnRunScopeTerminal(ctx, req); err != nil {
-			warnFanOut(logger, "FanOutRunScopeEvent: peer delivery failed; idempotency row not advanced, peer will be retried on the next terminal fan-out for this scope",
-				"peer", name, "run_scope_id", scopeID, "error", err)
-			continue
-		}
+			req := lifecycle.OnRunScopeTerminalRequest{
+				RunScopeID:     scopeID,
+				TerminalReason: terminalReason,
+				InstanceID:     instanceID.String(),
+			}
+			if err := sub.OnRunScopeTerminal(ctx, req); err != nil {
+				warnFanOut(logger, "FanOutRunScopeEvent: peer delivery failed; idempotency row not advanced, peer will be retried on the next terminal fan-out for this scope",
+					"peer", name, "run_scope_id", scopeID, "error", err)
+				return nil
+			}
 
-		if err := withOptionalFanOutTx(ctx, persist, func(ctx context.Context, useTx persistence.Tx) error {
 			return persist.LifecycleIdempotency().Upsert(ctx,
 				persistence.LifecycleIdempotencyRow{
 					ClaimProducerName: name,
@@ -111,7 +126,7 @@ func FanOutRunScopeEvent(
 				}, useTx,
 			)
 		}, tx); err != nil {
-			warnFanOut(logger, "FanOutRunScopeEvent: lifecycle row upsert failed after successful peer delivery; peer will be re-delivered on the next terminal fan-out for this scope",
+			warnFanOut(logger, "FanOutRunScopeEvent: peer fan-out transaction failed; peer will be retried on the next terminal fan-out for this scope",
 				"peer", name, "run_scope_id", scopeID, "error", err)
 			continue
 		}

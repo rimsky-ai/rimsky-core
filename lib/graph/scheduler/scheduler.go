@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -31,7 +32,7 @@ type Config struct {
 	SupervisorID            string
 	ParkedSweepInterval     time.Duration
 	StoreRegistry           *locks.Registry
-	LifecycleSubs           *locks.LifecycleRegistry
+	LifecycleSubs           *lifecycle.Registry
 	LifecyclePeersForSpec   func(tplSpec node.TemplateSpec) []string
 	BlobBackend             persistence.BlobBackend
 	BlobOrphans             persistence.BlobOrphanTable
@@ -243,7 +244,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	if cfg.Persist != nil && cfg.Queue != nil {
-		scopeFanout := runtime.FrameRunScopeTerminalFanout(cfg.Persist, cfg.LifecycleSubs, cfg.LifecyclePeersForSpec)
+		scopeFanout := runtime.FrameRunScopeTerminalFanout(cfg.Persist, cfg.AdvisoryLocker, cfg.LifecycleSubs, cfg.LifecyclePeersForSpec)
 		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log, scopeFanout, frameMetricsAdapter(cfg.Metrics)); err != nil {
 			log.Warn("tick: frame.RunTick failed", "error", err.Error())
 		}

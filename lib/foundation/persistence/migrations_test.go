@@ -39,6 +39,10 @@ func (f *fakeMigratorLocker) TakeClaimScopeLock(context.Context, string, []byte,
 	return nil
 }
 
+func (f *fakeMigratorLocker) TakeLifecycleScopeLock(context.Context, LifecycleIdempotencyScopeKind, string, Tx) error {
+	return nil
+}
+
 var _ AdvisoryLocker = (*fakeMigratorLocker)(nil)
 
 func TestMigratorRun_LexicographicOrderSkipsAppliedAndNonSQL(t *testing.T) {

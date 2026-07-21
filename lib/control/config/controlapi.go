@@ -18,6 +18,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
@@ -64,7 +65,7 @@ type controlAPIHandle struct {
 	addr            string
 	serveErr        chan error
 	registry        *locks.Registry
-	lifecycleReg    *locks.LifecycleRegistry
+	lifecycleReg    *lifecycle.Registry
 	terminator      *controlapi.InstanceTerminator
 	cancelLoops     context.CancelFunc
 	cancelDiscovery context.CancelFunc
@@ -221,6 +222,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	deps := controlapi.AppDeps{
 		Persist:        persistStore,
 		Queue:          persistQueue,
+		AdvisoryLocker: cfg.Driver.AdvisoryLocker(),
 		Clock:          cfg.Clock,
 		Logger:         cfg.Logger,
 		AuthState:      authState,

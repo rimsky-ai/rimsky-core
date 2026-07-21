@@ -8,28 +8,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"sort"
-	"sync"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-const lifecycleFanOutLockStripes = 256
-
-var lifecycleFanOutLocks [lifecycleFanOutLockStripes]sync.Mutex
-
-func lockLifecycleScope(scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string) func() {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(string(scopeKind)))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(scopeID))
-	mu := &lifecycleFanOutLocks[h.Sum32()%lifecycleFanOutLockStripes]
-	mu.Lock()
-	return mu.Unlock
+func withLifecycleScopeTx(
+	ctx context.Context,
+	deps AppDeps,
+	scopeKind persistence.LifecycleIdempotencyScopeKind,
+	scopeID string,
+	fn func(ctx context.Context, tx persistence.Tx) error,
+	tx persistence.Tx,
+) error {
+	if deps.AdvisoryLocker == nil {
+		return errAdvisoryLockerNotInitialized
+	}
+	return withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
+		if err := deps.AdvisoryLocker.TakeLifecycleScopeLock(ctx, scopeKind, scopeID, useTx); err != nil {
+			return fmt.Errorf("lifecycle scope lock %s/%s: %w", scopeKind, scopeID, err)
+		}
+		return fn(ctx, useTx)
+	}, tx)
 }
 
 type fanOutOutcome int
@@ -102,52 +105,45 @@ func FanOutTemplateEvent(
 
 	perPeerErr := map[string]error{}
 	for _, name := range peerNames {
-		var row *persistence.LifecycleIdempotencyRow
-		if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
-			r, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, templateHash, useTx)
-			row = r
-			return err
-		}, tx); err != nil {
-			perPeerErr[name] = err
-			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: lifecycle row lookup for %q: %w", name, err)
-		}
-		if !deletesRow && row != nil && row.State == target {
-			continue
-		}
-		if deletesRow && row == nil {
-			continue
-		}
-		if deps.LifecycleSubs == nil {
-			perPeerErr[name] = fmt.Errorf("lifecycle subscriber registry not initialized")
-			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: lifecycle subscriber registry not initialized")
-		}
-		s, ok := deps.LifecycleSubs.Get(name)
-		if !ok {
-			continue
-		}
-		if err := dispatchTemplateEvent(ctx, s, event, templateHash, payload); err != nil {
-			perPeerErr[name] = err
-			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: peer %q: %w", name, err)
-		}
-		if deletesRow {
-			if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
-				return deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, templateHash, useTx)
-			}, tx); err != nil {
-				perPeerErr[name] = err
-				return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: delete lifecycle row %q: %w", name, err)
+		if err := withLifecycleScopeTx(ctx, deps, scopeKind, templateHash, func(ctx context.Context, useTx persistence.Tx) error {
+			row, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, templateHash, useTx)
+			if err != nil {
+				return fmt.Errorf("lifecycle row lookup for %q: %w", name, err)
 			}
-			continue
-		}
-		if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
-			return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
+			if !deletesRow && row != nil && row.State == target {
+				return nil
+			}
+			if deletesRow && row == nil {
+				return nil
+			}
+			if deps.LifecycleSubs == nil {
+				return errLifecycleSubsNotInitialized
+			}
+			s, ok := deps.LifecycleSubs.Get(name)
+			if !ok {
+				return nil
+			}
+			if err := dispatchTemplateEvent(ctx, s, event, templateHash, payload); err != nil {
+				return fmt.Errorf("peer %q: %w", name, err)
+			}
+			if deletesRow {
+				if err := deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, templateHash, useTx); err != nil {
+					return fmt.Errorf("delete lifecycle row %q: %w", name, err)
+				}
+				return nil
+			}
+			if err := deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
 				ClaimProducerName: name,
 				ScopeKind:         scopeKind,
 				ScopeID:           templateHash,
 				State:             target,
-			}, useTx)
+			}, useTx); err != nil {
+				return fmt.Errorf("upsert lifecycle row %q: %w", name, err)
+			}
+			return nil
 		}, tx); err != nil {
 			perPeerErr[name] = err
-			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: upsert lifecycle row %q: %w", name, err)
+			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: %w", err)
 		}
 	}
 	return peerNames, nil, nil
@@ -194,55 +190,45 @@ func FanOutInstanceEvent(
 func fanOutInstancePeer(
 	ctx context.Context, deps AppDeps, name string, scopeKind persistence.LifecycleIdempotencyScopeKind, instanceID string, target persistence.LifecycleIdempotencyState, deletesRow bool, event LifecycleEvent, templateHash string, payload InstancePayload, perPeerErr map[string]error, tx persistence.Tx,
 ) (fanOutOutcome, error) {
-	unlock := lockLifecycleScope(scopeKind, instanceID)
-	defer unlock()
-
-	var row *persistence.LifecycleIdempotencyRow
-	if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
-		r, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, instanceID, useTx)
-		row = r
-		return err
-	}, tx); err != nil {
-		perPeerErr[name] = err
-		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: lifecycle row lookup for %q: %w", name, err)
-	}
-	if !deletesRow && row != nil && row.State == target {
-		return fanOutContinue, nil
-	}
-	if deletesRow && row == nil {
-		return fanOutContinue, nil
-	}
-	if deps.LifecycleSubs == nil {
-		perPeerErr[name] = fmt.Errorf("lifecycle subscriber registry not initialized")
-		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: lifecycle subscriber registry not initialized")
-	}
-	s, ok := deps.LifecycleSubs.Get(name)
-	if !ok {
-		return fanOutContinue, nil
-	}
-	if err := dispatchInstanceEvent(ctx, s, event, templateHash, instanceID, payload); err != nil {
-		perPeerErr[name] = err
-		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: peer %q: %w", name, err)
-	}
-	if deletesRow {
-		if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
-			return deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, instanceID, useTx)
-		}, tx); err != nil {
-			perPeerErr[name] = err
-			return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: delete lifecycle row %q: %w", name, err)
+	if err := withLifecycleScopeTx(ctx, deps, scopeKind, instanceID, func(ctx context.Context, useTx persistence.Tx) error {
+		row, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, instanceID, useTx)
+		if err != nil {
+			return fmt.Errorf("lifecycle row lookup for %q: %w", name, err)
 		}
-		return fanOutContinue, nil
-	}
-	if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
-		return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
+		if !deletesRow && row != nil && row.State == target {
+			return nil
+		}
+		if deletesRow && row == nil {
+			return nil
+		}
+		if deps.LifecycleSubs == nil {
+			return errLifecycleSubsNotInitialized
+		}
+		s, ok := deps.LifecycleSubs.Get(name)
+		if !ok {
+			return nil
+		}
+		if err := dispatchInstanceEvent(ctx, s, event, templateHash, instanceID, payload); err != nil {
+			return fmt.Errorf("peer %q: %w", name, err)
+		}
+		if deletesRow {
+			if err := deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, instanceID, useTx); err != nil {
+				return fmt.Errorf("delete lifecycle row %q: %w", name, err)
+			}
+			return nil
+		}
+		if err := deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
 			ClaimProducerName: name,
 			ScopeKind:         scopeKind,
 			ScopeID:           instanceID,
 			State:             target,
-		}, useTx)
+		}, useTx); err != nil {
+			return fmt.Errorf("upsert lifecycle row %q: %w", name, err)
+		}
+		return nil
 	}, tx); err != nil {
 		perPeerErr[name] = err
-		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: upsert lifecycle row %q: %w", name, err)
+		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: %w", err)
 	}
 	return fanOutContinue, nil
 }
@@ -272,48 +258,46 @@ func fanOutRunScopeEventForPeers(
 func fanOutRunScopePeer(
 	ctx context.Context, deps AppDeps, name string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, instanceID shared.UUID, terminalReason string, perPeerErr map[string]error, tx persistence.Tx,
 ) (fanOutOutcome, error) {
-	unlock := lockLifecycleScope(scopeKind, scopeID)
-	defer unlock()
-
-	var row *persistence.LifecycleIdempotencyRow
-	if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
-		r, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, scopeID, useTx)
-		row = r
-		return err
-	}, tx); err != nil {
-		perPeerErr[name] = err
-		return fanOutAbort, fmt.Errorf("FanOutRunScopeEvent: lifecycle row lookup for %q: %w", name, err)
-	}
-	if row != nil && row.State == persistence.LifecycleIdempotencyStateRunScopeTerminal {
-		return fanOutContinue, nil
-	}
-	if deps.LifecycleSubs == nil {
-		perPeerErr[name] = fmt.Errorf("lifecycle subscriber registry not initialized")
-		return fanOutAbort, fmt.Errorf("FanOutRunScopeEvent: lifecycle subscriber registry not initialized")
-	}
-	s, ok := deps.LifecycleSubs.Get(name)
-	if !ok {
-		return fanOutContinue, nil
-	}
-	req := locks.OnRunScopeTerminalRequest{
-		RunScopeID:     scopeID,
-		TerminalReason: terminalReason,
-		InstanceID:     instanceID.String(),
-	}
-	if err := s.OnRunScopeTerminal(ctx, req); err != nil {
-		perPeerErr[name] = err
-		return fanOutContinue, nil
-	}
-	if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
-		return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
+	var deliveryErr error
+	if err := withLifecycleScopeTx(ctx, deps, scopeKind, scopeID, func(ctx context.Context, useTx persistence.Tx) error {
+		row, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, scopeID, useTx)
+		if err != nil {
+			return fmt.Errorf("lifecycle row lookup for %q: %w", name, err)
+		}
+		if row != nil && row.State == persistence.LifecycleIdempotencyStateRunScopeTerminal {
+			return nil
+		}
+		if deps.LifecycleSubs == nil {
+			return errLifecycleSubsNotInitialized
+		}
+		s, ok := deps.LifecycleSubs.Get(name)
+		if !ok {
+			return nil
+		}
+		req := lifecycle.OnRunScopeTerminalRequest{
+			RunScopeID:     scopeID,
+			TerminalReason: terminalReason,
+			InstanceID:     instanceID.String(),
+		}
+		if err := s.OnRunScopeTerminal(ctx, req); err != nil {
+			deliveryErr = err
+			return nil
+		}
+		if err := deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
 			ClaimProducerName: name,
 			ScopeKind:         scopeKind,
 			ScopeID:           scopeID,
 			State:             persistence.LifecycleIdempotencyStateRunScopeTerminal,
-		}, useTx)
+		}, useTx); err != nil {
+			return fmt.Errorf("upsert lifecycle row %q: %w", name, err)
+		}
+		return nil
 	}, tx); err != nil {
 		perPeerErr[name] = err
-		return fanOutAbort, fmt.Errorf("FanOutRunScopeEvent: upsert lifecycle row %q: %w", name, err)
+		return fanOutAbort, fmt.Errorf("FanOutRunScopeEvent: %w", err)
+	}
+	if deliveryErr != nil {
+		perPeerErr[name] = deliveryErr
 	}
 	return fanOutContinue, nil
 }
@@ -453,6 +437,8 @@ func closeAndFanOutScopeTree(
 
 var errLifecycleSubsNotInitialized = fmt.Errorf("lifecycle subscriber registry not initialized")
 
+var errAdvisoryLockerNotInitialized = fmt.Errorf("advisory locker not initialized")
+
 // @concept: run-scope
 // @concept: lifecycle-subscriber
 func fanOutInstanceTerminatedFromLifecycleRows(
@@ -501,74 +487,65 @@ func dispatchInstanceTerminatedForPeer(
 	terminatedAtMs int64,
 	peerName string,
 ) error {
-	unlock := lockLifecycleScope(persistence.LifecycleIdempotencyScopeInstance, instanceID)
-	defer unlock()
-
-	var row *persistence.LifecycleIdempotencyRow
-	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := deps.Persist.LifecycleIdempotency().Get(ctx,
+	return withLifecycleScopeTx(ctx, deps, persistence.LifecycleIdempotencyScopeInstance, instanceID, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := deps.Persist.LifecycleIdempotency().Get(ctx,
 			peerName, persistence.LifecycleIdempotencyScopeInstance, instanceID, tx)
-		row = r
-		return err
-	}); err != nil {
-		return fmt.Errorf("lifecycle row lookup for %q: %w", peerName, err)
-	}
-	if row == nil {
-		return nil
-	}
-	s, ok := deps.LifecycleSubs.Get(peerName)
-	if !ok {
-		if deps.Logger != nil {
-			deps.Logger.Warn("lifecycle.unknown_subscriber_fallback",
-				"instance_id", instanceID,
-				"peer_name", peerName)
+		if err != nil {
+			return fmt.Errorf("lifecycle row lookup for %q: %w", peerName, err)
 		}
-		return deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if row == nil {
+			return nil
+		}
+		s, ok := deps.LifecycleSubs.Get(peerName)
+		if !ok {
+			if deps.Logger != nil {
+				deps.Logger.Warn("lifecycle.unknown_subscriber_fallback",
+					"instance_id", instanceID,
+					"peer_name", peerName)
+			}
 			return deps.Persist.LifecycleIdempotency().Delete(ctx,
 				peerName, persistence.LifecycleIdempotencyScopeInstance, instanceID, tx)
-		})
-	}
-	if err := s.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
-		InstanceID:         instanceID,
-		TemplateHash:       templateHash,
-		TerminatedAtUnixMs: terminatedAtMs,
-	}); err != nil {
-		return fmt.Errorf("peer %q OnInstanceTerminated: %w", peerName, err)
-	}
-	return deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		}
+		if err := s.OnInstanceTerminated(ctx, lifecycle.OnInstanceTerminatedRequest{
+			InstanceID:         instanceID,
+			TemplateHash:       templateHash,
+			TerminatedAtUnixMs: terminatedAtMs,
+		}); err != nil {
+			return fmt.Errorf("peer %q OnInstanceTerminated: %w", peerName, err)
+		}
 		return deps.Persist.LifecycleIdempotency().Delete(ctx,
 			peerName, persistence.LifecycleIdempotencyScopeInstance, instanceID, tx)
-	})
+	}, nil)
 }
 
-func dispatchTemplateEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID string, payload TemplatePayload) error {
+func dispatchTemplateEvent(ctx context.Context, s lifecycle.Subscriber, event LifecycleEvent, templateID string, payload TemplatePayload) error {
 	switch event {
 	case EventTemplateRegistered:
-		return s.OnTemplateRegistered(ctx, locks.OnTemplateRegisteredRequest{
+		return s.OnTemplateRegistered(ctx, lifecycle.OnTemplateRegisteredRequest{
 			TemplateHash: templateID,
 			Spec:         payload.Spec,
 		})
 	case EventTemplateDeployed:
-		return s.OnTemplateDeployed(ctx, locks.OnTemplateDeployedRequest{
+		return s.OnTemplateDeployed(ctx, lifecycle.OnTemplateDeployedRequest{
 			TemplateHash: templateID,
 			Tags:         payload.Tags,
 		})
 	case EventTemplateUndeployed:
-		return s.OnTemplateUndeployed(ctx, locks.OnTemplateUndeployedRequest{
+		return s.OnTemplateUndeployed(ctx, lifecycle.OnTemplateUndeployedRequest{
 			TemplateHash: templateID,
 		})
 	case EventTemplateDeregistered:
-		return s.OnTemplateDeregistered(ctx, locks.OnTemplateDeregisteredRequest{
+		return s.OnTemplateDeregistered(ctx, lifecycle.OnTemplateDeregisteredRequest{
 			TemplateHash: templateID,
 		})
 	}
 	return fmt.Errorf("dispatchTemplateEvent: %v is not template-scope", event)
 }
 
-func dispatchInstanceEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID, instanceID string, payload InstancePayload) error {
+func dispatchInstanceEvent(ctx context.Context, s lifecycle.Subscriber, event LifecycleEvent, templateID, instanceID string, payload InstancePayload) error {
 	switch event {
 	case EventInstanceCreated:
-		return s.OnInstanceCreated(ctx, locks.OnInstanceCreatedRequest{
+		return s.OnInstanceCreated(ctx, lifecycle.OnInstanceCreatedRequest{
 			InstanceID:      instanceID,
 			TemplateHash:    templateID,
 			InstanceKey:     payload.InstanceKey,
@@ -577,7 +554,7 @@ func dispatchInstanceEvent(ctx context.Context, s locks.LifecycleSubscriber, eve
 			OwnerAPIKeyID:   uuidString(payload.OwnerAPIKeyID),
 		})
 	case EventInstanceTerminated:
-		return s.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
+		return s.OnInstanceTerminated(ctx, lifecycle.OnInstanceTerminatedRequest{
 			InstanceID:         instanceID,
 			TemplateHash:       templateID,
 			TerminatedAtUnixMs: payload.TerminatedAtUnixMs,
