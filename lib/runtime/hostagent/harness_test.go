@@ -66,13 +66,13 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 	fp.stream = stream
 	fp.register = reg
 	fp.mu.Unlock()
-	fp.connectedOnce.Do(func() { close(fp.connected) })
 
 	if err := stream.Send(&genv1.ServerFrame{Body: &genv1.ServerFrame_RegisterAck{RegisterAck: &genv1.RegisterAck{
 		ProxyVersion: "test",
 	}}}); err != nil {
 		return err
 	}
+	fp.connectedOnce.Do(func() { close(fp.connected) })
 
 	recvCh := make(chan *genv1.ClientFrame)
 	errCh := make(chan error, 1)
@@ -95,7 +95,8 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 			}
 			select {
 			case fp.clientFrame <- frame:
-			default:
+			case <-fp.disconnect:
+				return errors.New("forced disconnect")
 			}
 		case recvErr := <-errCh:
 			return recvErr

@@ -136,7 +136,7 @@ func TestWaitHelpersScopeToOccurrenceOrdinal(t *testing.T) {
 		close(dispatchDone)
 	}()
 	h.ExecSQL(
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, sequence)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, frame_id, run_scope_id, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW(), $3, $4, 999)`,
 		uuid.New(), n.ID, frameID, scopeID,
 	)
