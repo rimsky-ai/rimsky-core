@@ -10,6 +10,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -339,10 +341,13 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		"method":      req.Method,
 	}
 	var decoded any
-	if json.Unmarshal(body, &decoded) == nil {
+	switch {
+	case json.Unmarshal(body, &decoded) == nil:
 		obs["body"] = decoded
-	} else {
+	case utf8.Valid(body):
 		obs["body"] = string(body)
+	default:
+		obs["body_base64"] = base64.StdEncoding.EncodeToString(body)
 	}
 	if inboundIdem != "" {
 		obs["idempotency_key"] = inboundIdem
@@ -440,9 +445,9 @@ func (s *SensorService) verifyTimestamp(auth *AuthConfig, tsHeader string) (int,
 
 func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	w, ok := s.watches[req.GetPublisherSubscriptionId()]
 	if !ok {
+		s.mu.Unlock()
 		return &genv1.UnsubscribeResponse{}, nil
 	}
 	delete(s.watches, req.GetPublisherSubscriptionId())
@@ -451,8 +456,10 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 			delete(s.pathToWatch, w.PathPrefix)
 		}
 	}
-	if s.state != nil {
-		if err := s.state.DeleteSubscription(context.Background(), req.GetPublisherSubscriptionId()); err != nil {
+	state := s.state
+	s.mu.Unlock()
+	if state != nil {
+		if err := state.DeleteSubscription(context.Background(), req.GetPublisherSubscriptionId()); err != nil {
 			s.logger.Warn("sensor-webhook.unsubscribe.state_delete_failed",
 				"publisher_subscription_id", req.GetPublisherSubscriptionId(), "error", err.Error())
 		}

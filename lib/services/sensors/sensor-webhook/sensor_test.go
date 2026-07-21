@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -353,6 +354,52 @@ func TestServeWebhook_NoneAccepts(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&pushed); got != 1 {
 		t.Errorf("upstream pushes: %d (want 1)", got)
+	}
+}
+
+func TestServeWebhook_NonUTF8Body_PreservedAsBase64NotCorrupted(t *testing.T) {
+	var capturedBody []byte
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	router := chi.NewRouter()
+	s := NewSensorService(rimsky.URL, router, noopLogger{})
+	subscribeWithAuth(t, s, "w1", "/wh/binary", map[string]any{"mode": "none"})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	binary := []byte{0xff, 0xfe, 0xfd, 0x00, 0x01}
+	resp, err := http.Post(srv.URL+"/wh/binary", "application/octet-stream", bytes.NewReader(binary))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal(capturedBody, &envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	payload, _ := envelope["payload"].(map[string]any)
+	if payload == nil {
+		t.Fatalf("payload missing: %+v", envelope)
+	}
+	encoded, ok := payload["body_base64"].(string)
+	if !ok {
+		t.Fatalf("expected payload.body_base64 for a non-UTF-8 body, got: %+v", payload)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode body_base64: %v", err)
+	}
+	if !bytes.Equal(decoded, binary) {
+		t.Errorf("round-tripped body = %x, want %x (byte-faithful, not corrupted)", decoded, binary)
 	}
 }
 

@@ -46,20 +46,8 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    last_seen_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
 	`
-	if _, err := s.db.ExecContext(ctx, schema); err != nil {
-		return err
-	}
-	droppedConfigColumns := []string{
-		"instance_id", "path_prefix", "idempotency_header",
-		"message_type", "auth_config", "target_node", "started_at",
-	}
-	for _, col := range droppedConfigColumns {
-		if _, err := s.db.ExecContext(ctx,
-			fmt.Sprintf("ALTER TABLE sensor_webhook_state DROP COLUMN IF EXISTS %s", col)); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := s.db.ExecContext(ctx, schema)
+	return err
 }
 
 func (s *stateDB) Close() error {

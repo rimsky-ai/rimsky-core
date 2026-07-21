@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
@@ -83,6 +84,51 @@ func TestVerifierRegistrationValidation(t *testing.T) {
 		}
 		if len(resp.ValidationWarnings) != 0 {
 			t.Fatalf("expected no validation warnings for registry-known check kinds, got: %s", string(raw))
+		}
+	})
+
+	t.Run("undeclared_error_class_produces_warning", func(t *testing.T) {
+		body := buildRegistrationValidationTemplate("registration-validation-undeclared-error-class", []any{
+			map[string]any{
+				"kind":     "no_nulls",
+				"severity": "error",
+				"config":   map[string]any{"field": "id"},
+			},
+		})
+		nodes := body["spec"].(map[string]any)["nodes"].([]map[string]any)
+		nodes[0]["error_types"] = map[string]any{
+			"verifier/not_a_declared_class": map[string]any{"action": "give_up"},
+		}
+
+		status, raw := ep.PostJSON(t, "/v1/templates", body)
+		if status != http.StatusCreated {
+			t.Fatalf("POST /templates with an undeclared error class: got %d (want 201 — this is a "+
+				"warning-grade finding, not a registration-blocking error): %s", status, string(raw))
+		}
+		var resp struct {
+			TemplateID         string `json:"template_id"`
+			ValidationWarnings []struct {
+				Path string `json:"path"`
+				Msg  string `json:"msg"`
+			} `json:"validation_warnings"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			t.Fatalf("decode 201 body: %v: %s", err, string(raw))
+		}
+		if resp.TemplateID == "" {
+			t.Fatalf("template_id empty: %s", string(raw))
+		}
+		found := false
+		for _, w := range resp.ValidationWarnings {
+			if strings.Contains(w.Msg, "verifier/not_a_declared_class") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected a validation_warnings entry naming the undeclared error class "+
+				"\"verifier/not_a_declared_class\" — this positively exercises the validation_warnings "+
+				"field name/shape (a rename or shape change here would otherwise go undetected by the "+
+				"other subtest, which only asserts the field is empty), got: %s", string(raw))
 		}
 	})
 }

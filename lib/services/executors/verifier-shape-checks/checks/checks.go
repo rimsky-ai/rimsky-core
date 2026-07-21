@@ -7,6 +7,7 @@ package checks
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/checkspec"
 )
@@ -142,43 +143,40 @@ func runPKUnique(cfg map[string]any, rows []Row) Result {
 	if err != nil {
 		return Result{Kind: "pk_unique", Message: err.Error(), ConfigError: true}
 	}
-	seen := map[string]Row{}
+	seen := map[string]struct{}{}
 	res := Result{Kind: "pk_unique", Counts: Counters{Rows: len(rows)}}
 	for _, r := range rows {
-		key := pkKey(r, fields)
-		if prev, ok := seen[key]; ok {
+		key, complete := pkKey(r, fields)
+		if !complete {
 			res.Failed = appendBounded(res.Failed, r, 100)
-			_ = prev
 			res.Counts.Failed++
 			continue
 		}
-		seen[key] = r
+		if _, dup := seen[key]; dup {
+			res.Failed = appendBounded(res.Failed, r, 100)
+			res.Counts.Failed++
+			continue
+		}
+		seen[key] = struct{}{}
 	}
 	res.Pass = res.Counts.Failed == 0
 	if !res.Pass {
-		res.Message = fmt.Sprintf("pk_unique: %d duplicate tuples over fields %v",
+		res.Message = fmt.Sprintf("pk_unique: %d duplicate or missing-field tuples over fields %v",
 			res.Counts.Failed, fields)
 	}
 	return res
 }
 
-func pkKey(r Row, fields []string) string {
+func pkKey(r Row, fields []string) (string, bool) {
 	parts := make([]string, len(fields))
 	for i, f := range fields {
-		parts[i] = fmt.Sprintf("%v", r[f])
-	}
-	return joinParts(parts)
-}
-
-func joinParts(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += "\x1f"
+		v, present := r[f]
+		if !present || v == nil {
+			return "", false
 		}
-		out += p
+		parts[i] = fmt.Sprintf("%T:%v", v, v)
 	}
-	return out
+	return strings.Join(parts, "\x1f"), true
 }
 
 func runRowCountRatio(cfg map[string]any, rows []Row) Result {
@@ -190,8 +188,30 @@ func runRowCountRatio(cfg map[string]any, rows []Row) Result {
 	if !ok || baseline <= 0 {
 		return Result{Kind: "row_count_ratio", Message: "config.baseline must be a positive number", ConfigError: true}
 	}
-	low, _ := checkspec.NumericDefault(cfg["low"], 0.5)
-	high, _ := checkspec.NumericDefault(cfg["high"], 2.0)
+	low := 0.5
+	if raw, ok := cfg["low"]; ok {
+		v, numOK := checkspec.Numeric(raw)
+		if !numOK {
+			return Result{Kind: "row_count_ratio", Message: "config.low must be numeric", ConfigError: true}
+		}
+		low = v
+	}
+	high := 2.0
+	if raw, ok := cfg["high"]; ok {
+		v, numOK := checkspec.Numeric(raw)
+		if !numOK {
+			return Result{Kind: "row_count_ratio", Message: "config.high must be numeric", ConfigError: true}
+		}
+		high = v
+	}
+	if low < 0 || high < 0 {
+		return Result{Kind: "row_count_ratio", Message: "config.low and config.high must be non-negative", ConfigError: true}
+	}
+	if low > high {
+		return Result{Kind: "row_count_ratio",
+			Message:     fmt.Sprintf("config.low (%g) must be <= config.high (%g)", low, high),
+			ConfigError: true}
+	}
 	count := float64(len(rows))
 	ratio := count / baseline
 	res := Result{
@@ -296,20 +316,20 @@ func runNumericRange(cfg map[string]any, rows []Row) Result {
 	if !hasMin && !hasMax {
 		return Result{Kind: "numeric_range", Message: "config.min or config.max required", ConfigError: true}
 	}
-	var min, max float64
+	var minBound, maxBound float64
 	if hasMin {
 		m, ok := checkspec.Numeric(minRaw)
 		if !ok {
 			return Result{Kind: "numeric_range", Message: fmt.Sprintf("config.min must be numeric, got %v (%T)", minRaw, minRaw), ConfigError: true}
 		}
-		min = m
+		minBound = m
 	}
 	if hasMax {
 		m, ok := checkspec.Numeric(maxRaw)
 		if !ok {
 			return Result{Kind: "numeric_range", Message: fmt.Sprintf("config.max must be numeric, got %v (%T)", maxRaw, maxRaw), ConfigError: true}
 		}
-		max = m
+		maxBound = m
 	}
 	res := Result{Kind: "numeric_range", Counts: Counters{Rows: len(rows)}}
 	for _, r := range rows {
@@ -319,12 +339,12 @@ func runNumericRange(cfg map[string]any, rows []Row) Result {
 			res.Counts.Failed++
 			continue
 		}
-		if hasMin && v < min {
+		if hasMin && v < minBound {
 			res.Failed = appendBounded(res.Failed, r, 100)
 			res.Counts.Failed++
 			continue
 		}
-		if hasMax && v > max {
+		if hasMax && v > maxBound {
 			res.Failed = appendBounded(res.Failed, r, 100)
 			res.Counts.Failed++
 		}
@@ -337,8 +357,8 @@ func runNumericRange(cfg map[string]any, rows []Row) Result {
 	return res
 }
 
-func appendBounded(out []Row, r Row, cap int) []Row {
-	if len(out) >= cap {
+func appendBounded(out []Row, r Row, limit int) []Row {
+	if len(out) >= limit {
 		return out
 	}
 	return append(out, r)

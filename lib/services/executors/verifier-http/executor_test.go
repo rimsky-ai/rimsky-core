@@ -163,6 +163,30 @@ func TestExecute_MissingURL(t *testing.T) {
 	}
 }
 
+func TestExecute_NonNumericExpectedStatusEntry_RejectedAsAttributeInvalid(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	executor := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"url":             ts.URL,
+		"expected_status": []any{"200"},
+	})
+	outcome, err := executor.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got: %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class: %s, want verifier/attribute_invalid", errOut.GetErrorClass())
+	}
+}
+
 func TestExecute_StubMode(t *testing.T) {
 	executor := NewServer(true)
 	req := buildReq(t, map[string]any{"url": "http://unreachable.invalid/"})

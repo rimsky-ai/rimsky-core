@@ -134,6 +134,89 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 	}
 }
 
+func TestSubscribe_PersistedWatermarkPreservedWhenInMemoryWatchAbsent(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_CRON_STATE_DSN", dsn)
+
+	srv, _, _, _ := newRecordingReceiver()
+	defer srv.Close()
+
+	state, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	defer state.Close()
+
+	registerTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cfg := map[string]any{"cron": "*/5 * * * *"}
+	raw, _ := json.Marshal(cfg)
+
+	seed := NewSensorService(srv.URL, noopLogger{})
+	seed.clock = func() time.Time { return registerTime }
+	seed.state = state
+	if _, err := seed.Subscribe(ctx, &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "cron-1", InstanceId: "inst-1", Kind: "cron",
+		ResolvedConfig: raw, MessageType: "invalidate",
+	}); err != nil {
+		t.Fatalf("seed Subscribe: %v", err)
+	}
+	wantNextFire := registerTime.Add(5 * time.Minute)
+
+	late := NewSensorService(srv.URL, noopLogger{})
+	late.clock = func() time.Time { return registerTime.Add(20 * time.Minute) }
+	late.state = state
+	if _, err := late.Subscribe(ctx, &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "cron-1", InstanceId: "inst-1", Kind: "cron",
+		ResolvedConfig: raw, MessageType: "invalidate",
+	}); err != nil {
+		t.Fatalf("late Subscribe: %v", err)
+	}
+
+	got := late.watches["cron-1"]
+	if got == nil {
+		t.Fatal("Subscribe did not register the watch in-memory")
+	}
+	if !got.NextFireAt.Equal(wantNextFire) {
+		t.Fatalf("NextFireAt: got %s, want %s (persisted watermark must win over a wall-clock recompute "+
+			"when the in-memory watch is absent but a DB row already exists)", got.NextFireAt, wantNextFire)
+	}
+}
+
+func TestSubscribe_StateUpsertFailure_FailsRPCAndRollsBackInMemoryWatch(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_CRON_STATE_DSN", dsn)
+
+	state, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	srv, _, _, _ := newRecordingReceiver()
+	defer srv.Close()
+
+	s := NewSensorService(srv.URL, noopLogger{})
+	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	s.state = state
+	cfg := map[string]any{"cron": "*/5 * * * *"}
+	raw, _ := json.Marshal(cfg)
+	_, err = s.Subscribe(ctx, &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "cron-1", InstanceId: "inst-1", Kind: "cron",
+		ResolvedConfig: raw, MessageType: "invalidate",
+	})
+	if err == nil {
+		t.Fatal("expected Subscribe to fail when the state DB upsert fails, " +
+			"so the caller (publisher-lifecycle) retries instead of believing the subscription durable")
+	}
+	if _, exists := s.watches["cron-1"]; exists {
+		t.Error("a failed persist must not leave an in-memory watch behind")
+	}
+}
+
 func TestSensorCronStateDSN_UnsetLosesSubscriptionOnRestart(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("RIMSKY_SENSOR_CRON_STATE_DSN", "")

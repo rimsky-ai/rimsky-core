@@ -96,7 +96,10 @@ func runSensorWebhookContainer(
 		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9084/tcp", "9184/tcp"),
 		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort("9184/tcp").WithStartupTimeout(60*time.Second),
+			wait.ForAll(
+				wait.ForListeningPort("9084/tcp"),
+				wait.ForListeningPort("9184/tcp"),
+			).WithDeadline(60*time.Second),
 		),
 	)
 	if err != nil {

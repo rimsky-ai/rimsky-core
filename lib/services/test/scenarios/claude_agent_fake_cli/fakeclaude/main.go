@@ -181,12 +181,30 @@ func (c *mcpClient) callTool(name string, args map[string]any) map[string]any {
 	for k, v := range args {
 		merged[k] = v
 	}
+	toolUseID := fmt.Sprintf("fake-claude-tool-%d", c.nextID+1)
+	printStreamJSONLine("assistant", []any{
+		map[string]any{"type": "tool_use", "id": toolUseID, "name": name},
+	})
 	res := c.request("tools/call", map[string]any{
 		"name":      name,
 		"arguments": merged,
 	})
+	printStreamJSONLine("user", []any{
+		map[string]any{"type": "tool_result", "tool_use_id": toolUseID},
+	})
 	result, _ := res["result"].(map[string]any)
 	return result
+}
+
+func printStreamJSONLine(msgType string, content []any) {
+	line, err := json.Marshal(map[string]any{
+		"type":    msgType,
+		"message": map[string]any{"content": content},
+	})
+	if err != nil {
+		return
+	}
+	fmt.Println(string(line))
 }
 
 func loadSignoffKey() ed25519.PrivateKey {
@@ -210,6 +228,11 @@ func loadSignoffKey() ed25519.PrivateKey {
 }
 
 func signValue(sessionID string, value any) string {
+	if sessionID == "" {
+		fail("signValue: sessionID is empty; the executor verifies signoffs against the dispatch id " +
+			"which only coincides with --session-id on a fresh spawn — a resume dispatch (--resume, " +
+			"no --session-id) has no sessionID to sign with here and must not silently sign the empty string")
+	}
 	key := loadSignoffKey()
 	msg, err := claudeagent.BuildSignoffMessage(sessionID, value)
 	if err != nil {

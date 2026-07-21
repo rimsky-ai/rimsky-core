@@ -117,15 +117,21 @@ func (s *Store) StreamTrace(req *genv1.StreamTraceRequest, stream genv1.Executor
 			return stream.Send(TraceCompleteEvent())
 		}
 		var idleC <-chan time.Time
+		var t *time.Timer
 		if idle > 0 {
-			t := time.NewTimer(idle)
+			t = time.NewTimer(idle)
 			idleC = t.C
-			defer t.Stop()
 		}
 		select {
 		case <-stream.Context().Done():
+			if t != nil {
+				t.Stop()
+			}
 			return nil
 		case <-sub.done:
+			if t != nil {
+				t.Stop()
+			}
 			tail, _ := s.drainFrom(nodeRunID, cursor)
 			for _, ev := range tail {
 				if err := stream.Send(ev); err != nil {
@@ -136,6 +142,9 @@ func (s *Store) StreamTrace(req *genv1.StreamTraceRequest, stream genv1.Executor
 		case <-idleC:
 			return stream.Send(TraceIdleTimeoutEvent())
 		case <-sub.wake:
+			if t != nil {
+				t.Stop()
+			}
 		}
 	}
 }
@@ -337,15 +346,21 @@ func HandleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, store *Store,
 			return
 		}
 		var idleC <-chan time.Time
+		var t *time.Timer
 		if idle > 0 {
-			t := time.NewTimer(idle)
+			t = time.NewTimer(idle)
 			idleC = t.C
-			defer t.Stop()
 		}
 		select {
 		case <-r.Context().Done():
+			if t != nil {
+				t.Stop()
+			}
 			return
 		case <-sub.done:
+			if t != nil {
+				t.Stop()
+			}
 			tail, _ := store.drainFrom(nodeRunID, cursor)
 			for _, ev := range tail {
 				if err := send(ev); err != nil {
@@ -358,6 +373,9 @@ func HandleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, store *Store,
 			_ = send(TraceIdleTimeoutEvent())
 			return
 		case <-sub.wake:
+			if t != nil {
+				t.Stop()
+			}
 		}
 	}
 }

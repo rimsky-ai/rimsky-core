@@ -25,6 +25,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorpub"
 )
 
+const maxPollBodyBytes = 10 * 1024 * 1024
+
 type Watch struct {
 	SubscriptionID string
 	InstanceID     string
@@ -35,6 +37,7 @@ type Watch struct {
 	MatchJSONVal   string
 	MessageType    string
 	ResolvedConfig []byte
+	StartedAt      time.Time
 
 	LastPollAt time.Time
 	LastHash   string
@@ -75,6 +78,7 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			MatchJSONKey:   r.MatchJSONKey,
 			MatchJSONVal:   r.MatchJSONVal,
 			MessageType:    r.MessageType,
+			StartedAt:      r.StartedAt,
 			LastHash:       r.LastHash,
 		}
 		s.logger.Info("sensor-http.state_recovered",
@@ -168,9 +172,13 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		if err != nil {
 			return nil, fmt.Errorf("invalid poll_interval %q: %w", cfg.PollInterval, err)
 		}
+		if d <= 0 {
+			return nil, fmt.Errorf("poll_interval %q must be positive", cfg.PollInterval)
+		}
 		interval = d
 	}
 	messageType := req.GetMessageType()
+	now := s.clock()
 	w := &Watch{
 		SubscriptionID: req.GetPublisherSubscriptionId(),
 		InstanceID:     req.GetInstanceId(),
@@ -181,6 +189,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		MatchJSONVal:   cfg.Match.JSONPath.Value,
 		MessageType:    messageType,
 		ResolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
+		StartedAt:      now,
 	}
 	s.mu.Lock()
 	state := s.state
@@ -191,14 +200,16 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		} else if persisted != nil {
 			w.LastHash = persisted.LastHash
+			w.StartedAt = persisted.StartedAt
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
+		s.mu.Unlock()
 		return &genv1.SubscribeResponse{}, nil
 	}
 	s.watches[w.SubscriptionID] = w
+	s.mu.Unlock()
 	s.logger.Info("sensor-http.subscribe",
 		"publisher_subscription_id", w.SubscriptionID,
 		"instance_id", w.InstanceID,
@@ -206,9 +217,15 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		"poll_interval", interval.String(),
 		"restored_last_hash", w.LastHash != "")
 	if state != nil {
-		if err := state.UpsertSubscription(context.Background(), w); err != nil {
+		if err := state.UpsertSubscription(ctx, w); err != nil {
+			s.mu.Lock()
+			if s.watches[w.SubscriptionID] == w {
+				delete(s.watches, w.SubscriptionID)
+			}
+			s.mu.Unlock()
 			s.logger.Warn("sensor-http.subscribe.state_upsert_failed",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			return nil, fmt.Errorf("sensor-http: persist subscription %s: %w", w.SubscriptionID, err)
 		}
 	}
 	return &genv1.SubscribeResponse{}, nil
@@ -241,7 +258,7 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			Kind:                    "http",
 			MessageType:             w.MessageType,
 			ResolvedConfig:          w.ResolvedConfig,
-			StartedAt:               timestamppb.New(s.clock()),
+			StartedAt:               timestamppb.New(w.StartedAt),
 		})
 	}
 	return &genv1.ListSubscriptionsResponse{Subscriptions: out}, nil
@@ -257,9 +274,15 @@ func (s *SensorService) Tick(ctx context.Context) {
 		}
 	}
 	s.mu.Unlock()
+	var wg sync.WaitGroup
 	for _, w := range due {
-		s.pollOne(ctx, w, now)
+		wg.Add(1)
+		go func(w *Watch) {
+			defer wg.Done()
+			s.pollOne(ctx, w, now)
+		}(w)
 	}
+	wg.Wait()
 }
 
 func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
@@ -280,10 +303,15 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		return
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPollBodyBytes+1))
 	if err != nil {
 		s.logger.Warn("sensor-http.poll_read_failed",
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+		return
+	}
+	if int64(len(body)) > maxPollBodyBytes {
+		s.logger.Warn("sensor-http.poll_body_too_large",
+			"publisher_subscription_id", w.SubscriptionID, "url", w.URL, "limit_bytes", maxPollBodyBytes)
 		return
 	}
 	if !statusMatch(resp.StatusCode, w.MatchStatus) {
@@ -372,7 +400,7 @@ func jsonMatch(body []byte, path, value string) bool {
 	if !ok {
 		s = fmt.Sprintf("%v", got)
 	}
-	return strings.Contains(s, value)
+	return s == value
 }
 
 func walkDottedPath(doc any, path string) (any, bool) {

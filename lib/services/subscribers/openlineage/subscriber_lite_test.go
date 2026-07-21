@@ -238,6 +238,113 @@ func TestTick_PermanentRejectionDeadLettersAndAdvancesPastPoisonPill(t *testing.
 	}
 }
 
+func TestTick_DecodeFailureDeadLettersAndAdvancesPastPoisonPill(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	setupLineageSchema(t, dsn)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	sub := newLiteSubscriber(t, dsn, backend.URL, 0)
+
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	badID := uuid.New()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO rimsky_lineage (id, record_kind, instance_id, frame_id, observed_at, record)
+		VALUES ($1, 'leaf_run', $2, $3, $4, $5)`,
+		badID, uuid.New(), uuid.New(), t0, []byte(`42`),
+	); err != nil {
+		t.Fatalf("insert unparseable lineage row: %v", err)
+	}
+
+	sub.nowFn = func() time.Time { return t0.Add(time.Hour) }
+	if err := sub.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	var deadLetterCnt int
+	if err := sub.state.QueryRow(ctx,
+		`SELECT count(*) FROM rimsky_openlineage_dead_letter WHERE namespace = $1`,
+		sub.cfg.Namespace).Scan(&deadLetterCnt); err != nil {
+		t.Fatalf("count dead letters: %v", err)
+	}
+	if deadLetterCnt != 1 {
+		t.Fatalf("dead letter count = %d, want 1 (a decode failure must be dead-lettered, not silently dropped)", deadLetterCnt)
+	}
+	if !sub.cursorAt.Equal(t0) || sub.cursorID != badID {
+		t.Errorf("cursor after tick = (%v, %s), want (%v, %s) — cursor must advance past the poison-pill row",
+			sub.cursorAt, sub.cursorID, t0, badID)
+	}
+}
+
+func TestTick_PersistsCursorPerRowNotOnlyAtBatchEnd(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	setupLineageSchema(t, dsn)
+
+	row1ID := uuid.New()
+	row2ID := uuid.New()
+	row2Reached := make(chan struct{})
+	releaseRow2 := make(chan struct{})
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var ev Event
+		_ = json.Unmarshal(body, &ev)
+		if ev.Run.RunID == row2ID.String() {
+			close(row2Reached)
+			<-releaseRow2
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	sub := newLiteSubscriber(t, dsn, backend.URL, 0)
+
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	insertLineageRow(t, dsn, row1ID, t0, LeafRunRecord{RunID: row1ID.String(), State: "fresh"})
+	insertLineageRow(t, dsn, row2ID, t0.Add(time.Second), LeafRunRecord{RunID: row2ID.String(), State: "fresh"})
+	sub.nowFn = func() time.Time { return t0.Add(time.Hour) }
+
+	tickDone := make(chan error, 1)
+	go func() { tickDone <- sub.tick(ctx) }()
+
+	<-row2Reached
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+	var persistedID uuid.UUID
+	var persistedAt time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT last_observed_at, last_id FROM rimsky_openlineage_cursor WHERE namespace = $1`,
+		sub.cfg.Namespace).Scan(&persistedAt, &persistedID); err != nil {
+		t.Fatalf("query persisted cursor mid-batch: %v", err)
+	}
+	close(releaseRow2)
+	if err := <-tickDone; err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if persistedID != row1ID || !persistedAt.Equal(t0) {
+		t.Errorf("cursor persisted mid-batch (while row 2 was still in flight) = (%v, %s), want (%v, %s) — "+
+			"the cursor must durably advance per row, not only once after the whole batch, "+
+			"or a crash mid-batch re-emits every already-delivered row on restart",
+			persistedAt, persistedID, t0, row1ID)
+	}
+}
+
 func TestTick_TransientFailureHaltsBatchWithoutDeadLettering(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)

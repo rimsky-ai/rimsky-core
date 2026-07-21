@@ -6,8 +6,6 @@ package scopesconflict
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -46,7 +44,7 @@ func TestScopesConflict_OverlapHeldOff(t *testing.T) {
 }
 
 func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEndpoint, pool *pgxpool.Pool) {
-	templateID := deployTemplate(t, ep, map[string]any{
+	templateID := ep.DeployTemplate(t, map[string]any{
 		"spec": map[string]any{
 			"name":    "scopes-conflict-top-level",
 			"version": "1",
@@ -92,7 +90,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 		},
 	})
 
-	instanceID := createInstance(t, ep, templateID, "ck-scopes-conflict-top-level")
+	instanceID := ep.CreateInstance(t, templateID, "ck-scopes-conflict-top-level", "scopes-conflict")
 
 	ep.RequireNodeTerminalSucceeded(t, instanceID, "acquirer", 120*time.Second)
 	ep.RequireNodeTerminalSucceeded(t, instanceID, "verifier", 120*time.Second)
@@ -125,7 +123,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 }
 
 func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEndpoint, pool *pgxpool.Pool) {
-	templateID := deployTemplate(t, ep, map[string]any{
+	templateID := ep.DeployTemplate(t, map[string]any{
 		"spec": map[string]any{
 			"name":    "scopes-conflict-fanout",
 			"version": "1",
@@ -151,7 +149,7 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 		},
 	})
 
-	instanceID := createInstance(t, ep, templateID, "ck-scopes-conflict-fanout")
+	instanceID := ep.CreateInstance(t, templateID, "ck-scopes-conflict-fanout", "scopes-conflict")
 
 	obs := ep.WaitForNodeTerminal(t, instanceID, "fan-parent", 45*time.Second)
 	if obs.RunSummary.FailedCount == 0 {
@@ -207,50 +205,4 @@ func countSubClaimRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, in
 		t.Fatalf("count sub-claim rows: %v", err)
 	}
 	return n
-}
-
-func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
-	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /templates: %d %s", status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t, "/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
-}
-
-// @decision: test-harness-create-instance-wakes-roots-after-create
-func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
-	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("POST /instances: %d %s", status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode instance response: %v: %s", err, string(raw))
-	}
-	if resp.InstanceID == "" {
-		t.Fatalf("instance_id empty: %s", string(raw))
-	}
-	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "scopes-conflict", instanceKey)
-	return resp.InstanceID
 }

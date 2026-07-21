@@ -166,6 +166,61 @@ func TestSubscribe_RejectsBadWatermark(t *testing.T) {
 	}
 }
 
+func TestSubscribe_RejectsNonPositivePollInterval(t *testing.T) {
+	for _, interval := range []string{"0s", "-1s"} {
+		s := NewSensorService("", noopLogger{})
+		s.SetBackend("memory", NewMemoryLister())
+		cfg := map[string]any{"backend": "memory", "bucket": "b", "poll_interval": interval}
+		raw, _ := json.Marshal(cfg)
+		_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+			PublisherSubscriptionId: "w1", Kind: "object-store", ResolvedConfig: raw,
+		})
+		if err == nil {
+			t.Errorf("poll_interval %q: expected rejection, got success (would hot-poll every tick)", interval)
+		}
+	}
+}
+
+func TestSubscribe_ResubscribeWithChangedConfig_UpdatesInPlace(t *testing.T) {
+	s := NewSensorService("", noopLogger{})
+	s.SetBackend("memory", NewMemoryLister())
+	raw1, _ := json.Marshal(map[string]any{
+		"backend": "memory", "bucket": "bucket-a", "prefix": "old/", "poll_interval": "10s",
+	})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw1,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.watches["w1"].SeenNames = map[string]struct{}{"already-seen.txt": {}}
+	s.mu.Unlock()
+
+	raw2, _ := json.Marshal(map[string]any{
+		"backend": "memory", "bucket": "bucket-a", "prefix": "new/", "poll_interval": "5s",
+	})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw2,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.mu.Lock()
+	w := s.watches["w1"]
+	s.mu.Unlock()
+	if w.Prefix != "new/" {
+		t.Errorf("Prefix: got %q, want %q (resubscribe must apply the changed config, not ignore it)", w.Prefix, "new/")
+	}
+	if w.PollInterval != 5*time.Second {
+		t.Errorf("PollInterval: got %s, want 5s", w.PollInterval)
+	}
+	if _, seen := w.SeenNames["already-seen.txt"]; seen {
+		t.Errorf("SeenNames not reset after a prefix change: %+v", w.SeenNames)
+	}
+}
+
 func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	var (
 		obsMu   sync.Mutex

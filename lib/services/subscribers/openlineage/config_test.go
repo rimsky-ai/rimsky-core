@@ -18,6 +18,24 @@ func TestLoadConfig_RequiresBackendURL(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_RejectsNonPostgresRimskyDSN(t *testing.T) {
+	t.Setenv("RIMSKY_OPENLINEAGE_RIMSKY_DSN", "file:/var/lib/rimsky/state.db")
+	t.Setenv("RIMSKY_OPENLINEAGE_BACKEND_URL", "http://marquez.example/api")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("expected LoadConfig to reject a non-Postgres RIMSKY_OPENLINEAGE_RIMSKY_DSN " +
+			"with a clear error naming the sqlite export gap, rather than failing later inside pgxpool.New")
+	}
+}
+
+func TestLoadConfig_RejectsNonPostgresStateDSN(t *testing.T) {
+	t.Setenv("RIMSKY_OPENLINEAGE_RIMSKY_DSN", "postgres://example/db")
+	t.Setenv("RIMSKY_OPENLINEAGE_STATE_DSN", "file:/var/lib/rimsky/state.db")
+	t.Setenv("RIMSKY_OPENLINEAGE_BACKEND_URL", "http://marquez.example/api")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("expected LoadConfig to reject a non-Postgres RIMSKY_OPENLINEAGE_STATE_DSN")
+	}
+}
+
 func TestLoadConfig_AcceptsConfiguredBackendURL(t *testing.T) {
 	t.Setenv("RIMSKY_OPENLINEAGE_RIMSKY_DSN", "postgres://example/db")
 	t.Setenv("RIMSKY_OPENLINEAGE_BACKEND_URL", "http://marquez.example/api")

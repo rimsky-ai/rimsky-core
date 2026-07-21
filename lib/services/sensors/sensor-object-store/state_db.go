@@ -59,10 +59,6 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`ALTER TABLE sensor_object_store_state DROP COLUMN IF EXISTS target_node`); err != nil {
-		return err
-	}
 	const seenNamesSchema = `
 		CREATE TABLE IF NOT EXISTS sensor_object_store_seen_names (
 		    publisher_subscription_id TEXT NOT NULL REFERENCES sensor_object_store_state (publisher_subscription_id) ON DELETE CASCADE,
@@ -103,6 +99,38 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 		w.SubscriptionID, w.InstanceID, w.Backend, w.Bucket, w.Prefix,
 		w.PollInterval.String(), w.WatermarkField, w.MessageType)
 	return err
+}
+
+func (s *stateDB) TouchLastPoll(ctx context.Context, subscriptionID string, at time.Time) error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sensor_object_store_state SET last_poll_at = $1 WHERE publisher_subscription_id = $2`,
+		at.UTC(), subscriptionID)
+	return err
+}
+
+func (s *stateDB) ResetWatermark(ctx context.Context, subscriptionID string) error {
+	if s == nil {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sensor_object_store_state SET watermark_name = NULL, watermark_time = NULL WHERE publisher_subscription_id = $1`,
+		subscriptionID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sensor_object_store_seen_names WHERE publisher_subscription_id = $1`,
+		subscriptionID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *stateDB) DeleteSubscription(ctx context.Context, subscriptionID string) error {

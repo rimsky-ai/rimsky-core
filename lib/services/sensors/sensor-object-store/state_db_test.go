@@ -61,6 +61,56 @@ func TestSubscribe_RestartReplay_PreloadsWatermark(t *testing.T) {
 	}
 }
 
+func TestTouchLastPoll_UpdatesEvenWithoutWatermarkAdvance(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN", dsn)
+
+	s1, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	defer s1.Close()
+	w := &Watch{
+		SubscriptionID: "sub-touch",
+		InstanceID:     "inst-touch",
+		Backend:        "memory",
+		Bucket:         "test-bucket",
+		Prefix:         "events/",
+		PollInterval:   30 * time.Second,
+		WatermarkField: "name",
+		MessageType:    "invalidate",
+	}
+	if err := s1.UpsertSubscription(ctx, w); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+
+	before, err := s1.GetSubscription(ctx, "sub-touch")
+	if err != nil {
+		t.Fatalf("GetSubscription (before): %v", err)
+	}
+	if before == nil {
+		t.Fatal("GetSubscription returned nil")
+	}
+
+	touchAt := time.Now().UTC().Add(time.Hour)
+	if err := s1.TouchLastPoll(ctx, "sub-touch", touchAt); err != nil {
+		t.Fatalf("TouchLastPoll: %v", err)
+	}
+
+	var lastPollAt time.Time
+	if err := s1.db.QueryRowContext(ctx,
+		`SELECT last_poll_at FROM sensor_object_store_state WHERE publisher_subscription_id = $1`,
+		"sub-touch").Scan(&lastPollAt); err != nil {
+		t.Fatalf("query last_poll_at: %v", err)
+	}
+	if !lastPollAt.Equal(touchAt) {
+		t.Fatalf("last_poll_at = %s, want %s — TouchLastPoll must persist a poll timestamp "+
+			"even when no new object was found (a restart-recovery test anchors on this to "+
+			"avoid a vacuous stability-window check)", lastPollAt, touchAt)
+	}
+}
+
 func TestSeenNames_PersistAndRoundTripAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)

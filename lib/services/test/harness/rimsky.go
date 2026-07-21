@@ -502,7 +502,7 @@ func (e RimskyEndpoint) PostJSONWithHeaders(t testing.TB, path string, body any,
 	}
 	for k, v := range headers {
 		if k == "" || v == "" {
-			continue
+			t.Fatalf("harness: POST %s: header with empty key or value (key=%q, value=%q)", path, k, v)
 		}
 		req.Header.Set(k, v)
 	}
@@ -528,6 +528,52 @@ func (e RimskyEndpoint) EmptyWakeAfterCreate(t testing.TB, instanceID, idempoten
 		t.Fatalf("POST /v1/instances/%s/messages (empty wake): %d %s",
 			instanceID, wakeStatus, string(wakeRaw))
 	}
+}
+
+func (e RimskyEndpoint) DeployTemplate(t testing.TB, body map[string]any) string {
+	t.Helper()
+	status, raw := e.PostJSON(t, "/v1/templates", body)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /templates: %d %s", status, string(raw))
+	}
+	var resp struct {
+		TemplateID string `json:"template_id"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode template response: %v: %s", err, string(raw))
+	}
+	if resp.TemplateID == "" {
+		t.Fatalf("template_id empty: %s", string(raw))
+	}
+	deployStatus, deployRaw := e.PostJSON(t, "/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
+	if deployStatus != http.StatusOK {
+		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
+	}
+	return resp.TemplateID
+}
+
+// @decision: test-harness-create-instance-wakes-roots-after-create
+func (e RimskyEndpoint) CreateInstance(t testing.TB, templateID, instanceKey, wakeIdempotencyKeyPrefix string) string {
+	t.Helper()
+	status, raw := e.PostJSON(t, "/v1/instances", map[string]any{
+		"template":     templateID,
+		"instance_key": instanceKey,
+		"params":       map[string]any{},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("POST /instances: %d %s", status, string(raw))
+	}
+	var resp struct {
+		InstanceID string `json:"instance_id"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode instance response: %v: %s", err, string(raw))
+	}
+	if resp.InstanceID == "" {
+		t.Fatalf("instance_id empty: %s", string(raw))
+	}
+	e.EmptyWakeAfterCreate(t, resp.InstanceID, wakeIdempotencyKeyPrefix, instanceKey)
+	return resp.InstanceID
 }
 
 func (e RimskyEndpoint) GetJSON(t testing.TB, path, bearer string) (int, []byte) {
@@ -671,28 +717,30 @@ func renderRimskyYAMLSQLite(cb *configBuilder) string {
 	return b.String()
 }
 
+func writeQuotedList(b *strings.Builder, first string, rest []string) {
+	fmt.Fprintf(b, "[%q", first)
+	for _, extra := range rest {
+		fmt.Fprintf(b, ", %q", extra)
+	}
+	b.WriteString("]\n")
+}
+
 func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 	if len(cb.claimProducers) == 0 {
 		b.WriteString("claim_producers: {}\n")
 	} else {
 		b.WriteString("claim_producers:\n")
 		for name, p := range cb.claimProducers {
-			fmt.Fprintf(b, "  %s:\n", name)
+			fmt.Fprintf(b, "  %q:\n", name)
 			fmt.Fprintf(b, "    endpoint: %q\n", p.endpoint)
-			b.WriteString("    protocols: [claim_producer")
-			for _, extra := range p.extraProtocols {
-				b.WriteString(", ")
-				b.WriteString(extra)
+			b.WriteString("    protocols: ")
+			writeQuotedList(b, "claim_producer", p.extraProtocols)
+			b.WriteString("    write_semantics_allowed: ")
+			if len(p.writeSemanticsAllowed) == 0 {
+				b.WriteString("[]\n")
+			} else {
+				writeQuotedList(b, p.writeSemanticsAllowed[0], p.writeSemanticsAllowed[1:])
 			}
-			b.WriteString("]\n")
-			b.WriteString("    write_semantics_allowed: [")
-			for i, ws := range p.writeSemanticsAllowed {
-				if i > 0 {
-					b.WriteString(", ")
-				}
-				b.WriteString(ws)
-			}
-			b.WriteString("]\n")
 		}
 	}
 
@@ -710,25 +758,21 @@ func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 	} else {
 		b.WriteString("executors:\n")
 		for name, e := range cb.executors {
-			fmt.Fprintf(b, "  %s:\n", name)
-			fmt.Fprintf(b, "    transport: %s\n", e.transport)
+			fmt.Fprintf(b, "  %q:\n", name)
+			fmt.Fprintf(b, "    transport: %q\n", e.transport)
 			fmt.Fprintf(b, "    endpoint: %q\n", e.endpoint)
 			b.WriteString("    tls: off\n")
-			b.WriteString("    protocols: [executor")
-			for _, extra := range e.extraProtocols {
-				b.WriteString(", ")
-				b.WriteString(extra)
-			}
-			b.WriteString("]\n")
+			b.WriteString("    protocols: ")
+			writeQuotedList(b, "executor", e.extraProtocols)
 		}
 	}
 
 	if len(cb.publishers) > 0 {
 		b.WriteString("publishers:\n")
 		for name, p := range cb.publishers {
-			fmt.Fprintf(b, "  %s:\n", name)
+			fmt.Fprintf(b, "  %q:\n", name)
 			fmt.Fprintf(b, "    endpoint: %q\n", p.endpoint)
-			b.WriteString("    protocols: [publisher]\n")
+			b.WriteString("    protocols: [\"publisher\"]\n")
 		}
 	}
 }

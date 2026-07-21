@@ -48,9 +48,6 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
 	hostDir := t.TempDir()
-	if err := os.MkdirAll(hostDir, 0o755); err != nil {
-		t.Fatalf("harness: mkdir hostDir: %v", err)
-	}
 	for _, parts := range spec.SeedFolders {
 		all := append([]string{hostDir}, parts...)
 		dir := filepath.Join(all...)

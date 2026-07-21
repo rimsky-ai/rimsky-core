@@ -55,11 +55,14 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	}
 	expected := defaultExpectedStatus()
 	if es, ok := ud["expected_status"].([]any); ok && len(es) > 0 {
-		var exact []int
+		exact := make([]int, 0, len(es))
 		for _, v := range es {
-			if n, ok := checkspec.Numeric(v); ok {
-				exact = append(exact, int(n))
+			n, ok := checkspec.Numeric(v)
+			if !ok {
+				return execoutcome.Errored("verifier/attribute_invalid",
+					fmt.Sprintf("expected_status entry %v is not numeric", v)), nil
 			}
+			exact = append(exact, int(n))
 		}
 		expected = expectedStatusSet{exact: exact, isExplicit: true}
 	}

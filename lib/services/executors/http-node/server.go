@@ -68,7 +68,6 @@ func (s *Server) recordTerminal(nodeRunID, stepID string, outcome *genv1.Outcome
 	}
 	switch oc := outcome.GetOutcome().(type) {
 	case *genv1.Outcome_Success:
-		_ = oc
 		s.obs.AppendEvent(nodeRunID, MakeEvent(
 			"step-complete-"+stepID, "step-"+stepID, "step_completed",
 			"http-node dispatch completed",
@@ -131,15 +130,19 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 
 	expectStatus := defaultExpectStatus()
 	if es, ok := ud["expect_status"].([]any); ok {
-		expectStatus = expectStatus[:0]
+		parsed := make([]int, 0, len(es))
 		for _, v := range es {
-			if f, ok := v.(float64); ok {
-				expectStatus = append(expectStatus, int(f))
+			f, ok := v.(float64)
+			if !ok {
+				return execoutcome.Errored("http/attribute_invalid",
+					fmt.Sprintf("expect_status entry %v is not numeric", v)), nil
 			}
+			parsed = append(parsed, int(f))
 		}
+		expectStatus = parsed
 	}
 
-	reqBody, ctype, err := buildRequestBody(ud, req.GetAttributes().AsMap())
+	reqBody, ctype, err := buildRequestBody(ud)
 	if err != nil {
 		return execoutcome.Errored("http/attribute_invalid", err.Error()), nil
 	}
@@ -221,9 +224,12 @@ var configAttributeKeys = map[string]struct{}{
 	"stub_response":     {},
 	"stub_tags":         {},
 	"error_class_field": {},
+	"probe_park":        {},
+	"probe_cancel":      {},
+	"park_resume_at":    {},
 }
 
-func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
+func buildRequestBody(ud map[string]any) (io.Reader, string, error) {
 	if b, ok := ud["body"]; ok && b != nil {
 		switch bb := b.(type) {
 		case string:
@@ -237,7 +243,7 @@ func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 		}
 	}
 	inputs := map[string]any{}
-	for k, v := range attrs {
+	for k, v := range ud {
 		if _, isConfig := configAttributeKeys[k]; isConfig {
 			continue
 		}

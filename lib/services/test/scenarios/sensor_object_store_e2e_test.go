@@ -10,6 +10,7 @@ package scenarios
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -91,11 +92,13 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	sensor.Stop(ctx)
 	t.Logf("sensor-object-store stopped; pre-restart message count=%d", preRestartCount)
 
+	restartedAt := time.Now().UTC()
 	sensor.Restart(ctx)
 	t.Logf("sensor-object-store restarted; recovered watermark must suppress re-emit " +
 		"when object-A is re-dropped into the fresh container's bucket")
 
 	sensor.PutObject(ctx, objectStoreBucket, objectAName, objectABytes)
+	waitForSensorObjectStorePollSince(t, ctx, statePool, subID, restartedAt, 30*time.Second)
 	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount,
 		5*objectStorePollInterval, "watermark-suppressed-re-emit-after-restart")
 
@@ -202,6 +205,31 @@ func requireObjectStoreMessagePayload(t *testing.T, ep harness.RimskyEndpoint, i
 		"20s (last seen %q, %s) — either the emit did not happen, or the payload metadata "+
 		"is canned (the load-bearing falsifier for this story)",
 		want, instanceID, lastSeen, label)
+}
+
+func waitForSensorObjectStorePollSince(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string, since time.Time, deadline time.Duration) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	var lastSeen sql.NullTime
+	for time.Now().Before(end) {
+		var pollAt sql.NullTime
+		err := pool.QueryRow(ctx,
+			`SELECT last_poll_at FROM sensor_object_store_state WHERE publisher_subscription_id = $1`,
+			subID,
+		).Scan(&pollAt)
+		if err == nil {
+			lastSeen = pollAt
+			if pollAt.Valid && pollAt.Time.After(since) {
+				return
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("sensor-object-store never recorded a poll after restart (since %s) within %v "+
+		"(last last_poll_at=%v) — without anchoring on an observed post-restart poll, the "+
+		"stability-window check that follows could start and finish before the recovered "+
+		"watch's first poll ever runs, passing vacuously",
+		since.Format(time.RFC3339Nano), deadline, lastSeen)
 }
 
 func waitForSensorObjectStoreSubscriptionPersisted(t *testing.T, ctx context.Context, pool *pgxpool.Pool, deadline time.Duration) string {

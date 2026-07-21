@@ -221,6 +221,9 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		if err != nil {
 			return nil, fmt.Errorf("invalid poll_interval %q: %w", cfg.PollInterval, err)
 		}
+		if d <= 0 {
+			return nil, fmt.Errorf("poll_interval %q must be positive", cfg.PollInterval)
+		}
 		interval = d
 	}
 	messageType := req.GetMessageType()
@@ -256,15 +259,54 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.watches[w.SubscriptionID]; exists {
+	if cur, exists := s.watches[w.SubscriptionID]; exists {
+		resetWatermark := cur.Bucket != w.Bucket || cur.Prefix != w.Prefix || cur.WatermarkField != w.WatermarkField
+		cur.InstanceID = w.InstanceID
+		cur.Backend = w.Backend
+		cur.Bucket = w.Bucket
+		cur.Prefix = w.Prefix
+		cur.PollInterval = w.PollInterval
+		cur.WatermarkField = w.WatermarkField
+		cur.MessageType = w.MessageType
+		cur.ResolvedConfig = w.ResolvedConfig
+		if resetWatermark {
+			cur.WatermarkName = ""
+			cur.WatermarkTime = time.Time{}
+			cur.SeenNames = nil
+		}
+		updated := *cur
+		s.mu.Unlock()
+		if state != nil {
+			if err := state.UpsertSubscription(context.Background(), &updated); err != nil {
+				s.logger.Warn("sensor-object-store.resubscribe.state_upsert_failed",
+					"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			}
+			if resetWatermark {
+				if err := state.ResetWatermark(context.Background(), w.SubscriptionID); err != nil {
+					s.logger.Warn("sensor-object-store.resubscribe.watermark_reset_failed",
+						"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+				}
+			}
+		}
+		s.logger.Info("sensor-object-store.resubscribe_config_updated",
+			"publisher_subscription_id", w.SubscriptionID,
+			"backend", cfg.Backend, "bucket", cfg.Bucket, "prefix", cfg.Prefix,
+			"poll_interval", interval.String(), "watermark_field", cfg.WatermarkField,
+			"watermark_reset", resetWatermark)
 		return &genv1.SubscribeResponse{}, nil
 	}
 	s.watches[w.SubscriptionID] = w
+	s.mu.Unlock()
 	if state != nil {
-		if err := state.UpsertSubscription(context.Background(), w); err != nil {
+		if err := state.UpsertSubscription(ctx, w); err != nil {
+			s.mu.Lock()
+			if s.watches[w.SubscriptionID] == w {
+				delete(s.watches, w.SubscriptionID)
+			}
+			s.mu.Unlock()
 			s.logger.Warn("sensor-object-store.subscribe.state_upsert_failed",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			return nil, fmt.Errorf("sensor-object-store: persist subscription %s: %w", w.SubscriptionID, err)
 		}
 	}
 	s.logger.Info("sensor-object-store.subscribe",
@@ -331,6 +373,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	s.mu.Lock()
 	w.LastPollAt = now
 	lister, ok := s.listers[w.Backend]
+	state := s.state
 	s.mu.Unlock()
 	if !ok {
 		s.logger.Warn("sensor-object-store.no_backend",
@@ -342,6 +385,12 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		s.logger.Warn("sensor-object-store.list_failed",
 			"publisher_subscription_id", w.SubscriptionID, "bucket", w.Bucket, "prefix", w.Prefix, "error", err.Error())
 		return
+	}
+	if state != nil {
+		if err := state.TouchLastPoll(ctx, w.SubscriptionID, now); err != nil {
+			s.logger.Warn("sensor-object-store.poll.touch_last_poll_failed",
+				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+		}
 	}
 
 	sort.Slice(objs, func(i, j int) bool {

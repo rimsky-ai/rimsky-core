@@ -271,6 +271,88 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 	}
 }
 
+func TestTick_LongDowntimeCoalescesMissedWindowsIntoOneMessage(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		observed int
+		bodies   []map[string]any
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		observed++
+		bodies = append(bodies, body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	cfg := map[string]any{"cron": "* * * * *"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+		MessageType: "system/invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	downtime := pin.Add(3 * time.Hour)
+	s.clock = func() time.Time { return downtime }
+	s.Tick(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if observed != 1 {
+		t.Fatalf("messages observed after a 3h outage on a minutely cron: got %d, want 1 "+
+			"(catch-up must coalesce, not replay every missed window)", observed)
+	}
+
+	s.mu.Lock()
+	w := s.watches["w1"]
+	s.mu.Unlock()
+	if !w.NextFireAt.After(downtime) {
+		t.Fatalf("next_fire_at after coalesced catch-up: %s, want a window after %s", w.NextFireAt, downtime)
+	}
+
+	payload, _ := bodies[0]["payload"].(map[string]any)
+	if payload == nil {
+		t.Fatalf("envelope payload missing/wrong shape: %+v", bodies[0])
+	}
+	missed, _ := payload["missed_windows"].(float64)
+	if missed < 100 {
+		t.Errorf("payload.missed_windows: got %v, want a large count reflecting the 3h backlog", missed)
+	}
+}
+
+func TestSubscribe_EvaluatesCronExpressionInUTCRegardlessOfProcessLocation(t *testing.T) {
+	notUTC := time.FixedZone("UTC-7", -7*60*60)
+	s := NewSensorService("", noopLogger{})
+	pin := time.Date(2026, 1, 1, 12, 0, 0, 0, notUTC)
+	s.clock = func() time.Time { return pin }
+	cfg := map[string]any{"cron": "0 0 * * *"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+		MessageType: "system/invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := s.watches["w1"]
+	want := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	if !w.NextFireAt.Equal(want) {
+		t.Fatalf("next_fire_at: got %s, want %s (cron must evaluate in UTC, not the process's local zone)",
+			w.NextFireAt, want)
+	}
+	if w.NextFireAt.Location() != time.UTC {
+		t.Errorf("next_fire_at location: got %s, want UTC", w.NextFireAt.Location())
+	}
+}
+
 func TestTick_FailedEmissionDoesNotAdvanceState_NextTickRetriesSameObservation(t *testing.T) {
 	var (
 		mu         sync.Mutex

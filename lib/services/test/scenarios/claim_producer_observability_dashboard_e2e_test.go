@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"testing"
 	"time"
@@ -295,7 +296,7 @@ func getClaimsPage(t *testing.T, bridge, cursor string, limit int) claimsPage {
 	t.Helper()
 	url := fmt.Sprintf("%s/observability/v1/claims?limit=%d", strings.TrimRight(bridge, "/"), limit)
 	if cursor != "" {
-		url += "&cursor=" + cursor
+		url += "&cursor=" + neturl.QueryEscape(cursor)
 	}
 	resp, err := http.Get(url) //nolint:gosec // #nosec G107
 	if err != nil {
@@ -433,7 +434,7 @@ func getAdminView(t *testing.T, bridge, name string, params map[string]string) a
 			} else {
 				url += "&"
 			}
-			url += k + "=" + v
+			url += k + "=" + neturl.QueryEscape(v)
 		}
 	}
 	resp, err := http.Get(url) //nolint:gosec // #nosec G107
@@ -490,27 +491,31 @@ func createObsInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, inst
 func waitForLedgerClaimCount(t *testing.T, bridge string, want int, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
-	var lastCount int
+	var lastCommitted int
 	for time.Now().Before(end) {
-		total := 0
+		committed := 0
 		cursor := ""
 		for page := 0; page < 32; page++ {
 			p := getClaimsPage(t, bridge, cursor, 50)
-			total += len(p.Claims)
+			for _, c := range p.Claims {
+				if c.State == "COMMITTED" {
+					committed++
+				}
+			}
 			if p.NextCursor == "" {
 				break
 			}
 			cursor = p.NextCursor
 		}
-		lastCount = total
-		if total >= want {
+		lastCommitted = committed
+		if committed >= want {
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("producer ledger never reported >= %d claims within %v; last count=%d. "+
-		"This means rimsky never opened a claim against the store — the wiring "+
+	t.Fatalf("producer ledger never reported >= %d COMMITTED claims within %v; last committed count=%d. "+
+		"This means rimsky never opened and committed a claim against the store — the wiring "+
 		"between the rimsky supervisor's executor dispatch and the store's "+
 		"ClaimProducer surface is broken at some point. Check rimsky logs.",
-		want, deadline, lastCount)
+		want, deadline, lastCommitted)
 }

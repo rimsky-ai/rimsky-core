@@ -97,3 +97,32 @@ func (e RimskyEndpoint) RequireNodeTerminalSucceeded(t testing.TB, instanceID, n
 	}
 	return obs
 }
+
+func (e RimskyEndpoint) WaitForNodeSettledTo(t testing.TB, instanceID, nodeType, want string, deadline time.Duration) NodeObservability {
+	t.Helper()
+	var failedEarly bool
+	obs, ok := e.PollNodeObservability(t, instanceID, nodeType, deadline, func(o NodeObservability) bool {
+		switch want {
+		case "fresh":
+			if o.RunSummary.FreshCount > 0 && o.RunSummary.ActiveCount == 0 && o.RunSummary.PendingCount == 0 {
+				return true
+			}
+			if o.RunSummary.FailedCount > 0 {
+				failedEarly = true
+				return true
+			}
+		case "failed":
+			return o.RunSummary.FailedCount > 0
+		}
+		return false
+	})
+	if failedEarly {
+		t.Fatalf("harness: node %q on instance %s settled with failed_count=%d, want fresh terminal (run_summary=%+v)",
+			nodeType, instanceID, obs.RunSummary.FailedCount, obs.RunSummary)
+	}
+	if !ok {
+		t.Fatalf("harness: node %q on instance %s did not reach %q within %v; last run_summary=%+v",
+			nodeType, instanceID, want, deadline, obs.RunSummary)
+	}
+	return obs
+}

@@ -62,8 +62,8 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	waitForSensorNodeState(t, ep, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
-	waitForSensorNodeState(t, ep, instanceID, "bystander", "fresh", 90*time.Second)
+	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
+	ep.WaitForNodeSettledTo(t, instanceID, "bystander", "fresh", 90*time.Second)
 
 	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
@@ -124,8 +124,8 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	waitForSensorNodeState(t, ep, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
-	waitForSensorNodeState(t, ep, instanceID, "bystander", "fresh", 90*time.Second)
+	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
+	ep.WaitForNodeSettledTo(t, instanceID, "bystander", "fresh", 90*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
@@ -144,7 +144,7 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 		// @story: cascade-signal-blind
 		requireWorkStartedGrew(t, ep, instanceID, reactorNodeAlias, reactorBefore, 120*time.Second,
 			fmt.Sprintf("fire %d/%d", i, fires))
-		waitForSensorNodeState(t, ep, instanceID, reactorNodeAlias, "fresh", 30*time.Second)
+		ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh", 30*time.Second)
 		requireInstanceNotTerminated(t, ep, instanceID)
 	}
 
@@ -298,33 +298,12 @@ func createSensorCascadeInstance(t *testing.T, ep harness.RimskyEndpoint, templa
 	return resp.InstanceID
 }
 
-func sensorNodeMatches(summary harness.NodeObservability, want string) bool {
-	switch want {
-	case "fresh":
-		return summary.RunSummary.ActiveCount == 0 && summary.RunSummary.PendingCount == 0
-	case "failed":
-		return summary.RunSummary.FailedCount > 0
-	}
-	return false
-}
-
-func waitForSensorNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType, want string, deadline time.Duration) {
-	t.Helper()
-	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
-		return sensorNodeMatches(o, want)
-	})
-	if !ok {
-		t.Fatalf("node %q on instance %s did not reach %q within %v; last run_summary=%+v",
-			nodeType, instanceID, want, deadline, obs.RunSummary)
-	}
-}
-
 func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	for time.Now().Before(end) {
 		if workStartedCount(t, ep, instanceID, nodeType) > baseline {
-			waitForSensorNodeState(t, ep, instanceID, nodeType, "fresh", 30*time.Second)
+			ep.WaitForNodeSettledTo(t, instanceID, nodeType, "fresh", 30*time.Second)
 			return
 		}
 		time.Sleep(250 * time.Millisecond)

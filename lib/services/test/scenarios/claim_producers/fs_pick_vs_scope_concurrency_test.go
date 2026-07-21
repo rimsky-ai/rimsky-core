@@ -30,7 +30,6 @@ func TestFSPickVsScopeConcurrency(t *testing.T) {
 			},
 			SeedFolders: [][]string{{"docs", "alpha"}},
 		})
-	_ = fs
 
 	executorEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
@@ -40,7 +39,7 @@ func TestFSPickVsScopeConcurrency(t *testing.T) {
 		harness.WithExecutor("stub", executorEndpoint),
 	)
 
-	templateID := deployTemplate(t, ep, map[string]any{
+	templateID := ep.DeployTemplate(t, map[string]any{
 		"spec": map[string]any{
 			"name":    "fs-pick-vs-scope",
 			"version": "1",
@@ -63,7 +62,7 @@ func TestFSPickVsScopeConcurrency(t *testing.T) {
 		},
 	})
 
-	instanceID := createInstance(t, ep, templateID, "ck-fs-pick-vs-scope")
+	instanceID := ep.CreateInstance(t, templateID, "ck-fs-pick-vs-scope", "claim_producers")
 
 	const deadline = 90 * time.Second
 	ep.RequireNodeTerminalSucceeded(t, instanceID, "pick-worker", deadline)

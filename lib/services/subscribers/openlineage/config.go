@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,9 +28,17 @@ func LoadConfig() (Config, error) {
 	if rimsky == "" {
 		return Config{}, fmt.Errorf("env RIMSKY_OPENLINEAGE_RIMSKY_DSN required")
 	}
+	if !strings.HasPrefix(rimsky, "postgres://") && !strings.HasPrefix(rimsky, "postgresql://") {
+		return Config{}, fmt.Errorf("env RIMSKY_OPENLINEAGE_RIMSKY_DSN must be a postgres:// or postgresql:// DSN " +
+			"(the bundled openlineage subscriber only polls a Postgres-backed rimsky_lineage table; " +
+			"it has no export path for a sqlite-backed rimsky deployment)")
+	}
 	state := os.Getenv("RIMSKY_OPENLINEAGE_STATE_DSN")
 	if state == "" {
 		state = rimsky
+	}
+	if !strings.HasPrefix(state, "postgres://") && !strings.HasPrefix(state, "postgresql://") {
+		return Config{}, fmt.Errorf("env RIMSKY_OPENLINEAGE_STATE_DSN must be a postgres:// or postgresql:// DSN")
 	}
 	backend := os.Getenv("RIMSKY_OPENLINEAGE_BACKEND_URL")
 	if backend == "" {

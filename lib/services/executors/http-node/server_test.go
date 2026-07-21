@@ -273,6 +273,67 @@ func TestExecute_WithCustomExpectStatus(t *testing.T) {
 	}
 }
 
+func TestExecute_NonNumericExpectStatusEntry_RejectedAsAttributeInvalid(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	s := testServer(t, false)
+	req := newRequest(t, map[string]any{
+		"url":           ts.URL,
+		"expect_status": []any{"200"},
+	})
+	outcome, err := s.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	errd := outcome.GetError()
+	if errd == nil {
+		t.Fatalf("expected Error outcome, got %T", outcome.GetOutcome())
+	}
+	if errd.GetErrorClass() != "http/attribute_invalid" {
+		t.Errorf("error_class=%q, want http/attribute_invalid", errd.GetErrorClass())
+	}
+}
+
+func TestExecute_StubOnlyKeys_NotForwardedInLiveRequestBody(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ts.Close()
+
+	s := testServer(t, false)
+	req := newRequest(t, map[string]any{
+		"url":            ts.URL,
+		"method":         "POST",
+		"probe_park":     true,
+		"probe_cancel":   false,
+		"park_resume_at": "2026-01-01T00:00:00Z",
+		"real_field":     "keep-me",
+	})
+	outcome, err := s.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("expected Success, got %T", outcome.GetOutcome())
+	}
+	for _, leaked := range []string{"probe_park", "probe_cancel", "park_resume_at"} {
+		if _, ok := gotBody[leaked]; ok {
+			t.Errorf("stub-only key %q leaked into live upstream request body: %+v", leaked, gotBody)
+		}
+	}
+	if gotBody["real_field"] != "keep-me" {
+		t.Errorf("real attribute dropped from upstream request body: %+v", gotBody)
+	}
+}
+
 func TestExecute_HTTPBridge_PostExecuteRoundTrip(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

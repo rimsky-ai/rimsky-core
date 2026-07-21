@@ -6,8 +6,6 @@ package atomicstaging
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,20 +67,20 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	)
 
 	commitTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-commit", fsCommitSelector, "ok")
-	commitInstanceID := createHeldSwapInstance(t, ep, commitTemplateID, "ck-fs-held-swap-commit")
+	commitInstanceID := ep.CreateInstance(t, commitTemplateID, "ck-fs-held-swap-commit", "held-swap")
 
-	waitForNodeState(t, ep, commitInstanceID, "acquirer", "fresh", 120*time.Second)
-	waitForNodeState(t, ep, commitInstanceID, "verifier", "fresh", 120*time.Second)
+	ep.WaitForNodeSettledTo(t, commitInstanceID, "acquirer", "fresh", 120*time.Second)
+	ep.WaitForNodeSettledTo(t, commitInstanceID, "verifier", "fresh", 120*time.Second)
 
 	committedDst := filepath.Join(store.HostDir, fsCommittedSubdir, fsCommitFolder)
 	sourceSrc := filepath.Join(store.HostDir, fsCommitSource, fsCommitFolder)
 	requireEventuallyMoved(t, committedDst, sourceSrc, 30*time.Second)
 
 	abandonTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-abandon", fsAbandonSelector, "err")
-	abandonInstanceID := createHeldSwapInstance(t, ep, abandonTemplateID, "ck-fs-held-swap-abandon")
+	abandonInstanceID := ep.CreateInstance(t, abandonTemplateID, "ck-fs-held-swap-abandon", "held-swap")
 
-	waitForNodeState(t, ep, abandonInstanceID, "verifier", "failed", 120*time.Second)
-	waitForNodeState(t, ep, abandonInstanceID, "acquirer", "failed", 120*time.Second)
+	ep.WaitForNodeSettledTo(t, abandonInstanceID, "verifier", "failed", 120*time.Second)
+	ep.WaitForNodeSettledTo(t, abandonInstanceID, "acquirer", "failed", 120*time.Second)
 
 	abandonCommittedDst := filepath.Join(store.HostDir, fsCommittedSubdir, fsAbandonFolder)
 	abandonSource := filepath.Join(store.HostDir, fsAbandonSource, fsAbandonFolder)
@@ -130,76 +128,7 @@ func deployHeldSwapTemplate(t *testing.T, ep harness.RimskyEndpoint, name, selec
 			},
 		},
 	}
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /templates (%s): %d %s", name, status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t, "/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
-}
-
-// @decision: test-harness-create-instance-wakes-roots-after-create
-func createHeldSwapInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
-	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("POST /instances: %d %s", status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode instance response: %v: %s", err, string(raw))
-	}
-	if resp.InstanceID == "" {
-		t.Fatalf("instance_id empty: %s", string(raw))
-	}
-	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "held-swap", instanceKey)
-	return resp.InstanceID
-}
-
-func waitForNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType, want string, deadline time.Duration) {
-	t.Helper()
-	var failedEarly bool
-	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
-		switch want {
-		case "fresh":
-			if o.RunSummary.FreshCount > 0 && o.RunSummary.ActiveCount == 0 && o.RunSummary.PendingCount == 0 {
-				return true
-			}
-			if o.RunSummary.FailedCount > 0 {
-				failedEarly = true
-				return true
-			}
-		case "failed":
-			return o.RunSummary.FailedCount > 0
-		}
-		return false
-	})
-	if failedEarly {
-		t.Fatalf("node %q on instance %s settled with failed_count=%d, want fresh terminal (run_summary=%+v)",
-			nodeType, instanceID, obs.RunSummary.FailedCount, obs.RunSummary)
-	}
-	if !ok {
-		t.Fatalf("node %q on instance %s did not reach %q within %v; last run_summary=%+v",
-			nodeType, instanceID, want, deadline, obs.RunSummary)
-	}
+	return ep.DeployTemplate(t, body)
 }
 
 func requireEventuallyMoved(t *testing.T, dst, src string, deadline time.Duration) {

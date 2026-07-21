@@ -60,7 +60,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 		harness.WithExecutor("stub", execEndpoint),
 	)
 
-	templateID := deployTemplate(t, ep, map[string]any{
+	templateID := ep.DeployTemplate(t, map[string]any{
 		"spec": map[string]any{
 			"name":    "pg-claim-unavailable",
 			"version": "1",
@@ -91,7 +91,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 		},
 	})
 
-	instanceID := createInstance(t, ep, templateID, "ck-pg-claim-unavailable")
+	instanceID := ep.CreateInstance(t, templateID, "ck-pg-claim-unavailable", "pg-error-classes")
 
 	requireEventKind(t, ep, instanceID,
 		"terminal/error/pg/claim_unavailable", 90*time.Second,
@@ -124,7 +124,7 @@ func testNotReplaceableDelivered(t *testing.T) {
 		harness.WithExecutor("stub", execEndpoint),
 	)
 
-	templateID := deployTemplate(t, ep, map[string]any{
+	templateID := ep.DeployTemplate(t, map[string]any{
 		"spec": map[string]any{
 			"name":    "pg-swap-failed",
 			"version": "1",
@@ -165,7 +165,7 @@ func testNotReplaceableDelivered(t *testing.T) {
 		},
 	})
 
-	instanceID := createInstance(t, ep, templateID, "ck-pg-not-replaceable")
+	instanceID := ep.CreateInstance(t, templateID, "ck-pg-not-replaceable", "pg-error-classes")
 
 	requireEventKind(t, ep, instanceID,
 		"terminal/error/pg/not_atomically_replaceable", 90*time.Second,
@@ -222,52 +222,6 @@ func seedSwapCollision(t *testing.T, pool *pgxpool.Pool, canonical string) {
 			t.Fatalf("seed swap collision (%q): %v", s, err)
 		}
 	}
-}
-
-func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
-	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/templates", body)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /templates: %d %s", status, string(raw))
-	}
-	var resp struct {
-		TemplateID string `json:"template_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode template response: %v: %s", err, string(raw))
-	}
-	if resp.TemplateID == "" {
-		t.Fatalf("template_id empty: %s", string(raw))
-	}
-	deployStatus, deployRaw := ep.PostJSON(t, "/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
-	if deployStatus != http.StatusOK {
-		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
-	}
-	return resp.TemplateID
-}
-
-// @decision: test-harness-create-instance-wakes-roots-after-create
-func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
-	t.Helper()
-	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("POST /instances: %d %s", status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("decode instance response: %v: %s", err, string(raw))
-	}
-	if resp.InstanceID == "" {
-		t.Fatalf("instance_id empty: %s", string(raw))
-	}
-	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "pg-error-classes", instanceKey)
-	return resp.InstanceID
 }
 
 func requireEventKind(t *testing.T, ep harness.RimskyEndpoint, instanceID, kind string, deadline time.Duration, why string) {

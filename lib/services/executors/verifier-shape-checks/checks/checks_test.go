@@ -34,6 +34,49 @@ func TestPKUnique(t *testing.T) {
 	}
 }
 
+func TestPKUnique_MissingFieldFlaggedNotCollidedAsDuplicate(t *testing.T) {
+	rows := []Row{{"id": "x"}, {}, {}}
+	r := Run(CheckSpec{Kind: "pk_unique", Config: map[string]any{"field": "id"}}, rows)
+	if r.Pass {
+		t.Errorf("expected fail (rows missing pk field): %+v", r)
+	}
+	if r.Counts.Failed != 2 {
+		t.Errorf("Counts.Failed = %d, want 2 (both missing-field rows, not collided as one duplicate pair)", r.Counts.Failed)
+	}
+}
+
+func TestPKUnique_CrossTypeValuesDoNotCollide(t *testing.T) {
+	rows := []Row{{"id": float64(1)}, {"id": "1"}}
+	r := Run(CheckSpec{Kind: "pk_unique", Config: map[string]any{"field": "id"}}, rows)
+	if !r.Pass {
+		t.Errorf("expected pass (float64(1) and string \"1\" are distinct keys): %+v", r)
+	}
+}
+
+func TestRowCountRatio_LowGreaterThanHighIsConfigError(t *testing.T) {
+	rows := []Row{{"a": 1}}
+	r := Run(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{"baseline": float64(1), "low": 2.0, "high": 0.5}}, rows)
+	if !r.ConfigError {
+		t.Errorf("expected ConfigError for low > high, got: %+v", r)
+	}
+}
+
+func TestRowCountRatio_NegativeBoundIsConfigError(t *testing.T) {
+	rows := []Row{{"a": 1}}
+	r := Run(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{"baseline": float64(1), "low": -1.0}}, rows)
+	if !r.ConfigError {
+		t.Errorf("expected ConfigError for negative low, got: %+v", r)
+	}
+}
+
+func TestRowCountRatio_NonNumericBoundIsConfigErrorNotSilentDefault(t *testing.T) {
+	rows := []Row{{"a": 1}}
+	r := Run(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{"baseline": float64(1), "low": "not-a-number"}}, rows)
+	if !r.ConfigError {
+		t.Errorf("expected ConfigError for non-numeric low, got: %+v", r)
+	}
+}
+
 func TestRowCountRatio(t *testing.T) {
 	rows := make([]Row, 10)
 	for i := range rows {

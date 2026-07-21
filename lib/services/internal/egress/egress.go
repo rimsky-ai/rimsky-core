@@ -98,9 +98,22 @@ func (g Guard) HTTPClient(timeout time.Duration) *http.Client {
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 	return &http.Client{
-		Timeout:   timeout,
-		Transport: schemeGuard{base: base},
+		Timeout:       timeout,
+		Transport:     schemeGuard{base: base},
+		CheckRedirect: stripHeadersOnCrossOriginRedirect,
 	}
+}
+
+const maxRedirects = 10
+
+func stripHeadersOnCrossOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("egress: stopped after %d redirects", maxRedirects)
+	}
+	if req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme {
+		req.Header = make(http.Header)
+	}
+	return nil
 }
 
 type schemeGuard struct{ base http.RoundTripper }

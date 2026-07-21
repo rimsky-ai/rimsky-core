@@ -133,10 +133,13 @@ func postMessage(t *testing.T, ep harness.RimskyEndpoint, path string, body map[
 	return resp.StatusCode, out, decoded.MessageID
 }
 
+const countInstanceMessagesStableWindow = 1 * time.Second
+
 func countInstanceMessages(t *testing.T, ep harness.RimskyEndpoint, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	var last int
+	last := -1
+	stableSince := time.Now()
 	for {
 		status, raw := ep.GetJSON(t, path, "")
 		if status != http.StatusOK {
@@ -148,8 +151,15 @@ func countInstanceMessages(t *testing.T, ep harness.RimskyEndpoint, path string)
 		if err := json.Unmarshal(raw, &resp); err != nil {
 			t.Fatalf("decode GET %s response: %v\nbody: %s", path, err, string(raw))
 		}
-		last = len(resp.Messages)
-		if last > 0 || !time.Now().Before(deadline) {
+		n := len(resp.Messages)
+		if n != last {
+			last = n
+			stableSince = time.Now()
+		}
+		if time.Since(stableSince) >= countInstanceMessagesStableWindow {
+			return last
+		}
+		if !time.Now().Before(deadline) {
 			return last
 		}
 		time.Sleep(100 * time.Millisecond)

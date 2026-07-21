@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,18 +66,8 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 		}
 	})
 
-	t.Run("two_replicas_fan_out_twice", func(t *testing.T) {
-		var fireCount int64
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw, _ := io.ReadAll(r.Body)
-			var body map[string]any
-			_ = json.Unmarshal(raw, &body)
-			if sub, _ := body["publisher_subscription_id"].(string); sub == "" {
-				t.Errorf("envelope.publisher_subscription_id: missing or empty (auth path discriminator)")
-			}
-			atomic.AddInt64(&fireCount, 1)
-			w.WriteHeader(http.StatusCreated)
-		}))
+	t.Run("two_replicas_fan_out_but_dedup_collapses_same_window", func(t *testing.T) {
+		srv, recv := newDedupingReceiver()
 		defer srv.Close()
 
 		replicaA := NewSensorService(srv.URL, noopLogger{})
@@ -101,9 +90,16 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 			s.Tick(context.Background())
 		}
 
-		if got := atomic.LoadInt64(&fireCount); got != 2 {
+		total, accepted := recv.snapshot()
+		if total != 2 {
 			t.Errorf("envelopes POSTed across two replicas: got %d, want exactly 2 "+
-				"(honest N× fan-out per concept:replica; no cross-replica coordination)", got)
+				"(honest N× fan-out per concept:replica; no cross-replica coordination)", total)
+		}
+		if accepted != 1 {
+			t.Errorf("dedup-accepted envelopes: got %d, want 1 "+
+				"(same subscription + same fire window collapses to one enqueued message at "+
+				"the control API; the window-deterministic idempotency key makes this deliberate, "+
+				"not a silent leader election)", accepted)
 		}
 	})
 

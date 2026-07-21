@@ -57,11 +57,7 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
 	`
-	if _, err := s.db.ExecContext(ctx, schema); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx,
-		`ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS target_node`)
+	_, err := s.db.ExecContext(ctx, schema)
 	return err
 }
 
@@ -132,6 +128,7 @@ type SubscriptionState struct {
 	MatchJSONKey   string
 	MatchJSONVal   string
 	MessageType    string
+	StartedAt      time.Time
 	LastHash       string
 }
 
@@ -144,7 +141,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 		        COALESCE(match_status, ''),
 		        COALESCE(match_json_key, ''),
 		        COALESCE(match_json_val, ''),
-		        message_type, COALESCE(last_hash, '')
+		        message_type, started_at, COALESCE(last_hash, '')
 		   FROM sensor_http_state`)
 	if err != nil {
 		return nil, err
@@ -170,7 +167,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 		        COALESCE(match_status, ''),
 		        COALESCE(match_json_key, ''),
 		        COALESCE(match_json_val, ''),
-		        message_type, COALESCE(last_hash, '')
+		        message_type, started_at, COALESCE(last_hash, '')
 		   FROM sensor_http_state
 		  WHERE publisher_subscription_id = $1`,
 		subscriptionID)
@@ -192,7 +189,7 @@ func scanSubscriptionState(scan func(...any) error) (SubscriptionState, error) {
 	)
 	if err := scan(&w.SubscriptionID, &w.InstanceID, &w.URL, &pollInterval,
 		&matchStatus, &w.MatchJSONKey, &w.MatchJSONVal,
-		&w.MessageType, &w.LastHash); err != nil {
+		&w.MessageType, &w.StartedAt, &w.LastHash); err != nil {
 		return SubscriptionState{}, err
 	}
 	if pollInterval != "" {

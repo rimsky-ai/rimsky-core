@@ -25,6 +25,7 @@ type Watch struct {
 	SubscriptionID string
 	InstanceID     string
 	CronExpr       string
+	Schedule       cron.Schedule
 	MessageType    string
 	ResolvedConfig []byte
 	NextFireAt     time.Time
@@ -57,11 +58,18 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 		return
 	}
 	for _, r := range rows {
+		sched, err := cron.ParseStandard(r.CronExpr)
+		if err != nil {
+			s.logger.Error("sensor-cron.attach_state_db.cron_parse_failed",
+				"publisher_subscription_id", r.SubscriptionID, "cron", r.CronExpr, "error", err.Error())
+			continue
+		}
 		lastFire := r.LastFireAt
 		s.watches[r.SubscriptionID] = &Watch{
 			SubscriptionID: r.SubscriptionID,
 			InstanceID:     r.InstanceID,
 			CronExpr:       r.CronExpr,
+			Schedule:       sched,
 			MessageType:    r.MessageType,
 			NextFireAt:     r.NextFireAt,
 			StartedAt:      r.StartedAt,
@@ -114,7 +122,7 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 	}, nil
 }
 
-func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
+func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
 	if req.GetKind() != "cron" {
 		return nil, fmt.Errorf("sensor-cron does not support kind %q", req.GetKind())
 	}
@@ -131,8 +139,31 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 	if err != nil {
 		return nil, fmt.Errorf("invalid cron %q: %w", cfg.Cron, err)
 	}
-	now := s.clock()
+
+	s.mu.Lock()
+	state := s.state
+	s.mu.Unlock()
+
+	var persisted *SubscriptionState
+	if state != nil {
+		p, getErr := state.GetSubscription(ctx, req.GetPublisherSubscriptionId())
+		if getErr != nil {
+			s.logger.Warn("sensor-cron.subscribe.state_get_failed",
+				"publisher_subscription_id", req.GetPublisherSubscriptionId(), "error", getErr.Error())
+		} else {
+			persisted = p
+		}
+	}
+
+	now := s.clock().UTC()
 	nextFireAt := sched.Next(now)
+	startedAt := now
+	var lastFireAt *time.Time
+	if persisted != nil {
+		nextFireAt = persisted.NextFireAt
+		startedAt = persisted.StartedAt
+		lastFireAt = persisted.LastFireAt
+	}
 	if nextFireAt.IsZero() {
 		s.logger.Warn("sensor-cron.never_fires",
 			"publisher_subscription_id", req.GetPublisherSubscriptionId(), "cron", cfg.Cron)
@@ -142,10 +173,12 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		SubscriptionID: req.GetPublisherSubscriptionId(),
 		InstanceID:     req.GetInstanceId(),
 		CronExpr:       cfg.Cron,
+		Schedule:       sched,
 		MessageType:    messageType,
 		ResolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
 		NextFireAt:     nextFireAt,
-		StartedAt:      now,
+		StartedAt:      startedAt,
+		LastFireAt:     lastFireAt,
 	}
 	s.mu.Lock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
@@ -153,17 +186,23 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		return &genv1.SubscribeResponse{}, nil
 	}
 	s.watches[w.SubscriptionID] = w
-	state := s.state
 	s.mu.Unlock()
 	s.logger.Info("sensor-cron.subscribe",
 		"publisher_subscription_id", w.SubscriptionID,
 		"instance_id", w.InstanceID,
 		"cron", cfg.Cron,
-		"next_fire_at", w.NextFireAt.Format(time.RFC3339))
+		"next_fire_at", w.NextFireAt.Format(time.RFC3339),
+		"restored_from_state", persisted != nil)
 	if state != nil {
-		if err := state.UpsertSubscription(context.Background(), w); err != nil {
+		if err := state.UpsertSubscription(ctx, w); err != nil {
+			s.mu.Lock()
+			if s.watches[w.SubscriptionID] == w {
+				delete(s.watches, w.SubscriptionID)
+			}
+			s.mu.Unlock()
 			s.logger.Warn("sensor-cron.subscribe.state_upsert_failed",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			return nil, fmt.Errorf("sensor-cron: persist subscription %s: %w", w.SubscriptionID, err)
 		}
 	}
 	return &genv1.SubscribeResponse{}, nil
@@ -203,7 +242,7 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 }
 
 func (s *SensorService) Tick(ctx context.Context) {
-	now := s.clock()
+	now := s.clock().UTC()
 	s.mu.Lock()
 	due := make([]*Watch, 0)
 	for _, w := range s.watches {
@@ -213,27 +252,34 @@ func (s *SensorService) Tick(ctx context.Context) {
 	}
 	s.mu.Unlock()
 
+	var wg sync.WaitGroup
 	for _, w := range due {
-		s.fireOne(ctx, w, now)
+		wg.Add(1)
+		go func(w *Watch) {
+			defer wg.Done()
+			s.fireOne(ctx, w, now)
+		}(w)
 	}
+	wg.Wait()
 }
 
 func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
-	body := map[string]any{
-		"observed_at": now.UTC().Format(time.RFC3339),
-		"cron":        w.CronExpr,
-		"fire_at":     w.NextFireAt.UTC().Format(time.RFC3339),
+	if w.Schedule == nil {
+		s.logger.Error("sensor-cron.fire.no_schedule",
+			"publisher_subscription_id", w.SubscriptionID, "cron", w.CronExpr)
+		return
 	}
-	idemKey := fmt.Sprintf("%s+%s", w.SubscriptionID, w.NextFireAt.UTC().Format(time.RFC3339))
+	missedWindows, caughtUpTo := coalesceMissedWindows(w.Schedule, w.NextFireAt, now)
+	body := map[string]any{
+		"observed_at":    now.UTC().Format(time.RFC3339),
+		"cron":           w.CronExpr,
+		"fire_at":        w.NextFireAt.UTC().Format(time.RFC3339),
+		"missed_windows": missedWindows - 1,
+	}
+	idemKey := cronIdempotencyKey(w.SubscriptionID, w.NextFireAt)
 	if err := s.postMessage(ctx, w, body, idemKey); err != nil {
 		s.logger.Warn("sensor-cron.message_post_failed",
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-		return
-	}
-	sched, err := cron.ParseStandard(w.CronExpr)
-	if err != nil {
-		s.logger.Error("sensor-cron.cron_parse_failed",
-			"publisher_subscription_id", w.SubscriptionID, "cron", w.CronExpr)
 		return
 	}
 	s.mu.Lock()
@@ -244,7 +290,7 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 	}
 	t := now
 	cur.LastFireAt = &t
-	cur.NextFireAt = sched.Next(cur.NextFireAt)
+	cur.NextFireAt = caughtUpTo
 	nextFireAt := cur.NextFireAt
 	lastFireAt := cur.LastFireAt
 	state := s.state
@@ -253,12 +299,34 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 		s.logger.Warn("sensor-cron.never_fires_again",
 			"publisher_subscription_id", w.SubscriptionID, "cron", w.CronExpr)
 	}
+	if missedWindows > 1 {
+		s.logger.Warn("sensor-cron.catch_up_coalesced",
+			"publisher_subscription_id", w.SubscriptionID, "missed_windows", missedWindows-1)
+	}
 	if state != nil {
 		if err := state.UpdateNextFire(ctx, w.SubscriptionID, nextFireAt, lastFireAt); err != nil {
 			s.logger.Warn("sensor-cron.fire.state_update_failed",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		}
 	}
+}
+
+func coalesceMissedWindows(sched cron.Schedule, dueAt, now time.Time) (int, time.Time) {
+	missed := 0
+	next := dueAt
+	for !next.After(now) {
+		missed++
+		advanced := sched.Next(next)
+		if advanced.IsZero() || !advanced.After(next) {
+			return missed, advanced
+		}
+		next = advanced
+	}
+	return missed, next
+}
+
+func cronIdempotencyKey(subscriptionID string, fireAt time.Time) string {
+	return fmt.Sprintf("%s+%s", subscriptionID, fireAt.UTC().Format(time.RFC3339))
 }
 
 func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {

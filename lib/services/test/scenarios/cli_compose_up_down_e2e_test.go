@@ -22,7 +22,6 @@ const composeProject = "project-alpha"
 const composePrefix = "compose:" + composeProject + ":"
 
 func TestCLICompose_UpThenDown(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 
 	netName := harness.NewNetwork(ctx, t)

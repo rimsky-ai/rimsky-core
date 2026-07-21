@@ -6,9 +6,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
@@ -56,6 +58,34 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatal("GetSubscription should return nil for unknown id")
+	}
+}
+
+func TestSubscribe_StateUpsertFailure_FailsRPCAndRollsBackInMemoryWatch(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_HTTP_STATE_DSN", dsn)
+
+	state, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
+	s.state = state
+	raw, _ := json.Marshal(map[string]any{"url": "http://example.test/feed", "poll_interval": "10s"})
+	_, err = s.Subscribe(ctx, &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "sub-1", InstanceId: "inst-1", Kind: "http", ResolvedConfig: raw,
+	})
+	if err == nil {
+		t.Fatal("expected Subscribe to fail when the state DB upsert fails, " +
+			"so the caller (publisher-lifecycle) retries instead of believing the subscription durable")
+	}
+	if _, exists := s.watches["sub-1"]; exists {
+		t.Error("a failed persist must not leave an in-memory watch behind")
 	}
 }
 

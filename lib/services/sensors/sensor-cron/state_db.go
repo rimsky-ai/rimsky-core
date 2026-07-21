@@ -51,18 +51,8 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    last_fire_at              TIMESTAMPTZ
 		);
 	`
-	if _, err := s.db.ExecContext(ctx, schema); err != nil {
-		return err
-	}
-	for _, drop := range []string{
-		`ALTER TABLE sensor_cron_state DROP COLUMN IF EXISTS missed_fires`,
-		`ALTER TABLE sensor_cron_state DROP COLUMN IF EXISTS target_node`,
-	} {
-		if _, err := s.db.ExecContext(ctx, drop); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := s.db.ExecContext(ctx, schema)
+	return err
 }
 
 func (s *stateDB) Close() error {
@@ -121,6 +111,29 @@ type SubscriptionState struct {
 	NextFireAt     time.Time
 	StartedAt      time.Time
 	LastFireAt     *time.Time
+}
+
+func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*SubscriptionState, error) {
+	if s == nil {
+		return nil, nil
+	}
+	row := s.db.QueryRowContext(ctx,
+		`SELECT publisher_subscription_id, instance_id, cron_expr,
+		        message_type, next_fire_at, started_at,
+		        last_fire_at
+		   FROM sensor_cron_state
+		  WHERE publisher_subscription_id = $1`,
+		subscriptionID)
+	var st SubscriptionState
+	if err := row.Scan(&st.SubscriptionID, &st.InstanceID, &st.CronExpr,
+		&st.MessageType, &st.NextFireAt, &st.StartedAt,
+		&st.LastFireAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &st, nil
 }
 
 func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {

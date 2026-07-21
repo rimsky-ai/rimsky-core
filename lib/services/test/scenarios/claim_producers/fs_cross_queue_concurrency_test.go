@@ -38,7 +38,6 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 			},
 			SeedFolders: [][]string{{"docs", "alpha"}},
 		})
-	_ = fs
 
 	executorEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
@@ -48,7 +47,7 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 		harness.WithExecutor("stub", executorEndpoint),
 	)
 
-	templateID := deployTemplate(t, ep, map[string]any{
+	templateID := ep.DeployTemplate(t, map[string]any{
 		"spec": map[string]any{
 			"name":    "fs-cross-queue",
 			"version": "1",
@@ -71,7 +70,7 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 		},
 	})
 
-	instanceID := createInstance(t, ep, templateID, "ck-fs-xqueue")
+	instanceID := ep.CreateInstance(t, templateID, "ck-fs-xqueue", "claim_producers")
 
 	const deadline = 90 * time.Second
 	ep.RequireNodeTerminalSucceeded(t, instanceID, "worker-r1", deadline)

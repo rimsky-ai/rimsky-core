@@ -24,7 +24,6 @@ import (
 var instanceIDLine = regexp.MustCompile(`(?m)^instance_id=([0-9a-fA-F-]{36})\s*$`)
 
 func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 
 	netName := harness.NewNetwork(ctx, t)

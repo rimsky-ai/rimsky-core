@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -122,6 +123,44 @@ func TestSubscribe_RejectsMissingURL(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for missing url")
+	}
+}
+
+func TestSubscribe_RejectsNonPositivePollInterval(t *testing.T) {
+	for _, interval := range []string{"0s", "-5s"} {
+		s := NewSensorService("", loopbackGuard(t), noopLogger{})
+		cfg := map[string]any{"url": "http://example.test/feed.json", "poll_interval": interval}
+		raw, _ := json.Marshal(cfg)
+		_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+			PublisherSubscriptionId: "w1", Kind: "http", ResolvedConfig: raw,
+		})
+		if err == nil {
+			t.Errorf("poll_interval %q: expected rejection, got success (would hot-poll every tick)", interval)
+		}
+	}
+}
+
+func TestListSubscriptions_StartedAtIsSubscribeTimeNotCallTime(t *testing.T) {
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
+	subscribeTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return subscribeTime }
+	raw, _ := json.Marshal(map[string]any{"url": "http://example.test/feed.json"})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.clock = func() time.Time { return subscribeTime.Add(time.Hour) }
+	resp, err := s.ListSubscriptions(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Subscriptions) != 1 {
+		t.Fatalf("subscriptions: %+v", resp.Subscriptions)
+	}
+	if got := resp.Subscriptions[0].GetStartedAt().AsTime(); !got.Equal(subscribeTime) {
+		t.Errorf("started_at: got %s, want %s (must be the original subscribe time, "+
+			"not the ListSubscriptions call time)", got, subscribeTime)
 	}
 }
 
@@ -382,6 +421,129 @@ func TestTick_JSONPathFilter(t *testing.T) {
 	if pushed != 1 {
 		t.Errorf("pushed: %d (want 1; jsonpath match)", pushed)
 	}
+}
+
+func TestTick_JSONPathFilter_SubstringIsNotAMatch(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"deployment":{"status":"unhealthy"}}`))
+	}))
+	defer upstream.Close()
+
+	pushed := 0
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pushed++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
+	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	cfg := map[string]any{
+		"url":           upstream.URL,
+		"poll_interval": "10s",
+		"match": map[string]any{
+			"jsonpath": map[string]any{
+				"path":  "deployment.status",
+				"value": "healthy",
+			},
+		},
+	}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Tick(context.Background())
+	if pushed != 0 {
+		t.Errorf("pushed: %d (want 0; \"unhealthy\" must not match filter value \"healthy\" via substring)", pushed)
+	}
+}
+
+func TestTick_OversizedResponseBody_RejectedNotBuffered(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(bytes.Repeat([]byte("a"), int(maxPollBodyBytes+1)))
+	}))
+	defer upstream.Close()
+
+	pushed := 0
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pushed++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
+	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	raw, _ := json.Marshal(map[string]any{"url": upstream.URL, "poll_interval": "10s"})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Tick(context.Background())
+	if pushed != 0 {
+		t.Errorf("pushed: %d (want 0; oversized body must be rejected, not delivered)", pushed)
+	}
+}
+
+func TestTick_PollsDueWatchesConcurrently_OneSlowWatchDoesNotBlockAnother(t *testing.T) {
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slow.Close()
+
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer fast.Close()
+
+	fastPolled := make(chan struct{})
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
+	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	for id, url := range map[string]string{"slow": slow.URL, "fast": fast.URL} {
+		raw, _ := json.Marshal(map[string]any{"url": url, "poll_interval": "1ms"})
+		if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+			PublisherSubscriptionId: id, InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	go func() {
+		s.mu.Lock()
+		w := s.watches["fast"]
+		s.mu.Unlock()
+		for {
+			s.mu.Lock()
+			polled := !w.LastPollAt.IsZero()
+			s.mu.Unlock()
+			if polled {
+				close(fastPolled)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	tickDone := make(chan struct{})
+	go func() {
+		s.Tick(context.Background())
+		close(tickDone)
+	}()
+
+	<-fastPolled
+	close(release)
+	<-tickDone
 }
 
 func TestTick_FailedEmissionDoesNotAdvanceState_NextTickRetriesSameObservation(t *testing.T) {
