@@ -282,25 +282,24 @@ func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEn
 
 func requireVerifierCheckFailedErrorClass(t *testing.T, events []harness.NodeEvent, debugBody string) {
 	t.Helper()
-	const want = "verifier/check_failed/"
+	const want = "verifier/check_failed/numeric_range"
 	for _, e := range events {
 		if cls, ok := e.Payload["error_class"].(string); ok {
-			if strings.HasPrefix(cls, want) {
+			if cls == want {
 				return
 			}
 		}
-		if strings.Contains(e.Kind, "/terminal/error/") {
-			if strings.Contains(e.Kind, want) {
-				return
-			}
+		if strings.Contains(e.Kind, "/terminal/error/") && strings.Contains(e.Kind, want) {
+			return
 		}
 	}
-	t.Fatalf("error leg: node settled `failed` but no event carries a "+
-		"`%s<kind>` error_class — the failure may have landed via an "+
-		"unrelated infra path (executor crash, transport error) rather "+
-		"than the bundled verifier's blocking-check terminal. Falsifier hit: "+
-		"the error-severity partition did not drive the terminal class.\n"+
-		"event log:\n%s\nfull observability body:\n%s",
+	t.Fatalf("error leg: node settled `failed` but no event carries error_class "+
+		"`%s` — either the failure landed via an unrelated infra path (executor "+
+		"crash, transport error) rather than the bundled verifier's blocking-check "+
+		"terminal, or the executor misattributed the blocking class to the "+
+		"warning-severity no_nulls check instead of the blocking numeric_range "+
+		"check. Falsifier hit: the error-severity partition did not drive the "+
+		"terminal class.\nevent log:\n%s\nfull observability body:\n%s",
 		want, formatEventsForDiagnostic(events), debugBody)
 }
 

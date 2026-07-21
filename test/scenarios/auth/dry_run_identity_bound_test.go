@@ -99,6 +99,24 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 		t.Fatalf("mode:dry_run create persisted an instance; GET /instances shows %d (want 0)", n)
 	}
 
+	code, resp = f.request(t, "POST", "/v1/instances?dry_run=false", dryKey, map[string]any{"template": hash})
+	if code != 200 {
+		t.Fatalf("mode:dry_run create (dry_run=false): code=%d resp=%+v (want 200 — an explicit false flag must NOT lift an identity-bound dry-run floor)", code, resp)
+	}
+	if dr, _ := resp["dry_run"].(bool); !dr {
+		t.Fatalf("mode:dry_run create (dry_run=false) missing dry_run envelope: %+v — the identity-bound floor was lifted by an explicit false flag", resp)
+	}
+	would, ok = resp["would_have_created"].(map[string]any)
+	if !ok {
+		t.Fatalf("mode:dry_run create (dry_run=false) missing would_have_created: %+v", resp)
+	}
+	if would["instance_id"] != "dry-run-not-persisted" {
+		t.Fatalf("mode:dry_run create (dry_run=false) instance_id should be the placeholder; got %+v", would)
+	}
+	if n := countInstances(t, f, adminKey); n != 0 {
+		t.Fatalf("mode:dry_run create (dry_run=false) persisted an instance; GET /instances shows %d (want 0)", n)
+	}
+
 	f.flushAudit()
 	ctx := context.Background()
 	var sawFlooredAttempt bool

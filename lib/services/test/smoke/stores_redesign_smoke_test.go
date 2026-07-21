@@ -9,8 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -60,11 +63,18 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 
 	instanceID := smokeCreateInstance(t, ep, templateID, "stores-redesign-1")
 
+	pool, err := pgxpool.New(ctx, ep.HostDSN)
+	if err != nil {
+		t.Fatalf("connect rimsky state postgres: %v", err)
+	}
+	defer pool.Close()
+
 	const cycles = 5
 	const perCycle = 30 * time.Second
 
 	for n := 1; n <= cycles; n++ {
 		ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", 30*time.Second)
+		requireCommittedDocsClaimFolder(ctx, t, pool, instanceID, n)
 		status, raw := ep.PostJSON(t,
 			fmt.Sprintf("/v1/instances/%s/pause", instanceID), nil)
 		if status != http.StatusOK {
@@ -88,6 +98,64 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 	}
 
 	ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", perCycle)
+	requireCommittedDocsClaimFolder(ctx, t, pool, instanceID, cycles+1)
+
+	folders := committedDocsClaimFolders(ctx, t, pool, instanceID)
+	if len(folders) != cycles+1 {
+		t.Fatalf("want %d committed claim_scope rows for producer %q across %d cycles, got %d: %v",
+			cycles+1, "docs", cycles, len(folders), folders)
+	}
+	distinct := map[string]bool{}
+	for _, f := range folders {
+		distinct[f] = true
+	}
+	if len(distinct) < 2 {
+		t.Fatalf("recycle pick policy picked the same folder every cycle (%v) — the ring never rotated across %d cycles seeded with 3 folders",
+			folders, cycles)
+	}
+}
+
+func committedDocsClaimFolders(ctx context.Context, t *testing.T, pool *pgxpool.Pool, instanceID string) []string {
+	t.Helper()
+	rows, err := pool.Query(ctx,
+		`SELECT ch.address FROM rimsky_claim_handles ch
+		   JOIN rimsky_nodes n ON n.id = ch.holder_node_id
+		  WHERE n.instance_id = $1
+		    AND ch.lock_kind = 'claim_scope'
+		    AND ch.producer_name = 'docs'
+		    AND ch.state = 'committed'
+		  ORDER BY ch.claimed_at`,
+		instanceID,
+	)
+	if err != nil {
+		t.Fatalf("query committed docs claim_scope rows: %v", err)
+	}
+	defer rows.Close()
+	var folders []string
+	for rows.Next() {
+		var addrRaw []byte
+		if err := rows.Scan(&addrRaw); err != nil {
+			t.Fatalf("scan claim_handles.address: %v", err)
+		}
+		var addrPath string
+		if err := json.Unmarshal(addrRaw, &addrPath); err != nil {
+			t.Fatalf("decode claim_handles.address %s: %v", string(addrRaw), err)
+		}
+		folders = append(folders, filepath.Base(addrPath))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate committed docs claim_scope rows: %v", err)
+	}
+	return folders
+}
+
+func requireCommittedDocsClaimFolder(ctx context.Context, t *testing.T, pool *pgxpool.Pool, instanceID string, cycle int) {
+	t.Helper()
+	folders := committedDocsClaimFolders(ctx, t, pool, instanceID)
+	if len(folders) < cycle {
+		t.Fatalf("cycle %d: want at least %d committed claim_scope rows for producer %q, got %d: %v",
+			cycle, cycle, "docs", len(folders), folders)
+	}
 }
 
 func smokeDeployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {

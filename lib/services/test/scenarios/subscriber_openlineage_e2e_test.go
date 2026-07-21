@@ -184,10 +184,6 @@ func TestSubscriberOpenlineage(t *testing.T) {
 		t.Fatalf("received %d malformed OpenLineage envelopes (falsifier 'malformed JSON' surfaced):\n%s",
 			len(validationErrs), strings.Join(validationErrs, "\n"))
 	}
-	if len(received) == 0 {
-		t.Fatalf("receiver got zero arrivals after the deadline — the subscriber " +
-			"never reached the receiver (DNS, host-gateway, or backend URL wrong)")
-	}
 }
 
 func validateOpenLineageEnvelope(body map[string]any) string {

@@ -343,11 +343,36 @@ func assertObservableStateReadParity(t *testing.T, ep harness.RimskyEndpoint, mc
 		t.Fatalf("%s read parity: MCP %q response is not a JSON object (canned response shape?); got %T\nenvelope: %v", cat.name, cat.readTool, mcpBody, envelope)
 	}
 
-	for k := range httpBody {
-		if _, ok := mcpMap[k]; !ok {
+	for k, httpVal := range httpBody {
+		mcpVal, ok := mcpMap[k]
+		if !ok {
 			t.Fatalf("%s read parity: MCP %q response missing top-level key %q present on HTTP %s response — MCP transport returned a canned shape\nhttp keys: %v\nmcp keys: %v",
 				cat.name, cat.readTool, k, cat.readHTTPPath, jsonMapKeys(httpBody), jsonMapKeys(mcpMap))
 		}
+		if !jsonValueIsEmpty(t, httpVal) && jsonValueIsEmpty(t, mcpVal) {
+			t.Fatalf("%s read parity: MCP %q top-level key %q is empty/null (%s) while HTTP %s carries real content (%s) — MCP transport returned a canned/empty payload",
+				cat.name, cat.readTool, k, string(mcpVal), cat.readHTTPPath, string(httpVal))
+		}
+	}
+}
+
+func jsonValueIsEmpty(t *testing.T, raw json.RawMessage) bool {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("decode JSON value for emptiness check: %v: %s", err, string(raw))
+	}
+	switch tv := v.(type) {
+	case nil:
+		return true
+	case string:
+		return tv == ""
+	case []any:
+		return len(tv) == 0
+	case map[string]any:
+		return len(tv) == 0
+	default:
+		return false
 	}
 }
 

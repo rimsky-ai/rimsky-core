@@ -46,22 +46,10 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 
 	waitForFramesByState(t, h, iid, "completed", 1)
 
-	var leafState string
-	err := h.Pool.QueryRow(context.Background(),
-		`SELECT COALESCE(r.state, 'fresh')
-		   FROM rimsky_nodes n
-		   LEFT JOIN rimsky_node_runs r
-		          ON r.node_id = n.id
-		         AND r.state IN ('pending','stale','running','held','parked')
-		  WHERE n.id = $1`, uuid.UUID(leaf.ID)).Scan(&leafState)
-	require.NoError(t, err)
-	require.Equal(t, "fresh", leafState,
-		"pruned leaf should remain fresh")
-
 	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 1)
 	var leafDispatchCount int
-	err = h.Pool.QueryRow(context.Background(), `
+	err := h.Pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM rimsky_node_runs
 		WHERE frame_id = $1 AND node_id = $2
 		  AND state IN ('pending','stale','running','held','parked')

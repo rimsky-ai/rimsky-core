@@ -553,8 +553,8 @@ func TestMCPSkin_FiltersByGrant(t *testing.T) {
 	}
 	tools := listResp["result"].(map[string]any)["tools"].([]any)
 	hasWriter := false
-	for _, t := range tools {
-		if t.(map[string]any)["name"] == "instance_create" {
+	for _, tl := range tools {
+		if tl.(map[string]any)["name"] == "instance_create" {
 			hasWriter = true
 		}
 	}

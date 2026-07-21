@@ -13,23 +13,23 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-func TestChildRunsPerPartitionKey_OneChildPerKey(t *testing.T) {
+func TestFanOutPartitions_IsAPureProjection_NoDedup(t *testing.T) {
 	t.Parallel()
 	subClaims := []runtime.SubClaim{
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p1"},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p2"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "dup"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "dup"},
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p3"},
 	}
 	parts := runtime.FanOutPartitions(subClaims)
-	seen := make(map[string]bool, len(parts))
-	for _, p := range parts {
-		if seen[p.PartitionKey] {
-			t.Errorf("duplicate partition_key in partitions: %s", p.PartitionKey)
-		}
-		seen[p.PartitionKey] = true
+	if len(parts) != len(subClaims) {
+		t.Fatalf("FanOutPartitions must be a 1:1 projection over its input — sub-claim "+
+			"de-duplication, if any, happens upstream at acquisition time, not here; "+
+			"got %d outputs for %d inputs", len(parts), len(subClaims))
 	}
-	if len(seen) != len(subClaims) {
-		t.Errorf("expected %d distinct partition_keys, got %d", len(subClaims), len(seen))
+	for i, p := range parts {
+		if p.PartitionKey != subClaims[i].PartitionKey || p.SubClaimHandleID != subClaims[i].ClaimHandleID {
+			t.Fatalf("parts[%d] = %+v does not mirror subClaims[%d] = %+v", i, p, i, subClaims[i])
+		}
 	}
 }
 

@@ -131,4 +131,7 @@ func TestAcquireUnavailable_NoPolicyFailsFast(t *testing.T) {
 	require.NotNil(t, worker)
 
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
+
+	require.Empty(t, h.Stub.Observed(),
+		"executor must not be invoked when acquire/unavailable fails fast with no configured error_types policy")
 }

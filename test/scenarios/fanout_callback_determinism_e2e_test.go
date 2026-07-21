@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -139,13 +137,6 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 
 	reg := h.Supervisor.CallbackRegistry()
 	require.NotNil(t, reg, "supervisor.CallbackRegistry() must not be nil")
-	var instanceRow *persistence.InstanceRow
-	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.Persist.Instances().Get(ctx, iid, tx)
-		instanceRow = r
-		return err
-	}))
-	require.NotNil(t, instanceRow)
 	reg.Register("ack-2", runtime.AsyncContext{
 		NodeID:       parentNode.ID,
 		InstanceID:   iid,
@@ -168,6 +159,10 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	require.Equal(t, "rejected_run_terminal", secondAck.AckStatus,
 		"second callback should be rejected as rejected_run_terminal per the determinism rule; got %q",
 		secondAck.AckStatus)
+	require.Nil(t, secondAck.CurrentNodeRunID,
+		"this fan-out child never re-dispatched after resolving, so there is no newer in-flight "+
+			"canonical successor run for the node — current_dispatch_id must be omitted, not name "+
+			"the already-terminal run that was just rejected")
 }
 
 type callbackAckBody struct {

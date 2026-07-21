@@ -206,6 +206,46 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 			t.Fatalf("persisted cli.mcp_servers[0] missing transport=http (got %v)", first)
 		}
 	})
+
+	t.Run("model refusal (stderr refusal marker, non-zero exit) classifies as agent/refused", func(t *testing.T) {
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
+			"claude-agent-refused",
+			"scenario:refused",
+		))
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-refused")
+		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+
+		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		if errorClass != "agent/refused" {
+			t.Fatalf("refused dispatch failed with error_class %q, want %q", errorClass, "agent/refused")
+		}
+	})
+
+	t.Run("unclassifiable crash (stderr, non-zero exit) falls back to agent/subprocess_exit/before_complete", func(t *testing.T) {
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
+			"claude-agent-crash",
+			"scenario:agent_crash",
+		))
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-crash")
+		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+
+		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		if errorClass != "agent/subprocess_exit/before_complete" {
+			t.Fatalf("crash dispatch failed with error_class %q, want %q", errorClass, "agent/subprocess_exit/before_complete")
+		}
+	})
+
+	t.Run("clean exit without a report is resumed with a reminder and completes", func(t *testing.T) {
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
+			"claude-agent-resume-reminder",
+			"scenario:resume_reminder",
+		))
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-resume-reminder")
+		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", 90*time.Second)
+	})
 }
 
 type claudeAgentTemplateOption func(workerNodeAttrs map[string]any)

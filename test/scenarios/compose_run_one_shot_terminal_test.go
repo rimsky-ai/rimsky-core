@@ -124,18 +124,22 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 
 	var completedCount, failedCount int
 	if qerr := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM rimsky_node_runs WHERE state = 'fresh'`).Scan(&completedCount); qerr != nil {
-		t.Fatalf("count completed node-runs: %v", qerr)
+		`SELECT COUNT(*) FROM rimsky_node_runs nr
+		   JOIN rimsky_nodes n ON n.id = nr.node_id
+		  WHERE n.node_type = 'worker' AND nr.state = 'fresh'`).Scan(&completedCount); qerr != nil {
+		t.Fatalf("count completed worker node-runs: %v", qerr)
 	}
 	if qerr := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM rimsky_node_runs WHERE state = 'failed'`).Scan(&failedCount); qerr != nil {
-		t.Fatalf("count failed node-runs: %v", qerr)
+		`SELECT COUNT(*) FROM rimsky_node_runs nr
+		   JOIN rimsky_nodes n ON n.id = nr.node_id
+		  WHERE n.node_type = 'worker' AND nr.state = 'failed'`).Scan(&failedCount); qerr != nil {
+		t.Fatalf("count failed worker node-runs: %v", qerr)
 	}
-	if completedCount < 1 {
-		t.Fatalf("expected at least one rimsky_node_runs row in state 'fresh' (success leg); got %d", completedCount)
+	if completedCount != 1 {
+		t.Fatalf("expected exactly one worker rimsky_node_runs row in state 'fresh' (success leg, the manifest's `ok` instance); got %d", completedCount)
 	}
-	if failedCount < 1 {
-		t.Fatalf("expected at least one rimsky_node_runs row in state 'failed' (failure leg); got %d", failedCount)
+	if failedCount != 1 {
+		t.Fatalf("expected exactly one worker rimsky_node_runs row in state 'failed' (failure leg, the manifest's `oops` instance); got %d", failedCount)
 	}
 
 	var workerNodeCount int
@@ -143,8 +147,8 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		`SELECT COUNT(*) FROM rimsky_nodes WHERE node_type = 'worker'`).Scan(&workerNodeCount); qerr != nil {
 		t.Fatalf("count worker nodes: %v", qerr)
 	}
-	if workerNodeCount < 2 {
-		t.Fatalf("expected >=2 worker nodes recorded by name; got %d", workerNodeCount)
+	if workerNodeCount != 2 {
+		t.Fatalf("expected exactly 2 worker nodes recorded by name (one per declared instance); got %d", workerNodeCount)
 	}
 
 	var failEventCount int
@@ -200,12 +204,12 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		`SELECT COUNT(*) FROM rimsky_message_idempotencies WHERE idempotency_key LIKE 'compose-wake-%'`).Scan(&composeWakeCount); qerr != nil {
 		t.Fatalf("count compose-wake idempotency rows: %v", qerr)
 	}
-	if composeWakeCount < 2 {
-		t.Fatalf("expected >=2 rimsky_message_idempotencies rows under 'compose-wake-%%' "+
+	if composeWakeCount != 2 {
+		t.Fatalf("expected exactly 2 rimsky_message_idempotencies rows under 'compose-wake-%%' "+
 			"(one per declared instance); got %d. This means the compose driver "+
 			"did NOT emit the empty-message wake step between ApplyPlan and the "+
 			"wait-for-terminal loop, which is the spec's post-instance-create-is-idle "+
-			"contract preserver", composeWakeCount)
+			"contract preserver, or emitted duplicates", composeWakeCount)
 	}
 
 	var composeWakeMessageCount int
@@ -218,8 +222,8 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	`).Scan(&composeWakeMessageCount); qerr != nil {
 		t.Fatalf("count compose-wake empty-typed ledger rows: %v", qerr)
 	}
-	if composeWakeMessageCount < 2 {
-		t.Fatalf("expected >=2 empty-typed operator-sender rows in rimsky_messages tied "+
+	if composeWakeMessageCount != 2 {
+		t.Fatalf("expected exactly 2 empty-typed operator-sender rows in rimsky_messages tied "+
 			"to compose-wake idempotency keys; got %d. The compose driver's wake step "+
 			"must travel the universal POST /messages surface with type='' and "+
 			"sender_kind='operator' — a wake taking any other shape is the spec falsifier", composeWakeMessageCount)

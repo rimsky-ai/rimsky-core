@@ -13,7 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/dataprocessing"
 )
 
-func TestStagingThenSwapWithCoHolders(t *testing.T) {
+func TestDataProcessingStub_ConcurrentPartitionStaging(t *testing.T) {
 	t.Parallel()
 	s := dataprocessing.New()
 	ctx := context.Background()

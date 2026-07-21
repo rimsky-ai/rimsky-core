@@ -99,8 +99,8 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 
 	// @story: sensor-http
 	preRestartCount := publisherMessageCount(t, ep, instanceID)
-	preRestartPolls := pollHits.Load()
 	sensor.Stop(ctx)
+	preRestartPolls := pollHits.Load()
 	t.Logf("sensor-http stopped; pre-restart message count=%d, upstream polls=%d",
 		preRestartCount, preRestartPolls)
 

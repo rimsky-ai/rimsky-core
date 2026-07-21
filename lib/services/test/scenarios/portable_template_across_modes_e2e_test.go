@@ -49,11 +49,18 @@ func TestPortableTemplateAcrossModes(t *testing.T) {
 		t.Fatalf("terminal tag class differs across modes: all-in-one=%q containerized=%q — same template file byte-for-byte reached a different terminal tag",
 			shapeAllInOne.TerminalTagClass, shapeContainerized.TerminalTagClass)
 	}
+	if !shapeAllInOne.StubProbe {
+		t.Fatalf("all-in-one mode: schema default stub_probe did not resolve to true in latest_attributes — JSON-schema default merging is not portable")
+	}
+	if !shapeContainerized.StubProbe {
+		t.Fatalf("containerized mode: schema default stub_probe did not resolve to true in latest_attributes — JSON-schema default merging is not portable")
+	}
 }
 
 type portableTerminalShape struct {
 	NodeType         string
 	TerminalTagClass string
+	StubProbe        bool
 }
 
 func buildPortableTemplateBody() map[string]any {
@@ -162,7 +169,8 @@ func dispatchAndReadTerminal(t *testing.T, ep harness.RimskyEndpoint, templateBy
 		t.Fatalf("GET node observability: %d %s", status, string(raw))
 	}
 	var latestAttrs struct {
-		Stub bool `json:"stub"`
+		Stub      bool `json:"stub"`
+		StubProbe bool `json:"stub_probe"`
 	}
 	if err := json.Unmarshal(obs.LatestAttributes, &latestAttrs); err != nil {
 		t.Fatalf("decode latest_attributes: %v: %s", err, string(raw))
@@ -173,6 +181,7 @@ func dispatchAndReadTerminal(t *testing.T, ep harness.RimskyEndpoint, templateBy
 	return portableTerminalShape{
 		NodeType:         obs.NodeType,
 		TerminalTagClass: terminalTagFromRunSummary(obs.RunSummary.FreshCount, obs.RunSummary.FailedCount),
+		StubProbe:        latestAttrs.StubProbe,
 	}
 }
 

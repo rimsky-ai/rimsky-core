@@ -40,7 +40,7 @@ func TestOnboardingDemo_RunSettlesIdle(t *testing.T) {
 	buildOnboardingRimskyCLI(t, binPath)
 
 	demoScript := repoExampleSpecPath(t, "examples/onboarding-demo.sh")
-	templatePath := repoExampleSpecPath(t, "examples/onboarding-template.yaml")
+	repoExampleSpecPath(t, "examples/onboarding-template.yaml")
 
 	stdout, exitCode := runDemoScript(t, ctx, demoScript, binPath, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {
@@ -66,10 +66,6 @@ func TestOnboardingDemo_RunSettlesIdle(t *testing.T) {
 	}
 	if match2[1] == instanceID {
 		t.Fatalf("second run produced the same instance_id %q — the script's per-run instance_key did not actually disambiguate", instanceID)
-	}
-
-	if _, err := os.Stat(templatePath); err != nil {
-		t.Fatalf("shipped template %s missing on disk: %v — the README's first-steps walkthrough is broken", templatePath, err)
 	}
 }
 

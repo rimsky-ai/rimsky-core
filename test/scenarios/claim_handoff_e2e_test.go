@@ -218,8 +218,6 @@ func testClaimHandoffMultiCoHolderCommit(t *testing.T) {
 	h.WaitForNodeState(slow.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
 
-	h.WaitForNodeState(slow.ID, cascade.NodeStateFresh)
-
 	requireClaimHandleState(t, h, acquirer.ID, spec.ClaimHandleStateCommitted, true)
 }
 

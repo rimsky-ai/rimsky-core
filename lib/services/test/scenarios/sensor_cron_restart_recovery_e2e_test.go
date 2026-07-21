@@ -38,11 +38,13 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 	rimskyAlias := harness.NextRimskyAlias()
 	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
 	sensor := harness.StartSensorCron(ctx, t, netName, "sensor-cron", rimskyInternalURL, statePGContainer.internalDSN)
+	execEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithRimskyAlias(rimskyAlias),
 		harness.WithPublisher(cronPublisherName, sensor.Endpoint),
+		harness.WithExecutor("stub", execEndpoint),
 	)
 
 	templateID := deployCronSensorTemplate(t, ep)
@@ -69,6 +71,8 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 		restartAt.Format(time.RFC3339Nano))
 
 	requireRecoveredPublisherMessage(t, ep, instanceID, cronPublisherName, restartAt, originalNextFire, 90*time.Second)
+
+	ep.RequireNodeTerminalSucceeded(t, instanceID, cronReactorNode, 90*time.Second)
 
 	requireSensorCronAdvancedWatermark(t, ctx, statePool, subID, originalNextFire, 60*time.Second)
 }
@@ -165,6 +169,9 @@ func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, i
 							"would also fire After(restartAt) but for a DIFFERENT window",
 							gotFireAt.Format(time.RFC3339Nano), wantFireAt.UTC().Format(time.RFC3339Nano))
 					}
+					if m.DeliveredAt == nil {
+						continue
+					}
 					return
 				}
 			}
@@ -239,7 +246,8 @@ func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 			},
 			"nodes": []map[string]any{
 				{
-					"type": cronReactorNode,
+					"type":     cronReactorNode,
+					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
 							"node":                   cronMessageType,

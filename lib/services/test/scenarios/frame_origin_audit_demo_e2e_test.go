@@ -32,15 +32,11 @@ func TestFrameOriginAuditDemo_RunExitsZero(t *testing.T) {
 	)
 
 	demoScript := repoExampleSpecPath(t, "examples/frame-origin-audit-demo.sh")
-	templatePath := repoExampleSpecPath(t, "examples/frame-origin-audit-demo-template.yaml")
+	repoExampleSpecPath(t, "examples/frame-origin-audit-demo-template.yaml")
 
 	stdout, exitCode := runFrameOriginAuditDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {
 		t.Fatalf("frame-origin-audit-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
-	}
-
-	if _, err := os.Stat(templatePath); err != nil {
-		t.Fatalf("shipped template %s missing on disk: %v — the frame-origin-audit demo's template is broken", templatePath, err)
 	}
 }
 

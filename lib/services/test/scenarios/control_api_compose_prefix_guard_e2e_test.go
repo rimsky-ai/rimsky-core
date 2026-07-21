@@ -194,6 +194,47 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("POST /tags (no-header) 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
+
+	originKey := mintAPIKey(t, ep, adminKey, "compose-guard-origin", []map[string]any{
+		{"action": "tag:create"},
+		{"action": "tag:read"},
+		{"action": "instance:create"},
+		{"action": "instance:read"},
+		{"action": "compose:origin"},
+	})
+
+	const admittedTag = "compose:project-alpha:perm-v2"
+	status, raw = ep.PostJSONWithHeaders(t, "/v1/tags", map[string]any{
+		"tag":      admittedTag,
+		"template": templateHash,
+	}, map[string]string{
+		"Authorization":           "Bearer " + originKey,
+		"X-Rimsky-Compose-Origin": "1",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("POST /tags %q with compose:origin-granted key + header returned %d, want 201 — a bearer actually holding compose:origin must be admitted\nbody: %s",
+			admittedTag, status, string(raw))
+	}
+	if !tagListedAuth(t, ep, adminKey, admittedTag) {
+		t.Fatalf("after an admitted compose:origin POST /tags, GET /tags does not list %q", admittedTag)
+	}
+
+	const admittedInstanceKey = "compose:project-alpha:perm-inst2"
+	status, raw = ep.PostJSONWithHeaders(t, "/v1/instances", map[string]any{
+		"template":     templateHash,
+		"instance_key": admittedInstanceKey,
+		"params":       map[string]any{},
+	}, map[string]string{
+		"Authorization":           "Bearer " + originKey,
+		"X-Rimsky-Compose-Origin": "1",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("POST /instances with instance_key %q + compose:origin-granted key + header returned %d, want 201 — a bearer actually holding compose:origin must be admitted\nbody: %s",
+			admittedInstanceKey, status, string(raw))
+	}
+	if got := instanceGetStatusAuth(t, ep, adminKey, admittedInstanceKey); got != http.StatusOK {
+		t.Fatalf("after an admitted compose:origin POST /instances, GET /instances/%s returned %d, want 200", admittedInstanceKey, got)
+	}
 }
 
 func mintAPIKey(t *testing.T, ep harness.RimskyEndpoint, callerKey, name string, perms []map[string]any) string {

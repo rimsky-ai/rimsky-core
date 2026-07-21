@@ -162,6 +162,40 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 		"a pipeline-rejected template must not be persisted")
 }
 
+func TestValidationPipeline_DryRunRegisterStillRunsPipeline(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "worker",
+		supportedRoles: []string{"executor"},
+		errs: []runtime.ValidationFinding{{
+			Class:   "attribute_shape_invalid",
+			Message: "missing required field foo",
+			Path:    "/executor/attributes/foo",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, runtime.UnreachableValidatorPermissiveWarn)
+	t.Cleanup(teardown)
+
+	_, listBefore := vh.httpJSON(t, "GET", "/v1/templates", nil)
+	beforeCount := len(listBefore["templates"].([]any))
+
+	body := validTemplateBody("vp-dryrun-err-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/v1/templates?dry_run=true", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Contains(t, out["error"], "validation pipeline",
+		"a dry-run register must still surface the pipeline rejection, proving validation ran before the dry-run gate")
+	require.NotContains(t, out, "would_have_registered",
+		"a validation-rejected dry-run register must NOT return a would_have_registered envelope — "+
+			"a canned success here would mean the dry-run branch ran BEFORE the validation pipeline")
+	require.GreaterOrEqual(t, vfake.ExecutorCalls(), 1,
+		"the validation-protocol's checks must actually fire against the advertising executor under dry-run")
+
+	_, listAfter := vh.httpJSON(t, "GET", "/v1/templates", nil)
+	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
+		"a pipeline-rejected dry-run register must not be persisted")
+}
+
 func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 	t.Parallel()
 	vfake := &fakeValidator{

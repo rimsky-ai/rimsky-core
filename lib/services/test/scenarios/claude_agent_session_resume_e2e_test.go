@@ -278,7 +278,7 @@ func dumpWorkerDispatchProvenance(t *testing.T, ctx context.Context, pool *pgxpo
 		  FROM rimsky_node_runs nr
 		  LEFT JOIN rimsky_node_attributes na ON na.node_run_id = nr.id
 		 WHERE nr.node_id = $1::uuid
-		 ORDER BY nr.enqueued_at, nr.id
+		 ORDER BY nr.sequence
 	`, nodeID)
 	if err != nil {
 		t.Logf("dumpWorkerDispatchProvenance: query: %v", err)
@@ -321,7 +321,7 @@ func getWorkerDispatchesInOrder(t *testing.T, ctx context.Context, pool *pgxpool
 		  LEFT JOIN rimsky_node_attributes na ON na.node_run_id = nr.id
 		 WHERE nr.node_id = $1::uuid
 		   AND nr.settling_signal_type IS NOT NULL
-		 ORDER BY nr.enqueued_at, nr.id
+		 ORDER BY nr.sequence
 	`, nodeID)
 	if err != nil {
 		t.Fatalf("query rimsky_node_runs for node %s: %v", nodeID, err)

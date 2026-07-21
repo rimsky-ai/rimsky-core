@@ -72,6 +72,9 @@ func TestAuthSmoke_BootstrapLifecycle(t *testing.T) {
 	if code := authCode(t, "DELETE", ep.BaseURL+"/v1/auth/keys/smoke-readonly", newAdmin, nil); code != 200 {
 		t.Fatalf("revoke ro: %d", code)
 	}
+	if code := authCode(t, "GET", ep.BaseURL+"/v1/auth/keys", roKey, nil); code == 200 {
+		t.Fatalf("revoked ro key still authenticates: %d, want non-200 — revocation must actually stop the key from working", code)
+	}
 }
 
 func authPost(t *testing.T, url, key string, body any) map[string]any {

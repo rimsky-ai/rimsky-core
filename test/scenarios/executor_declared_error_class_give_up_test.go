@@ -15,27 +15,27 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-func TestExecutorBlocked(t *testing.T) {
+func TestGiveUpPolicyForExecutorDeclaredErrorClass(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	h.Stub.WhenType("gated").Error("executor_blocked", map[string]any{
+	h.Stub.WhenType("gated").Error("custom_failure", map[string]any{
 		"reason": "stuck",
 		"need":   "input",
 	})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "blocked", Version: "1",
+		Name: "executor-declared-error-give-up", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "gated", Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/executor_blocked": {Action: "give_up"},
+					"stub/custom_failure": {Action: "give_up"},
 				},
 			}),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-blocked", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-executor-declared-error-give-up", map[string]any{})
 
 	n := h.FindNode(iid, "gated")
 	require.NotNil(t, n)
@@ -45,10 +45,10 @@ func TestExecutorBlocked(t *testing.T) {
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, KindIn: []string{"terminal/error/stub/executor_blocked"}},
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, KindIn: []string{"terminal/error/stub/custom_failure"}},
 			persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
 	}))
-	require.NotEmpty(t, evs.Events, "expected terminal/error/stub/executor_blocked signal row")
+	require.NotEmpty(t, evs.Events, "expected terminal/error/stub/custom_failure signal row")
 }

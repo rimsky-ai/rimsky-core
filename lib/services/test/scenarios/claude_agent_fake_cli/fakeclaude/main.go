@@ -25,8 +25,6 @@ import (
 
 const signoffPrivateKeyPath = "/etc/rimsky/fake-claude-signoff-private-key.pem"
 
-const witnessPath = "/tmp/fake-claude-validator-header.txt"
-
 func main() {
 	argv := os.Args[1:]
 	sessionID := readArg(argv, "--session-id")
@@ -66,6 +64,14 @@ func main() {
 	case strings.Contains(userPrompt, "scenario:rate_limited"):
 		fmt.Fprintln(os.Stderr, "API Error: 429 rate_limit_error; anthropic-ratelimit-requests-reset: 4070908800")
 		os.Exit(1)
+	case strings.Contains(userPrompt, "scenario:refused"):
+		fmt.Fprintln(os.Stderr, "the model answered (refusal); request was refused by the model")
+		os.Exit(1)
+	case strings.Contains(userPrompt, "scenario:agent_crash"):
+		fmt.Fprintln(os.Stderr, "fake-claude: unexpected internal crash, aborting")
+		os.Exit(1)
+	case strings.Contains(userPrompt, "scenario:resume_reminder"):
+		return
 	case strings.Contains(userPrompt, "scenario:env_ref_witness"):
 		scenarioEnvRefWitness(client, sessionID)
 	case strings.Contains(userPrompt, "scenario:session_resume"):
@@ -156,7 +162,7 @@ func (c *mcpClient) initialize() {
 	})
 	req, err := http.NewRequest(http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
-		return
+		fail(fmt.Sprintf("MCP notifications/initialized request build: %v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -164,9 +170,10 @@ func (c *mcpClient) initialize() {
 		req.Header.Set("Mcp-Session-Id", c.sessionID)
 	}
 	resp, err := http.DefaultClient.Do(req)
-	if err == nil {
-		resp.Body.Close()
+	if err != nil {
+		fail(fmt.Sprintf("MCP notifications/initialized: %v", err))
 	}
+	resp.Body.Close()
 }
 
 func (c *mcpClient) callTool(name string, args map[string]any) map[string]any {
@@ -240,9 +247,6 @@ func scenarioEnvRefWitness(client *mcpClient, sessionID string) {
 	resolvedHeader := "Bearer " + token
 	sum := sha256.Sum256([]byte(resolvedHeader))
 	digest := hex.EncodeToString(sum[:])
-	if err := os.WriteFile(witnessPath, []byte(resolvedHeader), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "fake-claude: witness write failed: %v\n", err)
-	}
 	signedValue := map[string]any{
 		"validator_header_digest_sha256": digest,
 		"scenario":                       "env_ref_witness",

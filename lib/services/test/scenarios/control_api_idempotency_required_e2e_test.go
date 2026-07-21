@@ -55,6 +55,9 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 
 	// @story: instance-create-is-idle
 	baseline := countInstanceMessages(t, ep, messagesPath)
+	if baseline != 0 {
+		t.Fatalf("newly-created instance %s already has %d persisted messages, want 0 — instance creation must be idle", instanceID, baseline)
+	}
 
 	invalidateBody := map[string]any{
 		"type": "idem/probe",

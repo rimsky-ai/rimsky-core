@@ -58,20 +58,30 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 
 	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 
-	readmeArgs := documentedRunInvocation(t, ep.BaseURL, specPath)
+	readmeArgs := documentedRunInvocation(t, ep.BaseURL, "examples/compose/template-a.yml")
 	_, readmeCode := captureRunRun(t, ctx, readmeArgs)
 	if readmeCode != 0 {
 		t.Fatalf("README-documented `rimsky run` invocation %v exited %d (want 0)", readmeArgs, readmeCode)
 	}
 }
 
-func documentedRunInvocation(t *testing.T, baseURL, specPath string) []string {
+var readmeRunInvocationRe = regexp.MustCompile(`(?m)^rimsky run (\S+)\s*$`)
+
+func documentedRunInvocation(t *testing.T, baseURL, specRelPath string) []string {
 	t.Helper()
-	return []string{
-		"--endpoint", baseURL,
-		"--instance-key", "example-readme-run",
-		specPath,
+	raw, err := os.ReadFile(repoExampleSpecPath(t, "examples/README.md"))
+	if err != nil {
+		t.Fatalf("read examples/README.md: %v", err)
 	}
+	m := readmeRunInvocationRe.FindStringSubmatch(string(raw))
+	if m == nil {
+		t.Fatalf("examples/README.md has no `rimsky run <file>` invocation line to prove")
+	}
+	documentedRelPath := filepath.FromSlash(m[1])
+	if documentedRelPath != filepath.FromSlash(specRelPath) {
+		t.Fatalf("examples/README.md documents `rimsky run %s`, but the test drives %s — keep the README and the proof in sync", m[1], specRelPath)
+	}
+	return []string{"--endpoint", baseURL, repoExampleSpecPath(t, specRelPath)}
 }
 
 func captureRunRun(t *testing.T, ctx context.Context, args []string) (string, int) {

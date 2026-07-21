@@ -89,6 +89,57 @@ func TestFanOutParallelismSemaphore_Unbounded(t *testing.T) {
 	sem.Release()
 }
 
+func TestFanOutSemaphoreRegistry_PerParentIsolation(t *testing.T) {
+	r := NewFanOutSemaphoreRegistry()
+	p1 := shared.UUID(uuid.New())
+	p2 := shared.UUID(uuid.New())
+	s1 := r.GetOrCreate(p1, 1)
+	s2 := r.GetOrCreate(p2, 1)
+
+	if err := s1.Acquire(context.Background()); err != nil {
+		t.Fatalf("s1.Acquire: %v", err)
+	}
+	if err := s2.Acquire(context.Background()); err != nil {
+		t.Fatalf("s2.Acquire (independent parent): %v", err)
+	}
+}
+
+func TestFanOutParallelismSemaphore_ConcurrentAcquireRespectsCap(t *testing.T) {
+	const cap = 4
+	const goroutines = 32
+	sem := NewFanOutParallelismSemaphore(cap)
+
+	var mu sync.Mutex
+	maxConcurrent := 0
+	current := 0
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := sem.Acquire(context.Background()); err != nil {
+				t.Errorf("Acquire: %v", err)
+				return
+			}
+			mu.Lock()
+			current++
+			if current > maxConcurrent {
+				maxConcurrent = current
+			}
+			mu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			mu.Lock()
+			current--
+			mu.Unlock()
+			sem.Release()
+		}()
+	}
+	wg.Wait()
+	if maxConcurrent > cap {
+		t.Errorf("max concurrent: %d (exceeds cap=%d)", maxConcurrent, cap)
+	}
+}
+
 func TestFanOutSemaphoreRegistry_GetOrCreateIsIdempotent(t *testing.T) {
 	r := NewFanOutSemaphoreRegistry()
 	parent := shared.UUID(uuid.New())

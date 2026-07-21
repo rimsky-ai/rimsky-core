@@ -22,7 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-func TestAcquireUnavailableRetryDefault(t *testing.T) {
+func TestAcquireUnavailable_ExplicitRetryAction(t *testing.T) {
 	t.Parallel()
 
 	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
@@ -49,7 +49,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": 1}, true, "ran")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "acq-unavail-default", Version: "1",
+		Name: "acq-unavail-explicit-retry", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -65,7 +65,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 			),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-acq-unavail-default", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-acq-unavail-explicit-retry", map[string]any{})
 
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
