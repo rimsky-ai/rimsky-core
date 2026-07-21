@@ -90,7 +90,7 @@ func spawnOnPickedPort(ctx context.Context, params SpawnServiceParams, pickPort 
 		return nil, fmt.Errorf("allocate port: %w", err)
 	}
 
-	cmd := exec.Command(params.BinaryPath, params.Args...) //nolint:gosec // path trust is the caller's posture (host-agent canonicalizes + allow-paths-checks via resolveBindingPath; future callers MUST validate the binary path against their own trust model before invoking SpawnService)
+	cmd := exec.Command(params.BinaryPath, params.Args...) //nolint:gosec
 	if params.Cwd != "" {
 		cmd.Dir = params.Cwd
 	}
@@ -149,6 +149,12 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		cwd = sp.GetCwd()
 	}
 
+	// @story: host-agent-per-binding-overrides
+	readyTimeoutSeconds := sp.GetBinding().GetReadyTimeoutSeconds()
+	if readyTimeoutSeconds == 0 {
+		readyTimeoutSeconds = sp.GetReadyTimeoutSeconds()
+	}
+
 	env := os.Environ()
 	for k, v := range sp.GetBinding().GetEnv() {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
@@ -171,7 +177,7 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		Cwd:          cwd,
 		Env:          env,
 		DialTLS:      a.trust.dialChildTLSConfig(),
-		ReadyTimeout: time.Duration(sp.GetReadyTimeoutSeconds()) * time.Second,
+		ReadyTimeout: time.Duration(readyTimeoutSeconds) * time.Second,
 	})
 	if err != nil {
 		a.forgetBootstrapToken(spawnID)
@@ -196,6 +202,7 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 	}
 
 	a.childMu.Lock()
+	prior, hadPrior := a.children[spawnID]
 	a.children[spawnID] = &liveChild{
 		spawnID:     spawnID,
 		runScopeID:  sp.GetRunScopeId(),
@@ -206,6 +213,17 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		exited:      spawned.Exited,
 	}
 	a.childMu.Unlock()
+	if hadPrior {
+		slog.Warn("hostagent: spawn_id collided with a still-live child; terminating the prior process before replacing it",
+			"spawn_id", spawnID)
+		grace := a.cfg.ReapGracePeriod
+		go func() {
+			terminateChild(prior, grace)
+			if prior.conn != nil {
+				_ = prior.conn.Close()
+			}
+		}()
+	}
 	a.writeStatus()
 
 	slog.Info("hostagent: spawned child", "spawn_id", sp.GetSpawnId(), "path", execPath, "port", spawned.Port, "protocols", sp.GetExpectedProtocols())

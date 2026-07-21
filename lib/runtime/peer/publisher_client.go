@@ -83,7 +83,7 @@ func (c *PublisherClient) Close() {
 }
 
 func DialPublisher(_ context.Context, name, endpoint, tlsMode string) (*PublisherClient, error) {
-	target, err := stripScheme(name, endpoint)
+	target, err := StripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}

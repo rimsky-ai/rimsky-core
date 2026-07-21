@@ -43,14 +43,11 @@ func SweepOrphanedBlobs(ctx context.Context, args OrphanBlobsArgs) error {
 	if args.Clock != nil {
 		now = args.Clock.Now()
 	}
-	rows, err := args.BlobOrphans.DueBefore(ctx, now, limit)
+	rows, err := args.BlobOrphans.DueBefore(ctx, now, args.Backend.Name(), limit)
 	if err != nil {
 		return fmt.Errorf("SweepOrphanedBlobs: list: %w", err)
 	}
 	for _, r := range rows {
-		if r.Backend != args.Backend.Name() {
-			continue
-		}
 		if err := reapOneBlobOrphan(ctx, args, r, log); err != nil {
 			log.Warn("tick: reap blob orphan failed",
 				"handle", r.Handle,

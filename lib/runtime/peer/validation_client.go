@@ -125,7 +125,7 @@ func (c *ValidationClient) Close() {
 }
 
 func DialValidation(_ context.Context, name, endpoint, tlsMode string, supportedRoles []string) (*ValidationClient, error) {
-	target, err := stripScheme(name, endpoint)
+	target, err := StripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func DialValidation(_ context.Context, name, endpoint, tlsMode string, supported
 }
 
 func FetchExecutorValidationRoles(ctx context.Context, name, endpoint, tlsMode string) ([]string, error) {
-	target, err := stripScheme(name, endpoint)
+	target, err := StripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func FetchExecutorValidationRoles(ctx context.Context, name, endpoint, tlsMode s
 }
 
 func FetchPublisherValidationRoles(ctx context.Context, name, endpoint, tlsMode string) ([]string, error) {
-	target, err := stripScheme(name, endpoint)
+	target, err := StripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}

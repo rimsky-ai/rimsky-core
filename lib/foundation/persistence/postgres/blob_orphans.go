@@ -35,17 +35,17 @@ func (b *blobOrphansImpl) Insert(ctx context.Context, row persistence.BlobOrphan
 	return nil
 }
 
-func (b *blobOrphansImpl) DueBefore(ctx context.Context, cutoff time.Time, limit int) ([]persistence.BlobOrphanRow, error) {
+func (b *blobOrphansImpl) DueBefore(ctx context.Context, cutoff time.Time, backend string, limit int) ([]persistence.BlobOrphanRow, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := b.pool.Query(ctx,
 		`SELECT handle, backend, orphaned_at, reap_after
 		   FROM rimsky_blob_orphans
-		  WHERE reap_after <= $1
+		  WHERE reap_after <= $1 AND backend = $2
 		  ORDER BY reap_after ASC
-		  LIMIT $2`,
-		cutoff, limit,
+		  LIMIT $3`,
+		cutoff, backend, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("blob_orphans.DueBefore: %w", err)

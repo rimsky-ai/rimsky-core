@@ -23,9 +23,11 @@ import (
 type lifecycleFakeClient struct {
 	name string
 
-	mu             sync.Mutex
-	unsubscribeErr error
-	unsubscribed   []shared.UUID
+	mu                  sync.Mutex
+	unsubscribeErr      error
+	unsubscribed        []shared.UUID
+	listed              []clientiface.ListedPublisherSubscription
+	beforeListSubscribe func()
 }
 
 func (c *lifecycleFakeClient) Name() string { return c.name }
@@ -42,7 +44,10 @@ func (c *lifecycleFakeClient) Unsubscribe(_ context.Context, id shared.UUID) err
 }
 
 func (c *lifecycleFakeClient) ListSubscriptions(context.Context) ([]clientiface.ListedPublisherSubscription, error) {
-	return nil, nil
+	if c.beforeListSubscribe != nil {
+		c.beforeListSubscribe()
+	}
+	return c.listed, nil
 }
 
 func (c *lifecycleFakeClient) unsubscribeCalls() []shared.UUID {
@@ -350,5 +355,50 @@ func TestUnsubscribeIfRowStopped_NoOpWhenRowStillActive(t *testing.T) {
 
 	if calls := client.unsubscribeCalls(); len(calls) != 0 {
 		t.Fatalf("Unsubscribe calls = %v, want none — a row still active must not be compensated", calls)
+	}
+}
+
+// @concept: publisher-subscription
+func TestResyncPublisherSubscriptions_LiveMountingRaceLostCASIsCompensated(t *testing.T) {
+	tables := openPublisherLifecycleTables(t)
+	subID := shared.UUID(uuid.New())
+	seedPublisherSubscription(t, tables, persistence.PublisherSubscriptionRow{
+		ID:             subID,
+		PublisherName:  "racy-pub",
+		Kind:           "test-kind",
+		ResolvedConfig: []byte(`{}`),
+		State:          persistence.PublisherSubscriptionStateMounting,
+	})
+
+	client := &lifecycleFakeClient{
+		name:   "racy-pub",
+		listed: []clientiface.ListedPublisherSubscription{{PublisherSubscriptionID: subID}},
+	}
+	client.beforeListSubscribe = func() {
+		if _, err := tables.PublisherSubscriptions().CompareAndSetState(
+			context.Background(), subID,
+			persistence.PublisherSubscriptionStateMounting,
+			persistence.PublisherSubscriptionStateStopped, "",
+		); err != nil {
+			t.Fatalf("simulate concurrent stop: %v", err)
+		}
+	}
+
+	deps := PublisherLifecycleDeps{
+		Persist:    tables,
+		Publishers: &lifecycleFakeRegistry{client: client},
+		Clock:      shared.SystemClock{},
+		Logger:     shared.SilentLogger{},
+	}
+
+	if err := ResyncPublisherSubscriptions(context.Background(), deps); err != nil {
+		t.Fatalf("ResyncPublisherSubscriptions: %v", err)
+	}
+
+	calls := client.unsubscribeCalls()
+	if len(calls) != 1 || calls[0] != subID {
+		t.Fatalf("Unsubscribe calls = %v, want exactly [%v] — when the mounting->active CAS loses a race against a "+
+			"concurrent stop, the live-but-now-stopped subscription must be compensated with an Unsubscribe call, "+
+			"matching the parallel re-subscribe path's handling of the same CAS failure", calls, subID)
 	}
 }

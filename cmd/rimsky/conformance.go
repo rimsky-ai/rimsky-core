@@ -135,10 +135,18 @@ func runConformanceExecutor(args []string) int {
 	}
 
 	conformance.Summary(results, os.Stdout)
+	passed := 0
 	for _, r := range results {
 		if !r.Passed && !r.Skipped {
 			return 1
 		}
+		if r.Passed {
+			passed++
+		}
+	}
+	if passed == 0 && len(results) > 0 {
+		fmt.Fprintln(os.Stderr, "rimsky conformance executor: 0 scenarios passed (all skipped); executor coverage was not verified")
+		return 1
 	}
 
 	if *checkObs {

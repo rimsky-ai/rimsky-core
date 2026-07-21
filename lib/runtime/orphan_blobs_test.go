@@ -7,6 +7,7 @@ package runtime_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -27,11 +28,14 @@ func (f *fakeBlobOrphanTable) Insert(_ context.Context, row persistence.BlobOrph
 	return nil
 }
 
-func (f *fakeBlobOrphanTable) DueBefore(_ context.Context, cutoff time.Time, limit int) ([]persistence.BlobOrphanRow, error) {
+func (f *fakeBlobOrphanTable) DueBefore(_ context.Context, cutoff time.Time, backend string, limit int) ([]persistence.BlobOrphanRow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []persistence.BlobOrphanRow
 	for _, r := range f.rows {
+		if r.Backend != backend {
+			continue
+		}
 		if !r.ReapAfter.After(cutoff) {
 			out = append(out, r)
 			if limit > 0 && len(out) >= limit {
@@ -127,6 +131,49 @@ func TestSweepOrphanedBlobsCrossBackendIgnored(t *testing.T) {
 	}
 	if len(store.rows) != 1 {
 		t.Fatalf("cross-backend orphan should not be reaped; got %d rows", len(store.rows))
+	}
+}
+
+func TestSweepOrphanedBlobsCrossBackendRowsDoNotStarveSameBackendPage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	be := persistence.NewMemoryBackend()
+	h, err := be.Write(ctx, persistence.BlobKey{}, []byte("same-backend"))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	store := &fakeBlobOrphanTable{}
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		if err := store.Insert(ctx, persistence.BlobOrphanRow{
+			Handle:     fmt.Sprintf("fs:foreign-%d", i),
+			Backend:    "filesystem",
+			OrphanedAt: now.Add(-time.Hour),
+			ReapAfter:  now.Add(-time.Minute).Add(-time.Duration(i) * time.Second),
+		}, nil); err != nil {
+			t.Fatalf("Insert foreign %d: %v", i, err)
+		}
+	}
+	if err := store.Insert(ctx, persistence.BlobOrphanRow{
+		Handle: string(h), Backend: "memory",
+		OrphanedAt: now.Add(-time.Hour), ReapAfter: now.Add(-time.Minute),
+	}, nil); err != nil {
+		t.Fatalf("Insert same-backend: %v", err)
+	}
+
+	if err := runtime.SweepOrphanedBlobs(ctx, runtime.OrphanBlobsArgs{
+		BlobOrphans: store,
+		Backend:     be,
+		Limit:       2,
+	}); err != nil {
+		t.Fatalf("SweepOrphanedBlobs: %v", err)
+	}
+
+	if _, err := be.Read(ctx, h); !errors.Is(err, persistence.ErrBlobNotFound) {
+		t.Fatalf("same-backend orphan must be reaped even though 5 foreign-backend rows sort earlier by reap_after; got %v", err)
+	}
+	if len(store.rows) != 5 {
+		t.Fatalf("only the same-backend row should have been reaped from the store; got %d rows remaining", len(store.rows))
 	}
 }
 

@@ -59,6 +59,9 @@ func (c *httpClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
+	if name, ok := peer.ServiceNameFromContext(ctx); ok {
+		httpReq.Header.Set(peer.ServiceNameHTTPHeader, name)
+	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
 		if c.tlsMode == peer.TLSModeRequired {
@@ -76,7 +79,7 @@ func (c *httpClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*g
 		return nil, "", fmt.Errorf("http bridge: read body: %w", err)
 	}
 	var outcome genv1.Outcome
-	if err := protojson.Unmarshal(respBytes, &outcome); err != nil {
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(respBytes, &outcome); err != nil {
 		return nil, "", fmt.Errorf("http bridge: unmarshal outcome: %w", err)
 	}
 	principal := ""

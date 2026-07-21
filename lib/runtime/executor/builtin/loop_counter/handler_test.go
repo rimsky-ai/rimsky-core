@@ -59,6 +59,23 @@ func TestExecute_TagsAndDeltaAcrossBoundary(t *testing.T) {
 	}
 }
 
+func TestExecute_RedispatchAfterDoneKeepsEmittingDone(t *testing.T) {
+	t.Parallel()
+	outcome := mustExecute(t, map[string]any{"max": float64(3), "count": float64(5)})
+	success := outcome.GetSuccess()
+	if success == nil {
+		t.Fatalf("expected Success outcome, got %T", outcome.GetOutcome())
+	}
+	tags := success.GetTags()
+	if len(tags) != 1 || tags[0] != "done" {
+		t.Errorf("re-dispatch past max: Tags = %v, want [done]", tags)
+	}
+	delta := success.GetAttributesDelta().AsMap()
+	if gotCount, _ := delta["count"].(float64); gotCount != 6 {
+		t.Errorf("re-dispatch past max: AttributesDelta.count = %v, want 6", delta["count"])
+	}
+}
+
 func TestExecute_SchemaViolationsReturnError(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -69,6 +86,8 @@ func TestExecute_SchemaViolationsReturnError(t *testing.T) {
 		{name: "max_negative", attrs: map[string]any{"max": float64(-1)}},
 		{name: "max_non_numeric", attrs: map[string]any{"max": "three"}},
 		{name: "count_non_numeric", attrs: map[string]any{"max": float64(3), "count": "two"}},
+		{name: "max_non_integral", attrs: map[string]any{"max": float64(2.9)}},
+		{name: "count_non_integral", attrs: map[string]any{"max": float64(3), "count": float64(1.5)}},
 	}
 	for _, tc := range cases {
 		tc := tc

@@ -17,7 +17,11 @@ import (
 )
 
 func main() {
-	cfg := hostagent.LoadConfigFromEnv()
+	cfg, err := hostagent.LoadConfigFromEnv()
+	if err != nil {
+		slog.Error("hostagent.LoadConfigFromEnv", "error", err)
+		os.Exit(1)
+	}
 
 	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: shared.ParseLogLevel(cfg.LogLevel)})
 	slog.SetDefault(slog.New(handler))

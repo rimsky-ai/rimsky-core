@@ -27,19 +27,27 @@ type Config struct {
 	StatusFile string
 }
 
-func LoadConfigFromEnv() Config {
+func LoadConfigFromEnv() (Config, error) {
+	heartbeat, err := envDurationSec("RIMSKY_AGENT_HEARTBEAT_SEC", 10*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	reapGrace, err := envDurationSec("RIMSKY_AGENT_REAP_GRACE_SEC", 30*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		RimskyURL:         os.Getenv("RIMSKY_URL"),
 		APIKey:            os.Getenv("RIMSKY_API_KEY"),
 		ListenAddr:        os.Getenv("RIMSKY_AGENT_LISTEN"),
 		AgentLabel:        envOr("RIMSKY_AGENT_LABEL", defaultAgentLabel()),
 		LogLevel:          envOr("RIMSKY_LOG_LEVEL", "info"),
-		HeartbeatInterval: envDurationSec("RIMSKY_AGENT_HEARTBEAT_SEC", 10*time.Second),
-		ReapGracePeriod:   envDurationSec("RIMSKY_AGENT_REAP_GRACE_SEC", 30*time.Second),
+		HeartbeatInterval: heartbeat,
+		ReapGracePeriod:   reapGrace,
 		TLSEnabled:        envBool("RIMSKY_AGENT_TLS"),
 		TLSCAPath:         os.Getenv("RIMSKY_AGENT_TLS_CA"),
 		StatusFile:        os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
-	}
+	}, nil
 }
 
 func (c Config) withDefaults() Config {
@@ -82,14 +90,17 @@ func envBool(key string) bool {
 	}
 }
 
-func envDurationSec(key string, def time.Duration) time.Duration {
+func envDurationSec(key string, def time.Duration) (time.Duration, error) {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
-		return def
+		return def, nil
 	}
 	var secs int
-	if _, err := fmt.Sscanf(v, "%d", &secs); err != nil || secs <= 0 {
-		return def
+	if _, err := fmt.Sscanf(v, "%d", &secs); err != nil {
+		return 0, fmt.Errorf("%s: invalid integer seconds value %q", key, v)
 	}
-	return time.Duration(secs) * time.Second
+	if secs <= 0 {
+		return 0, fmt.Errorf("%s: must be a positive number of seconds, got %d", key, secs)
+	}
+	return time.Duration(secs) * time.Second, nil
 }

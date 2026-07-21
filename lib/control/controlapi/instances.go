@@ -251,7 +251,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		switch body.MessageQueueMode {
-		case "", "backlog", "coalesce":
+		case "", nodepkg.MessageQueueModeBacklog, nodepkg.MessageQueueModeCoalesce:
 		default:
 			badRequest(w, fmt.Sprintf("message_queue_mode = %q; want one of backlog | coalesce", body.MessageQueueMode))
 			return

@@ -28,6 +28,12 @@ type TemplateSpec struct {
 	MessageQueueMode string `yaml:"message_queue_mode,omitempty" json:"message_queue_mode,omitempty"`
 }
 
+// @concept: instance
+const (
+	MessageQueueModeBacklog  = "backlog"
+	MessageQueueModeCoalesce = "coalesce"
+)
+
 // @concept: message-schema
 type MessageSchema struct {
 	Type       string          `yaml:"type" json:"type"`

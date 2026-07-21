@@ -76,7 +76,7 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 		t.Fatalf("expected new handle on overwrite; both = %q", firstHandle)
 	}
 
-	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 100)
+	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), mem.Name(), 100)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	}
 	verifyNoSpill(t, rawDB, runID)
 
-	orphRows, err = orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 100)
+	orphRows, err = orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), mem.Name(), 100)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore (post-downgrade): %v", err)
 	}
@@ -211,7 +211,7 @@ func TestSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
 		t.Fatalf("Upsert on new run: %v", err)
 	}
 
-	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 100)
+	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), mem.Name(), 100)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore: %v", err)
 	}

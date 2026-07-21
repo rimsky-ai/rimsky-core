@@ -292,6 +292,9 @@ func (f *fakeDiagnosticQueue) GetClaimedBy(context.Context, shared.UUID) (persis
 func (f *fakeDiagnosticQueue) GetDispatchNode(context.Context, shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
 	return shared.UUID{}, persistence.ClaimOwnership{}, nil
 }
+func (f *fakeDiagnosticQueue) GetDispatchNodeInTx(context.Context, persistence.Tx, shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+	return shared.UUID{}, persistence.ClaimOwnership{}, nil
+}
 func (f *fakeDiagnosticQueue) RefreshHeartbeat(context.Context, string) error { return nil }
 func (f *fakeDiagnosticQueue) ListLive(context.Context, persistence.DispatchListFilter, persistence.ListPagination) (persistence.PaginatedListResult[persistence.DispatchRow], error) {
 	return persistence.PaginatedListResult[persistence.DispatchRow]{}, nil

@@ -92,12 +92,13 @@ func EvaluateBreakpoints(
 		}, args.Logger, 0) {
 			continue
 		}
-		if bp.SignalType != nil && cc.TerminalSignal != nil {
-			if !cc.TerminalSignal.Type.HasPrefix(signalpkg.TypePath(*bp.SignalType)) {
+		if bp.SignalType != nil {
+			if cc.TerminalSignal == nil || !cc.TerminalSignal.Type.HasPrefix(signalpkg.TypePath(*bp.SignalType)) {
 				continue
 			}
 		}
 
+		cc.MergedAttributes = result
 		hitID, err := createHitWithinCap(ctx, args, cc, bp)
 		if err != nil {
 			return result, err
@@ -115,6 +116,7 @@ func EvaluateBreakpoints(
 			merged, _ := shared.DeepMergeJSON(result, hit.ResumeOverlay).(map[string]any)
 			if merged != nil {
 				result = merged
+				matcherInput = result
 			}
 		}
 	}

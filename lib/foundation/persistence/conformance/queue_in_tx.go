@@ -88,6 +88,29 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetDispatchNode unclaimed: nodeID=%v want %v", gotNode, fix.NodeID)
 	}
 
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		gotNode, owner, err := q.GetDispatchNodeInTx(ctx, tx, nodeRunID)
+		if err != nil {
+			return err
+		}
+		if owner.Kind != "unclaimed" {
+			t.Fatalf("GetDispatchNodeInTx unclaimed: kind=%q want %q", owner.Kind, "unclaimed")
+		}
+		if gotNode != fix.NodeID {
+			t.Fatalf("GetDispatchNodeInTx unclaimed: nodeID=%v want %v", gotNode, fix.NodeID)
+		}
+		_, owner, err = q.GetDispatchNodeInTx(ctx, tx, uuid.New())
+		if err != nil {
+			return err
+		}
+		if owner.Kind != "not_found" {
+			t.Fatalf("GetDispatchNodeInTx not_found: kind=%q want %q", owner.Kind, "not_found")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("GetDispatchNodeInTx: %v", err)
+	}
+
 	supID := "queue-in-tx-supervisor"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, supID)

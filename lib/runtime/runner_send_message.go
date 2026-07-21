@@ -64,7 +64,7 @@ func sendCascadeMessageInTx(
 	}
 
 	idempotencyKey := fmt.Sprintf("cascade-send:%s:%s", nodeID.String(), frameID.String())
-	senderKind := "instance"
+	senderKind := SenderKindInstance
 	sender := "instance:" + instanceID.String()
 
 	candidateID := shared.UUID(uuid.New())

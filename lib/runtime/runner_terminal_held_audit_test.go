@@ -20,18 +20,23 @@ import (
 
 func countSignalAudits(t *testing.T, tables persistence.Tables, nodeID shared.UUID, kind string) int {
 	t.Helper()
+	return len(signalAuditRows(t, tables, nodeID, kind))
+}
+
+func signalAuditRows(t *testing.T, tables persistence.Tables, nodeID shared.UUID, kind string) []persistence.EventRow {
+	t.Helper()
 	ctx := context.Background()
-	var n int
+	var rows []persistence.EventRow
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := tables.Events().List(ctx, persistence.EventListFilter{NodeID: &nodeID, KindIn: []string{kind}},
+		res, err := tables.Events().List(ctx, persistence.EventListFilter{NodeID: &nodeID, KindIn: []string{kind}},
 			persistence.ListPagination{Limit: 100}, tx)
 		if err != nil {
 			return err
 		}
-		n = len(rows.Events)
+		rows = res.Events
 		return nil
 	}))
-	return n
+	return rows
 }
 
 func TestApplyTerminalComplete_HeldTransitionDoesNotDoubleAuditTerminalSuccess(t *testing.T) {
@@ -87,6 +92,10 @@ func TestApplyTerminalComplete_HeldTransitionDoesNotDoubleAuditTerminalSuccess(t
 		return err
 	}))
 
-	require.Equal(t, 1, countSignalAudits(t, tables, acq.NodeID, "terminal/success"),
+	rows := signalAuditRows(t, tables, acq.NodeID, "terminal/success")
+	require.Equal(t, 1, len(rows),
 		"no double-emit: the deferred settlement is the run's one and only terminal audit")
+	require.Equal(t, "auto-terminal/Commit", rows[0].Payload["change_summary"],
+		"a non-poisoned holder resolution must be labelled as a commit, derived from the holder's own "+
+			"portfolio status rather than any caller-supplied outcome value")
 }

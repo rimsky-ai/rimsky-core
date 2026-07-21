@@ -103,6 +103,77 @@ func TestHTTPClientTLSOffPlaintext(t *testing.T) {
 	}
 }
 
+func TestHTTPClientForwardsServiceNameHeader(t *testing.T) {
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get(peer.ServiceNameHTTPHeader)
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := json.Marshal(map[string]any{"success": map[string]any{"changed": true}})
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	c, err := NewHTTPClient(Endpoint{Transport: "http", URL: srv.URL, TLS: peer.TLSModeOff})
+	if err != nil {
+		t.Fatalf("NewHTTPClient: %v", err)
+	}
+	defer c.Close()
+
+	ctx := peer.WithServiceName(context.Background(), "my-executor")
+	if _, _, err := c.Execute(ctx, &genv1.ExecuteRequest{}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotHeader != "my-executor" {
+		t.Fatalf("service-name header = %q, want %q", gotHeader, "my-executor")
+	}
+}
+
+func TestHTTPClientOmitsServiceNameHeaderWhenUnset(t *testing.T) {
+	var sawHeader bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawHeader = r.Header.Get(peer.ServiceNameHTTPHeader) != ""
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := json.Marshal(map[string]any{"success": map[string]any{"changed": true}})
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	c, err := NewHTTPClient(Endpoint{Transport: "http", URL: srv.URL, TLS: peer.TLSModeOff})
+	if err != nil {
+		t.Fatalf("NewHTTPClient: %v", err)
+	}
+	defer c.Close()
+
+	if _, _, err := c.Execute(context.Background(), &genv1.ExecuteRequest{}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if sawHeader {
+		t.Fatal("expected no service-name header when ctx carries none")
+	}
+}
+
+func TestHTTPClientToleratesUnknownOutcomeFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":{"changed":true},"unknown_future_field":{"x":1}}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewHTTPClient(Endpoint{Transport: "http", URL: srv.URL, TLS: peer.TLSModeOff})
+	if err != nil {
+		t.Fatalf("NewHTTPClient: %v", err)
+	}
+	defer c.Close()
+
+	outcome, _, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
+	if err != nil {
+		t.Fatalf("Execute with an unknown top-level Outcome field must not fail (gRPC's binary wire format already tolerates it): %v", err)
+	}
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("expected Success outcome, got %+v", outcome)
+	}
+}
+
 func TestClientPoolKeyIncludesTLSMode(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()

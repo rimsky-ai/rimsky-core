@@ -226,6 +226,27 @@ func occupyPortWithoutListening(t *testing.T) (int, func()) {
 	return sa.(*syscall.SockaddrInet4).Port, func() { _ = syscall.Close(fd) }
 }
 
+func TestSpawnService_TrustsCallerSuppliedPathWithNoInternalAllowlistCheck(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	untrustedPath := filepath.Join(t.TempDir(), "does-not-exist-and-is-not-allowlisted")
+	_, err := SpawnService(ctx, SpawnServiceParams{
+		BinaryPath:   untrustedPath,
+		ReadyTimeout: time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected an error for a nonexistent binary path")
+	}
+	if strings.Contains(err.Error(), "not permitted") || strings.Contains(err.Error(), "allow-paths") {
+		t.Fatalf("SpawnService must not itself apply an allow-paths policy (that is resolveBindingPath's job, called before SpawnService); "+
+			"got a policy-shaped rejection instead of a plain exec error: %v", err)
+	}
+	if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "exec start") {
+		t.Fatalf("expected a plain OS/exec error for the unresolvable path, got: %v", err)
+	}
+}
+
 func TestSpawnServiceRetriesPastStolenPort(t *testing.T) {
 	bin := buildFixture(t, "stub-service")
 	stolenPort, release := occupyPortWithoutListening(t)

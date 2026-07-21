@@ -76,6 +76,10 @@ func TestSweepRotationGrace(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
+	var hookCalls int
+	unregister := runtime.RegisterAuthMutationHook(func() { hookCalls++ })
+	defer unregister()
+
 	logger := shared.NewCapturingLogger()
 	n, err := runtime.SweepRotationGrace(ctx, tables, clock, logger)
 	if err != nil {
@@ -83,6 +87,9 @@ func TestSweepRotationGrace(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("sweep returned %d; want 1", n)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("expected 1 auth-mutation hook invocation when a key was swept, got %d", hookCalls)
 	}
 
 	row, ok, err := tables.APIKeys().GetByID(ctx, keyID, nil)
@@ -96,6 +103,9 @@ func TestSweepRotationGrace(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("re-sweep returned %d; want 0", n)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("expected no additional auth-mutation hook invocation when zero keys were swept, got %d", hookCalls)
 	}
 
 	var auditFound int

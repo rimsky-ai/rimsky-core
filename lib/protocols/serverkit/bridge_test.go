@@ -21,8 +21,9 @@ import (
 type fakeServer struct {
 	genv1.UnimplementedClaimProducerServer
 
-	OpenFunc       func(*genv1.OpenRequest) (*genv1.OpenResponse, error)
-	SplitScopeFunc func(*genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error)
+	OpenFunc           func(*genv1.OpenRequest) (*genv1.OpenResponse, error)
+	SplitScopeFunc     func(*genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error)
+	ScopesConflictFunc func(*genv1.ClaimScopesConflictRequest) (*genv1.ScopesConflictResponse, error)
 }
 
 func (f *fakeServer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
@@ -37,6 +38,13 @@ func (f *fakeServer) SplitScope(_ context.Context, req *genv1.SplitScopeRequest)
 		return f.SplitScopeFunc(req)
 	}
 	return &genv1.SplitScopeResponse{}, nil
+}
+
+func (f *fakeServer) ScopesConflict(_ context.Context, req *genv1.ClaimScopesConflictRequest) (*genv1.ScopesConflictResponse, error) {
+	if f.ScopesConflictFunc != nil {
+		return f.ScopesConflictFunc(req)
+	}
+	return &genv1.ScopesConflictResponse{}, nil
 }
 
 func mountFake(t *testing.T, srv *fakeServer) *httptest.Server {
@@ -283,6 +291,50 @@ func TestSplitScopeBridge_RoundTrips(t *testing.T) {
 	}
 	if !bytes.Equal(sub.GetPayload(), wantPayload) {
 		t.Fatalf("Payload not transported intact: got %s want %s", sub.GetPayload(), wantPayload)
+	}
+}
+
+func TestScopesConflictBridge_RoundTrips(t *testing.T) {
+	wantScopeA := []byte(`"items/a"`)
+	wantScopeB := []byte(`"items/b"`)
+	gotScopeA := []byte(nil)
+	gotScopeB := []byte(nil)
+	srv := &fakeServer{}
+	srv.ScopesConflictFunc = func(req *genv1.ClaimScopesConflictRequest) (*genv1.ScopesConflictResponse, error) {
+		gotScopeA = req.GetClaimScopeA()
+		gotScopeB = req.GetClaimScopeB()
+		return &genv1.ScopesConflictResponse{Conflicts: true}, nil
+	}
+	ts := mountFake(t, srv)
+
+	body, err := json.Marshal(map[string]any{
+		"claim_scope_a": wantScopeA,
+		"claim_scope_b": wantScopeB,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	resp, err := http.Post(ts.URL+"/v1/scopes_conflict", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /v1/scopes_conflict: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", resp.StatusCode, raw)
+	}
+	if !bytes.Equal(gotScopeA, wantScopeA) {
+		t.Fatalf("claim_scope_a not transported intact: got %s want %s", gotScopeA, wantScopeA)
+	}
+	if !bytes.Equal(gotScopeB, wantScopeB) {
+		t.Fatalf("claim_scope_b not transported intact: got %s want %s", gotScopeB, wantScopeB)
+	}
+	var got genv1.ScopesConflictResponse
+	if err := protojson.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("protojson.Unmarshal: %v\nbody: %s", err, raw)
+	}
+	if !got.GetConflicts() {
+		t.Fatalf("Conflicts = false, want true")
 	}
 }
 

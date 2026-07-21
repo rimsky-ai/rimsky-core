@@ -610,7 +610,7 @@ func TestValidateErrorTypes_AcceptsRuntimeSynthesizedExecutorSyncTimeout(t *test
 func TestIsRuntimeSynthesizedErrorClass_MatchesSharedList(t *testing.T) {
 	for _, c := range foundationspec.RuntimeSynthesizedErrorClasses {
 		if !isRuntimeSynthesizedErrorClass(c) {
-			t.Errorf("expected %q (from spec.RuntimeSynthesizedErrorClasses) to be recognized as runtime-synthesized", c)
+			t.Errorf("expected %q (from foundationspec.RuntimeSynthesizedErrorClasses) to be recognized as runtime-synthesized", c)
 		}
 	}
 	if !isRuntimeSynthesizedErrorClass("acquire/unavailable") {
@@ -2908,6 +2908,46 @@ func TestValidateTemplate_Error_SendsMessage_MutexWithExecutor(t *testing.T) {
 	require.False(t, res.Ok())
 	if !findErrorContains(res.Errors, "sends_message and executor are mutually exclusive") {
 		t.Fatalf("expected mutual-exclusion error executor vs sends_message, got %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Error_DirectSendMessageExecutorWithoutSendsMessage(t *testing.T) {
+	aliases := NewKindAliasMap()
+	require.NoError(t, aliases.Register(foundationspec.SendMessageKindName, "rimsky.send_message"))
+	tspec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{{
+			Type:     "direct-send-message",
+			Executor: "rimsky.send_message",
+		}},
+	}
+	res := ValidateTemplate(tspec, RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
+		KindAliases:   aliases,
+	})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "may only be reached via sends_message") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a direct-executor-without-sends_message diagnostic, got %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Ok_SendMessageViaSendsMessageSugarBypassesDirectExecutorCheck(t *testing.T) {
+	aliases := NewKindAliasMap()
+	require.NoError(t, aliases.Register(foundationspec.SendMessageKindName, "rimsky.send_message"))
+	tspec := sendsMessageOKSpec(t)
+	res := ValidateTemplate(tspec, RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
+		KindAliases:   aliases,
+	})
+	if !res.Ok() {
+		t.Fatalf("expected ok for sends_message sugar even with kind aliases wired, got errors: %+v", res.Errors)
 	}
 }
 

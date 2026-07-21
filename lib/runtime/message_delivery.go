@@ -27,6 +27,12 @@ type EnqueueMessageDeps interface {
 	Messages() persistence.MessageTable
 }
 
+const (
+	SenderKindOperator  = "operator"
+	SenderKindPublisher = "publisher"
+	SenderKindInstance  = "instance"
+)
+
 // @concept: message-schema
 func EnqueueMessage(ctx context.Context, tx persistence.Tx, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest) error {
 	if req.ID == (shared.UUID{}) {
@@ -40,9 +46,12 @@ func EnqueueMessage(ctx context.Context, tx persistence.Tx, deps EnqueueMessageD
 		return errors.New("EnqueueMessage: sender required")
 	}
 	switch req.SenderKind {
-	case "operator", "publisher", "instance":
+	case SenderKindOperator, SenderKindPublisher, SenderKindInstance:
 	default:
 		return fmt.Errorf("EnqueueMessage: unknown sender_kind %q (want operator|publisher|instance)", req.SenderKind)
+	}
+	if err := validateMessagePayloadIsObjectShaped(req.Payload); err != nil {
+		return &node.MessageBodySchemaViolation{Type: req.Type, Err: err}
 	}
 	if req.ReceivedAt.IsZero() {
 		req.ReceivedAt = time.Now().UTC()
@@ -62,7 +71,7 @@ func EnqueueMessage(ctx context.Context, tx persistence.Tx, deps EnqueueMessageD
 			}
 		}
 	}
-	if inst != nil && inst.MessageQueueMode == "coalesce" {
+	if inst != nil && inst.MessageQueueMode == node.MessageQueueModeCoalesce {
 		if _, err := deps.Messages().CancelPendingForInstance(ctx, tx, req.InstanceID); err != nil {
 			return fmt.Errorf("EnqueueMessage: coalesce prior pending: %w", err)
 		}
@@ -222,6 +231,24 @@ func findMessageReceiverNode(
 		}
 	}
 	return nil, nil
+}
+
+// @concept: message
+func validateMessagePayloadIsObjectShaped(payload []byte) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	var probe any
+	if err := json.Unmarshal(payload, &probe); err != nil {
+		return fmt.Errorf("payload is not valid JSON: %w", err)
+	}
+	if probe == nil {
+		return nil
+	}
+	if _, ok := probe.(map[string]any); !ok {
+		return fmt.Errorf("payload must be a JSON object (or empty) to populate the receiving run's attribute bag; got %T", probe)
+	}
+	return nil
 }
 
 // @concept: message

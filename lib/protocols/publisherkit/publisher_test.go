@@ -104,6 +104,47 @@ func TestSend_4xx_NoRetry_LogsRejected(t *testing.T) {
 	}
 }
 
+func TestSend_4xx_NilLoggerDoesNotPanic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	res := Send(context.Background(), srv.Client(), nil, func(time.Duration) {}, Request{
+		URL:           srv.URL,
+		Envelope:      []byte(`{}`),
+		PublisherName: "test",
+	})
+	if !res.Rejected {
+		t.Fatal("4xx must set Rejected=true even with a nil Logger")
+	}
+}
+
+func TestShouldRetry_ContextCancelInterruptsSleep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	slowSleep := func(time.Duration) {
+		close(started)
+		time.Sleep(10 * time.Second)
+	}
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- shouldRetry(ctx, 1, 3, slowSleep, []time.Duration{5 * time.Second})
+	}()
+
+	<-started
+	cancel()
+
+	select {
+	case got := <-done:
+		if got {
+			t.Fatal("expected shouldRetry to return false once ctx is cancelled")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("shouldRetry did not return promptly after ctx cancellation")
+	}
+}
+
 func TestSend_5xxThenSuccess(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

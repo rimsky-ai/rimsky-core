@@ -80,7 +80,7 @@ func testNodeAttributesSpillUpsertMergeDeltaOrphans(t *testing.T, d persistence.
 		t.Fatalf("Upsert tiny: got %+v, want exactly k=v", got.Data)
 	}
 
-	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 100)
+	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), mem.Name(), 100)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore: %v", err)
 	}

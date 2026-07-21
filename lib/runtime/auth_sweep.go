@@ -51,8 +51,10 @@ func SweepRotationGrace(
 			log.Info("auth.rotation_grace_revoked", "key_id", k.ID.String(), "key_name", k.Name)
 		}
 	}
-	for _, h := range registeredAuthMutationHooks() {
-		h()
+	if len(swept) > 0 {
+		for _, h := range registeredAuthMutationHooks() {
+			h()
+		}
 	}
 	return len(swept), nil
 }

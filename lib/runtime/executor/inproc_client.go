@@ -43,11 +43,11 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	if !ok {
 		return nil, "", fmt.Errorf("InProcessClient.Execute: no handler for %q", c.url)
 	}
-	nodeRunID, err := uuid.Parse(req.DispatchId)
+	nodeRunID, err := parseOptionalUUID(req.DispatchId)
 	if err != nil {
 		return nil, "", fmt.Errorf("InProcessClient.Execute: parse dispatch_id %q: %w", req.DispatchId, err)
 	}
-	nodeID, err := uuid.Parse(req.NodeId)
+	nodeID, err := parseOptionalUUID(req.NodeId)
 	if err != nil {
 		return nil, "", fmt.Errorf("InProcessClient.Execute: parse node_id %q: %w", req.NodeId, err)
 	}
@@ -85,3 +85,10 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 }
 
 func (c *InProcessClient) Close() error { return nil }
+
+func parseOptionalUUID(s string) (uuid.UUID, error) {
+	if s == "" {
+		return uuid.UUID{}, nil
+	}
+	return uuid.Parse(s)
+}

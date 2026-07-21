@@ -163,6 +163,28 @@ func TestInProcessClient_ParsesTypedUUIDsAtBoundary(t *testing.T) {
 	}
 }
 
+func TestInProcessClient_EmptyDispatchIDAndNodeIDAreAccepted(t *testing.T) {
+	const url = "inproc://test-empty-ids"
+	reg := NewInProcessRegistry()
+	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
+		return successOutcome(), nil
+	}}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	client, err := NewInProcessClient(Endpoint{Transport: "inproc", URL: url}, reg, nil)
+	if err != nil {
+		t.Fatalf("NewInProcessClient: %v", err)
+	}
+	req := &genv1.ExecuteRequest{}
+	outcome, _, err := client.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute with empty dispatch_id/node_id must be accepted (may be empty outside the node-run-row path): %v", err)
+	}
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("expected Success outcome, got %+v", outcome)
+	}
+}
+
 func TestInProcessClient_PoolWiresInprocCase(t *testing.T) {
 	const url = "inproc://test-pool"
 	reg := NewInProcessRegistry()

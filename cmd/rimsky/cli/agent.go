@@ -70,7 +70,11 @@ func runAgentStart(args []string) int {
 		return 2
 	}
 
-	cfg := hostagent.LoadConfigFromEnv()
+	cfg, err := hostagent.LoadConfigFromEnv()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	if *allowPaths != "" {
 		cfg.AllowPaths = splitNonEmpty(*allowPaths, ",")
 	}

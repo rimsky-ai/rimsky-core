@@ -17,10 +17,11 @@ import (
 )
 
 type Client struct {
-	name string
-	conn *grpc.ClientConn
-	rpc  genv1.ClaimProducerClient
-	caps claimproducer.Capabilities
+	name     string
+	conn     *grpc.ClientConn
+	rpc      genv1.ClaimProducerClient
+	caps     claimproducer.Capabilities
+	declared claimproducer.Capabilities
 }
 
 var _ locks.ClaimProducer = (*Client)(nil)
@@ -40,7 +41,19 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 	if err != nil {
 		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: %w", c.name, err)
 	}
-	return c.caps.EnforceOpenWriteSemantics("remote producer", c.name, out)
+	out, err = c.caps.EnforceOpenWriteSemantics("remote producer", c.name, out)
+	if err != nil {
+		return claimproducer.OpenOutcome{}, err
+	}
+	if out.Available && len(c.declared.WriteSemanticsAllowed) > 0 {
+		rws := out.Result.RealizedWriteSemantics
+		if !c.declared.Contains(rws) {
+			return claimproducer.OpenOutcome{}, fmt.Errorf(
+				"remote producer %q: Open: realized_write_semantics %q is outside the operator-declared allowed set %v (advertised envelope %v)",
+				c.name, rws, c.declared.WriteSemanticsAllowed, c.caps.WriteSemanticsAllowed)
+		}
+	}
+	return out, nil
 }
 
 func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) (claimproducer.CommitResult, error) {
@@ -116,5 +129,6 @@ func (c *Client) ValidateCapabilities(declared claimproducer.Capabilities) error
 				c.name, declared.WriteSemanticsAllowed, c.caps.WriteSemanticsAllowed)
 		}
 	}
+	c.declared = declared
 	return nil
 }

@@ -30,6 +30,7 @@ func Mount(mux *http.ServeMux, srv genv1.ClaimProducerServer) {
 	mux.HandleFunc("/v1/abandon", producerHandler(srv, "abandon"))
 	mux.HandleFunc("/v1/release", producerHandler(srv, "release"))
 	mux.HandleFunc("/v1/split_scope", producerHandler(srv, "split_scope"))
+	mux.HandleFunc("/v1/scopes_conflict", producerHandler(srv, "scopes_conflict"))
 }
 
 func MountLifecycle(mux *http.ServeMux, srv genv1.LifecycleSubscriberServer) {
@@ -145,6 +146,15 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			ClaimHandleId:    req.ClaimHandleID,
 			PartitionRequest: req.PartitionRequest,
 		})
+	case "scopes_conflict":
+		var req scopesConflictBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.ScopesConflict(ctx, &genv1.ClaimScopesConflictRequest{
+			ClaimScopeA: req.ClaimScopeA,
+			ClaimScopeB: req.ClaimScopeB,
+		})
 	}
 	return nil, errUnknownVerb
 }
@@ -240,6 +250,11 @@ type actionBody struct {
 type splitScopeBody struct {
 	ClaimHandleID    string `json:"claim_handle_id"`
 	PartitionRequest []byte `json:"partition_request"`
+}
+
+type scopesConflictBody struct {
+	ClaimScopeA []byte `json:"claim_scope_a"`
+	ClaimScopeB []byte `json:"claim_scope_b"`
 }
 
 type templateScopeBody struct {

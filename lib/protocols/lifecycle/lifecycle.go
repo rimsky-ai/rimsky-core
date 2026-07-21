@@ -6,6 +6,7 @@ package lifecycle
 
 import "context"
 
+// @concept: lifecycle-subscriber
 type LifecycleSubscriber interface {
 	Name() string
 

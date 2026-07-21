@@ -20,6 +20,7 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 const (
@@ -31,7 +32,7 @@ const (
 	errClassContractMismatch      = "contract_mismatch"
 )
 
-const serviceNameHeader = "x-rimsky-service-name"
+const serviceNameHeader = peer.ServiceNameMetadataKey
 
 const anonymousRoutingIdentity = hostagent.AnonymousRoutingIdentity
 

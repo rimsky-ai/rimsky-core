@@ -42,7 +42,7 @@ func (f *fakeMessagesTable) Insert(_ context.Context, _ persistence.Tx, req pers
 
 func (f *fakeMessagesTable) MarkDelivered(_ context.Context, _ persistence.Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error) {
 	row, ok := f.rows[id]
-	if !ok || row.DeliveredAt != nil {
+	if !ok || row.DeliveredAt != nil || row.Cancelled {
 		return false, nil
 	}
 	row.DeliveredAt = &deliveredAt
@@ -54,7 +54,7 @@ func (f *fakeMessagesTable) MarkDelivered(_ context.Context, _ persistence.Tx, i
 func (f *fakeMessagesTable) ListPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
 	var out []persistence.MessageRow
 	for _, r := range f.rows {
-		if r.InstanceID != instanceID || r.DeliveredAt != nil {
+		if r.InstanceID != instanceID || r.DeliveredAt != nil || r.Cancelled {
 			continue
 		}
 		out = append(out, *r)
@@ -274,6 +274,64 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	}
 }
 
+func TestEnqueueMessage_RejectsNonObjectPayload(t *testing.T) {
+	m := newFakeMessages()
+	deps := &enqueueDepsStub{inst: &nilInstancesTable{}, tpls: &nilTemplatesTable{}, msgs: m}
+	ctx := context.Background()
+
+	base := persistence.EnqueueMessageRequest{
+		InstanceID: shared.UUID(uuid.New()),
+		Type:       "invalidate", Sender: "op-A", SenderKind: "operator",
+	}
+
+	for _, tc := range []struct {
+		name    string
+		payload []byte
+	}{
+		{"array", []byte(`[1,2,3]`)},
+		{"string", []byte(`"hello"`)},
+		{"number", []byte(`42`)},
+		{"bool", []byte(`true`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := base
+			req.ID = shared.UUID(uuid.New())
+			req.Payload = tc.payload
+			err := EnqueueMessage(ctx, nil, deps, req)
+			if err == nil {
+				t.Fatalf("EnqueueMessage(%s payload): expected error, got nil", tc.name)
+			}
+			var schemaErr *node.MessageBodySchemaViolation
+			if !errors.As(err, &schemaErr) {
+				t.Fatalf("EnqueueMessage(%s payload) error must unwrap to *node.MessageBodySchemaViolation, got %T: %v", tc.name, err, err)
+			}
+			if _, ok := m.rows[req.ID]; ok {
+				t.Fatalf("a non-object-payload message must not be inserted into the ledger (%s)", tc.name)
+			}
+		})
+	}
+
+	objReq := base
+	objReq.ID = shared.UUID(uuid.New())
+	objReq.Payload = []byte(`{"k":"v"}`)
+	if err := EnqueueMessage(ctx, nil, deps, objReq); err != nil {
+		t.Fatalf("EnqueueMessage(object payload): %v", err)
+	}
+
+	emptyReq := base
+	emptyReq.ID = shared.UUID(uuid.New())
+	if err := EnqueueMessage(ctx, nil, deps, emptyReq); err != nil {
+		t.Fatalf("EnqueueMessage(empty payload): %v", err)
+	}
+
+	nullReq := base
+	nullReq.ID = shared.UUID(uuid.New())
+	nullReq.Payload = []byte(`null`)
+	if err := EnqueueMessage(ctx, nil, deps, nullReq); err != nil {
+		t.Fatalf("EnqueueMessage(null payload): %v", err)
+	}
+}
+
 // @concept: message-schema
 func TestEnqueueMessage_RejectsBodySchemaViolation(t *testing.T) {
 	m := newFakeMessages()
@@ -368,6 +426,38 @@ func TestDeliverPendingMessages_OnlyDeliversFrameTrigger(t *testing.T) {
 	}
 	if len(res.Messages) != 0 {
 		t.Fatalf("expected empty deliver-set on repeat call (idempotent), got %d", len(res.Messages))
+	}
+}
+
+func TestFakeMessagesTable_CancelledRowsExcludedFromPendingAndDelivery(t *testing.T) {
+	m := newFakeMessages()
+	ctx := context.Background()
+	inst := shared.UUID(uuid.New())
+	now := time.Now().UTC()
+
+	cancelledID := shared.UUID(uuid.New())
+	if err := m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+		ID: cancelledID, InstanceID: inst, Type: "invalidate",
+		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
+	}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	m.rows[cancelledID].Cancelled = true
+
+	pending, err := m.ListPendingForInstance(ctx, nil, inst)
+	if err != nil {
+		t.Fatalf("ListPendingForInstance: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("ListPendingForInstance must exclude cancelled rows, matching the real drivers; got %+v", pending)
+	}
+
+	delivered, err := m.MarkDelivered(ctx, nil, cancelledID, shared.UUID(uuid.New()), now)
+	if err != nil {
+		t.Fatalf("MarkDelivered: %v", err)
+	}
+	if delivered {
+		t.Fatal("MarkDelivered must refuse to deliver a cancelled row, matching the real drivers")
 	}
 }
 

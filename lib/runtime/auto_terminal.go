@@ -177,7 +177,7 @@ func expectedInheritorsMissing(
 	members := sg.Members
 	holderTypes := make(map[string]struct{}, len(holders))
 	for _, h := range holders {
-		nodeID, _, err := args.Queue.GetDispatchNode(ctx, h.HolderNodeRunID)
+		nodeID, _, err := args.Queue.GetDispatchNodeInTx(ctx, tx, h.HolderNodeRunID)
 		if err != nil || nodeID == (shared.UUID{}) {
 			continue
 		}

@@ -12,8 +12,8 @@ import "google/protobuf/struct.proto";
 
 // ExecutorObservability is the optional read-only protocol every
 // executor MAY implement to expose per-dispatch traces to dashboards.
-// The dispatch protocol (executor.proto) is unchanged. See
-// docs/specs/2026-05-02-dashboard-and-observability-design.md §2.
+// The dispatch protocol (executor.proto) is unchanged.
+// @concept: observability
 service ExecutorObservability {
   rpc Capabilities(ExecutorCapabilitiesRequest) returns (ObservabilityCapabilities);
   rpc GetTrace(GetTraceRequest) returns (Trace);

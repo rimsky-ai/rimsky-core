@@ -80,11 +80,9 @@ func ReleaseHeldDurableClaims(
 			continue
 		}
 		if err := args.ClaimHandles.DeleteResolved(ctx, r.ID, tx); err != nil {
-			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
-				ClaimHandleID: r.ID, ProducerName: producerName,
-				Err: fmt.Errorf("delete row: %w", err),
-			})
-			continue
+			return HeldDurableReleaseReport{}, fmt.Errorf(
+				"ReleaseHeldDurableClaims: claim_handle %s: release verb enqueued but delete row failed, aborting to avoid a committed row referencing an already-queued release: %w",
+				r.ID, err)
 		}
 		report.Succeeded++
 	}

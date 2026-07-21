@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -273,7 +274,13 @@ func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {
 			ClaimScopeDataHash: HashBytes(lk.ClaimResult.ClaimScope),
 		})
 	}
-	for alias, cr := range acq.HeldClaims {
+	heldAliases := make([]string, 0, len(acq.HeldClaims))
+	for alias := range acq.HeldClaims {
+		heldAliases = append(heldAliases, alias)
+	}
+	sort.Strings(heldAliases)
+	for _, alias := range heldAliases {
+		cr := acq.HeldClaims[alias]
 		out = append(out, LeafRunHeldClaim{
 			ClaimHandleID:      "",
 			Role:               "held:" + alias,

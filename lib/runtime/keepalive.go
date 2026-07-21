@@ -58,7 +58,7 @@ func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request)
 	var found bool
 	if txErr := c.Persist.Transaction(r.Context(), func(ctx context.Context, tx persistence.Tx) error {
 		var berr error
-		found, berr = c.Queue.BumpLastProgressAt(ctx, tx, runID, time.Now().UTC())
+		found, berr = c.Queue.BumpLastProgressAt(ctx, tx, runID, c.clockNow().UTC())
 		if berr != nil || !found {
 			return berr
 		}
@@ -85,6 +85,13 @@ func (c *CallbackServer) renewClaimExpiryForRun(ctx context.Context, tx persiste
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
-	newExpiry := time.Now().UTC().Add(5 * interval)
+	newExpiry := c.clockNow().UTC().Add(5 * interval)
 	return c.ClaimHandles.RenewExpiryForHolderRun(ctx, runID, newExpiry, tx)
+}
+
+func (c *CallbackServer) clockNow() time.Time {
+	if c.Clock != nil {
+		return c.Clock.Now()
+	}
+	return time.Now()
 }

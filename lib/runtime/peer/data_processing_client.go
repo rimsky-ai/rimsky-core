@@ -116,7 +116,7 @@ func (c *DataProcessingClient) Close() {
 }
 
 func DialDataProcessing(_ context.Context, name, endpoint, tlsMode string) (*DataProcessingClient, error) {
-	target, err := stripScheme(name, endpoint)
+	target, err := StripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}

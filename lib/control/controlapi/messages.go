@@ -38,13 +38,13 @@ func operatorSenderSubject(ident auth.Identity) string {
 }
 
 func dedupSenderKind(senderKind string, ident auth.Identity) string {
-	if senderKind == "publisher" {
-		return "publisher"
+	if senderKind == runtime.SenderKindPublisher {
+		return runtime.SenderKindPublisher
 	}
 	if ident.Kind == auth.IdentityAnonymous {
 		return "anonymous"
 	}
-	return "operator"
+	return runtime.SenderKindOperator
 }
 
 func registerMessagesRoutes(r chi.Router, deps AppDeps) {
@@ -127,9 +127,9 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid JSON body: "+err.Error())
 			return
 		}
-		senderKind := "operator"
+		senderKind := runtime.SenderKindOperator
 		if body.PublisherSubscriptionID != "" {
-			senderKind = "publisher"
+			senderKind = runtime.SenderKindPublisher
 		}
 		sender := "operator"
 		idempotencyKey := strings.TrimSpace(req.Header.Get("Idempotency-Key"))
@@ -179,7 +179,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				sort.Strings(declared)
 				return &unknownMessageTypeError{Type: body.Type, Declared: declared}
 			}
-			if senderKind == "publisher" {
+			if senderKind == runtime.SenderKindPublisher {
 				subID, parseErr := uuid.Parse(body.PublisherSubscriptionID)
 				if parseErr != nil {
 					return errPublisherSubscriptionNotLive

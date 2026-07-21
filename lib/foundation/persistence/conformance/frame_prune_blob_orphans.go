@@ -78,7 +78,7 @@ func testFramePruneEnrollsScratchAndAttributeBlobOrphans(t *testing.T, d persist
 	}
 
 	farFuture := time.Now().Add(48 * time.Hour)
-	before, err := orphans.DueBefore(ctx, farFuture, 1000)
+	before, err := orphans.DueBefore(ctx, farFuture, mem.Name(), 1000)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore(before prune): %v", err)
 	}
@@ -108,7 +108,7 @@ func testFramePruneEnrollsScratchAndAttributeBlobOrphans(t *testing.T, d persist
 		t.Fatalf("PruneTraceForRetention pruned %d frames, want 1", pruned)
 	}
 
-	after, err := orphans.DueBefore(ctx, farFuture, 1000)
+	after, err := orphans.DueBefore(ctx, farFuture, mem.Name(), 1000)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore(after prune): %v", err)
 	}

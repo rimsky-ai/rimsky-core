@@ -185,6 +185,35 @@ func TestEvaluateBreakpoints_SignalTypePrefixMatchAndMiss(t *testing.T) {
 	}
 }
 
+func TestEvaluateBreakpoints_SignalTypeFilterFailsClosedOnNilSignal(t *testing.T) {
+	ctx := context.Background()
+	tables := openInMemoryTables(t)
+	instanceID := seedBreakpointEvalFixture(t, ctx, tables)
+	anyPrefix := "terminal/*"
+	bpID := createBreakpointForEval(t, ctx, tables, persistence.BreakpointRow{
+		InstanceID:     instanceID,
+		Matcher:        map[string]any{},
+		Checkpoint:     persistence.CheckpointAfterTerminal,
+		SignalType:     &anyPrefix,
+		Mode:           persistence.BreakpointModeNotifyOnly,
+		OverflowPolicy: persistence.OverflowDropOldest,
+		HitTTLSeconds:  300,
+		CreatedByKey:   "test",
+	})
+
+	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+	cc := newCheckpointContext(instanceID)
+	cc.Checkpoint = persistence.CheckpointAfterTerminal
+	cc.TerminalSignal = nil
+
+	if _, err := runtime.EvaluateBreakpoints(ctx, args, cc); err != nil {
+		t.Fatalf("EvaluateBreakpoints: %v", err)
+	}
+	if got := len(listHitsForBreakpoint(t, ctx, tables, bpID)); got != 0 {
+		t.Fatalf("signal_type-filtered breakpoint with nil TerminalSignal must fail closed (no hit); got %d hits", got)
+	}
+}
+
 func TestEvaluateBreakpoints_NotifyOnlyDoesNotBlock(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -283,6 +312,89 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("EvaluateBreakpoints did not return after resume within 2s")
+	}
+}
+
+func TestEvaluateBreakpoints_LaterBreakpointSeesEarlierResumeOverlay(t *testing.T) {
+	ctx := context.Background()
+	tables := openInMemoryTables(t)
+	instanceID := seedBreakpointEvalFixture(t, ctx, tables)
+	bp1ID := createBreakpointForEval(t, ctx, tables, persistence.BreakpointRow{
+		InstanceID:     instanceID,
+		Matcher:        map[string]any{},
+		Checkpoint:     persistence.CheckpointBeforeDispatch,
+		Mode:           persistence.BreakpointModePause,
+		OverflowPolicy: persistence.OverflowBlockDispatch,
+		HitTTLSeconds:  300,
+		CreatedByKey:   "test",
+	})
+	bp2ID := createBreakpointForEval(t, ctx, tables, persistence.BreakpointRow{
+		InstanceID: instanceID,
+		Matcher: map[string]any{
+			"attrs": map[string]any{"added": float64(1)},
+		},
+		Checkpoint:     persistence.CheckpointBeforeDispatch,
+		Mode:           persistence.BreakpointModePause,
+		OverflowPolicy: persistence.OverflowBlockDispatch,
+		HitTTLSeconds:  300,
+		CreatedByKey:   "test",
+	})
+
+	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+	cc := newCheckpointContext(instanceID)
+	cc.MergedAttributes = map[string]any{"base": "x"}
+
+	type evalResult struct {
+		merged map[string]any
+		err    error
+	}
+	resultCh := make(chan evalResult, 1)
+	go func() {
+		out, err := runtime.EvaluateBreakpoints(ctx, args, cc)
+		resultCh <- evalResult{merged: out, err: err}
+	}()
+
+	waitForHit := func(bpID shared.UUID) shared.UUID {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			hits := listHitsForBreakpoint(t, ctx, tables, bpID)
+			if len(hits) == 1 {
+				return hits[0].ID
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Fatalf("hit row for breakpoint %s never appeared", bpID)
+		return shared.UUID{}
+	}
+
+	hit1ID := waitForHit(bp1ID)
+	resumeHit(t, ctx, tables, hit1ID, map[string]any{"added": float64(1)})
+
+	hit2ID := waitForHit(bp2ID)
+
+	hits2 := listHitsForBreakpoint(t, ctx, tables, bp2ID)
+	if len(hits2) != 1 {
+		t.Fatalf("expected exactly 1 hit for bp2, got %d", len(hits2))
+	}
+	dispatchCtx, _ := hits2[0].Snapshot["dispatch_context"].(map[string]any)
+	mergedInSnapshot, _ := dispatchCtx["merged_attributes"].(map[string]any)
+	if mergedInSnapshot["added"] != float64(1) {
+		t.Fatalf("bp2 snapshot must reflect bp1's resume overlay; got merged_attributes=%#v", mergedInSnapshot)
+	}
+
+	resumeHit(t, ctx, tables, hit2ID, nil)
+
+	select {
+	case res := <-resultCh:
+		if res.err != nil {
+			t.Fatalf("EvaluateBreakpoints error: %v", res.err)
+		}
+		if res.merged["added"] != float64(1) {
+			t.Fatalf("final merged attributes missing bp1's overlay: %#v", res.merged)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("EvaluateBreakpoints did not return after both resumes within 2s")
 	}
 }
 

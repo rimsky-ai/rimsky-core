@@ -292,7 +292,7 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if outcome.Status == ackStatusAccepted {
-		if err := c.Queue.Complete(r.Context(), asyncCtx.NodeRunID, asyncCtx.SupervisorID); err != nil {
+		if err := c.Queue.Complete(context.WithoutCancel(r.Context()), asyncCtx.NodeRunID, asyncCtx.SupervisorID); err != nil {
 			c.Logger.Error("callback: queue.Complete failed after applied terminal",
 				"node_id", asyncCtx.NodeID.String(),
 				"dispatch_id", asyncCtx.NodeRunID.String(),

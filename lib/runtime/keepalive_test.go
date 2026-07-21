@@ -33,13 +33,15 @@ func (keepaliveStubTables) Transaction(ctx context.Context, fn func(ctx context.
 
 type keepaliveStubQueue struct {
 	persistence.Queue
-	found bool
-	err   error
-	calls []shared.UUID
+	found  bool
+	err    error
+	calls  []shared.UUID
+	stamps []time.Time
 }
 
-func (q *keepaliveStubQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, runID shared.UUID, _ time.Time) (bool, error) {
+func (q *keepaliveStubQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, runID shared.UUID, now time.Time) (bool, error) {
 	q.calls = append(q.calls, runID)
+	q.stamps = append(q.stamps, now)
 	return q.found, q.err
 }
 
@@ -257,6 +259,35 @@ func TestKeepalive_Success(t *testing.T) {
 	}
 	if queue.calls[0] != shared.UUID(runID) {
 		t.Fatalf("BumpLastProgressAt runID = %s, want %s", queue.calls[0], runID)
+	}
+}
+
+func TestKeepalive_UsesInjectedClockNotWallClock(t *testing.T) {
+	t.Parallel()
+	queue := &keepaliveStubQueue{found: true}
+	fixed := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := shared.NewControllableClock(fixed)
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		Persist:      keepaliveStubTables{},
+		Queue:        queue,
+		Clock:        clock,
+	}
+	router := newKeepaliveRouter(c)
+
+	runID := uuid.New()
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, keepaliveRequest(runID.String(), cancelTokenFor("sup-1", runID)))
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(queue.stamps) != 1 {
+		t.Fatalf("BumpLastProgressAt calls = %d, want 1", len(queue.stamps))
+	}
+	if !queue.stamps[0].Equal(fixed) {
+		t.Fatalf("BumpLastProgressAt stamp = %v, want the injected clock's fixed time %v (not wall-clock time.Now())", queue.stamps[0], fixed)
 	}
 }
 

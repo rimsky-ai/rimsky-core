@@ -17,6 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 type fakeLineageTable struct {
@@ -643,6 +644,29 @@ func TestHashHelpers_Stable(t *testing.T) {
 	}
 	if HashBytes([]byte("hello")) == HashBytes([]byte("world")) {
 		t.Fatal("different inputs hash to the same value")
+	}
+}
+
+func TestHeldClaimsForLineage_HeldAliasesInDeterministicOrder(t *testing.T) {
+	acq := &acquisition{
+		HeldClaims: map[string]claimproducer.ClaimResult{
+			"zeta":  {},
+			"alpha": {},
+			"mid":   {},
+		},
+	}
+
+	for i := 0; i < 20; i++ {
+		got := HeldClaimsForLineage(acq)
+		if len(got) != 3 {
+			t.Fatalf("iteration %d: got %d entries, want 3", i, len(got))
+		}
+		wantOrder := []string{"held:alpha", "held:mid", "held:zeta"}
+		for j, want := range wantOrder {
+			if got[j].Role != want {
+				t.Fatalf("iteration %d: entry[%d].Role=%q want %q (held aliases must be sorted for deterministic lineage records)", i, j, got[j].Role, want)
+			}
+		}
 	}
 }
 

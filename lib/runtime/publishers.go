@@ -303,7 +303,9 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 			}
 			if _, ok := liveSet[s.ID]; ok {
 				if s.State == persistence.PublisherSubscriptionStateMounting {
-					markSubscriptionActive(ctx, deps, s.ID)
+					if !markSubscriptionActive(ctx, deps, s.ID) {
+						unsubscribeIfRowStopped(ctx, deps, client, s.ID)
+					}
 				}
 				continue
 			}

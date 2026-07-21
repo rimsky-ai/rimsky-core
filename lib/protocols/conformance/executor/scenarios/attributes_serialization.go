@@ -22,7 +22,11 @@ func init() {
 		Run: func(ctx context.Context, env conformance.Env) error {
 			attrs, err := structpb.NewStruct(map[string]any{
 				"stub_probe": true,
-				"echo":       "ping",
+				"nested": map[string]any{
+					"list":    []any{1.0, "two", true, nil},
+					"unicode": "héllo wörld 世界",
+					"number":  -12.5,
+				},
 			})
 			if err != nil {
 				return fmt.Errorf("build attributes: %w", err)

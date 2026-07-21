@@ -7,6 +7,7 @@ package loop_counter
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -78,6 +79,9 @@ func errorOutcome(errClass, msg string) *genv1.Outcome {
 func asInt(v any) (int, error) {
 	switch x := v.(type) {
 	case float64:
+		if x != math.Trunc(x) {
+			return 0, fmt.Errorf("not an integer: %v", x)
+		}
 		return int(x), nil
 	case int:
 		return x, nil

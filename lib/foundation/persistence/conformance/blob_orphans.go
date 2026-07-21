@@ -40,7 +40,7 @@ func TestBlobOrphans(t *testing.T, d persistence.Database) {
 		row2 := row
 		row2.ReapAfter = base.Add(2 * time.Hour)
 		mustInsertOrphan(t, ctx, store, orphans, row2)
-		got, err := orphans.DueBefore(ctx, base.Add(90*time.Minute), 1000)
+		got, err := orphans.DueBefore(ctx, base.Add(90*time.Minute), "mem", 1000)
 		if err != nil {
 			t.Fatalf("DueBefore: %v", err)
 		}
@@ -65,7 +65,7 @@ func TestBlobOrphans(t *testing.T, d persistence.Database) {
 		for _, r := range []persistence.BlobOrphanRow{late, early, mid} {
 			mustInsertOrphan(t, ctx, store, orphans, r)
 		}
-		got, err := orphans.DueBefore(ctx, base.Add(150*time.Minute), 1000)
+		got, err := orphans.DueBefore(ctx, base.Add(150*time.Minute), "mem", 1000)
 		if err != nil {
 			t.Fatalf("DueBefore: %v", err)
 		}
@@ -91,7 +91,7 @@ func TestBlobOrphans(t *testing.T, d persistence.Database) {
 			}
 			mustInsertOrphan(t, ctx, store, orphans, r)
 		}
-		got, err := orphans.DueBefore(ctx, base.Add(time.Hour), 2)
+		got, err := orphans.DueBefore(ctx, base.Add(time.Hour), "mem", 2)
 		if err != nil {
 			t.Fatalf("DueBefore: %v", err)
 		}
@@ -118,7 +118,7 @@ func TestBlobOrphans(t *testing.T, d persistence.Database) {
 		if err := orphans.Delete(ctx, row.Handle); err != nil {
 			t.Fatalf("Delete (idempotent): %v", err)
 		}
-		got, err := orphans.DueBefore(ctx, base.Add(time.Hour), 1000)
+		got, err := orphans.DueBefore(ctx, base.Add(time.Hour), "mem", 1000)
 		if err != nil {
 			t.Fatalf("DueBefore: %v", err)
 		}
@@ -126,6 +126,44 @@ func TestBlobOrphans(t *testing.T, d persistence.Database) {
 			if r.Handle == row.Handle {
 				t.Fatalf("deleted handle %q still present", row.Handle)
 			}
+		}
+	})
+
+	t.Run("DueBeforeFiltersByBackendAtTheQueryLevel", func(t *testing.T) {
+		mustInsertOrphan(t, ctx, store, orphans, persistence.BlobOrphanRow{
+			Handle: "orphan-backend-mem", Backend: "mem", OrphanedAt: base, ReapAfter: base,
+		})
+		mustInsertOrphan(t, ctx, store, orphans, persistence.BlobOrphanRow{
+			Handle: "orphan-backend-fs", Backend: "filesystem", OrphanedAt: base, ReapAfter: base,
+		})
+		got, err := orphans.DueBefore(ctx, base.Add(time.Hour), "mem", 1000)
+		if err != nil {
+			t.Fatalf("DueBefore: %v", err)
+		}
+		for _, r := range got {
+			if r.Backend != "mem" {
+				t.Fatalf("DueBefore(backend=mem) returned a row from backend %q; the filter must apply at the query level, "+
+					"not just by the caller discarding rows after the fact", r.Backend)
+			}
+			if r.Handle == "orphan-backend-fs" {
+				t.Fatalf("DueBefore(backend=mem) must not return the filesystem-backend row")
+			}
+		}
+		gotFS, err := orphans.DueBefore(ctx, base.Add(time.Hour), "filesystem", 1000)
+		if err != nil {
+			t.Fatalf("DueBefore: %v", err)
+		}
+		sawFS := false
+		for _, r := range gotFS {
+			if r.Handle == "orphan-backend-fs" {
+				sawFS = true
+			}
+			if r.Backend != "filesystem" {
+				t.Fatalf("DueBefore(backend=filesystem) returned a row from backend %q", r.Backend)
+			}
+		}
+		if !sawFS {
+			t.Fatalf("DueBefore(backend=filesystem) must return the filesystem-backend row")
 		}
 	})
 }

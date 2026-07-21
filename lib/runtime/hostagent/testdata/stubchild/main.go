@@ -221,8 +221,12 @@ func (s *stubClaimProducer) Capabilities(_ context.Context, _ *genv1.Capabilitie
 	}, nil
 }
 
-func (s *stubClaimProducer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
+func (s *stubClaimProducer) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	recordVerb("open")
+	if os.Getenv("STUBCHILD_OPEN_BLOCK_UNTIL_CANCEL") != "" {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return &genv1.OpenResponse{Result: &genv1.OpenResponse_Acquired{Acquired: &genv1.Acquired{
 		RealizedWriteSemantics: genv1.WriteSemantics_WRITE_SEMANTICS_SYNC,
 	}}}, nil

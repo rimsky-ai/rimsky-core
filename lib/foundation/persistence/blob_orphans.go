@@ -18,6 +18,6 @@ type BlobOrphanRow struct {
 
 type BlobOrphanTable interface {
 	Insert(ctx context.Context, row BlobOrphanRow, tx Tx) error
-	DueBefore(ctx context.Context, cutoff time.Time, limit int) ([]BlobOrphanRow, error)
+	DueBefore(ctx context.Context, cutoff time.Time, backend string, limit int) ([]BlobOrphanRow, error)
 	Delete(ctx context.Context, handle string) error
 }

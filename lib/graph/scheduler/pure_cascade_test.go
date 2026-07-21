@@ -78,6 +78,9 @@ func (f *fakeQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.
 func (f *fakeQueue) GetDispatchNode(_ context.Context, _ shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
 	return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
+func (f *fakeQueue) GetDispatchNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+	return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
+}
 func (f *fakeQueue) RefreshHeartbeat(_ context.Context, _ string) error { return nil }
 func (f *fakeQueue) ListLive(_ context.Context, _ persistence.DispatchListFilter, _ persistence.ListPagination) (persistence.PaginatedListResult[persistence.DispatchRow], error) {
 	return persistence.PaginatedListResult[persistence.DispatchRow]{}, nil

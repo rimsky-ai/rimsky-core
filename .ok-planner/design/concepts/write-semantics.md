@@ -32,6 +32,7 @@ Owns: the enum values, the envelope handshake, the realized-per-claim value, the
 ## Invariants
 
 - The operator-declared allowed set ⊆ producer-advertised set (validated at startup; fails fast).
+- Every realized value returned by a remote producer's Open is checked against both the producer-advertised set and the operator-declared narrowing (`lib/runtime/peer/client.go::Client.Open`) — a producer realizing a value inside its own advertised envelope but outside the operator's declared narrowing is rejected per-claim, not just at startup.
 - The wire zero value of this enum must not be returned by producers; the supervisor rejects any acquisition that yields it.
 - Byte-equal-scope uniformity: two open-verb calls with byte-equal claim scope MUST return the same realized value.
 - Reader-lease internal serialization is forbidden for the staged-asynchronous mode — honest support requires snapshot delegation or MVCC pass-through.

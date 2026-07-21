@@ -75,6 +75,29 @@ func TestHeldClaimsSummaryForBreakpoint_OmitsClaimContent(t *testing.T) {
 	}
 }
 
+func TestHeldClaimsSummaryForBreakpoint_HeldAliasesInDeterministicOrder(t *testing.T) {
+	acq := &acquisition{
+		HeldClaims: map[string]claimproducer.ClaimResult{
+			"zeta":  {},
+			"alpha": {},
+			"mid":   {},
+		},
+	}
+
+	for i := 0; i < 20; i++ {
+		got := heldClaimsSummaryForBreakpoint(acq)
+		if len(got) != 3 {
+			t.Fatalf("iteration %d: got %d entries, want 3", i, len(got))
+		}
+		wantOrder := []string{"alpha", "mid", "zeta"}
+		for j, want := range wantOrder {
+			if got[j]["alias"] != want {
+				t.Fatalf("iteration %d: entry[%d].alias=%v want %q (held aliases must be sorted for deterministic snapshots)", i, j, got[j]["alias"], want)
+			}
+		}
+	}
+}
+
 func TestHeldClaimsSummaryForBreakpoint_NilAcquisitionReturnsEmpty(t *testing.T) {
 	got := heldClaimsSummaryForBreakpoint(nil)
 	if len(got) != 0 {

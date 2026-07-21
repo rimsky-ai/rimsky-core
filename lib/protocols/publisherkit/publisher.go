@@ -34,9 +34,16 @@ type Request struct {
 	SubscriptionID string
 }
 
+type noopLogger struct{}
+
+func (noopLogger) Warn(string, ...any) {}
+
 func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, req Request) Result {
 	if sleep == nil {
 		sleep = time.Sleep
+	}
+	if log == nil {
+		log = noopLogger{}
 	}
 	const maxAttempts = 3
 	delays := []time.Duration{
@@ -54,7 +61,7 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 		}
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			if !shouldRetry(attempt, maxAttempts, ctx, sleep, delays) {
+			if !shouldRetry(ctx, attempt, maxAttempts, sleep, delays) {
 				return Result{Err: err, Status: 0, Attempts: attempt}
 			}
 			continue
@@ -79,14 +86,14 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 			}
 		}
 		lastErr := fmt.Errorf("rimsky %s → %d", req.URL, resp.StatusCode)
-		if !shouldRetry(attempt, maxAttempts, ctx, sleep, delays) {
+		if !shouldRetry(ctx, attempt, maxAttempts, sleep, delays) {
 			return Result{Err: lastErr, Status: resp.StatusCode, Attempts: attempt}
 		}
 	}
 	panic("publisherkit.Send: loop exited without returning — shouldRetry must return false by the final attempt")
 }
 
-func shouldRetry(attempt, max int, ctx context.Context, sleep Sleeper, delays []time.Duration) bool {
+func shouldRetry(ctx context.Context, attempt, max int, sleep Sleeper, delays []time.Duration) bool {
 	if attempt >= max {
 		return false
 	}
@@ -97,8 +104,20 @@ func shouldRetry(attempt, max int, ctx context.Context, sleep Sleeper, delays []
 	if idx >= len(delays) {
 		idx = len(delays) - 1
 	}
-	sleep(delays[idx])
+	ctxAwareSleep(ctx, sleep, delays[idx])
 	return ctx.Err() == nil
+}
+
+func ctxAwareSleep(ctx context.Context, sleep Sleeper, d time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		sleep(d)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 func truncate(s string, n int) string {

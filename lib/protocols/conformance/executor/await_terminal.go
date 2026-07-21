@@ -28,6 +28,7 @@ func AwaitTerminal(ctx context.Context, outcome *genv1.Outcome, env Env) (*genv1
 		return nil, errors.New("AwaitAsyncCallback with empty async_ack_id; cannot route callback")
 	}
 	ch := env.Callbacks.Register(ackID)
+	defer env.Callbacks.Unregister(ackID)
 	select {
 	case cb := <-ch:
 		if cb == nil {

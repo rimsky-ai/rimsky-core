@@ -159,6 +159,117 @@ func TestInstanceTerminationCleanup_PreservesFailedReleaseForRetry(t *testing.T)
 	require.Empty(t, pending)
 }
 
+type deleteResolvedFailingClaimHandles struct {
+	persistence.ClaimHandleTable
+	failID shared.UUID
+	err    error
+}
+
+func (f deleteResolvedFailingClaimHandles) DeleteResolved(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+	if id == f.failID {
+		return f.err
+	}
+	return f.ClaimHandleTable.DeleteResolved(ctx, id, tx)
+}
+
+func TestInstanceTerminationCleanup_DeleteResolvedFailureAbortsWithoutOrphaningTheOutboxRow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	tmpl := insertDeployedTemplateAsset(ctx, t, backend, node.TemplateSpec{
+		Name: "instance-termination-cleanup-delete-fail", Version: "1",
+	})
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
+	ck := "ck-instance-termination-cleanup-delete-fail"
+	var acqNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID: mainScopeID, GraphName: "main", InstanceID: instID,
+		}); err != nil {
+			return err
+		}
+		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: instID, TemplateHash: tmpl.ID,
+			InstanceKey: &ck, Params: map[string]any{},
+		}, tx); err != nil {
+			return err
+		}
+		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: instID,
+			NodeType: "acquirer", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		acqNode = a
+		return nil
+	}))
+
+	reg := locks.NewRegistry()
+	storeName := "workspace"
+	stubStore := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+	})
+	reg.Add(storeName, stubStore)
+
+	intent := "rw"
+	claimID := shared.UUID(uuid.New())
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID: claimID, LockKind: persistence.LockKindScope,
+			ProducerName: &storeName, ClaimScopeData: []byte(`"durable-` + claimID.String() + `"`), Address: []byte(`"durable-addr"`),
+			Intent:             &intent,
+			HolderSupervisorID: "sup-cleanup-delfail", HolderNodeID: acqNode.ID,
+			ExpiresAt: time.Now().Add(10 * time.Minute),
+			IsHeld:    true,
+			Lifetime:  spec.ClaimLifetimeDurable,
+		}, tx); err != nil {
+			return err
+		}
+		return backend.ClaimHandles().Promote(ctx, claimID, "sup-cleanup-delfail", spec.ClaimHandleStateCommitted, tx)
+	}))
+
+	deleteErr := errors.New("simulated delete-resolved failure")
+	failingHandles := deleteResolvedFailingClaimHandles{
+		ClaimHandleTable: backend.ClaimHandles(),
+		failID:           claimID,
+		err:              deleteErr,
+	}
+
+	clock := shared.NewControllableClock(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  failingHandles,
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		SupervisorID:  "sup-cleanup-delfail",
+		Clock:         clock,
+	}
+	txErr := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := runtime.ReleaseHeldDurableClaims(ctx, args, tx, instID, shared.SilentLogger{})
+		return err
+	})
+	require.Error(t, txErr)
+	require.ErrorIs(t, txErr, deleteErr)
+
+	var row *persistence.ClaimHandleRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := backend.ClaimHandles().Get(ctx, claimID, tx)
+		row = r
+		return err
+	}))
+	require.NotNil(t, row, "the claim_handle row must survive when its deletion fails, matching the rolled-back outbox enqueue")
+
+	outbox := runtime.ProducerVerbOutboxOf(args)
+	require.NotNil(t, outbox)
+	pending, err := outbox.ListAll(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, pending, "the outbox enqueue for this claim must have rolled back alongside the failed delete, not been left as an orphaned row")
+}
+
 func countVerbCalls(f *storetest.Fake, claimID shared.UUID, verb string) int {
 	n := 0
 	for _, c := range f.Calls() {

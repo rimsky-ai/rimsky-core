@@ -5,11 +5,26 @@
 package runtime
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
+
+type failingMatchEventPersist struct {
+	err error
+}
+
+func (f failingMatchEventPersist) Transaction(_ context.Context, _ func(ctx context.Context, tx persistence.Tx) error) error {
+	return f.err
+}
+
+func (f failingMatchEventPersist) Events() persistence.EventTable { return nil }
 
 func TestApplyAttributeOverrides(t *testing.T) {
 	logger := shared.SilentLogger{}
@@ -130,52 +145,60 @@ func TestApplyAttributeOverrides(t *testing.T) {
 		}
 	})
 
-	t.Run("malformed by_executor.<exec> fragment falls back to resolved", func(t *testing.T) {
+	t.Run("malformed by_executor.<exec> fragment falls back to resolved and warns", func(t *testing.T) {
 		resolved := map[string]any{"cli": map[string]any{"k": "resolved"}}
 		ov := map[string]any{
 			"by_executor": map[string]any{
 				"claude-agent": "non-object",
 			},
 		}
-		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", logger)
+		capLog := shared.NewCapturingLogger()
+		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", capLog)
 		if !reflect.DeepEqual(got, resolved) {
 			t.Fatalf("got %#v want %#v (expected resolved when by_executor.<exec> fragment is malformed)", got, resolved)
 		}
+		assertHasWarn(t, capLog)
 	})
 
-	t.Run("malformed by_node.<node> fragment falls back to resolved", func(t *testing.T) {
+	t.Run("malformed by_node.<node> fragment falls back to resolved and warns", func(t *testing.T) {
 		resolved := map[string]any{"cli": map[string]any{"k": "resolved"}}
 		ov := map[string]any{
 			"by_node": map[string]any{
 				"area-pass": []any{"not", "an", "object"},
 			},
 		}
-		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", logger)
+		capLog := shared.NewCapturingLogger()
+		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", capLog)
 		if !reflect.DeepEqual(got, resolved) {
 			t.Fatalf("got %#v want %#v (expected resolved when by_node.<node> fragment is malformed)", got, resolved)
 		}
+		assertHasWarn(t, capLog)
 	})
 
-	t.Run("malformed by_executor (top-level non-map) falls back to resolved", func(t *testing.T) {
+	t.Run("malformed by_executor (top-level non-map) falls back to resolved and warns", func(t *testing.T) {
 		resolved := map[string]any{"cli": map[string]any{"k": "resolved"}}
 		ov := map[string]any{
 			"by_executor": "claude-agent=ignored",
 		}
-		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", logger)
+		capLog := shared.NewCapturingLogger()
+		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", capLog)
 		if !reflect.DeepEqual(got, resolved) {
 			t.Fatalf("got %#v want %#v (expected resolved when by_executor itself is non-object)", got, resolved)
 		}
+		assertHasWarn(t, capLog)
 	})
 
-	t.Run("malformed by_node (top-level non-map) falls back to resolved", func(t *testing.T) {
+	t.Run("malformed by_node (top-level non-map) falls back to resolved and warns", func(t *testing.T) {
 		resolved := map[string]any{"cli": map[string]any{"k": "resolved"}}
 		ov := map[string]any{
 			"by_node": float64(42),
 		}
-		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", logger)
+		capLog := shared.NewCapturingLogger()
+		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", capLog)
 		if !reflect.DeepEqual(got, resolved) {
 			t.Fatalf("got %#v want %#v (expected resolved when by_node itself is non-object)", got, resolved)
 		}
+		assertHasWarn(t, capLog)
 	})
 
 	t.Run("nil resolved + overrides non-empty but no fragment matches → no Warn", func(t *testing.T) {
@@ -314,6 +337,39 @@ func TestApplyAttributeOverrides(t *testing.T) {
 			t.Fatalf("a directive-shaped override/default value must pass through as a literal string, unsubstituted: got %#v want %#v", got, want)
 		}
 	})
+}
+
+func TestEmitOverrideMatchEventsAfterMerge_TransactionFailurePropagates(t *testing.T) {
+	wantErr := errors.New("boom")
+	capLog := shared.NewCapturingLogger()
+	instanceID := shared.UUID(uuid.New())
+
+	err := emitOverrideMatchEventsAfterMerge(context.Background(), failingMatchEventPersist{err: wantErr}, capLog, instanceID, []int{0})
+	if err == nil {
+		t.Fatal("expected error to propagate when the match-event transaction fails")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected wrapped %v, got %v", wantErr, err)
+	}
+	assertHasWarn(t, capLog)
+}
+
+func TestEmitOverrideMatchEventsAfterMerge_NoMatchesIsNoop(t *testing.T) {
+	instanceID := shared.UUID(uuid.New())
+	err := emitOverrideMatchEventsAfterMerge(context.Background(), failingMatchEventPersist{err: errors.New("must not be called")}, shared.SilentLogger{}, instanceID, nil)
+	if err != nil {
+		t.Fatalf("expected no-op for empty matched indices, got %v", err)
+	}
+}
+
+func assertHasWarn(t *testing.T, capLog *shared.CapturingLogger) {
+	t.Helper()
+	for _, rec := range capLog.Records() {
+		if rec.Level == "warn" {
+			return
+		}
+	}
+	t.Fatalf("expected a Warn log, got records=%#v", capLog.Records())
 }
 
 func TestApplyAttributeOverrides_ByMatch(t *testing.T) {

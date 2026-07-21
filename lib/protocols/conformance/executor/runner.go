@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -65,8 +66,13 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	}
 	asyncSupport := probeAsyncSupport(ctx, env, opts.Timeout)
 
+	all := All()
+	if unknown := unknownFilterNames(opts.Only, opts.Skip, all); len(unknown) > 0 {
+		return nil, fmt.Errorf("conformance: unknown scenario name(s) in --scenarios/--skip: %s", strings.Join(unknown, ", "))
+	}
+
 	results := []Result{}
-	for _, sc := range All() {
+	for _, sc := range all {
 		if skipMatch(sc.Name, opts.Only, opts.Skip) {
 			results = append(results, Result{Scenario: sc.Name, Skipped: true})
 			continue
@@ -152,6 +158,20 @@ func skipMatch(name string, only, skip []string) bool {
 	return true
 }
 
+func unknownFilterNames(only, skip []string, all []Scenario) []string {
+	known := make(map[string]bool, len(all))
+	for _, sc := range all {
+		known[sc.Name] = true
+	}
+	var unknown []string
+	for _, s := range append(append([]string{}, only...), skip...) {
+		if !known[s] {
+			unknown = append(unknown, s)
+		}
+	}
+	return unknown
+}
+
 func Summary(results []Result, w *os.File) {
 	passed, failed, skipped := 0, 0, 0
 	for _, r := range results {
@@ -168,7 +188,11 @@ func Summary(results []Result, w *os.File) {
 			passed++
 		}
 		if r.Skipped {
-			fmt.Fprintf(w, "[%s] %s (%s)\n", status, r.Scenario, r.Error)
+			if r.Error == "" {
+				fmt.Fprintf(w, "[%s] %s\n", status, r.Scenario)
+			} else {
+				fmt.Fprintf(w, "[%s] %s (%s)\n", status, r.Scenario, r.Error)
+			}
 		} else {
 			fmt.Fprintf(w, "[%s] %s (%.3fs) %s\n", status, r.Scenario, r.Duration.Seconds(), r.Error)
 		}

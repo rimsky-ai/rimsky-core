@@ -125,6 +125,8 @@ type Queue interface {
 
 	GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, ClaimOwnership, error)
 
+	GetDispatchNodeInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (shared.UUID, ClaimOwnership, error)
+
 	LookupRunByAsyncAckID(ctx context.Context, tx Tx, ackID string) (*DispatchRow, error)
 
 	RegisterAsyncAck(ctx context.Context, tx Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string) error

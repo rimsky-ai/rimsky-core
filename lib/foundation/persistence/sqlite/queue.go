@@ -508,11 +508,19 @@ func (q *queueImpl) StampPriorDispatchInTx(ctx context.Context, tx persistence.T
 }
 
 func (q *queueImpl) GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+	return q.getDispatchNode(ctx, q.db, nodeRunID)
+}
+
+func (q *queueImpl) GetDispatchNodeInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+	return q.getDispatchNode(ctx, q.q(tx), nodeRunID)
+}
+
+func (q *queueImpl) getDispatchNode(ctx context.Context, exec querier, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
 	var (
 		nodeIDStr string
 		claimedBy sql.NullString
 	)
-	err := q.db.QueryRowContext(ctx,
+	err := exec.QueryRowContext(ctx,
 		`SELECT node_id, claimed_by FROM rimsky_node_runs WHERE id = ?`,
 		nodeRunID.String(),
 	).Scan(&nodeIDStr, &claimedBy)

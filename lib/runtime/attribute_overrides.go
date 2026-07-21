@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/matcher"
@@ -23,7 +24,7 @@ func applyAttributeOverrides(
 	childKey string,
 	logger shared.Logger,
 ) (merged map[string]any, matched []int) {
-	mergedAny := any(shared.DeepMergeJSON(resolved, nil))
+	mergedAny := shared.DeepMergeJSON(resolved, nil)
 	if len(overrides) == 0 {
 		if m, ok := mergedAny.(map[string]any); ok {
 			return m, nil
@@ -31,10 +32,10 @@ func applyAttributeOverrides(
 		return map[string]any{}, nil
 	}
 
-	if frag, ok := lookupFragment(overrides, "by_executor", executor); ok {
+	if frag, ok := lookupFragment(overrides, "by_executor", executor, logger); ok {
 		mergedAny = shared.DeepMergeJSON(mergedAny, frag)
 	}
-	if frag, ok := lookupFragment(overrides, "by_node", nodeName); ok {
+	if frag, ok := lookupFragment(overrides, "by_node", nodeName, logger); ok {
 		mergedAny = shared.DeepMergeJSON(mergedAny, frag)
 	}
 
@@ -72,13 +73,17 @@ func applyAttributeOverrides(
 	return cloned, matched
 }
 
-func lookupFragment(overrides map[string]any, key, subkey string) (map[string]any, bool) {
+func lookupFragment(overrides map[string]any, key, subkey string, logger shared.Logger) (map[string]any, bool) {
 	raw, ok := overrides[key]
 	if !ok {
 		return nil, false
 	}
 	m, ok := raw.(map[string]any)
 	if !ok {
+		if logger != nil {
+			logger.Warn("applyAttributeOverrides: override key has malformed shape; skipping",
+				"key", key)
+		}
 		return nil, false
 	}
 	frag, ok := m[subkey]
@@ -87,6 +92,10 @@ func lookupFragment(overrides map[string]any, key, subkey string) (map[string]an
 	}
 	fm, ok := frag.(map[string]any)
 	if !ok {
+		if logger != nil {
+			logger.Warn("applyAttributeOverrides: override fragment has malformed shape; skipping",
+				"key", key, "subkey", subkey)
+		}
 		return nil, false
 	}
 	return fm, true
@@ -144,9 +153,9 @@ func emitOverrideMatchEventsAfterMerge(
 	logger shared.Logger,
 	instanceID shared.UUID,
 	matched []int,
-) {
+) error {
 	if len(matched) == 0 {
-		return
+		return nil
 	}
 	err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for _, idx := range matched {
@@ -160,10 +169,14 @@ func emitOverrideMatchEventsAfterMerge(
 		}
 		return nil
 	})
-	if err != nil && logger != nil {
-		logger.Warn("instance.attribute_override_match_event_failed",
-			"instance_id", instanceID.String(),
-			"matched_indices", matched,
-			"error", err.Error())
+	if err != nil {
+		if logger != nil {
+			logger.Warn("instance.attribute_override_match_event_failed",
+				"instance_id", instanceID.String(),
+				"matched_indices", matched,
+				"error", err.Error())
+		}
+		return fmt.Errorf("emit attribute-override match events: %w", err)
 	}
+	return nil
 }

@@ -21,8 +21,15 @@ const (
 )
 
 func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame) {
-	if df.GetKind() == genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
+	switch df.GetKind() {
+	case genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL:
 		a.cancelDispatch(df.GetStreamId())
+		return
+	case genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA:
+	default:
+		slog.Warn("hostagent: dispatch frame with unsupported kind",
+			"kind", df.GetKind(), "spawn_id", df.GetSpawnId(), "stream_id", df.GetStreamId())
+		a.sendDispatchCancel(df)
 		return
 	}
 
@@ -38,7 +45,7 @@ func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame
 	case protocolExecutor:
 		a.dispatchExecutor(ctx, child, df)
 	case protocolClaimProducer:
-		go a.dispatchClaimProducer(ctx, child, df)
+		a.dispatchClaimProducer(ctx, child, df)
 	default:
 		slog.Warn("hostagent: dispatch for unknown protocol", "protocol", df.GetProtocol(), "spawn_id", df.GetSpawnId())
 		a.sendDispatchCancel(df)
@@ -56,6 +63,7 @@ func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv
 	a.registerDispatchCancel(df.GetStreamId(), cancel)
 
 	go func() {
+		defer cancel()
 		defer a.clearDispatchCancel(df.GetStreamId())
 		outcome, err := genv1.NewExecutorClient(child.conn).Execute(dispatchCtx, &req)
 		if err != nil {
@@ -74,13 +82,20 @@ func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv
 }
 
 func (a *agent) dispatchClaimProducer(ctx context.Context, child *liveChild, df *genv1.DispatchFrame) {
-	respBytes, err := forwardClaimProducerUnary(ctx, child, df.GetClaimProducerVerb(), df.GetPayload())
-	if err != nil {
-		slog.Warn("hostagent: claim-producer dispatch failed", "spawn_id", df.GetSpawnId(), "verb", df.GetClaimProducerVerb(), "error", err)
-		a.sendDispatchCancel(df)
-		return
-	}
-	a.sendDispatchData(df, respBytes)
+	dispatchCtx, cancel := context.WithCancel(ctx)
+	a.registerDispatchCancel(df.GetStreamId(), cancel)
+
+	go func() {
+		defer cancel()
+		defer a.clearDispatchCancel(df.GetStreamId())
+		respBytes, err := forwardClaimProducerUnary(dispatchCtx, child, df.GetClaimProducerVerb(), df.GetPayload())
+		if err != nil {
+			slog.Warn("hostagent: claim-producer dispatch failed", "spawn_id", df.GetSpawnId(), "verb", df.GetClaimProducerVerb(), "error", err)
+			a.sendDispatchCancel(df)
+			return
+		}
+		a.sendDispatchData(df, respBytes)
+	}()
 }
 
 type protoPtr[T any] interface {

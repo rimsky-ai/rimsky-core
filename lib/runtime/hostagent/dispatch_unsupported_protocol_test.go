@@ -70,3 +70,41 @@ func TestDispatchFrameRejectsUnsupportedProtocol(t *testing.T) {
 		t.Fatalf("kind = %v, want CANCEL (a dispatch for an unsupported late-bind protocol must be rejected, not silently routed to the spawned child)", resp.GetKind())
 	}
 }
+
+func TestDispatchFrameRejectsUnsupportedKind(t *testing.T) {
+	for _, kind := range []genv1.DispatchFrame_DispatchFrameKind{
+		genv1.DispatchFrame_DISPATCH_FRAME_KIND_UNSPECIFIED,
+		genv1.DispatchFrame_DISPATCH_FRAME_KIND_HALF_CLOSE,
+	} {
+		t.Run(kind.String(), func(t *testing.T) {
+			bin := buildStubChild(t)
+			fp := startFakeProxy(t)
+			connectAgentToFakeProxy(t, fp, Config{})
+
+			spawnID := uuid.NewString()
+			ack := spawnVia(t, fp, &genv1.Spawn{
+				SpawnId:             spawnID,
+				Binding:             &genv1.Binding{Path: bin},
+				ExpectedProtocols:   []string{protocolExecutor},
+				ReadyTimeoutSeconds: 15,
+			})
+			if ack.GetStatus() != genv1.SpawnAck_SPAWN_STATUS_READY {
+				t.Fatalf("spawn failed: %v", ack.GetError())
+			}
+			t.Cleanup(func() { reapVia(t, fp, spawnID, 5) })
+
+			streamID := uuid.NewString()
+			fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
+				SpawnId:  spawnID,
+				Protocol: protocolExecutor,
+				StreamId: streamID,
+				Kind:     kind,
+			}}})
+
+			resp := nextDispatch(t, fp, streamID)
+			if resp.GetKind() != genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
+				t.Fatalf("kind = %v, want CANCEL (a dispatch frame of kind %v must be rejected, not treated as DATA)", resp.GetKind(), kind)
+			}
+		})
+	}
+}

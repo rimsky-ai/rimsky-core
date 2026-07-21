@@ -154,6 +154,44 @@ func TestAwaitTerminal_AsyncFollowsCallbackToSuccess(t *testing.T) {
 	}
 }
 
+func TestAwaitTerminal_UnregistersAckIDAfterDelivery(t *testing.T) {
+	r, err := StartCallbackReceiver()
+	if err != nil {
+		t.Fatalf("StartCallbackReceiver: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	ackID := "ack-cleanup"
+	out := awaitAsyncOutcome(ackID)
+	env := Env{Callbacks: r}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		body, _ := json.Marshal(map[string]any{
+			"success": map[string]any{"changed": true},
+		})
+		resp, perr := http.Post(r.URL()+"/v1/callback/"+ackID, "application/json", bytes.NewReader(body))
+		if perr != nil {
+			t.Errorf("POST: %v", perr)
+			return
+		}
+		_ = resp.Body.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := AwaitTerminal(ctx, out, env); err != nil {
+		t.Fatalf("AwaitTerminal: %v", err)
+	}
+
+	r.mu.Lock()
+	_, stillWaiting := r.wait[ackID]
+	r.mu.Unlock()
+	if stillWaiting {
+		t.Fatal("expected wait map entry to be removed after AwaitTerminal delivered the outcome")
+	}
+}
+
 func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {

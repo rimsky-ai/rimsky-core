@@ -47,6 +47,8 @@ func SweepOrphanedClaimHandles(ctx context.Context, args OrphanReaperArgs) error
 
 func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persistence.ClaimHandleRow, log shared.Logger) error {
 	if lh.HolderSupervisorID == nil {
+		log.Warn("tick: skip claim-handle reap: nil holder_supervisor_id; row will be re-listed by ListExpired every sweep",
+			"claim_handle_id", lh.ID.String(), "kind", string(lh.LockKind))
 		return nil
 	}
 	if args.PreReapHook != nil {

@@ -5,6 +5,7 @@
 package conformance
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"net"
@@ -238,5 +239,73 @@ func TestRun_DialErrorSurfaced(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected Run to surface a dial error for an unknown transport")
+	}
+}
+
+func TestUnknownFilterNames_DetectsTypo(t *testing.T) {
+	all := []Scenario{{Name: "execute_happy_path"}, {Name: "attributes_serialization"}}
+	got := unknownFilterNames([]string{"execute_happy_pathh"}, nil, all)
+	if len(got) != 1 || got[0] != "execute_happy_pathh" {
+		t.Fatalf("unknownFilterNames = %v, want [execute_happy_pathh]", got)
+	}
+}
+
+func TestUnknownFilterNames_AllKnownReturnsEmpty(t *testing.T) {
+	all := []Scenario{{Name: "execute_happy_path"}, {Name: "attributes_serialization"}}
+	got := unknownFilterNames([]string{"execute_happy_path"}, []string{"attributes_serialization"}, all)
+	if len(got) != 0 {
+		t.Fatalf("unknownFilterNames = %v, want empty", got)
+	}
+}
+
+func TestUnknownFilterNames_ChecksBothOnlyAndSkip(t *testing.T) {
+	all := []Scenario{{Name: "execute_happy_path"}}
+	got := unknownFilterNames([]string{"typo_only"}, []string{"typo_skip"}, all)
+	if len(got) != 2 {
+		t.Fatalf("unknownFilterNames = %v, want 2 unknown names", got)
+	}
+}
+
+func TestSummary_SkippedWithoutErrorOmitsEmptyParens(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "summary")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	Summary([]Result{{Scenario: "filtered_out", Skipped: true}}, f)
+
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatalf("Seek: %v", err)
+	}
+	scanner := bufio.NewScanner(f)
+	if !scanner.Scan() {
+		t.Fatal("expected at least one line of output")
+	}
+	line := scanner.Text()
+	if want := "[SKIP] filtered_out"; line != want {
+		t.Errorf("line=%q want=%q", line, want)
+	}
+}
+
+func TestSummary_SkippedWithReasonKeepsParens(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "summary")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	Summary([]Result{{Scenario: "needs_stub", Skipped: true, Error: "stub mode required"}}, f)
+
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatalf("Seek: %v", err)
+	}
+	scanner := bufio.NewScanner(f)
+	if !scanner.Scan() {
+		t.Fatal("expected at least one line of output")
+	}
+	line := scanner.Text()
+	if want := "[SKIP] needs_stub (stub mode required)"; line != want {
+		t.Errorf("line=%q want=%q", line, want)
 	}
 }

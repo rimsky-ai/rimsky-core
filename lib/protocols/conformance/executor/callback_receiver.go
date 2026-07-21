@@ -88,6 +88,12 @@ func (r *CallbackReceiver) Register(ackID string) <-chan *genv1.Outcome {
 	return ch
 }
 
+func (r *CallbackReceiver) Unregister(ackID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.wait, ackID)
+}
+
 func (r *CallbackReceiver) SimulateRestart() <-chan string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

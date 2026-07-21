@@ -202,7 +202,7 @@ func attributeKeyDeclared(sender TemplateNodeDef, key string) bool {
 // @concept: instance
 func validateMessageQueueMode(spec *TemplateSpec, res *ValidationResult) {
 	switch spec.MessageQueueMode {
-	case "", "backlog", "coalesce":
+	case "", MessageQueueModeBacklog, MessageQueueModeCoalesce:
 	default:
 		res.Errors = append(res.Errors, ValidationError{
 			Path: "message_queue_mode",
@@ -211,7 +211,7 @@ func validateMessageQueueMode(spec *TemplateSpec, res *ValidationResult) {
 		})
 		return
 	}
-	if spec.MessageQueueMode != "coalesce" {
+	if spec.MessageQueueMode != MessageQueueModeCoalesce {
 		return
 	}
 	distinct := make(map[string]struct{}, len(spec.Messages))
@@ -819,6 +819,16 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHoo
 				"sends_message and delegate are mutually exclusive (delegate=%q, sends_message=%q)",
 				n.Delegate, n.SendsMessage),
 		})
+	}
+	if hasExecutor && !hasSendsMessage && hooks.KindAliases != nil {
+		if sendMessageAlias, ok := hooks.KindAliases.Resolve(spec.SendMessageKindName); ok && n.Executor == sendMessageAlias {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.executor", base),
+				Msg: fmt.Sprintf(
+					"executor=%q is the builtin send-message executor and may only be reached via sends_message (or kind: %s); declared directly with no sends_message, the dispatch callback binding required to send a cascade message is never wired up",
+					n.Executor, spec.SendMessageKindName),
+			})
+		}
 	}
 	if !hasExecutor && !hasDelegate && !hasSendsMessage && effectiveExecutor(n, hooks) == "" {
 		if n.Attributes != nil && len(n.Attributes.Schema) > 0 {

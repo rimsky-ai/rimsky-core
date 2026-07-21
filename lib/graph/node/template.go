@@ -37,6 +37,11 @@ const (
 	SelfTarget = spec.SelfTarget
 )
 
+const (
+	MessageQueueModeBacklog  = spec.MessageQueueModeBacklog
+	MessageQueueModeCoalesce = spec.MessageQueueModeCoalesce
+)
+
 func RequiredClaimProducers(node TemplateNodeDef) []string {
 	if len(node.ClaimProducers) == 0 {
 		return nil

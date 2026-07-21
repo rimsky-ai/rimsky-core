@@ -10,6 +10,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"sort"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -60,7 +61,12 @@ func heldClaimsSummaryForBreakpoint(acq *acquisition) []map[string]any {
 		}
 		out = append(out, entry)
 	}
+	heldAliases := make([]string, 0, len(acq.HeldClaims))
 	for alias := range acq.HeldClaims {
+		heldAliases = append(heldAliases, alias)
+	}
+	sort.Strings(heldAliases)
+	for _, alias := range heldAliases {
 		out = append(out, map[string]any{
 			"alias":  alias,
 			"source": "held",

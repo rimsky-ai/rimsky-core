@@ -35,7 +35,7 @@ func capabilityDialOptions(name, tlsMode string) []grpc.DialOption {
 }
 
 func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) {
-	target, err := stripScheme(name, endpoint)
+	target, err := StripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) 
 }
 
 func DialLifecycle(_ context.Context, name, endpoint, tlsMode string) (*LifecycleClient, error) {
-	target, err := stripScheme(name, endpoint)
+	target, err := StripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func DialLifecycle(_ context.Context, name, endpoint, tlsMode string) (*Lifecycl
 	}, nil
 }
 
-func stripScheme(name, endpoint string) (string, error) {
+func StripScheme(name, endpoint string) (string, error) {
 	if endpoint == "" {
 		return "", fmt.Errorf("remote peer %q: endpoint is required", name)
 	}

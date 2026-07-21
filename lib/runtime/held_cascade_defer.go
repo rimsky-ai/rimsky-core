@@ -201,7 +201,7 @@ func emitDeferredHeldCascade(
 	visited := map[foundationshared.UUID]struct{}{}
 	for _, h := range holders {
 		visited[h.HolderNodeRunID] = struct{}{}
-		pc, err := transitionHolderIfFullyResolved(ctx, args, tx, h.HolderNodeRunID, td)
+		pc, err := transitionHolderIfFullyResolved(ctx, args, tx, h.HolderNodeRunID)
 		if err != nil {
 			return nil, fmt.Errorf("emitDeferredHeldCascade: holder %s: %w", h.HolderNodeRunID, err)
 		}
@@ -209,7 +209,7 @@ func emitDeferredHeldCascade(
 	}
 	if td.LineageHint.NodeRunID != (foundationshared.UUID{}) {
 		if _, seen := visited[td.LineageHint.NodeRunID]; !seen {
-			pc, err := transitionHolderIfFullyResolved(ctx, args, tx, td.LineageHint.NodeRunID, td)
+			pc, err := transitionHolderIfFullyResolved(ctx, args, tx, td.LineageHint.NodeRunID)
 			if err != nil {
 				return nil, fmt.Errorf("emitDeferredHeldCascade: acquirer %s: %w", td.LineageHint.NodeRunID, err)
 			}
@@ -224,23 +224,7 @@ func emitDeferredHeldCascade(
 func transitionThisHolderIfFullyResolved(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition,
 ) (postCommitFn, error) {
-	status, err := evaluateHolderPortfolio(ctx, args, tx, acq.NodeRunID)
-	if err != nil {
-		return nil, err
-	}
-	if !status.FullyResolved {
-		return nil, nil
-	}
-	outcome := OutcomeCommit
-	if status.Poisoned {
-		outcome = OutcomeAbandon
-	}
-	td := TerminalDecision{
-		ClaimHandleID: foundationshared.UUID{},
-		Outcome:       outcome,
-		LineageHint:   ClaimLineageHint{NodeRunID: acq.NodeRunID},
-	}
-	return transitionHolderIfFullyResolved(ctx, args, tx, acq.NodeRunID, td)
+	return transitionHolderIfFullyResolved(ctx, args, tx, acq.NodeRunID)
 }
 
 // @decision: held-as-state-not-phase
@@ -279,7 +263,7 @@ func holderIsAggregatingParent(
 // @decision: held-as-state-not-phase
 func transitionHolderIfFullyResolved(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	holderNodeRunID foundationshared.UUID, td TerminalDecision,
+	holderNodeRunID foundationshared.UUID,
 ) (postCommitFn, error) {
 	if holderNodeRunID == (foundationshared.UUID{}) {
 		return nil, nil
@@ -311,7 +295,11 @@ func transitionHolderIfFullyResolved(
 		sigType  string
 		sig      signalpkg.Signal
 	)
-	changeSummary := "auto-terminal/" + outcomeVerbName(td.Outcome)
+	holderOutcome := OutcomeCommit
+	if status.Poisoned {
+		holderOutcome = OutcomeAbandon
+	}
+	changeSummary := "auto-terminal/" + outcomeVerbName(holderOutcome)
 	if status.Poisoned {
 		newState = cascade.NodeStateFailed
 		reason = cascade.ReasonAutoTerminalAbandon

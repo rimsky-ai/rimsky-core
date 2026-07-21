@@ -81,7 +81,7 @@ func testDeletePriorCascadeStalesEnrollsScratchBlobOrphan(t *testing.T, d persis
 		t.Fatalf("DeletePriorCascadeStales deleted %d rows, want 1", deleted)
 	}
 
-	after, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 1000)
+	after, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), mem.Name(), 1000)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore: %v", err)
 	}
@@ -132,7 +132,7 @@ func testDropPendingRunEnrollsScratchBlobOrphan(t *testing.T, d persistence.Data
 		t.Fatalf("DropPendingRun: %v", err)
 	}
 
-	after, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 1000)
+	after, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), mem.Name(), 1000)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore: %v", err)
 	}

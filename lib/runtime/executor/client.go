@@ -29,11 +29,19 @@ type grpcClient struct {
 	api  genv1.ExecutorClient
 }
 
+const maxRecvMsgSizeBytes = 64 * 1024 * 1024
+
 func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("executor.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
-	conn, err := grpc.NewClient(endpoint.URL, peer.UnaryDialOptions(endpoint.URL, endpoint.TLS)...)
+	target, err := peer.StripScheme(endpoint.URL, endpoint.URL)
+	if err != nil {
+		return nil, fmt.Errorf("executor.NewGRPCClient: %w", err)
+	}
+	dialOpts := append(peer.UnaryDialOptions(endpoint.URL, endpoint.TLS),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSizeBytes)))
+	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("executor.NewGRPCClient: dial %s: %w", endpoint.URL, err)
 	}

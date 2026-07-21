@@ -92,7 +92,10 @@ func startAgent(t *testing.T, proxyAddr, apiKeyPlaintext string) (context.Cancel
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	cfg := hostagent.LoadConfigFromEnv()
+	cfg, err := hostagent.LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv: %v", err)
+	}
 	cfg.RimskyURL = proxyAddr
 	cfg.APIKey = apiKeyPlaintext
 	cfg.AgentLabel = "scenario-agent"
