@@ -163,7 +163,7 @@ partition_policies:
   by_region:
     items_table: items
     select: "*"
-    where: "region = $1 AND category = $2"
+    where: "region = ANY_REGION AND category = ANY_CATEGORY"
     limit: 10
     params_schema:
       properties:

@@ -98,27 +98,6 @@ func (h *fakeHandle) waitStderrRegistered() {
 	}
 }
 
-func (h *fakeHandle) emitStdout(chunk string) {
-	h.mu.Lock()
-	cbs := append([]func(string){}, h.stdoutCbs...)
-	h.mu.Unlock()
-	for _, cb := range cbs {
-		cb(chunk)
-	}
-}
-
-func (h *fakeHandle) waitStdoutRegistered() {
-	for {
-		h.mu.Lock()
-		n := len(h.stdoutCbs)
-		h.mu.Unlock()
-		if n > 0 {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
 func (h *fakeHandle) exit(result ExitResult) {
 	h.mu.Lock()
 	if h.exited {

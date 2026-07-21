@@ -78,6 +78,26 @@ lib/services/stubexecutor
 /cmd/rimsky/cli/compose/testdata/stub-executor/stub-executor
 /stubchild
 
+# Same stray-binary hazard when running `go build ./...` (or `go vet ./...`
+# with a build step) across the whole lib/services module: each main package
+# gets its binary written into its own source directory, named for that
+# directory, rather than at the lib/services module root.
+lib/services/claim_producers/filesystem/cmd/cmd
+lib/services/claim_producers/postgres/cmd/cmd
+lib/services/executors/claude-agent/cmd/cmd
+lib/services/executors/http-node/cmd/cmd
+lib/services/executors/verifier-http/cmd/cmd
+lib/services/executors/verifier-shape-checks/cmd/cmd
+lib/services/sensors/sensor-cron/sensor-cron
+lib/services/sensors/sensor-http/sensor-http
+lib/services/sensors/sensor-object-store/sensor-object-store
+lib/services/sensors/sensor-webhook/sensor-webhook
+lib/services/subscribers/openlineage/openlineage
+lib/services/test/overlapproducer/overlapproducer
+lib/services/test/scenarios/claude_agent_fake_cli/fakeclaude/fakeclaude
+lib/services/test/scenarios/claude_agent_fake_cli/fakeclaudeserver/fakeclaudeserver
+lib/services/test/stubexecutor/stubexecutor
+
 # Local env / coverage
 .env
 *.env.local

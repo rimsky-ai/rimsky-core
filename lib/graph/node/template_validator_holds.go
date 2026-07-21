@@ -60,7 +60,7 @@ func validateHolds(n TemplateNodeDef, base string, spec *TemplateSpec, declared 
 func validateHoldsLocalAliasCollisions(n TemplateNodeDef, base string, res *ValidationResult) {
 	byLocalAlias := make(map[string][]string, len(n.Holds))
 	for alias, binding := range n.Holds {
-		localAlias := effectiveHoldsLocalAlias(alias, binding)
+		localAlias := EffectiveHoldsLocalAlias(alias, binding)
 		byLocalAlias[localAlias] = append(byLocalAlias[localAlias], alias)
 	}
 	localAliases := make([]string, 0, len(byLocalAlias))
