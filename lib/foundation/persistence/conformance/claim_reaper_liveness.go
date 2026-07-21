@@ -145,7 +145,7 @@ func testSweepExecutorDeadlinesSkipsParkedRow(t *testing.T, d persistence.Databa
 
 	maxQuiet := 30
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RegisterAsyncAck(ctx, tx, runID, "orphan-liveness-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "")
+		return q.RegisterAsyncAck(ctx, runID, "orphan-liveness-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "", tx)
 	}); err != nil {
 		t.Fatalf("RegisterAsyncAck: %v", err)
 	}

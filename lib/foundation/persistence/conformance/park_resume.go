@@ -25,7 +25,7 @@ func seedClaimedRunForNode(
 	q := d.Queue()
 	var nodeRunID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 nodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -35,11 +35,11 @@ func seedClaimedRunForNode(
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  32,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -47,14 +47,14 @@ func seedClaimedRunForNode(
 			if c.NodeID != nodeID {
 				continue
 			}
-			ok, err := q.ClaimDispatchRow(ctx, tx, c.NodeRunID, supID)
+			ok, err := q.ClaimDispatchRow(ctx, c.NodeRunID, supID, tx)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				t.Fatalf("seedClaimedRunForNode: claim was not successful")
 			}
-			if _, err := q.PromoteClaimedToRunning(ctx, tx, c.NodeRunID, supID); err != nil {
+			if _, err := q.PromoteClaimedToRunning(ctx, c.NodeRunID, supID, tx); err != nil {
 				return err
 			}
 			nodeRunID = c.NodeRunID
@@ -87,34 +87,34 @@ func seedExtraNode(ctx context.Context, t *testing.T, d persistence.Database, fi
 func parkRun(ctx context.Context, t *testing.T, d persistence.Database, in persistence.ParkActiveInput) {
 	t.Helper()
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := d.Queue().ParkActiveInTx(ctx, tx, in); err != nil {
+		if err := d.Queue().ParkActive(ctx, in, tx); err != nil {
 			return err
 		}
-		row, err := d.Tables().Nodes().GetRunForGate(ctx, tx, in.NodeRunID)
+		row, err := d.Tables().Nodes().GetRunForGate(ctx, in.NodeRunID, tx)
 		if err != nil {
 			return err
 		}
 		if row == nil {
-			return fmt.Errorf("parkRun: node run row %s vanished between ParkActiveInTx and GetRunForGate", in.NodeRunID)
+			return fmt.Errorf("parkRun: node run row %s vanished between ParkActive and GetRunForGate", in.NodeRunID)
 		}
 		return d.Tables().Nodes().UpdateState(ctx, in.NodeRunID,
 			cascade.NodeStateParked, cascade.ReasonHandlerPark, nil, tx)
 	}); err != nil {
-		t.Fatalf("ParkActiveInTx(%s): %v", in.NodeRunID, err)
+		t.Fatalf("ParkActive(%s): %v", in.NodeRunID, err)
 	}
 }
 
-func resumeRunInTx(ctx context.Context, d persistence.Database, tx persistence.Tx, nodeRunID shared.UUID) (bool, error) {
-	resumed, err := d.Queue().ResumeParkedInTx(ctx, tx, nodeRunID)
+func resumeRunInTx(ctx context.Context, d persistence.Database, nodeRunID shared.UUID, tx persistence.Tx) (bool, error) {
+	resumed, err := d.Queue().ResumeParked(ctx, nodeRunID, tx)
 	if err != nil || !resumed {
 		return resumed, err
 	}
-	row, err := d.Tables().Nodes().GetRunForGate(ctx, tx, nodeRunID)
+	row, err := d.Tables().Nodes().GetRunForGate(ctx, nodeRunID, tx)
 	if err != nil {
 		return false, err
 	}
 	if row == nil {
-		return false, fmt.Errorf("resumeRunInTx: node run row %s vanished between ResumeParkedInTx and GetRunForGate", nodeRunID)
+		return false, fmt.Errorf("resumeRunInTx: node run row %s vanished between ResumeParked and GetRunForGate", nodeRunID)
 	}
 	if err := d.Tables().Nodes().UpdateState(ctx, nodeRunID,
 		cascade.NodeStateStale, cascade.ReasonDeadlineResume, nil, tx); err != nil {
@@ -282,10 +282,10 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 
 	for _, runID := range []shared.UUID{runA, runB} {
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			_, err := resumeRunInTx(ctx, d, tx, runID)
+			_, err := resumeRunInTx(ctx, d, runID, tx)
 			return err
 		}); err != nil {
-			t.Fatalf("ResumeParkedInTx(%s): %v", runID, err)
+			t.Fatalf("ResumeParked(%s): %v", runID, err)
 		}
 	}
 	if got := countHeld(); got != 0 {
@@ -312,7 +312,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		ResumeAt:          now.Add(-1 * time.Minute),
 	})
 
-	parked, err := q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
+	parked, err := q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID, nil)
 	if err != nil {
 		t.Fatalf("GetParkedByNode: %v", err)
 	}
@@ -327,21 +327,21 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		var resumed bool
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
-			resumed, err = resumeRunInTx(ctx, d, tx, runID)
+			resumed, err = resumeRunInTx(ctx, d, runID, tx)
 			return err
 		}); err != nil {
-			t.Fatalf("ResumeParkedInTx: %v", err)
+			t.Fatalf("ResumeParked: %v", err)
 		}
 		return resumed
 	}
 	if !resume() {
-		t.Fatalf("first ResumeParkedInTx did not resume the parked row")
+		t.Fatalf("first ResumeParked did not resume the parked row")
 	}
 	if resume() {
-		t.Fatalf("second ResumeParkedInTx resumed an already-stale row")
+		t.Fatalf("second ResumeParked resumed an already-stale row")
 	}
 
-	parked, err = q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
+	parked, err = q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID, nil)
 	if err != nil {
 		t.Fatalf("GetParkedByNode after resume: %v", err)
 	}
@@ -365,11 +365,11 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 			"(park-resume does not open a new frame)", preParkRow.FrameID, postResumeRow.FrameID)
 	}
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  32,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -408,16 +408,16 @@ func testParkResumeClearsParkedAt(
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resumed, err := resumeRunInTx(ctx, d, tx, runID)
+		resumed, err := resumeRunInTx(ctx, d, runID, tx)
 		if err != nil {
 			return err
 		}
 		if !resumed {
-			t.Fatalf("ResumeParkedInTx did not resume the parked row")
+			t.Fatalf("ResumeParked did not resume the parked row")
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("ResumeParkedInTx: %v", err)
+		t.Fatalf("ResumeParked: %v", err)
 	}
 
 	parkedAtAfterResume := rawQuery(t, d,
@@ -443,13 +443,13 @@ func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 	wantMaxQuietSec := 45
 	wantMaxRuntimeSec := 1800
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RegisterAsyncAck(ctx, tx, runID, ackID, now, &wantMaxQuietSec, &wantMaxRuntimeSec, expectedPrincipal)
+		return q.RegisterAsyncAck(ctx, runID, ackID, now, &wantMaxQuietSec, &wantMaxRuntimeSec, expectedPrincipal, tx)
 	}); err != nil {
 		t.Fatalf("RegisterAsyncAck: %v", err)
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		got, err := q.LookupRunByAsyncAckID(ctx, tx, ackID)
+		got, err := q.LookupRunByAsyncAckID(ctx, ackID, tx)
 		if err != nil {
 			return err
 		}
@@ -484,7 +484,7 @@ func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		got, err := q.LookupRunByAsyncAckID(ctx, tx, "no-such-ack-id")
+		got, err := q.LookupRunByAsyncAckID(ctx, "no-such-ack-id", tx)
 		if err != nil {
 			return err
 		}
@@ -508,7 +508,7 @@ func testBumpLastProgressAt(t *testing.T, d persistence.Database) {
 	var found bool
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var berr error
-		found, berr = q.BumpLastProgressAt(ctx, tx, runID, t1)
+		found, berr = q.BumpLastProgressAt(ctx, runID, t1, tx)
 		return berr
 	}); err != nil {
 		t.Fatalf("BumpLastProgressAt(t1): %v", err)
@@ -528,7 +528,7 @@ func testBumpLastProgressAt(t *testing.T, d persistence.Database) {
 	t2 := t1.Add(5 * time.Second)
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var berr error
-		found, berr = q.BumpLastProgressAt(ctx, tx, runID, t2)
+		found, berr = q.BumpLastProgressAt(ctx, runID, t2, tx)
 		return berr
 	}); err != nil {
 		t.Fatalf("BumpLastProgressAt(t2): %v", err)
@@ -546,7 +546,7 @@ func testBumpLastProgressAt(t *testing.T, d persistence.Database) {
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var berr error
-		found, berr = q.BumpLastProgressAt(ctx, tx, shared.UUID(uuid.New()), t2)
+		found, berr = q.BumpLastProgressAt(ctx, shared.UUID(uuid.New()), t2, tx)
 		return berr
 	}); err != nil {
 		t.Fatalf("BumpLastProgressAt(bogus): %v", err)

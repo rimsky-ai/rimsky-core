@@ -22,9 +22,9 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	if accepts == nil {
 		accepts = []string{}
 	}
-	stores := in.AcceptedClaimProducers
-	if stores == nil {
-		stores = []string{}
+	claimProducers := in.AcceptedClaimProducers
+	if claimProducers == nil {
+		claimProducers = []string{}
 	}
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx,
@@ -37,7 +37,7 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 		       concurrency              = excluded.concurrency,
 		       callback_host            = excluded.callback_host,
 		       callback_port            = excluded.callback_port`,
-		in.ID, marshalStringArray(accepts), marshalStringArray(stores), in.Concurrency,
+		in.ID, marshalStringArray(accepts), marshalStringArray(claimProducers), in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort), now,
 	)
 	return err
@@ -92,12 +92,12 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 	if err != nil {
 		return persistence.SupervisorRow{}, err
 	}
-	stores, err := unmarshalStringArray(acceptedClaimProducersStr)
+	claimProducers, err := unmarshalStringArray(acceptedClaimProducersStr)
 	if err != nil {
 		return persistence.SupervisorRow{}, err
 	}
 	r.AcceptedExecutors = executors
-	r.AcceptedClaimProducers = stores
+	r.AcceptedClaimProducers = claimProducers
 	r.CallbackHost = callbackHost.String
 	if callbackPort.Valid {
 		r.CallbackPort = int(callbackPort.Int64)

@@ -103,7 +103,7 @@ func TestSubgraphEntryAlias_ResolvesToCallingNodeAtRuntime(t *testing.T) {
 
 	var seen any
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, midNode.ID)
+		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, midNode.ID, tx)
 		if err != nil || latest == nil {
 			return err
 		}

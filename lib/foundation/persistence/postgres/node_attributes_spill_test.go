@@ -43,9 +43,9 @@ func seedNodeAndRunPG(
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainRunScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -219,7 +219,7 @@ func TestPGSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
 
 	newRunID := seedSecondRunPG(t, ctx, d, nodeID, scopeID, priorRunID, 2)
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return attrs.SnapshotBagForNewRun(ctx, tx, shared.UUID(newRunID), shared.UUID(nodeID), shared.UUID(scopeID))
+		return attrs.SnapshotBagForNewRun(ctx, shared.UUID(newRunID), shared.UUID(nodeID), shared.UUID(scopeID), tx)
 	}); err != nil {
 		t.Fatalf("SnapshotBagForNewRun: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestPGSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
 
 	var snap map[string]any
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		bag, err := attrs.GetDispatchInputBag(ctx, tx, shared.UUID(newRunID))
+		bag, err := attrs.GetDispatchInputBag(ctx, shared.UUID(newRunID), tx)
 		snap = bag
 		return err
 	}); err != nil {

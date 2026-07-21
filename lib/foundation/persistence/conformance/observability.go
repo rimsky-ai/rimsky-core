@@ -47,7 +47,7 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, store, id, tx)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:           id,
 			TemplateHash: tmpl,

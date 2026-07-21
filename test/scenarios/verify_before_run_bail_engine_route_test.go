@@ -185,7 +185,7 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, worker.ID, tx)
 		latest = r
 		return gerr
 	}))

@@ -511,22 +511,22 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := foundationshared.UUID(uuid.New())
-		if err := f.db.Tables().Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := f.db.Tables().Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		_ = nodeID
 		rootScope := foundationshared.UUID(uuid.New())
-		if err := f.db.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := f.db.Tables().RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         rootScope,
 			GraphName:  "main",
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := f.db.Tables().Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, tx)
@@ -538,16 +538,16 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 			return err
 		}
 		runID := foundationshared.UUID(uuid.New())
-		if err := f.db.Tables().NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := f.db.Tables().NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID:    runID,
 			NodeID:       nodeID,
 			FrameID:      foundationshared.UUID(frameID),
 			RunScopeID:   frameRow.RootRunScopeID,
 			ExecutorName: "",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return f.db.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFailed, nil, false)
+		return f.db.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateFailed, nil, false, tx)
 	}); err != nil {
 		t.Fatalf("seed failed node: %v", err)
 	}
@@ -598,11 +598,11 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 		}, tx); err != nil {
 			return err
 		}
-		if err := f.db.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := f.db.Tables().RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		ck := "dryrun-asset-key"

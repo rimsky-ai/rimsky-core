@@ -27,7 +27,7 @@ func newFakeMessages() *fakeMessagesTable {
 	return &fakeMessagesTable{rows: make(map[shared.UUID]*persistence.MessageRow)}
 }
 
-func (f *fakeMessagesTable) Insert(_ context.Context, _ persistence.Tx, req persistence.EnqueueMessageRequest) error {
+func (f *fakeMessagesTable) Insert(_ context.Context, req persistence.EnqueueMessageRequest, _ persistence.Tx) error {
 	f.rows[req.ID] = &persistence.MessageRow{
 		ID:         req.ID,
 		InstanceID: req.InstanceID,
@@ -40,7 +40,7 @@ func (f *fakeMessagesTable) Insert(_ context.Context, _ persistence.Tx, req pers
 	return nil
 }
 
-func (f *fakeMessagesTable) MarkDelivered(_ context.Context, _ persistence.Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error) {
+func (f *fakeMessagesTable) MarkDelivered(_ context.Context, id shared.UUID, frame shared.UUID, deliveredAt time.Time, _ persistence.Tx) (bool, error) {
 	row, ok := f.rows[id]
 	if !ok || row.DeliveredAt != nil || row.Cancelled {
 		return false, nil
@@ -51,7 +51,7 @@ func (f *fakeMessagesTable) MarkDelivered(_ context.Context, _ persistence.Tx, i
 	return true, nil
 }
 
-func (f *fakeMessagesTable) ListPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
+func (f *fakeMessagesTable) ListPendingForInstance(_ context.Context, instanceID shared.UUID, _ persistence.Tx) ([]persistence.MessageRow, error) {
 	var out []persistence.MessageRow
 	for _, r := range f.rows {
 		if r.InstanceID != instanceID || r.DeliveredAt != nil || r.Cancelled {
@@ -63,7 +63,7 @@ func (f *fakeMessagesTable) ListPendingForInstance(_ context.Context, _ persiste
 	return out, nil
 }
 
-func (f *fakeMessagesTable) ListDeliveredForFrame(_ context.Context, _ persistence.Tx, frame shared.UUID) ([]persistence.MessageRow, error) {
+func (f *fakeMessagesTable) ListDeliveredForFrame(_ context.Context, frame shared.UUID, _ persistence.Tx) ([]persistence.MessageRow, error) {
 	var out []persistence.MessageRow
 	for _, r := range f.rows {
 		if r.FrameID == nil || *r.FrameID != frame {
@@ -75,7 +75,7 @@ func (f *fakeMessagesTable) ListDeliveredForFrame(_ context.Context, _ persisten
 	return out, nil
 }
 
-func (f *fakeMessagesTable) Get(_ context.Context, id shared.UUID) (*persistence.MessageRow, error) {
+func (f *fakeMessagesTable) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.MessageRow, error) {
 	r, ok := f.rows[id]
 	if !ok {
 		return nil, nil
@@ -84,11 +84,7 @@ func (f *fakeMessagesTable) Get(_ context.Context, id shared.UUID) (*persistence
 	return &cp, nil
 }
 
-func (f *fakeMessagesTable) GetInTx(ctx context.Context, _ persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
-	return f.Get(ctx, id)
-}
-
-func (f *fakeMessagesTable) CancelPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) (int, error) {
+func (f *fakeMessagesTable) CancelPendingForInstance(_ context.Context, instanceID shared.UUID, _ persistence.Tx) (int, error) {
 	n := 0
 	for _, r := range f.rows {
 		if r.InstanceID == instanceID && r.DeliveredAt == nil && !r.Cancelled {
@@ -258,18 +254,18 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 		ID: shared.UUID(uuid.New()), InstanceID: shared.UUID(uuid.New()),
 		Type: "invalidate", Sender: "op-A", SenderKind: "operator",
 	}
-	if err := EnqueueMessage(ctx, nil, deps, good); err != nil {
+	if err := EnqueueMessage(ctx, deps, good, nil); err != nil {
 		t.Fatalf("EnqueueMessage(good): %v", err)
 	}
 
-	if err := EnqueueMessage(ctx, nil, deps, persistence.EnqueueMessageRequest{}); err == nil {
+	if err := EnqueueMessage(ctx, deps, persistence.EnqueueMessageRequest{}, nil); err == nil {
 		t.Fatal("EnqueueMessage(empty): expected error")
 	}
 
 	bad := good
 	bad.ID = shared.UUID(uuid.New())
 	bad.SenderKind = "bogus"
-	if err := EnqueueMessage(ctx, nil, deps, bad); err == nil {
+	if err := EnqueueMessage(ctx, deps, bad, nil); err == nil {
 		t.Fatal("EnqueueMessage(bogus sender_kind): expected error")
 	}
 }
@@ -297,7 +293,7 @@ func TestEnqueueMessage_RejectsNonObjectPayload(t *testing.T) {
 			req := base
 			req.ID = shared.UUID(uuid.New())
 			req.Payload = tc.payload
-			err := EnqueueMessage(ctx, nil, deps, req)
+			err := EnqueueMessage(ctx, deps, req, nil)
 			if err == nil {
 				t.Fatalf("EnqueueMessage(%s payload): expected error, got nil", tc.name)
 			}
@@ -314,20 +310,20 @@ func TestEnqueueMessage_RejectsNonObjectPayload(t *testing.T) {
 	objReq := base
 	objReq.ID = shared.UUID(uuid.New())
 	objReq.Payload = []byte(`{"k":"v"}`)
-	if err := EnqueueMessage(ctx, nil, deps, objReq); err != nil {
+	if err := EnqueueMessage(ctx, deps, objReq, nil); err != nil {
 		t.Fatalf("EnqueueMessage(object payload): %v", err)
 	}
 
 	emptyReq := base
 	emptyReq.ID = shared.UUID(uuid.New())
-	if err := EnqueueMessage(ctx, nil, deps, emptyReq); err != nil {
+	if err := EnqueueMessage(ctx, deps, emptyReq, nil); err != nil {
 		t.Fatalf("EnqueueMessage(empty payload): %v", err)
 	}
 
 	nullReq := base
 	nullReq.ID = shared.UUID(uuid.New())
 	nullReq.Payload = []byte(`null`)
-	if err := EnqueueMessage(ctx, nil, deps, nullReq); err != nil {
+	if err := EnqueueMessage(ctx, deps, nullReq, nil); err != nil {
 		t.Fatalf("EnqueueMessage(null payload): %v", err)
 	}
 }
@@ -361,7 +357,7 @@ func TestEnqueueMessage_RejectsBodySchemaViolation(t *testing.T) {
 		Type: "ping/recheck", Sender: "op-A", SenderKind: "operator",
 		Payload: []byte(`{}`),
 	}
-	err := EnqueueMessage(ctx, nil, deps, violating)
+	err := EnqueueMessage(ctx, deps, violating, nil)
 	if err == nil {
 		t.Fatal("EnqueueMessage(body violating body_schema): expected error, got nil")
 	}
@@ -379,7 +375,7 @@ func TestEnqueueMessage_RejectsBodySchemaViolation(t *testing.T) {
 	compliant := violating
 	compliant.ID = shared.UUID(uuid.New())
 	compliant.Payload = []byte(`{"pong_status":"ok"}`)
-	if err := EnqueueMessage(ctx, nil, deps, compliant); err != nil {
+	if err := EnqueueMessage(ctx, deps, compliant, nil); err != nil {
 		t.Fatalf("EnqueueMessage(body matching body_schema): %v", err)
 	}
 	if _, ok := m.rows[compliant.ID]; !ok {
@@ -396,17 +392,17 @@ func TestDeliverTriggeringMessage_OnlyDeliversFrameTrigger(t *testing.T) {
 
 	triggerID := shared.UUID(uuid.New())
 	siblingID := shared.UUID(uuid.New())
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+	_ = m.Insert(ctx, persistence.EnqueueMessageRequest{
 		ID: triggerID, InstanceID: inst, Type: "invalidate",
 		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
-	})
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+	}, nil)
+	_ = m.Insert(ctx, persistence.EnqueueMessageRequest{
 		ID: siblingID, InstanceID: inst, Type: "invalidate",
 		Sender: "op-A", SenderKind: "operator",
 		ReceivedAt: now.Add(time.Second),
-	})
+	}, nil)
 
-	res, err := DeliverTriggeringMessage(ctx, nil, m, inst, frame1, triggerID, now)
+	res, err := DeliverTriggeringMessage(ctx, m, inst, frame1, triggerID, now, nil)
 	if err != nil {
 		t.Fatalf("DeliverTriggeringMessage: %v", err)
 	}
@@ -414,13 +410,13 @@ func TestDeliverTriggeringMessage_OnlyDeliversFrameTrigger(t *testing.T) {
 		t.Fatalf("DeliverTriggeringMessage: got %+v, want exactly the trigger %s", res.Messages, triggerID)
 	}
 
-	remaining, _ := m.ListPendingForInstance(ctx, nil, inst)
+	remaining, _ := m.ListPendingForInstance(ctx, inst, nil)
 	if len(remaining) != 1 || remaining[0].ID != siblingID {
 		t.Fatalf("after delivering trigger, pending=%v, want one row with sibling %s — a message must only flow into its own frame, never into a sibling frame's delivery",
 			remaining, siblingID)
 	}
 
-	res, err = DeliverTriggeringMessage(ctx, nil, m, inst, frame1, triggerID, now)
+	res, err = DeliverTriggeringMessage(ctx, m, inst, frame1, triggerID, now, nil)
 	if err != nil {
 		t.Fatalf("DeliverTriggeringMessage (repeat): %v", err)
 	}
@@ -436,15 +432,15 @@ func TestFakeMessagesTable_CancelledRowsExcludedFromPendingAndDelivery(t *testin
 	now := time.Now().UTC()
 
 	cancelledID := shared.UUID(uuid.New())
-	if err := m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+	if err := m.Insert(ctx, persistence.EnqueueMessageRequest{
 		ID: cancelledID, InstanceID: inst, Type: "invalidate",
 		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
 	m.rows[cancelledID].Cancelled = true
 
-	pending, err := m.ListPendingForInstance(ctx, nil, inst)
+	pending, err := m.ListPendingForInstance(ctx, inst, nil)
 	if err != nil {
 		t.Fatalf("ListPendingForInstance: %v", err)
 	}
@@ -452,7 +448,7 @@ func TestFakeMessagesTable_CancelledRowsExcludedFromPendingAndDelivery(t *testin
 		t.Fatalf("ListPendingForInstance must exclude cancelled rows, matching the real drivers; got %+v", pending)
 	}
 
-	delivered, err := m.MarkDelivered(ctx, nil, cancelledID, shared.UUID(uuid.New()), now)
+	delivered, err := m.MarkDelivered(ctx, cancelledID, shared.UUID(uuid.New()), now, nil)
 	if err != nil {
 		t.Fatalf("MarkDelivered: %v", err)
 	}
@@ -469,12 +465,12 @@ func TestDeliverTriggeringMessage_DeliveredMatchesTrigger(t *testing.T) {
 	now := time.Now().UTC()
 
 	msgID := shared.UUID(uuid.New())
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+	_ = m.Insert(ctx, persistence.EnqueueMessageRequest{
 		ID: msgID, InstanceID: inst, Type: "ping/recheck",
 		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
-	})
+	}, nil)
 
-	res, err := DeliverTriggeringMessage(ctx, nil, m, inst, frame, msgID, now)
+	res, err := DeliverTriggeringMessage(ctx, m, inst, frame, msgID, now, nil)
 	if err != nil {
 		t.Fatalf("DeliverTriggeringMessage: %v", err)
 	}
@@ -482,7 +478,7 @@ func TestDeliverTriggeringMessage_DeliveredMatchesTrigger(t *testing.T) {
 		t.Fatalf("DeliverTriggeringMessage: got %+v, want one row with id=%s", res.Messages, msgID)
 	}
 
-	delivered, err := m.ListDeliveredForFrame(ctx, nil, frame)
+	delivered, err := m.ListDeliveredForFrame(ctx, frame, nil)
 	if err != nil {
 		t.Fatalf("ListDeliveredForFrame: %v", err)
 	}

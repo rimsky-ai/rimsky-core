@@ -24,14 +24,14 @@ func seedIdempotencyRow(ctx context.Context, t *testing.T, d persistence.Databas
 	t.Helper()
 	msgID := shared.UUID(uuid.New())
 	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, _, err := d.Tables().MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
+		_, _, err := d.Tables().MessageIdempotencies().InsertOrLookup(ctx, persistence.MessageIdempotencyRow{
 			InstanceID:     instanceID,
 			SenderKind:     "operator",
 			Sender:         "operator",
 			IdempotencyKey: msgID.String(),
 			MessageID:      msgID,
 			CreatedAt:      createdAt,
-		})
+		}, tx)
 		return err
 	}))
 	if !createdAt.IsZero() {
@@ -54,7 +54,7 @@ func seedInstanceForIdempotencyTest(ctx context.Context, t *testing.T, d persist
 	})
 	var inst persistence.InstanceRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, nil)
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, nil, tx)
 		inst = i
 		return nil
 	}))

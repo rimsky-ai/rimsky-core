@@ -27,7 +27,7 @@ func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state casc
 	for {
 		var latest *persistence.NodeRunLatest
 		_ = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
+			r, err := h.Persist.Nodes().GetLatestRunForNode(ctx, nodeID, tx)
 			latest = r
 			return err
 		})

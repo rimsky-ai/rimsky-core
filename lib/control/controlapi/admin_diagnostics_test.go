@@ -157,10 +157,10 @@ func (noopNodes) GetFailedTerminalRunScopeID(context.Context, shared.UUID, persi
 func (noopNodes) HasRunForNodeInFrame(context.Context, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (noopNodes) HasAdvancedSiblingInScope(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) (bool, error) {
+func (noopNodes) HasAdvancedSiblingInScope(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (noopNodes) ListPendingSiblingRunsInScope(context.Context, persistence.Tx, shared.UUID) ([]shared.UUID, error) {
+func (noopNodes) ListPendingSiblingRunsInScope(context.Context, shared.UUID, persistence.Tx) ([]shared.UUID, error) {
 	return nil, nil
 }
 func (noopNodes) GetRunByDispatchIDForUpdate(context.Context, shared.UUID, persistence.Tx) (*persistence.NodeRunForCallback, error) {
@@ -175,55 +175,55 @@ func (noopNodes) GetRunSummary(context.Context, shared.UUID, persistence.Tx) (pe
 func (noopNodes) GetRunSummaryForNodes(context.Context, []shared.UUID, persistence.Tx) (map[shared.UUID]persistence.NodeRunSummary, error) {
 	return nil, nil
 }
-func (noopNodes) FindLatestCascadePending(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) (*persistence.NodeRunForGate, error) {
+func (noopNodes) FindLatestCascadePending(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (noopNodes) CreateCascadePending(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) (shared.UUID, error) {
+func (noopNodes) CreateCascadePending(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) (shared.UUID, error) {
 	return shared.UUID{}, nil
 }
-func (noopNodes) LockReceiverCascade(context.Context, persistence.Tx, shared.UUID, shared.UUID, shared.UUID) error {
+func (noopNodes) LockReceiverCascade(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) GetLatestRunForNode(context.Context, persistence.Tx, shared.UUID) (*persistence.NodeRunLatest, error) {
+func (noopNodes) GetLatestRunForNode(context.Context, shared.UUID, persistence.Tx) (*persistence.NodeRunLatest, error) {
 	return nil, nil
 }
-func (noopNodes) GetLatestRunForNodes(context.Context, persistence.Tx, []shared.UUID) (map[shared.UUID]persistence.NodeRunLatest, error) {
+func (noopNodes) GetLatestRunForNodes(context.Context, []shared.UUID, persistence.Tx) (map[shared.UUID]persistence.NodeRunLatest, error) {
 	return nil, nil
 }
-func (noopNodes) ListRunsForInstanceByStates(context.Context, persistence.Tx, shared.UUID, []cascade.NodeState) ([]persistence.NodeRunLatest, error) {
+func (noopNodes) ListRunsForInstanceByStates(context.Context, shared.UUID, []cascade.NodeState, persistence.Tx) ([]persistence.NodeRunLatest, error) {
 	return nil, nil
 }
-func (noopNodes) GetRunForGate(context.Context, persistence.Tx, shared.UUID) (*persistence.NodeRunForGate, error) {
+func (noopNodes) GetRunForGate(context.Context, shared.UUID, persistence.Tx) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (noopNodes) GetPriorRunBySequence(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
+func (noopNodes) GetPriorRunBySequence(context.Context, shared.UUID, shared.UUID, int64, persistence.Tx) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (noopNodes) DeletePriorCascadeStales(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (int, error) {
+func (noopNodes) DeletePriorCascadeStales(context.Context, shared.UUID, shared.UUID, int64, persistence.Tx) (int, error) {
 	return 0, nil
 }
-func (noopNodes) HasLaterCascadePending(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (bool, error) {
+func (noopNodes) HasLaterCascadePending(context.Context, shared.UUID, shared.UUID, int64, persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (noopNodes) ListPendingRunsInScopeForNodes(context.Context, persistence.Tx, shared.UUID, []shared.UUID) ([]shared.UUID, error) {
+func (noopNodes) ListPendingRunsInScopeForNodes(context.Context, shared.UUID, []shared.UUID, persistence.Tx) ([]shared.UUID, error) {
 	return nil, nil
 }
-func (noopNodes) GetPriorCascadeQueuedNotClaimed(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
+func (noopNodes) GetPriorCascadeQueuedNotClaimed(context.Context, shared.UUID, shared.UUID, int64, persistence.Tx) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (noopNodes) GetMostRecentSettledRun(context.Context, persistence.Tx, shared.UUID, shared.UUID, int64) (*persistence.NodeRunForGate, error) {
+func (noopNodes) GetMostRecentSettledRun(context.Context, shared.UUID, shared.UUID, int64, persistence.Tx) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (noopNodes) TransitionPendingToStale(context.Context, persistence.Tx, shared.UUID, time.Time) error {
+func (noopNodes) TransitionPendingToStale(context.Context, shared.UUID, time.Time, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) DropPendingRun(context.Context, persistence.Tx, shared.UUID) error {
+func (noopNodes) DropPendingRun(context.Context, shared.UUID, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) SetRunRequiredStores(context.Context, persistence.Tx, shared.UUID, []string) (bool, error) {
+func (noopNodes) SetRunRequiredClaimProducers(context.Context, shared.UUID, []string, persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (noopNodes) CreateNonCascadeStale(context.Context, persistence.Tx, persistence.NonCascadeStaleInput) (shared.UUID, error) {
+func (noopNodes) CreateNonCascadeStale(context.Context, persistence.NonCascadeStaleInput, persistence.Tx) (shared.UUID, error) {
 	return shared.UUID{}, nil
 }
 func (noopNodes) UpdateRunEvaluatorState(context.Context, shared.UUID, spec.EvaluatorState, persistence.Tx) error {
@@ -241,19 +241,16 @@ func (f *fakeDiagnosticQueue) ListParkedDiagnostic(_ context.Context, _ persiste
 	return f.rows, nil
 }
 
-func (f *fakeDiagnosticQueue) Enqueue(context.Context, persistence.DispatchRequest) error {
+func (f *fakeDiagnosticQueue) Enqueue(context.Context, persistence.DispatchRequest, persistence.Tx) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) EnqueueInTx(context.Context, persistence.DispatchRequest, persistence.Tx) error {
-	return nil
-}
-func (f *fakeDiagnosticQueue) SelectCandidates(context.Context, persistence.Tx, persistence.SelectCandidatesRequest) ([]persistence.Candidate, error) {
+func (f *fakeDiagnosticQueue) SelectCandidates(context.Context, persistence.SelectCandidatesRequest, persistence.Tx) ([]persistence.Candidate, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) ClaimDispatchRow(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
+func (f *fakeDiagnosticQueue) ClaimDispatchRow(context.Context, shared.UUID, string, persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *fakeDiagnosticQueue) PromoteClaimedToRunning(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
+func (f *fakeDiagnosticQueue) PromoteClaimedToRunning(context.Context, shared.UUID, string, persistence.Tx) (bool, error) {
 	return false, nil
 }
 func (f *fakeDiagnosticQueue) Complete(context.Context, shared.UUID, string) error {
@@ -262,19 +259,16 @@ func (f *fakeDiagnosticQueue) Complete(context.Context, shared.UUID, string) err
 func (f *fakeDiagnosticQueue) ForceComplete(context.Context, shared.UUID) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) RemoveForNodeInTx(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
+func (f *fakeDiagnosticQueue) RemoveForNode(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) ForceRemoveForNode(context.Context, shared.UUID, shared.UUID) error {
-	return nil
-}
-func (f *fakeDiagnosticQueue) ForceRemoveForNodeInTx(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
+func (f *fakeDiagnosticQueue) ForceRemoveForNode(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) ListOrphanedClaims(context.Context) ([]persistence.DispatchRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) StampPriorDispatchInTx(context.Context, persistence.Tx, shared.UUID, shared.UUID, string) error {
+func (f *fakeDiagnosticQueue) StampPriorDispatch(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) ReleaseClaimWithDisposition(context.Context, shared.UUID, string, string) error {
@@ -289,10 +283,7 @@ func (f *fakeDiagnosticQueue) ForceReleaseClaim(context.Context, shared.UUID) er
 func (f *fakeDiagnosticQueue) GetClaimedBy(context.Context, shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{}, nil
 }
-func (f *fakeDiagnosticQueue) GetDispatchNode(context.Context, shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
-	return shared.UUID{}, persistence.ClaimOwnership{}, nil
-}
-func (f *fakeDiagnosticQueue) GetDispatchNodeInTx(context.Context, persistence.Tx, shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+func (f *fakeDiagnosticQueue) GetDispatchNode(context.Context, shared.UUID, persistence.Tx) (shared.UUID, persistence.ClaimOwnership, error) {
 	return shared.UUID{}, persistence.ClaimOwnership{}, nil
 }
 func (f *fakeDiagnosticQueue) RefreshHeartbeat(context.Context, string) error { return nil }
@@ -308,43 +299,43 @@ func (f *fakeDiagnosticQueue) CountParked(context.Context) (int, error) {
 func (f *fakeDiagnosticQueue) GetByID(context.Context, shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) GetInFlightRunForNode(context.Context, persistence.Tx, shared.UUID, shared.UUID) (shared.UUID, bool, error) {
+func (f *fakeDiagnosticQueue) GetInFlightRunForNode(context.Context, shared.UUID, shared.UUID, persistence.Tx) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
 }
-func (f *fakeDiagnosticQueue) GetMostRecentRunForNodeInScope(context.Context, persistence.Tx, shared.UUID, shared.UUID) (shared.UUID, bool, error) {
+func (f *fakeDiagnosticQueue) GetMostRecentRunForNodeInScope(context.Context, shared.UUID, shared.UUID, persistence.Tx) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
 }
-func (f *fakeDiagnosticQueue) ListInFlightRunStates(context.Context, persistence.Tx, []shared.UUID, shared.UUID, shared.UUID) (map[shared.UUID][]string, error) {
+func (f *fakeDiagnosticQueue) ListInFlightRunStates(context.Context, []shared.UUID, shared.UUID, shared.UUID, persistence.Tx) (map[shared.UUID][]string, error) {
 	return map[shared.UUID][]string{}, nil
 }
-func (f *fakeDiagnosticQueue) ParkActiveInTx(context.Context, persistence.Tx, persistence.ParkActiveInput) error {
+func (f *fakeDiagnosticQueue) ParkActive(context.Context, persistence.ParkActiveInput, persistence.Tx) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) ListParkedReadyForResume(context.Context, time.Time, int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, persistence.Tx, shared.UUID, shared.UUID) (*persistence.ParkedRow, error) {
+func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID, shared.UUID, persistence.Tx) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID) (bool, error) {
+func (f *fakeDiagnosticQueue) ResumeParked(context.Context, shared.UUID, persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persistence.Tx, shared.UUID, *int) error {
+func (f *fakeDiagnosticQueue) UpdateDispatchTuning(context.Context, shared.UUID, *int, persistence.Tx) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) BumpLastProgressAt(context.Context, persistence.Tx, shared.UUID, time.Time) (bool, error) {
+func (f *fakeDiagnosticQueue) BumpLastProgressAt(context.Context, shared.UUID, time.Time, persistence.Tx) (bool, error) {
 	return true, nil
 }
-func (f *fakeDiagnosticQueue) RegisterAsyncAck(context.Context, persistence.Tx, shared.UUID, string, time.Time, *int, *int, string) error {
+func (f *fakeDiagnosticQueue) RegisterAsyncAck(context.Context, shared.UUID, string, time.Time, *int, *int, string, persistence.Tx) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) LookupRunByAsyncAckID(context.Context, persistence.Tx, string) (*persistence.DispatchRow, error) {
+func (f *fakeDiagnosticQueue) LookupRunByAsyncAckID(context.Context, string, persistence.Tx) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) LoadScratchInTx(context.Context, persistence.Tx, shared.UUID) ([]byte, string, string, error) {
+func (f *fakeDiagnosticQueue) LoadScratch(context.Context, shared.UUID, persistence.Tx) ([]byte, string, string, error) {
 	return nil, "", "", nil
 }
-func (f *fakeDiagnosticQueue) WriteScratchInTx(context.Context, persistence.Tx, shared.UUID, []byte, string, string) error {
+func (f *fakeDiagnosticQueue) WriteScratch(context.Context, shared.UUID, []byte, string, string, persistence.Tx) error {
 	return nil
 }
 

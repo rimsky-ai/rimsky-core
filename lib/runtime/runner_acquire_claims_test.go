@@ -57,9 +57,9 @@ func TestAcquireClaim_EmptyOpenClaimScopeFallsBackToSeededSelector(t *testing.T)
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -73,18 +73,18 @@ func TestAcquireClaim_EmptyOpenClaimScopeFallsBackToSeededSelector(t *testing.T)
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
-		return tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		return tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: runID, NodeID: nodeID, FrameID: frameID, RunScopeID: mainScopeID, ExecutorName: "stub",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed fixture: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestAcquireClaim_EmptyOpenClaimScopeFallsBackToSeededSelector(t *testing.T)
 	)
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var aErr error
-		lock, res, aErr = acquireClaim(ctx, args, tx, instanceID, spec, cand, 5*time.Second, nil, nil)
+		lock, res, aErr = acquireClaim(ctx, args, instanceID, spec, cand, 5*time.Second, nil, nil, tx)
 		return aErr
 	}); err != nil {
 		t.Fatalf("acquireClaim: %v", err)
@@ -188,7 +188,7 @@ func TestEvaluateClaimScopeConflict_HolderWithUnrealizedWriteSemanticsBailsInste
 	cand := persistence.Candidate{NodeID: fx.nodeID, NodeRunID: candidateRunID}
 
 	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, _, err := evaluateClaimScopeConflict(ctx, args, tx, fake, spec, cand)
+		_, _, err := evaluateClaimScopeConflict(ctx, args, fake, spec, cand, tx)
 		return err
 	})
 	if err == nil {

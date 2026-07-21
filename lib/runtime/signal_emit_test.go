@@ -41,15 +41,7 @@ func TestEmitSignalInTx_RejectsNonCanonicalTypePath(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			err := emitSignalInTxOnce(
-				context.Background(),
-				RunArgs{},
-				nil,
-				foundationshared.UUID{},
-				"",
-				foundationshared.UUID{},
-				foundationshared.UUID{},
-				foundationshared.UUID{},
-				c.sig,
+				context.Background(), RunArgs{}, foundationshared.UUID{}, "", foundationshared.UUID{}, foundationshared.UUID{}, foundationshared.UUID{}, c.sig, nil,
 			)
 			if err == nil {
 				t.Fatalf("expected non-canonical type-path %q to be rejected", c.sig.Type)

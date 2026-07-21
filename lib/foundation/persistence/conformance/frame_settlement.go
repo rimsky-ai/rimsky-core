@@ -42,7 +42,7 @@ func completeRunAdmin(ctx context.Context, t *testing.T, d persistence.Database,
 	t.Helper()
 	store := d.Tables()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return forceRunStateToFresh(ctx, tx, store, runID)
+		return forceRunStateToFresh(ctx, store, runID, tx)
 	}); err != nil {
 		t.Fatalf("completeRunAdmin: forceRunStateToFresh(%s): %v", runID, err)
 	}
@@ -67,14 +67,14 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, runID, frameSettlementSup)
+		ok, err := q.ClaimDispatchRow(ctx, runID, frameSettlementSup, tx)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			t.Fatalf("claim for park failed")
 		}
-		_, err = q.PromoteClaimedToRunning(ctx, tx, runID, frameSettlementSup)
+		_, err = q.PromoteClaimedToRunning(ctx, runID, frameSettlementSup, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("claim tx: %v", err)
@@ -88,12 +88,12 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resumed, err := resumeRunInTx(ctx, d, tx, runID)
+		resumed, err := resumeRunInTx(ctx, d, runID, tx)
 		if err != nil {
 			return err
 		}
 		if !resumed {
-			t.Fatalf("ResumeParkedInTx did not resume")
+			t.Fatalf("ResumeParked did not resume")
 		}
 		return nil
 	}); err != nil {
@@ -171,7 +171,7 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 		if _, err := frames.MarkFrameEnded(ctx, fix.FrameID, tx); err != nil {
 			return err
 		}
-		otherScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
+		otherScope := seedMainRunScopeForInstance(ctx, t, store, fix.InstanceID, tx)
 		var err error
 		otherFrame, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, otherScope, tx)
 		return err

@@ -67,8 +67,7 @@ func TestMessages_PostListGet(t *testing.T) {
 
 	mid, err := uuid.Parse(msgID)
 	require.NoError(t, err)
-	row, err := h.persist.Messages().Get(ctx, shared.UUID(mid))
-	require.NoError(t, err)
+	row := getMessageRow(t, ctx, h, shared.UUID(mid))
 	require.NotNil(t, row)
 	require.Equal(t, "system/invalidate", row.Type)
 	require.Equal(t, "operator", row.SenderKind)
@@ -105,7 +104,7 @@ func TestMessages_ListByFrameID(t *testing.T) {
 			return err
 		}
 		frameID = fid
-		ok, err := h.persist.Messages().MarkDelivered(ctx, tx, shared.UUID(mid), frameID, time.Now().UTC())
+		ok, err := h.persist.Messages().MarkDelivered(ctx, shared.UUID(mid), frameID, time.Now().UTC(), tx)
 		if err != nil {
 			return err
 		}
@@ -187,7 +186,7 @@ func insertPublisherSubscription(t *testing.T, h *harness, instanceID string, pu
 	require.NoError(t, err)
 	subID := shared.UUID(uuid.New())
 	require.NoError(t, h.persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		return h.persist.PublisherSubscriptions().Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             subID,
 			InstanceID:     shared.UUID(instUUID),
 			PublisherName:  publisherName,
@@ -196,7 +195,7 @@ func insertPublisherSubscription(t *testing.T, h *harness, instanceID string, pu
 
 			MessageType: "system/invalidate",
 			State:       state,
-		})
+		}, tx)
 	}))
 	return subID.String()
 }
@@ -221,8 +220,7 @@ func TestCreateMessage_PublisherSubscriptionActiveSucceeds(t *testing.T) {
 
 	mid, err := uuid.Parse(msgID)
 	require.NoError(t, err)
-	row, err := h.persist.Messages().Get(ctx, shared.UUID(mid))
-	require.NoError(t, err)
+	row := getMessageRow(t, ctx, h, shared.UUID(mid))
 	require.NotNil(t, row)
 	require.Equal(t, "publisher", row.SenderKind)
 	require.Equal(t, "sensor-http", row.Sender, "sender must be derived from publisher_name, not body")
@@ -629,8 +627,7 @@ func TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry(t *testing.T) {
 
 	mid, err := uuid.Parse(msgID)
 	require.NoError(t, err)
-	row, err := h.persist.Messages().Get(ctx, shared.UUID(mid))
-	require.NoError(t, err)
+	row := getMessageRow(t, ctx, h, shared.UUID(mid))
 	require.NotNil(t, row, "the empty-typed envelope must be persisted")
 	require.Equal(t, "", row.Type, "the row's type must be exactly the empty string")
 
@@ -751,7 +748,7 @@ func deliverMessageForTest(t *testing.T, h *harness, instID, msgID string, deliv
 			return err
 		}
 		frameID = fid
-		ok, err := h.persist.Messages().MarkDelivered(ctx, tx, mid, frameID, deliveredAt)
+		ok, err := h.persist.Messages().MarkDelivered(ctx, mid, frameID, deliveredAt, tx)
 		if err != nil {
 			return err
 		}
@@ -937,4 +934,15 @@ func TestDedupSenderKind_AnonymousBucketDistinctFromOperatorAndPublisher(t *test
 	pub := dedupSenderKind("publisher", auth.AnonymousIdentity())
 	require.Equal(t, "publisher", pub,
 		"senderKind=publisher must take priority over identity kind even when the identity is anonymous")
+}
+
+func getMessageRow(t *testing.T, ctx context.Context, h *harness, id shared.UUID) *persistence.MessageRow {
+	t.Helper()
+	var row *persistence.MessageRow
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.persist.Messages().Get(ctx, id, tx)
+		row = r
+		return err
+	}))
+	return row
 }

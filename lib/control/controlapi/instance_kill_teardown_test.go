@@ -164,14 +164,14 @@ func TestTerminateInstance_CancelsPendingMessages(t *testing.T) {
 
 	msgID := shared.UUID(uuid.New())
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		return h.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instUUID,
 			Type:       "system/invalidate",
 			Sender:     "test-kill",
 			SenderKind: "operator",
 			ReceivedAt: time.Now().UTC(),
-		})
+		}, tx)
 	}))
 
 	status, out := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/terminate", map[string]any{})
@@ -225,16 +225,16 @@ func TestTerminateInstance_ClosesNestedScopeTreeChildrenFirst(t *testing.T) {
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		root := rootScope
 		sub := subgraphScope
-		if err := h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := h.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: subgraphScope, ParentRunScopeID: &root, ParentNodeRunID: &parentRunID,
 			GraphName: "sub-flow", InstanceID: instUUID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return h.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: partitionScope, ParentRunScopeID: &sub, ParentNodeRunID: &parentRunID,
 			GraphName: "sub-flow", PartitionKey: "partition-a", InstanceID: instUUID,
-		})
+		}, tx)
 	}))
 
 	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/terminate", map[string]any{})

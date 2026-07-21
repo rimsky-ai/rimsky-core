@@ -42,7 +42,7 @@ func TestCancelInFlightSiblings_MalformedAggregationPolicyWarnsAndNoOps(t *testi
 		Logger:       capLog,
 	}
 
-	post, err := cancelInFlightSiblings(context.Background(), args, nil, parentID, triggerID)
+	post, err := cancelInFlightSiblings(context.Background(), args, parentID, triggerID, nil)
 	if err != nil {
 		t.Fatalf("expected no error for a malformed aggregation_policy (warn + non-strict fallback), got %v", err)
 	}

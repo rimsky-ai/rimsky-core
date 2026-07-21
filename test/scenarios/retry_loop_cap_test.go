@@ -49,7 +49,7 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, worker.ID, tx)
 		latest = r
 		return err
 	}))

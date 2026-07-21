@@ -66,7 +66,7 @@ func TestApplyErrorPolicy_GiveUpWithActiveClaimDefersThroughHeldToAbandoned(t *t
 
 	var runRow *persistence.NodeRunForGate
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return err
 	}))
@@ -87,7 +87,7 @@ func TestApplyErrorPolicy_GiveUpWithActiveClaimDefersThroughHeldToAbandoned(t *t
 
 	var treeRow *persistence.NodeRunTreeRow
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.NodeRunTree().GetByID(ctx, tx, acq.NodeRunID)
+		r, err := tables.NodeRunTree().GetByID(ctx, acq.NodeRunID, tx)
 		treeRow = r
 		return err
 	}))

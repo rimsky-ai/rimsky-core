@@ -30,12 +30,7 @@ func ShouldSpillBlob(bb BlobBackend, threshold int, size int) bool {
 const DefaultOrphanRetention = 24 * time.Hour
 
 func QueueBlobOrphan(
-	ctx context.Context,
-	orphans BlobOrphanTable,
-	tx Tx,
-	handle, backend string,
-	now time.Time,
-	retention time.Duration,
+	ctx context.Context, orphans BlobOrphanTable, handle, backend string, now time.Time, retention time.Duration, tx Tx,
 ) error {
 	if handle == "" || orphans == nil {
 		return nil
@@ -59,12 +54,7 @@ type CarriedBag struct {
 }
 
 func CarryForwardBag(
-	ctx context.Context,
-	bb BlobBackend,
-	tx Tx,
-	key BlobKey,
-	priorData []byte,
-	priorHandle, priorBackend string,
+	ctx context.Context, bb BlobBackend, key BlobKey, priorData []byte, priorHandle, priorBackend string, tx Tx,
 ) (CarriedBag, error) {
 	if priorHandle == "" || bb == nil || priorBackend != bb.Name() {
 		return CarriedBag{
@@ -74,7 +64,7 @@ func CarryForwardBag(
 			Backend:     priorBackend,
 		}, nil
 	}
-	bytes, err := ReadBlobInTx(ctx, bb, tx, Handle(priorHandle))
+	bytes, err := ReadBlobInTx(ctx, bb, Handle(priorHandle), tx)
 	if err != nil {
 		if errors.Is(err, ErrBlobNotFound) {
 			empty := []byte("{}")
@@ -82,7 +72,7 @@ func CarryForwardBag(
 		}
 		return CarriedBag{}, err
 	}
-	fresh, err := WriteBlobInTx(ctx, bb, tx, key, bytes)
+	fresh, err := WriteBlobInTx(ctx, bb, key, bytes, tx)
 	if err != nil {
 		return CarriedBag{}, err
 	}

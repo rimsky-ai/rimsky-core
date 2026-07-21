@@ -81,25 +81,25 @@ func (c *advisoryLockerImpl) AcquireMigrationLock(ctx context.Context) (func() e
 	}, nil
 }
 
-func (c *advisoryLockerImpl) TakeNamedLockInTx(ctx context.Context, tx persistence.Tx, name string) error {
+func (c *advisoryLockerImpl) TakeNamedLock(ctx context.Context, name string, tx persistence.Tx) error {
 	pgT, err := unwrapTx(tx)
 	if err != nil {
-		return fmt.Errorf("postgres.TakeNamedLockInTx: %w", err)
+		return fmt.Errorf("postgres.TakeNamedLock: %w", err)
 	}
 	if _, err := pgT.Exec(ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", namedLockKeyClass, name); err != nil {
-		return fmt.Errorf("postgres.TakeNamedLockInTx: name %q: %w", name, err)
+		return fmt.Errorf("postgres.TakeNamedLock: name %q: %w", name, err)
 	}
 	return nil
 }
 
-func (c *advisoryLockerImpl) TakeClaimScopeLockInTx(ctx context.Context, tx persistence.Tx, claimProducerName string, claimScopeData []byte) error {
+func (c *advisoryLockerImpl) TakeClaimScopeLock(ctx context.Context, claimProducerName string, claimScopeData []byte, tx persistence.Tx) error {
 	pgT, err := unwrapTx(tx)
 	if err != nil {
-		return fmt.Errorf("postgres.TakeClaimScopeLockInTx: %w", err)
+		return fmt.Errorf("postgres.TakeClaimScopeLock: %w", err)
 	}
 	key := claimProducerName + ":" + hex.EncodeToString(claimScopeData)
 	if _, err := pgT.Exec(ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", claimScopeLockKeyClass, key); err != nil {
-		return fmt.Errorf("postgres.TakeClaimScopeLockInTx: claim producer %q: %w", claimProducerName, err)
+		return fmt.Errorf("postgres.TakeClaimScopeLock: claim producer %q: %w", claimProducerName, err)
 	}
 	return nil
 }

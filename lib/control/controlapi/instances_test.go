@@ -356,7 +356,7 @@ func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
 	mountingID := shared.UUID(uuid.New())
 	failedID := shared.UUID(uuid.New())
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		if err := h.persist.PublisherSubscriptions().Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             mountingID,
 			InstanceID:     shared.UUID(instUUID),
 			PublisherName:  "sensor-alpha",
@@ -364,10 +364,10 @@ func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
 			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
 
 			State: persistence.PublisherSubscriptionStateMounting,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return h.persist.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		return h.persist.PublisherSubscriptions().Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             failedID,
 			InstanceID:     shared.UUID(instUUID),
 			PublisherName:  "sensor-beta",
@@ -376,7 +376,7 @@ func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
 
 			State:         persistence.PublisherSubscriptionStateFailed,
 			FailureReason: `publisher "sensor-beta" is not registered`,
-		})
+		}, tx)
 	}))
 
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
@@ -459,19 +459,19 @@ func TestDeleteInstance_PurgesRunScopeLifecycleIdempotencyRows(t *testing.T) {
 
 	rootScopeID := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := h.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: rootScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		msgID := uuid.New()
-		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := h.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		_, err := h.persist.Frames().InsertRunningFrame(ctx, instID, msgID, rootScopeID, tx)

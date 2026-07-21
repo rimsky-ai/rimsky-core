@@ -99,7 +99,7 @@ type ClaimLineageHint struct {
 }
 
 func acquirerInstanceID(
-	ctx context.Context, args RunArgs, tx persistence.Tx, holderNodeID shared.UUID,
+	ctx context.Context, args RunArgs, holderNodeID shared.UUID, tx persistence.Tx,
 ) (shared.UUID, error) {
 	acquirer, err := args.Persist.Nodes().Get(ctx, holderNodeID, tx)
 	if err != nil {
@@ -112,8 +112,7 @@ func acquirerInstanceID(
 }
 
 func ResolveClaimHandleTerminal(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	td TerminalDecision,
+	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
 ) (postCommitFn, error) {
 	if td.Producer == nil {
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: producer is nil for claim_handle %s", td.ClaimHandleID)
@@ -122,18 +121,18 @@ func ResolveClaimHandleTerminal(
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: unknown terminal outcome %q for claim_handle %s",
 			td.Outcome, td.ClaimHandleID)
 	}
-	versionID, err := dispatchDataProcessingTerminal(ctx, args, tx, td)
+	versionID, err := dispatchDataProcessingTerminal(ctx, args, td, tx)
 	if err != nil {
 		return nil, err
 	}
 	// @concept: terminal-resolution
-	if err := enqueueProducerVerb(ctx, args, tx, td); err != nil {
+	if err := enqueueProducerVerb(ctx, args, td, tx); err != nil {
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: %w", err)
 	}
-	emitTerminalForensics(ctx, args, tx, td, versionID)
+	emitTerminalForensics(ctx, args, td, versionID, tx)
 	post := kickProducerVerbDispatch(args)
 	if td.Outcome.IsAbandon() {
-		pc, err := cancelDescendantClaims(ctx, args, tx, td.ClaimHandleID)
+		pc, err := cancelDescendantClaims(ctx, args, td.ClaimHandleID, tx)
 		if err != nil {
 			return nil, fmt.Errorf("ResolveClaimHandleTerminal: cancelDescendantClaims: %w", err)
 		}
@@ -143,12 +142,12 @@ func ResolveClaimHandleTerminal(
 		if err := args.ClaimHandles.Delete(ctx, td.ClaimHandleID, td.SupervisorID, tx); err != nil {
 			return nil, fmt.Errorf("ResolveClaimHandleTerminal: ownership-bail Delete: %w", err)
 		}
-	} else if err := promoteHandleState(ctx, args, tx, td); err != nil {
+	} else if err := promoteHandleState(ctx, args, td, tx); err != nil {
 		return nil, err
 	}
 	// @concept: claim-handle
 	// @decision: held-as-state-not-phase
-	heldPC, err := emitDeferredHeldCascade(ctx, args, tx, td)
+	heldPC, err := emitDeferredHeldCascade(ctx, args, td, tx)
 	if err != nil {
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: deferred held cascade: %w", err)
 	}
@@ -158,11 +157,11 @@ func ResolveClaimHandleTerminal(
 	if td.ParentClaimHandleID == nil {
 		return post, nil
 	}
-	settlePC, err := SettleFromFanoutChild(ctx, args, tx, FanoutChildSettlementInput{
+	settlePC, err := SettleFromFanoutChild(ctx, args, FanoutChildSettlementInput{
 		ParentClaimHandleID: *td.ParentClaimHandleID,
 		ChildClaimHandleID:  td.ClaimHandleID,
 		ChildOutcome:        td.Outcome,
-	})
+	}, tx)
 	if err != nil {
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: settle children: %w", err)
 	}
@@ -171,7 +170,7 @@ func ResolveClaimHandleTerminal(
 }
 
 func dispatchDataProcessingTerminal(
-	ctx context.Context, args RunArgs, tx persistence.Tx, td TerminalDecision,
+	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
 ) (string, error) {
 	if len(td.CandidateHandle) == 0 || td.ProducerName == "" || args.DataProcessors == nil {
 		return "", nil
@@ -211,7 +210,7 @@ func dispatchDataProcessingTerminal(
 }
 
 func promoteHandleState(
-	ctx context.Context, args RunArgs, tx persistence.Tx, td TerminalDecision,
+	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
 ) error {
 	promoteState := spec.ClaimHandleStateCommitted
 	if td.Outcome.IsAbandon() {

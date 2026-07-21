@@ -76,7 +76,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	nodeRunID := uuid.New()
 	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, sequence)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, frame_id, run_scope_id, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', $3, $4, 1)`,
 		nodeRunID, n.ID, frameID, mainScopeID,
 	)
@@ -164,7 +164,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, n.ID, tx)
 		latest = r
 		return gerr
 	}))

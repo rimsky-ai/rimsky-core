@@ -91,7 +91,7 @@ func (d *fakeEnqueueDeps) Instances() persistence.InstanceTable {
 func (d *fakeEnqueueDeps) Templates() persistence.TemplateTable { return &fakeTemplatesForEnqueue{} }
 func (d *fakeEnqueueDeps) Messages() persistence.MessageTable   { return d.msgs }
 
-func (f *fakeMessages) Insert(_ context.Context, _ persistence.Tx, req persistence.EnqueueMessageRequest) error {
+func (f *fakeMessages) Insert(_ context.Context, req persistence.EnqueueMessageRequest, _ persistence.Tx) error {
 	f.rows[req.ID] = &persistence.MessageRow{
 		ID:         req.ID,
 		InstanceID: req.InstanceID,
@@ -104,7 +104,7 @@ func (f *fakeMessages) Insert(_ context.Context, _ persistence.Tx, req persisten
 	return nil
 }
 
-func (f *fakeMessages) MarkDelivered(_ context.Context, _ persistence.Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error) {
+func (f *fakeMessages) MarkDelivered(_ context.Context, id shared.UUID, frame shared.UUID, deliveredAt time.Time, _ persistence.Tx) (bool, error) {
 	row, ok := f.rows[id]
 	if !ok || row.DeliveredAt != nil {
 		return false, nil
@@ -115,7 +115,7 @@ func (f *fakeMessages) MarkDelivered(_ context.Context, _ persistence.Tx, id sha
 	return true, nil
 }
 
-func (f *fakeMessages) ListPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
+func (f *fakeMessages) ListPendingForInstance(_ context.Context, instanceID shared.UUID, _ persistence.Tx) ([]persistence.MessageRow, error) {
 	var out []persistence.MessageRow
 	for _, r := range f.rows {
 		if r.InstanceID != instanceID || r.DeliveredAt != nil || r.Cancelled {
@@ -127,7 +127,7 @@ func (f *fakeMessages) ListPendingForInstance(_ context.Context, _ persistence.T
 	return out, nil
 }
 
-func (f *fakeMessages) Get(_ context.Context, id shared.UUID) (*persistence.MessageRow, error) {
+func (f *fakeMessages) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.MessageRow, error) {
 	r, ok := f.rows[id]
 	if !ok {
 		return nil, nil
@@ -136,15 +136,11 @@ func (f *fakeMessages) Get(_ context.Context, id shared.UUID) (*persistence.Mess
 	return &cp, nil
 }
 
-func (f *fakeMessages) GetInTx(ctx context.Context, _ persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
-	return f.Get(ctx, id)
-}
-
 func (f *fakeMessages) List(_ context.Context, _ persistence.MessageListFilter, _ persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	return persistence.PaginatedListResult[persistence.MessageRow]{}, nil
 }
 
-func (f *fakeMessages) CancelPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) (int, error) {
+func (f *fakeMessages) CancelPendingForInstance(_ context.Context, instanceID shared.UUID, _ persistence.Tx) (int, error) {
 	n := 0
 	for _, r := range f.rows {
 		if r.InstanceID == instanceID && r.DeliveredAt == nil && !r.Cancelled {
@@ -159,7 +155,7 @@ func (f *fakeMessages) PickPendingMessagesForIdleInstances(_ context.Context, _ 
 	return nil, nil
 }
 
-func (f *fakeMessages) ListDeliveredForFrame(_ context.Context, _ persistence.Tx, frame shared.UUID) ([]persistence.MessageRow, error) {
+func (f *fakeMessages) ListDeliveredForFrame(_ context.Context, frame shared.UUID, _ persistence.Tx) ([]persistence.MessageRow, error) {
 	var out []persistence.MessageRow
 	for _, r := range f.rows {
 		if r.FrameID == nil || *r.FrameID != frame {

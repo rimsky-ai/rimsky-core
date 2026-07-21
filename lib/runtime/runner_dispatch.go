@@ -211,7 +211,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 			},
 		}
 		if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := dctx.Args.Queue.RegisterAsyncAck(ctx, tx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal); err != nil {
+			if err := dctx.Args.Queue.RegisterAsyncAck(ctx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal, tx); err != nil {
 				return fmt.Errorf("register async ack: %w", err)
 			}
 			return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),
@@ -791,7 +791,7 @@ func loadDispatchBag(ctx context.Context, args RunArgs, acq *acquisition) (map[s
 	}
 	var bag map[string]any
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		raw, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, tx, acq.NodeRunID)
+		raw, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, acq.NodeRunID, tx)
 		if err != nil {
 			return err
 		}

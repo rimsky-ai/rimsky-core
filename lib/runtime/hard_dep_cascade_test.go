@@ -36,11 +36,11 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	instID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
 			InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -72,13 +72,13 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	aRunID := shared.UUID(uuid.New())
 	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'running', 100, 'cascade', $4, $5)
     `, aRunID, aN.ID, "stub", frameID, mainScopeID)
 	bRunID := shared.UUID(uuid.New())
 	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'stale', 100, 'cascade', $3, $4)
     `, bRunID, bN.ID, frameID, mainScopeID)
 
@@ -87,7 +87,7 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	}
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.CascadeSubscribersStaleInTxForTest(
-			ctx, args, tx, aN.ID, "a", aRunID, inst.ID, frameID,
+			ctx, args, aN.ID, "a", aRunID, inst.ID, frameID, tx,
 		)
 	}))
 

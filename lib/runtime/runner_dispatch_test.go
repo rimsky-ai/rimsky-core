@@ -700,11 +700,11 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         fx.mainScopeID,
 			GraphName:  tmplspec.MainGraphName,
 			InstanceID: fx.instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -726,13 +726,13 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: fx.instanceID,
 			Type:       "test/fixture-seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := tables.Frames().InsertRunningFrame(ctx, fx.instanceID, msgID, fx.mainScopeID, tx)
@@ -740,21 +740,21 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 			return err
 		}
 		fx.frameID = frameID
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: fx.parentNodeRunID, NodeID: fx.callerNodeID, FrameID: frameID,
 			RunScopeID: fx.mainScopeID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		mainScopeIDCopy := fx.mainScopeID
 		parentRunIDCopy := fx.parentNodeRunID
-		return tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               fx.subScopeID,
 			ParentRunScopeID: &mainScopeIDCopy,
 			ParentNodeRunID:  &parentRunIDCopy,
 			GraphName:        "inner",
 			InstanceID:       fx.instanceID,
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seedCarryForwardFixture: %v", err)
 	}
@@ -801,14 +801,13 @@ func TestResolveAttributes_LoadsSnapshotBag(t *testing.T) {
 	fx := seedCarryForwardFixture(t, ctx)
 	nodeRunID := shared.UUID(uuid.New())
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := fx.tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+		if err := fx.tables.NodeRunTree().CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 			NodeRunID: nodeRunID, NodeID: fx.nodeID, FrameID: fx.frameID,
 			RunScopeID: fx.mainScopeID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return fx.tables.NodeAttributes().SetDispatchInputBag(ctx, tx, nodeRunID, fx.nodeID,
-			map[string]any{"count": float64(7)})
+		return fx.tables.NodeAttributes().SetDispatchInputBag(ctx, nodeRunID, fx.nodeID, map[string]any{"count": float64(7)}, tx)
 	}); err != nil {
 		t.Fatalf("seed dispatch row: %v", err)
 	}
@@ -900,13 +899,13 @@ func TestResolveAttributes_DispatchGateRejectsInvalidResolvedBag(t *testing.T) {
 		t.Helper()
 		nodeRunID := shared.UUID(uuid.New())
 		if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := fx.tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+			if err := fx.tables.NodeRunTree().CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 				NodeRunID: nodeRunID, NodeID: fx.nodeID, FrameID: fx.frameID,
 				RunScopeID: fx.mainScopeID,
-			}); err != nil {
+			}, tx); err != nil {
 				return err
 			}
-			return fx.tables.NodeAttributes().SetDispatchInputBag(ctx, tx, nodeRunID, fx.nodeID, bag)
+			return fx.tables.NodeAttributes().SetDispatchInputBag(ctx, nodeRunID, fx.nodeID, bag, tx)
 		}); err != nil {
 			t.Fatalf("seed run: %v", err)
 		}

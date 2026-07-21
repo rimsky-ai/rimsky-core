@@ -27,7 +27,7 @@ type terminalEventView struct {
 }
 
 // @concept: cascade-graph
-func computeCascadeGraph(ctx context.Context, deps Deps, tx persistence.Tx, nodes []persistence.NodeRow, template *persistence.TemplateRow) ([]CascadeNode, error) {
+func computeCascadeGraph(ctx context.Context, deps Deps, nodes []persistence.NodeRow, template *persistence.TemplateRow, tx persistence.Tx) ([]CascadeNode, error) {
 	byType := make(map[string]persistence.NodeRow, len(nodes))
 	nodeIDs := make([]shared.UUID, 0, len(nodes))
 	for _, n := range nodes {

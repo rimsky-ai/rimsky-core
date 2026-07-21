@@ -26,17 +26,17 @@ type RunScopeRow struct {
 }
 
 type RunScopeTable interface {
-	Create(ctx context.Context, tx Tx, row RunScopeRow) error
+	Create(ctx context.Context, row RunScopeRow, tx Tx) error
 
-	GetByID(ctx context.Context, tx Tx, id shared.UUID) (*RunScopeRow, error)
+	GetByID(ctx context.Context, id shared.UUID, tx Tx) (*RunScopeRow, error)
 
-	GetFanoutPartition(ctx context.Context, tx Tx, parentNodeRunID shared.UUID, partitionKey string) (*RunScopeRow, error)
+	GetFanoutPartition(ctx context.Context, parentNodeRunID shared.UUID, partitionKey string, tx Tx) (*RunScopeRow, error)
 
-	Close(ctx context.Context, tx Tx, id shared.UUID) error
+	Close(ctx context.Context, id shared.UUID, tx Tx) error
 
-	ListParentChain(ctx context.Context, tx Tx, id shared.UUID) ([]RunScopeRow, error)
+	ListParentChain(ctx context.Context, id shared.UUID, tx Tx) ([]RunScopeRow, error)
 
-	ListTreeDeepestFirst(ctx context.Context, tx Tx, rootRunScopeID shared.UUID) ([]RunScopeRow, error)
+	ListTreeDeepestFirst(ctx context.Context, rootRunScopeID shared.UUID, tx Tx) ([]RunScopeRow, error)
 }
 
 var ErrRunScopeClosed = errors.New("persistence: run scope is closed")

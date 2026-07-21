@@ -71,8 +71,7 @@ type AggregateResult struct {
 }
 
 func recordRunTreeChanged(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool,
+	ctx context.Context, args RunArgs, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool, tx persistence.Tx,
 ) error {
 	if args.Persist == nil {
 		return nil
@@ -81,7 +80,7 @@ func recordRunTreeChanged(
 	if rt == nil {
 		return nil
 	}
-	return rt.UpdateStateAndOutcome(ctx, tx, runID, state, settlingSignalType, changed)
+	return rt.UpdateStateAndOutcome(ctx, runID, state, settlingSignalType, changed, tx)
 }
 
 func childStatesForAggregate(children []persistence.NodeRunTreeRow) []ChildState {
@@ -231,17 +230,13 @@ func aggregateChanged(children []ChildState) bool {
 }
 
 func CreateRootNodeRun(
-	ctx context.Context, tx persistence.Tx, rt persistence.NodeRunTreeTable,
-	clock shared.Clock,
-	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
-	executor string, requiredClaimProducers []string,
-	policy spec.AggregationPolicy,
+	ctx context.Context, rt persistence.NodeRunTreeTable, clock shared.Clock, nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID, executor string, requiredClaimProducers []string, policy spec.AggregationPolicy, tx persistence.Tx,
 ) (shared.UUID, error) {
 	runID := shared.UUID(uuid.New())
 	if policy.Kind == "" {
 		policy.Kind = spec.AggregationKindStrict
 	}
-	if err := rt.CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+	if err := rt.CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 		NodeRunID:              runID,
 		NodeID:                 nodeID,
 		FrameID:                frameID,
@@ -250,20 +245,17 @@ func CreateRootNodeRun(
 		RequiredClaimProducers: requiredClaimProducers,
 		AggregationPolicy:      policy,
 		EnqueuedAt:             clock.Now(),
-	}); err != nil {
+	}, tx); err != nil {
 		return shared.UUID{}, fmt.Errorf("CreateRootNodeRun: %w", err)
 	}
 	return runID, nil
 }
 
 func CreateChildNodeRun(
-	ctx context.Context, tx persistence.Tx, rt persistence.NodeRunTreeTable, queue persistence.Queue,
-	clock shared.Clock,
-	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
-	executor string, requiredClaimProducers []string, policy spec.AggregationPolicy,
+	ctx context.Context, rt persistence.NodeRunTreeTable, queue persistence.Queue, clock shared.Clock, nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID, executor string, requiredClaimProducers []string, policy spec.AggregationPolicy, tx persistence.Tx,
 ) (shared.UUID, error) {
 	if queue != nil {
-		existing, ok, err := queue.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
+		existing, ok, err := queue.GetInFlightRunForNode(ctx, nodeID, runScopeID, tx)
 		if err != nil {
 			return shared.UUID{}, fmt.Errorf("CreateChildNodeRun: lookup in-flight: %w", err)
 		}
@@ -275,7 +267,7 @@ func CreateChildNodeRun(
 	if policy.Kind == "" {
 		policy.Kind = spec.AggregationKindStrict
 	}
-	if err := rt.CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+	if err := rt.CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 		NodeRunID:              runID,
 		NodeID:                 nodeID,
 		FrameID:                frameID,
@@ -284,17 +276,16 @@ func CreateChildNodeRun(
 		RequiredClaimProducers: requiredClaimProducers,
 		AggregationPolicy:      policy,
 		EnqueuedAt:             clock.Now(),
-	}); err != nil {
+	}, tx); err != nil {
 		return shared.UUID{}, fmt.Errorf("CreateChildNodeRun: %w", err)
 	}
 	return runID, nil
 }
 
 func GetRunTree(
-	ctx context.Context, tx persistence.Tx, rt persistence.NodeRunTreeTable,
-	runID shared.UUID,
+	ctx context.Context, rt persistence.NodeRunTreeTable, runID shared.UUID, tx persistence.Tx,
 ) ([]persistence.NodeRunTreeRow, error) {
-	root, err := rt.GetByID(ctx, tx, runID)
+	root, err := rt.GetByID(ctx, runID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("GetRunTree: load root: %w", err)
 	}
@@ -306,7 +297,7 @@ func GetRunTree(
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		children, err := rt.ListChildren(ctx, tx, current)
+		children, err := rt.ListChildren(ctx, current, tx)
 		if err != nil {
 			return nil, fmt.Errorf("GetRunTree: list children of %s: %w", current, err)
 		}

@@ -19,16 +19,15 @@ import (
 )
 
 func seedMainRunScopeForInstance(
-	ctx context.Context, t *testing.T, tx persistence.Tx, store persistence.Tables,
-	instanceID shared.UUID,
+	ctx context.Context, t *testing.T, store persistence.Tables, instanceID shared.UUID, tx persistence.Tx,
 ) shared.UUID {
 	t.Helper()
 	id := shared.UUID(uuid.New())
-	if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+	if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 		ID:         id,
 		GraphName:  spec.MainGraphName,
 		InstanceID: instanceID,
-	}); err != nil {
+	}, tx); err != nil {
 		t.Fatalf("seedMainRunScopeForInstance: %v", err)
 	}
 	return id
@@ -73,12 +72,12 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:           shared.UUID(mainRunScopeID),
 			GraphName:    spec.MainGraphName,
 			InstanceID:   shared.UUID(instanceID),
 			PartitionKey: "",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -100,13 +99,13 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 
 	messageID := uuid.New()
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         shared.UUID(messageID),
 			InstanceID: shared.UUID(instanceID),
 			Type:       "fixture/message",
 			Sender:     "operator",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, shared.UUID(messageID), shared.UUID(mainRunScopeID), tx)
@@ -162,7 +161,7 @@ func seedConformanceRunForNode(
 
 	var runID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 nodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -172,11 +171,11 @@ func seedConformanceRunForNode(
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -205,7 +204,7 @@ func seedConformanceRunForScope(
 
 	var runID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 nodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -215,7 +214,7 @@ func seedConformanceRunForScope(
 		}, tx); err != nil {
 			return err
 		}
-		id, found, err := q.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
+		id, found, err := q.GetInFlightRunForNode(ctx, nodeID, runScopeID, tx)
 		if err != nil {
 			return err
 		}
@@ -238,9 +237,9 @@ func inTx(ctx context.Context, store persistence.Tables, fn func(tx persistence.
 
 // @concept: node-run
 func forceRunStateToFresh(
-	ctx context.Context, tx persistence.Tx, store persistence.Tables, runID shared.UUID,
+	ctx context.Context, store persistence.Tables, runID shared.UUID, tx persistence.Tx,
 ) error {
-	row, err := store.NodeRunTree().GetByID(ctx, tx, runID)
+	row, err := store.NodeRunTree().GetByID(ctx, runID, tx)
 	if err != nil || row == nil {
 		return err
 	}

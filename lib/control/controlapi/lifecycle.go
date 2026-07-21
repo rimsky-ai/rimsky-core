@@ -103,11 +103,11 @@ func FanOutTemplateEvent(
 	perPeerErr := map[string]error{}
 	for _, name := range peerNames {
 		var row *persistence.LifecycleIdempotencyRow
-		if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+		if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
 			r, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, templateHash, useTx)
 			row = r
 			return err
-		}); err != nil {
+		}, tx); err != nil {
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: lifecycle row lookup for %q: %w", name, err)
 		}
@@ -130,22 +130,22 @@ func FanOutTemplateEvent(
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: peer %q: %w", name, err)
 		}
 		if deletesRow {
-			if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+			if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
 				return deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, templateHash, useTx)
-			}); err != nil {
+			}, tx); err != nil {
 				perPeerErr[name] = err
 				return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: delete lifecycle row %q: %w", name, err)
 			}
 			continue
 		}
-		if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+		if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
 			return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
 				ClaimProducerName: name,
 				ScopeKind:         scopeKind,
 				ScopeID:           templateHash,
 				State:             target,
 			}, useTx)
-		}); err != nil {
+		}, tx); err != nil {
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: upsert lifecycle row %q: %w", name, err)
 		}
@@ -154,10 +154,7 @@ func FanOutTemplateEvent(
 }
 
 func withOptionalTx(
-	ctx context.Context,
-	store persistence.Tables,
-	tx persistence.Tx,
-	fn func(ctx context.Context, tx persistence.Tx) error,
+	ctx context.Context, store persistence.Tables, fn func(ctx context.Context, tx persistence.Tx) error, tx persistence.Tx,
 ) error {
 	if tx != nil {
 		return fn(ctx, tx)
@@ -186,7 +183,7 @@ func FanOutInstanceEvent(
 
 	perPeerErr := map[string]error{}
 	for _, name := range peerNames {
-		outcome, ferr := fanOutInstancePeer(ctx, deps, name, scopeKind, instanceID, target, deletesRow, event, templateHash, payload, tx, perPeerErr)
+		outcome, ferr := fanOutInstancePeer(ctx, deps, name, scopeKind, instanceID, target, deletesRow, event, templateHash, payload, perPeerErr, tx)
 		if outcome == fanOutAbort {
 			return peerNames, perPeerErr, ferr
 		}
@@ -195,28 +192,17 @@ func FanOutInstanceEvent(
 }
 
 func fanOutInstancePeer(
-	ctx context.Context,
-	deps AppDeps,
-	name string,
-	scopeKind persistence.LifecycleIdempotencyScopeKind,
-	instanceID string,
-	target persistence.LifecycleIdempotencyState,
-	deletesRow bool,
-	event LifecycleEvent,
-	templateHash string,
-	payload InstancePayload,
-	tx persistence.Tx,
-	perPeerErr map[string]error,
+	ctx context.Context, deps AppDeps, name string, scopeKind persistence.LifecycleIdempotencyScopeKind, instanceID string, target persistence.LifecycleIdempotencyState, deletesRow bool, event LifecycleEvent, templateHash string, payload InstancePayload, perPeerErr map[string]error, tx persistence.Tx,
 ) (fanOutOutcome, error) {
 	unlock := lockLifecycleScope(scopeKind, instanceID)
 	defer unlock()
 
 	var row *persistence.LifecycleIdempotencyRow
-	if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+	if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
 		r, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, instanceID, useTx)
 		row = r
 		return err
-	}); err != nil {
+	}, tx); err != nil {
 		perPeerErr[name] = err
 		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: lifecycle row lookup for %q: %w", name, err)
 	}
@@ -239,22 +225,22 @@ func fanOutInstancePeer(
 		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: peer %q: %w", name, err)
 	}
 	if deletesRow {
-		if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+		if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
 			return deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, instanceID, useTx)
-		}); err != nil {
+		}, tx); err != nil {
 			perPeerErr[name] = err
 			return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: delete lifecycle row %q: %w", name, err)
 		}
 		return fanOutContinue, nil
 	}
-	if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+	if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
 		return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
 			ClaimProducerName: name,
 			ScopeKind:         scopeKind,
 			ScopeID:           instanceID,
 			State:             target,
 		}, useTx)
-	}); err != nil {
+	}, tx); err != nil {
 		perPeerErr[name] = err
 		return fanOutAbort, fmt.Errorf("FanOutInstanceEvent: upsert lifecycle row %q: %w", name, err)
 	}
@@ -275,7 +261,7 @@ func fanOutRunScopeEventForPeers(
 
 	perPeerErr := map[string]error{}
 	for _, name := range peers {
-		outcome, ferr := fanOutRunScopePeer(ctx, deps, name, scopeKind, scopeID, instanceID, terminalReason, tx, perPeerErr)
+		outcome, ferr := fanOutRunScopePeer(ctx, deps, name, scopeKind, scopeID, instanceID, terminalReason, perPeerErr, tx)
 		if outcome == fanOutAbort {
 			return peers, perPeerErr, ferr
 		}
@@ -284,25 +270,17 @@ func fanOutRunScopeEventForPeers(
 }
 
 func fanOutRunScopePeer(
-	ctx context.Context,
-	deps AppDeps,
-	name string,
-	scopeKind persistence.LifecycleIdempotencyScopeKind,
-	scopeID string,
-	instanceID shared.UUID,
-	terminalReason string,
-	tx persistence.Tx,
-	perPeerErr map[string]error,
+	ctx context.Context, deps AppDeps, name string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, instanceID shared.UUID, terminalReason string, perPeerErr map[string]error, tx persistence.Tx,
 ) (fanOutOutcome, error) {
 	unlock := lockLifecycleScope(scopeKind, scopeID)
 	defer unlock()
 
 	var row *persistence.LifecycleIdempotencyRow
-	if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+	if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
 		r, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, scopeID, useTx)
 		row = r
 		return err
-	}); err != nil {
+	}, tx); err != nil {
 		perPeerErr[name] = err
 		return fanOutAbort, fmt.Errorf("FanOutRunScopeEvent: lifecycle row lookup for %q: %w", name, err)
 	}
@@ -326,14 +304,14 @@ func fanOutRunScopePeer(
 		perPeerErr[name] = err
 		return fanOutContinue, nil
 	}
-	if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+	if err := withOptionalTx(ctx, deps.Persist, func(ctx context.Context, useTx persistence.Tx) error {
 		return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
 			ClaimProducerName: name,
 			ScopeKind:         scopeKind,
 			ScopeID:           scopeID,
 			State:             persistence.LifecycleIdempotencyStateRunScopeTerminal,
 		}, useTx)
-	}); err != nil {
+	}, tx); err != nil {
 		perPeerErr[name] = err
 		return fanOutAbort, fmt.Errorf("FanOutRunScopeEvent: upsert lifecycle row %q: %w", name, err)
 	}
@@ -415,7 +393,7 @@ func closeAndFanOutScopeTree(
 	logger := deps.Logger
 	var treeDeepestFirst []persistence.RunScopeRow
 	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := deps.Persist.RunScopes().ListTreeDeepestFirst(ctx, tx, rootRunScopeID)
+		rows, err := deps.Persist.RunScopes().ListTreeDeepestFirst(ctx, rootRunScopeID, tx)
 		treeDeepestFirst = rows
 		return err
 	}); err != nil {
@@ -431,7 +409,7 @@ func closeAndFanOutScopeTree(
 	var firstErr error
 	for _, scope := range treeDeepestFirst {
 		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return deps.Persist.RunScopes().Close(ctx, tx, scope.ID)
+			return deps.Persist.RunScopes().Close(ctx, scope.ID, tx)
 		}); err != nil {
 			if logger != nil {
 				logger.Warn("CloseAndFanOutRunScopesForInstance: close run-scope failed",

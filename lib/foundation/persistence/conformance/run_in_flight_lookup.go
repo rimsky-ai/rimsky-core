@@ -23,7 +23,7 @@ func testInFlightLookupSingleRowPerScopePerNode(t *testing.T, d persistence.Data
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		_, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("Affirm: %v", err)
@@ -32,7 +32,7 @@ func testInFlightLookupSingleRowPerScopePerNode(t *testing.T, d persistence.Data
 	var runID shared.UUID
 	var ok bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		id, found, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, fix.MainRunScopeID)
+		id, found, err := q.GetInFlightRunForNode(ctx, fix.NodeID, fix.MainRunScopeID, tx)
 		runID = id
 		ok = found
 		return err
@@ -56,28 +56,28 @@ func testInFlightLookupNoFalsePositiveAcrossScopes(t *testing.T, d persistence.D
 	parentRun := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	scopeB := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               scopeB,
 			ParentRunScopeID: &fix.MainRunScopeID,
 			ParentNodeRunID:  &parentRun,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "scope-b",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Create scope B: %v", err)
 	}
 
 	scopeA := fix.MainRunScopeID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, scopeA, fix.FrameID)
+		_, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, scopeA, fix.FrameID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("Affirm A: %v", err)
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, scopeB, fix.FrameID)
+		_, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, scopeB, fix.FrameID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("Affirm B: %v", err)
@@ -85,7 +85,7 @@ func testInFlightLookupNoFalsePositiveAcrossScopes(t *testing.T, d persistence.D
 
 	var idA shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		id, found, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, scopeA)
+		id, found, err := q.GetInFlightRunForNode(ctx, fix.NodeID, scopeA, tx)
 		if !found {
 			t.Fatalf("lookup A: not found")
 		}
@@ -97,7 +97,7 @@ func testInFlightLookupNoFalsePositiveAcrossScopes(t *testing.T, d persistence.D
 
 	var idB shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		id, found, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, scopeB)
+		id, found, err := q.GetInFlightRunForNode(ctx, fix.NodeID, scopeB, tx)
 		if !found {
 			t.Fatalf("lookup B: not found")
 		}
@@ -121,14 +121,14 @@ func testInFlightLookupDeterministicWithMultipleCoexistingPendings(t *testing.T,
 
 	var earliest shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		id, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		id, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		earliest = id
 		return err
 	}); err != nil {
 		t.Fatalf("CreateCascadePending(first): %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		_, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		_, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("CreateCascadePending(second): %v", err)
@@ -139,7 +139,7 @@ func testInFlightLookupDeterministicWithMultipleCoexistingPendings(t *testing.T,
 		var found bool
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
 			var err error
-			id, found, err = q.GetInFlightRunForNode(ctx, tx, fix.NodeID, fix.MainRunScopeID)
+			id, found, err = q.GetInFlightRunForNode(ctx, fix.NodeID, fix.MainRunScopeID, tx)
 			return err
 		}); err != nil {
 			t.Fatalf("GetInFlightRunForNode: %v", err)
@@ -163,7 +163,7 @@ func testInFlightLookupReturnsNoneWhenAbsent(t *testing.T, d persistence.Databas
 	var id shared.UUID
 	var found bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		x, ok, err := q.GetInFlightRunForNode(ctx, tx, missingNode, fix.MainRunScopeID)
+		x, ok, err := q.GetInFlightRunForNode(ctx, missingNode, fix.MainRunScopeID, tx)
 		id = x
 		found = ok
 		return err

@@ -32,8 +32,7 @@ func TestClaimTerminalRecordCreation(t *testing.T) {
 		Outcome:            persistence.LineageOutcomeCommitted,
 		ProducerMetadata:   map[string]any{"row_count": float64(1)},
 	}
-	if err := runtime.WriteClaimTerminalLineage(ctx, nil, lt,
-		shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec); err != nil {
+	if err := runtime.WriteClaimTerminalLineage(ctx, lt, shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec, nil); err != nil {
 		t.Fatalf("WriteClaimTerminalLineage: %v", err)
 	}
 	if len(lt.rows) != 1 {

@@ -68,11 +68,11 @@ func seedSendInstance(t *testing.T, ctx context.Context, d persistence.Database)
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainRunScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -115,11 +115,11 @@ func seedSendInstanceNoBodySchema(t *testing.T, ctx context.Context, d persisten
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainRunScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -156,9 +156,7 @@ func TestSendCascadeMessageInTx_HappyPath(t *testing.T) {
 
 	var msgID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
-			instanceID, nodeID, frameID, "ping/recheck",
-			[]byte(`{"pong_status":"needs_work"}`))
+		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"needs_work"}`), tx)
 		if err != nil {
 			return err
 		}
@@ -174,10 +172,7 @@ func TestSendCascadeMessageInTx_HappyPath(t *testing.T) {
 	if msgID == (shared.UUID{}) {
 		t.Fatalf("expected a non-zero message id, got zero")
 	}
-	row, err := d.Tables().Messages().Get(ctx, msgID)
-	if err != nil {
-		t.Fatalf("Messages.Get: %v", err)
-	}
+	row := getMessageRowInTx(t, ctx, d.Tables(), msgID)
 	if row == nil {
 		t.Fatalf("expected envelope to exist after commit, got nil")
 	}
@@ -212,9 +207,7 @@ func TestSendCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 
 	sentinelErr := errors.New("forced rollback after send")
 	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, sendErr := sendCascadeMessageInTx(ctx, d.Tables(), tx,
-			instanceID, nodeID, frameID, "ping/recheck",
-			[]byte(`{"pong_status":"ok"}`))
+		id, replayed, sendErr := sendCascadeMessageInTx(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"ok"}`), tx)
 		if sendErr != nil {
 			return sendErr
 		}
@@ -253,10 +246,7 @@ func TestSendCascadeMessage_NotCancelledByLaterRollback(t *testing.T) {
 		t.Errorf("first send must not be a replay")
 	}
 
-	row, err := d.Tables().Messages().Get(ctx, msgID)
-	if err != nil {
-		t.Fatalf("Messages.Get (pre-rollback): %v", err)
-	}
+	row := getMessageRowInTx(t, ctx, d.Tables(), msgID)
 	if row == nil {
 		t.Fatalf("expected the sent envelope to be durably committed immediately, before any later transaction runs")
 	}
@@ -269,10 +259,7 @@ func TestSendCascadeMessage_NotCancelledByLaterRollback(t *testing.T) {
 		t.Fatalf("expected sentinel error to propagate, got %v", terminalErr)
 	}
 
-	postRow, err := d.Tables().Messages().Get(ctx, msgID)
-	if err != nil {
-		t.Fatalf("Messages.Get (post-rollback): %v", err)
-	}
+	postRow := getMessageRowInTx(t, ctx, d.Tables(), msgID)
 	if postRow == nil {
 		t.Fatalf("the already-sent message must survive a later terminal-resolution transaction's rollback " +
 			"(message emission is not part of the terminal-apply tx); got nil after the sentinel rollback")
@@ -291,9 +278,7 @@ func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	var firstReplayed, secondReplayed bool
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
-			instanceID, nodeID, frameID, "ping/recheck",
-			[]byte(`{"pong_status":"v1"}`))
+		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"v1"}`), tx)
 		if err != nil {
 			return err
 		}
@@ -309,9 +294,7 @@ func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
-			instanceID, nodeID, frameID, "ping/recheck",
-			[]byte(`{"pong_status":"v2-IGNORED"}`))
+		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"v2-IGNORED"}`), tx)
 		if err != nil {
 			return err
 		}
@@ -333,10 +316,7 @@ func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 		t.Fatalf("envelope row count = %d after retry; want exactly 1 (deterministic idempotency on (node_id, frame_id))", got)
 	}
 
-	row, err := d.Tables().Messages().Get(ctx, firstID)
-	if err != nil {
-		t.Fatalf("Messages.Get: %v", err)
-	}
+	row := getMessageRowInTx(t, ctx, d.Tables(), firstID)
 	if row == nil {
 		t.Fatalf("expected envelope row, got nil")
 	}
@@ -359,9 +339,7 @@ func TestSendCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 
 	var msgID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
-			instanceID, nodeID, frameID, "ping/recheck",
-			[]byte(`{"pong_status":"needs_work"}`))
+		id, replayed, err := sendCascadeMessageInTx(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"needs_work"}`), tx)
 		if err != nil {
 			return err
 		}
@@ -374,10 +352,7 @@ func TestSendCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 		t.Fatalf("send tx: %v", err)
 	}
 
-	row, err := d.Tables().Messages().Get(ctx, msgID)
-	if err != nil {
-		t.Fatalf("Messages.Get: %v", err)
-	}
+	row := getMessageRowInTx(t, ctx, d.Tables(), msgID)
 	if row == nil {
 		t.Fatalf("expected message envelope for id=%s; got nil", msgID)
 	}
@@ -399,9 +374,7 @@ func TestSendCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) 
 
 	for i := 0; i < 2; i++ {
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			_, _, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
-				instanceID, nodeID, frameID, "ping/recheck",
-				[]byte(`{"pong_status":"v"}`))
+			_, _, err := sendCascadeMessageInTx(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"v"}`), tx)
 			return err
 		}); err != nil {
 			t.Fatalf("send iter %d: %v", i, err)
@@ -423,18 +396,14 @@ func TestSendCascadeMessageInTx_EmptyNonNilBodyDefaultsToJSONObject(t *testing.T
 
 	var msgID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, _, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
-			instanceID, nodeID, frameID, "ping/unconstrained", []byte{})
+		id, _, err := sendCascadeMessageInTx(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/unconstrained", []byte{}, tx)
 		msgID = id
 		return err
 	}); err != nil {
 		t.Fatalf("send tx: %v", err)
 	}
 
-	row, err := d.Tables().Messages().Get(ctx, msgID)
-	if err != nil {
-		t.Fatalf("Messages.Get: %v", err)
-	}
+	row := getMessageRowInTx(t, ctx, d.Tables(), msgID)
 	if row == nil {
 		t.Fatalf("expected envelope row, got nil")
 	}
@@ -458,9 +427,7 @@ func TestSendCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t
 		nodeID := shared.UUID(uuid.New())
 		frameID := shared.UUID(uuid.New())
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			_, _, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
-				instanceID, nodeID, frameID, "ping/recheck",
-				[]byte(`{"pong_status":"v"}`))
+			_, _, err := sendCascadeMessageInTx(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"v"}`), tx)
 			return err
 		}); err != nil {
 			t.Fatalf("send iter %d: %v", i, err)
@@ -469,4 +436,17 @@ func TestSendCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t
 	if got := countMessages(t, ctx, d, instanceID); got != 3 {
 		t.Fatalf("envelope row count = %d; want 3 (distinct (node_id, frame_id) pairs must produce distinct envelopes)", got)
 	}
+}
+
+func getMessageRowInTx(t *testing.T, ctx context.Context, tables persistence.Tables, id shared.UUID) *persistence.MessageRow {
+	t.Helper()
+	var row *persistence.MessageRow
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := tables.Messages().Get(ctx, id, tx)
+		row = r
+		return err
+	}); err != nil {
+		t.Fatalf("Messages.Get: %v", err)
+	}
+	return row
 }

@@ -68,7 +68,7 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode, leafNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmplRow.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -113,7 +113,7 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 
 	var subClaims []runtime.SubClaim
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		out, err := runtime.AcquireSubClaims(ctx, seedArgs, tx, runtime.AcquireSubClaimsInput{
+		out, err := runtime.AcquireSubClaims(ctx, seedArgs, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
 			ProducerName:        storeName,
 			NodeRunID:           leafNodeRunID,
@@ -122,27 +122,27 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 			InstanceID:          inst.ID,
 			LivenessInterval:    30 * time.Second,
 			ParentIntent:        string(claimproducer.IntentReadWrite),
-		})
+		}, tx)
 		subClaims = out
 		return err
 	}))
 	require.Len(t, subClaims, 1, "one sub-scope → one parented sub-claim held by the leaf run")
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.NodeAttributes().SetDispatchInputBag(ctx, tx, leafNodeRunID, leafNode.ID, map[string]any{"seed": "base"}); err != nil {
+		if err := backend.NodeAttributes().SetDispatchInputBag(ctx, leafNodeRunID, leafNode.ID, map[string]any{"seed": "base"}, tx); err != nil {
 			return err
 		}
-		claimed, err := d.Queue().ClaimDispatchRow(ctx, tx, leafNodeRunID, supID)
+		claimed, err := d.Queue().ClaimDispatchRow(ctx, leafNodeRunID, supID, tx)
 		if err != nil {
 			return err
 		}
 		require.True(t, claimed, "leaf run must be claimable")
-		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, tx, leafNodeRunID, supID)
+		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, leafNodeRunID, supID, tx)
 		if err != nil {
 			return err
 		}
 		require.True(t, promoted, "leaf run must promote to running")
-		return d.Queue().RegisterAsyncAck(ctx, tx, leafNodeRunID, ackID, clk.Now(), nil, nil, "")
+		return d.Queue().RegisterAsyncAck(ctx, leafNodeRunID, ackID, clk.Now(), nil, nil, "", tx)
 	}))
 
 	cb := &runtime.CallbackServer{

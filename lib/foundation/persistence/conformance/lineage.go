@@ -45,14 +45,14 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 		}
 		rowID := shared.UUID(uuid.New())
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			return store.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			return store.Lineage().Insert(ctx, persistence.LineageRow{
 				ID:         rowID,
 				RecordKind: persistence.LineageRecordKindLeafRun,
 				InstanceID: fix.InstanceID,
 				FrameID:    fix.FrameID,
 				ObservedAt: observedAt,
 				Record:     recBytes,
-			})
+			}, tx)
 		}); err != nil {
 			t.Fatalf("Lineage.Insert: %v", err)
 		}
@@ -113,14 +113,14 @@ func testLineageQueryPaginatesWithCursor(t *testing.T, d persistence.Database) {
 		}
 		rowID := shared.UUID(uuid.New())
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			return store.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			return store.Lineage().Insert(ctx, persistence.LineageRow{
 				ID:         rowID,
 				RecordKind: persistence.LineageRecordKindLeafRun,
 				InstanceID: fix.InstanceID,
 				FrameID:    fix.FrameID,
 				ObservedAt: observedAt,
 				Record:     recBytes,
-			})
+			}, tx)
 		}); err != nil {
 			t.Fatalf("Lineage.Insert: %v", err)
 		}
@@ -197,14 +197,14 @@ func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database
 			t.Fatalf("marshal lineage record: %v", err)
 		}
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			return store.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			return store.Lineage().Insert(ctx, persistence.LineageRow{
 				ID:         shared.UUID(uuid.New()),
 				RecordKind: persistence.LineageRecordKindLeafRun,
 				InstanceID: fix.InstanceID,
 				FrameID:    fix.FrameID,
 				ObservedAt: observedAt,
 				Record:     recBytes,
-			})
+			}, tx)
 		}); err != nil {
 			t.Fatalf("Lineage.Insert: %v", err)
 		}

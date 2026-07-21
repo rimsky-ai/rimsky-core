@@ -31,7 +31,7 @@ func TestLeafRunRecordCreation(t *testing.T) {
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
 	}
-	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(), rec); err != nil {
+	if err := runtime.WriteLeafRunLineage(ctx, lt, instanceID, frameID, time.Now().UTC(), rec, nil); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)
 	}
 	if len(lt.rows) != 1 {
@@ -63,8 +63,7 @@ func TestLeafRunRecordCreation_RequiresState(t *testing.T) {
 		NodeRunID: shared.UUID(uuid.New()),
 		FrameID:   shared.UUID(uuid.New()),
 	}
-	err := runtime.WriteLeafRunLineage(context.Background(), nil, lt,
-		shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec)
+	err := runtime.WriteLeafRunLineage(context.Background(), lt, shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec, nil)
 	if err == nil {
 		t.Fatal("expected error when state is empty")
 	}

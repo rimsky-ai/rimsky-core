@@ -113,7 +113,7 @@ func openReconcilerFixtureTables(t *testing.T) (persistence.Tables, shared.UUID,
 		}, tx); err != nil {
 			return err
 		}
-		return tables.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		return tables.PublisherSubscriptions().Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             subID,
 			InstanceID:     instanceID,
 			PublisherName:  "test-pub",
@@ -121,7 +121,7 @@ func openReconcilerFixtureTables(t *testing.T) (persistence.Tables, shared.UUID,
 			ResolvedConfig: []byte(`{}`),
 			State:          persistence.PublisherSubscriptionStateActive,
 			StartedAt:      time.Now().UTC(),
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed fixture: %v", err)
 	}

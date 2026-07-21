@@ -58,11 +58,11 @@ func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request)
 	var found bool
 	if txErr := c.Persist.Transaction(r.Context(), func(ctx context.Context, tx persistence.Tx) error {
 		var berr error
-		found, berr = c.Queue.BumpLastProgressAt(ctx, tx, runID, c.clockNow().UTC())
+		found, berr = c.Queue.BumpLastProgressAt(ctx, runID, c.clockNow().UTC(), tx)
 		if berr != nil || !found {
 			return berr
 		}
-		return c.renewClaimExpiryForRun(ctx, tx, runID)
+		return c.renewClaimExpiryForRun(ctx, runID, tx)
 	}); txErr != nil {
 		c.Logger.Error("keepalive: bump failed",
 			"run_id", runID.String(), "error", txErr.Error())
@@ -77,7 +77,7 @@ func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request)
 }
 
 // @concept: orphan-reaper
-func (c *CallbackServer) renewClaimExpiryForRun(ctx context.Context, tx persistence.Tx, runID shared.UUID) error {
+func (c *CallbackServer) renewClaimExpiryForRun(ctx context.Context, runID shared.UUID, tx persistence.Tx) error {
 	if c.ClaimHandles == nil {
 		return nil
 	}

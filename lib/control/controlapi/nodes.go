@@ -92,7 +92,7 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			summary = s
-			latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, row.ID)
+			latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, row.ID, tx)
 			if err != nil {
 				return err
 			}
@@ -234,7 +234,7 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			latestByID, err := deps.Persist.Nodes().GetLatestRunForNodes(ctx, tx, nodeIDs)
+			latestByID, err := deps.Persist.Nodes().GetLatestRunForNodes(ctx, nodeIDs, tx)
 			if err != nil {
 				return err
 			}

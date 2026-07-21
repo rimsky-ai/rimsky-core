@@ -59,9 +59,9 @@ func seedHeldErrorFixture(t *testing.T, curState cascade.NodeState, nodeDef *nod
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -75,9 +75,9 @@ func seedHeldErrorFixture(t *testing.T, curState cascade.NodeState, nodeDef *nod
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -85,7 +85,7 @@ func seedHeldErrorFixture(t *testing.T, curState cascade.NodeState, nodeDef *nod
 			return err
 		}
 		frameID = fid
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 holderNodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -95,11 +95,11 @@ func seedHeldErrorFixture(t *testing.T, curState cascade.NodeState, nodeDef *nod
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -111,14 +111,14 @@ func seedHeldErrorFixture(t *testing.T, curState cascade.NodeState, nodeDef *nod
 		if holderNodeRunID == (shared.UUID{}) {
 			return fmt.Errorf("seedHeldErrorFixture: candidate not surfaced for %s", holderNodeID)
 		}
-		claimed, err := q.ClaimDispatchRow(ctx, tx, holderNodeRunID, "sup-held-shield")
+		claimed, err := q.ClaimDispatchRow(ctx, holderNodeRunID, "sup-held-shield", tx)
 		if err != nil {
 			return err
 		}
 		if !claimed {
 			return fmt.Errorf("seedHeldErrorFixture: run %s not claimable", holderNodeRunID)
 		}
-		promoted, err := q.PromoteClaimedToRunning(ctx, tx, holderNodeRunID, "sup-held-shield")
+		promoted, err := q.PromoteClaimedToRunning(ctx, holderNodeRunID, "sup-held-shield", tx)
 		if err != nil {
 			return err
 		}
@@ -179,7 +179,7 @@ func TestApplyErrorPolicy_HeldRunShieldedFromErrorTransition(t *testing.T) {
 
 		var runRow *persistence.NodeRunForGate
 		if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+			r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 			runRow = r
 			return err
 		}); err != nil {

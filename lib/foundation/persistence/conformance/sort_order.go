@@ -30,7 +30,7 @@ func testAdvisoryLockConcurrentAcquisitionSmoke(t *testing.T, d persistence.Data
 		for i := 0; i < iterations; i++ {
 			err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				for _, n := range names {
-					if err := coord.TakeNamedLockInTx(ctx, tx, n); err != nil {
+					if err := coord.TakeNamedLock(ctx, n, tx); err != nil {
 						return err
 					}
 				}
@@ -58,7 +58,7 @@ func testAdvisoryLockConcurrentAcquisitionSmoke(t *testing.T, d persistence.Data
 		for i := 0; i < iterations; i++ {
 			err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				for _, r := range scopes {
-					if err := coord.TakeClaimScopeLockInTx(ctx, tx, claimProducerName, r); err != nil {
+					if err := coord.TakeClaimScopeLock(ctx, claimProducerName, r, tx); err != nil {
 						return err
 					}
 				}

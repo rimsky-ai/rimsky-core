@@ -61,7 +61,7 @@ func TestApplyTerminalInfraError_SkipsOperatorPolicyAndUsesDefaultRetryCap(t *te
 		}
 		var runRow *persistence.NodeRunForGate
 		if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+			r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 			runRow = r
 			return err
 		}); err != nil {
@@ -77,7 +77,7 @@ func TestApplyTerminalInfraError_SkipsOperatorPolicyAndUsesDefaultRetryCap(t *te
 
 	var runRow *persistence.NodeRunForGate
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return err
 	}); err != nil {
@@ -90,7 +90,7 @@ func TestApplyTerminalInfraError_SkipsOperatorPolicyAndUsesDefaultRetryCap(t *te
 		t.Fatalf("applyTerminalInfraError (give-up attempt): %v", err)
 	}
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return err
 	}); err != nil {
@@ -117,7 +117,7 @@ func TestApplyTerminalInfraError_NodeMaxRetriesOverridesDefaultCap(t *testing.T)
 		driveInfraErrorOnce(t, tables, args, acq)
 		var runRow *persistence.NodeRunForGate
 		if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+			r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 			runRow = r
 			return err
 		}); err != nil {
@@ -137,7 +137,7 @@ func TestApplyTerminalInfraError_NodeMaxRetriesOverridesDefaultCap(t *testing.T)
 	}
 	var runRow *persistence.NodeRunForGate
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return err
 	}); err != nil {
@@ -167,7 +167,7 @@ func TestApplyTerminalInfraError_SubgraphExitNodeStillRetriesAndGivesUp(t *testi
 		driveInfraErrorOnce(t, tables, args, acq)
 		var runRow *persistence.NodeRunForGate
 		if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+			r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 			runRow = r
 			return err
 		}); err != nil {
@@ -187,7 +187,7 @@ func TestApplyTerminalInfraError_SubgraphExitNodeStillRetriesAndGivesUp(t *testi
 	}
 	var runRow *persistence.NodeRunForGate
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return err
 	}); err != nil {

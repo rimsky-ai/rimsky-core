@@ -23,7 +23,7 @@ func testSettlingSignalTypeNullNotEmptyStringSentinel(t *testing.T, d persistenc
 
 	var beforeTerminal *persistence.NodeRunLatest
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		r, err := store.Nodes().GetLatestRunForNode(ctx, fix.NodeID, tx)
 		beforeTerminal = r
 		return err
 	}); err != nil {
@@ -50,7 +50,7 @@ func testSettlingSignalTypeNullNotEmptyStringSentinel(t *testing.T, d persistenc
 
 	var afterSuccess *persistence.NodeRunLatest
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		r, err := store.Nodes().GetLatestRunForNode(ctx, fix.NodeID, tx)
 		afterSuccess = r
 		return err
 	}); err != nil {

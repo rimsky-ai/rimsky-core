@@ -28,8 +28,7 @@ func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) b
 }
 
 func markClaimHolderForRun(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	claimHandleID, runID shared.UUID, success bool,
+	ctx context.Context, args RunArgs, claimHandleID, runID shared.UUID, success bool, tx persistence.Tx,
 ) error {
 	state := persistence.ClaimHolderStateCompleted
 	if !success {
@@ -44,8 +43,7 @@ func markClaimHolderForRun(
 }
 
 func findInheritedAliasesForRun(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	subgraphs []node.HoldingSubgraph, nodeType string, runID shared.UUID,
+	ctx context.Context, args RunArgs, subgraphs []node.HoldingSubgraph, nodeType string, runID shared.UUID, tx persistence.Tx,
 ) ([]inheritedAlias, error) {
 	if len(subgraphs) == 0 {
 		return nil, nil

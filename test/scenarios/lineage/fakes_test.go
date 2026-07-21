@@ -16,7 +16,7 @@ type fakeLineage struct {
 	rows []persistence.LineageRow
 }
 
-func (f *fakeLineage) Insert(_ context.Context, _ persistence.Tx, row persistence.LineageRow) error {
+func (f *fakeLineage) Insert(_ context.Context, row persistence.LineageRow, _ persistence.Tx) error {
 	f.rows = append(f.rows, row)
 	return nil
 }

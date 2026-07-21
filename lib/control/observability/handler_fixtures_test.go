@@ -40,11 +40,11 @@ func seedInstanceWithNode(t *testing.T, ctx context.Context, store persistence.T
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainRunScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -86,14 +86,14 @@ func seedFrame(t *testing.T, ctx context.Context, store persistence.Tables, inst
 	msgID := shared.UUID(uuid.New())
 	var frameID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       msgType,
 			Sender:     "test-frame-seed",
 			SenderKind: "operator",
 			ReceivedAt: time.Now().UTC(),
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, msgID, runScopeID, tx)
@@ -130,7 +130,7 @@ func seedPendingRun(t *testing.T, ctx context.Context, d persistence.Database, n
 	q := d.Queue()
 	var runID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 nodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -140,11 +140,11 @@ func seedPendingRun(t *testing.T, ctx context.Context, d persistence.Database, n
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -167,14 +167,14 @@ func claimAndPromoteRun(t *testing.T, ctx context.Context, d persistence.Databas
 	store := d.Tables()
 	q := d.Queue()
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		claimed, err := q.ClaimDispatchRow(ctx, tx, runID, supervisorID)
+		claimed, err := q.ClaimDispatchRow(ctx, runID, supervisorID, tx)
 		if err != nil {
 			return err
 		}
 		if !claimed {
 			t.Fatalf("claimAndPromoteRun: run %s not claimed", runID)
 		}
-		promoted, err := q.PromoteClaimedToRunning(ctx, tx, runID, supervisorID)
+		promoted, err := q.PromoteClaimedToRunning(ctx, runID, supervisorID, tx)
 		if err != nil {
 			return err
 		}

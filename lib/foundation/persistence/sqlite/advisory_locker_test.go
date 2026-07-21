@@ -124,7 +124,7 @@ func TestAcquireMigrationLock_HonorsContextCancel(t *testing.T) {
 	}
 }
 
-func TestTakeNamedLockInTx_MutualExclusionComesFromImmediateTxLock(t *testing.T) {
+func TestTakeNamedLock_MutualExclusionComesFromImmediateTxLock(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -156,7 +156,7 @@ func TestTakeNamedLockInTx_MutualExclusionComesFromImmediateTxLock(t *testing.T)
 		go func() {
 			defer wg.Done()
 			errs <- store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				if err := locker.TakeNamedLockInTx(ctx, tx, "lock-race-probe"); err != nil {
+				if err := locker.TakeNamedLock(ctx, "lock-race-probe", tx); err != nil {
 					return err
 				}
 				sTx, err := unwrapTx(tx)
@@ -186,7 +186,7 @@ func TestTakeNamedLockInTx_MutualExclusionComesFromImmediateTxLock(t *testing.T)
 		t.Fatalf("count probe rows: %v", err)
 	}
 	if count != racers {
-		t.Fatalf("lock_race_probe has %d rows, want %d — TakeNamedLockInTx is a no-op on sqlite, so this "+
+		t.Fatalf("lock_race_probe has %d rows, want %d — TakeNamedLock is a no-op on sqlite, so this "+
 			"only serializes via the _txlock=immediate DSN pragma making every Transaction a write tx from "+
 			"BEGIN; a lost update here means that pragma stopped closing the read-then-write window", count, racers)
 	}

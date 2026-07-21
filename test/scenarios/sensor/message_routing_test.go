@@ -30,7 +30,7 @@ func insertLiveSubscription(t *testing.T, h *scenario.Harness, instanceID shared
 	t.Helper()
 	subID := shared.UUID(uuid.New())
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.Persist.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		return h.Persist.PublisherSubscriptions().Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             subID,
 			InstanceID:     instanceID,
 			PublisherName:  publisherName,
@@ -39,7 +39,7 @@ func insertLiveSubscription(t *testing.T, h *scenario.Harness, instanceID shared
 			MessageType:    "sensor/observation",
 			State:          state,
 			StartedAt:      time.Now().UTC(),
-		})
+		}, tx)
 	}))
 	return subID
 }
@@ -119,8 +119,7 @@ func TestMessageRouting_PublisherEnvelopeDeliveredThroughRealPipeline(t *testing
 	require.NoError(t, err)
 	msgID := shared.UUID(msgUUID)
 
-	row, err := h.Persist.Messages().Get(h.Ctx, msgID)
-	require.NoError(t, err)
+	row := getRoutedMessage(t, h, msgID)
 	require.NotNil(t, row)
 	require.Equal(t, "publisher", row.SenderKind,
 		"a publisher_subscription_id post must be attributed to sender_kind publisher")
@@ -129,8 +128,7 @@ func TestMessageRouting_PublisherEnvelopeDeliveredThroughRealPipeline(t *testing
 	require.Equal(t, "sensor/observation", row.Type)
 
 	for {
-		row, err = h.Persist.Messages().Get(h.Ctx, msgID)
-		require.NoError(t, err)
+		row = getRoutedMessage(t, h, msgID)
 		if row.DeliveredAt != nil {
 			break
 		}
@@ -217,8 +215,7 @@ func TestMessageRouting_MarkDeliveredImpliesReceiverRunInSameFrame(t *testing.T)
 
 	var row *persistence.MessageRow
 	for {
-		r, err := h.Persist.Messages().Get(h.Ctx, msgID)
-		require.NoError(t, err)
+		r := getRoutedMessage(t, h, msgID)
 		if r != nil && r.DeliveredAt != nil {
 			row = r
 			break
@@ -243,10 +240,21 @@ func TestMessageRouting_MarkDeliveredImpliesReceiverRunInSameFrame(t *testing.T)
 
 	var pending []persistence.MessageRow
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := h.Persist.Messages().ListPendingForInstance(ctx, tx, iid)
+		p, err := h.Persist.Messages().ListPendingForInstance(ctx, iid, tx)
 		pending = p
 		return err
 	}))
 	require.Empty(t, pending,
 		"the consumed message must not linger as pending")
+}
+
+func getRoutedMessage(t *testing.T, h *scenario.Harness, id shared.UUID) *persistence.MessageRow {
+	t.Helper()
+	var row *persistence.MessageRow
+	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.Persist.Messages().Get(ctx, id, tx)
+		row = r
+		return err
+	}))
+	return row
 }

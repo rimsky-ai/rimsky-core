@@ -66,7 +66,7 @@ func (b *PgLargeObjectBackend) Write(ctx context.Context, _ persistence.BlobKey,
 	return persistence.Handle(fmt.Sprintf("pglo:%d", oid)), nil
 }
 
-func (b *PgLargeObjectBackend) WriteInTx(ctx context.Context, tx persistence.Tx, _ persistence.BlobKey, bytes []byte) (persistence.Handle, error) {
+func (b *PgLargeObjectBackend) WriteInTx(ctx context.Context, _ persistence.BlobKey, bytes []byte, tx persistence.Tx) (persistence.Handle, error) {
 	pgT, err := unwrapTx(tx)
 	if err != nil {
 		return "", fmt.Errorf("blob pglo: WriteInTx: %w", err)
@@ -90,7 +90,7 @@ func (b *PgLargeObjectBackend) WriteInTx(ctx context.Context, tx persistence.Tx,
 	return persistence.Handle(fmt.Sprintf("pglo:%d", oid)), nil
 }
 
-func (b *PgLargeObjectBackend) ReadInTx(ctx context.Context, tx persistence.Tx, handle persistence.Handle) ([]byte, error) {
+func (b *PgLargeObjectBackend) ReadInTx(ctx context.Context, handle persistence.Handle, tx persistence.Tx) ([]byte, error) {
 	oid, err := parsePgloHandle(handle)
 	if err != nil {
 		return nil, err

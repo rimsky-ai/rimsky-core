@@ -57,9 +57,9 @@ func openSelfExclusionFixture(ctx context.Context, t *testing.T) selfExclusionFi
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -73,9 +73,9 @@ func openSelfExclusionFixture(ctx context.Context, t *testing.T) selfExclusionFi
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -93,9 +93,9 @@ func seedSelfExclusionRun(ctx context.Context, t *testing.T, fx selfExclusionFix
 	t.Helper()
 	runID := shared.UUID(uuid.New())
 	require.NoError(t, fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return fx.tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		return fx.tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: runID, NodeID: fx.nodeID, FrameID: fx.frameID, RunScopeID: fx.mainScopeID, ExecutorName: "stub",
-		})
+		}, tx)
 	}))
 	return runID
 }
@@ -144,7 +144,7 @@ func TestEvaluateClaimScopeConflict_PriorRunOfSameNodeOnSameSupervisorIsAConflic
 	var conflicted, persistentConflict bool
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		conflicted, persistentConflict, err = evaluateClaimScopeConflict(ctx, args, tx, fake, spec, cand)
+		conflicted, persistentConflict, err = evaluateClaimScopeConflict(ctx, args, fake, spec, cand, tx)
 		return err
 	}))
 	require.True(t, conflicted,
@@ -174,7 +174,7 @@ func TestEvaluateClaimScopeConflict_SameRunOwnPriorClaimIsExcluded(t *testing.T)
 	var conflicted bool
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		conflicted, _, err = evaluateClaimScopeConflict(ctx, args, tx, fake, spec, cand)
+		conflicted, _, err = evaluateClaimScopeConflict(ctx, args, fake, spec, cand, tx)
 		return err
 	}))
 	require.False(t, conflicted,

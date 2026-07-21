@@ -34,19 +34,19 @@ func TestDeleteInstance_OnRunScopeTerminalFiresBeforeOnInstanceTerminated(t *tes
 
 	rootScopeID := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := h.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: rootScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		msgID := uuid.New()
-		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := h.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		_, err := h.persist.Frames().InsertRunningFrame(ctx, instID, msgID, rootScopeID, tx)

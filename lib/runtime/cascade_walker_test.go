@@ -106,8 +106,7 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 	var firstPendingID shared.UUID
 	t.Run("case1_no_pending_creates_new", func(t *testing.T) {
 		require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			id, err := ensureCascadePending(ctx, args, tx,
-				receiverNodeID, mainScopeID, frameID, senderANodeID, senderARunID)
+			id, err := ensureCascadePending(ctx, args, receiverNodeID, mainScopeID, frameID, senderANodeID, senderARunID, tx)
 			firstPendingID = id
 			return err
 		}))
@@ -118,8 +117,7 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 	t.Run("case2_pending_no_sender_node_accumulates", func(t *testing.T) {
 		var after shared.UUID
 		require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			id, err := ensureCascadePending(ctx, args, tx,
-				receiverNodeID, mainScopeID, frameID, senderBNodeID, senderBRunID)
+			id, err := ensureCascadePending(ctx, args, receiverNodeID, mainScopeID, frameID, senderBNodeID, senderBRunID, tx)
 			after = id
 			return err
 		}))
@@ -130,7 +128,7 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 	t.Run("case3_pending_sender_node_already_covered_creates_new", func(t *testing.T) {
 		_, err = rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_node_runs
-			   (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+			   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
 			 VALUES (?, ?, 'stub', '[]', datetime('now'), 'fresh', 100, 'cascade', ?, ?)`,
 			senderARunID.String(), senderANodeID.String(), frameID.String(), mainScopeID.String(),
 		)
@@ -149,8 +147,7 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 
 		var after shared.UUID
 		require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			id, err := ensureCascadePending(ctx, args, tx,
-				receiverNodeID, mainScopeID, frameID, senderANodeID, senderASecondRunID)
+			id, err := ensureCascadePending(ctx, args, receiverNodeID, mainScopeID, frameID, senderANodeID, senderASecondRunID, tx)
 			after = id
 			return err
 		}))

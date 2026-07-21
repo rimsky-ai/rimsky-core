@@ -143,7 +143,7 @@ func TestBindLeafCandidateHandles_MatchesByParentClaimHandleIDNotProducerNameAlo
 	}
 	cand := persistence.Candidate{NodeRunID: nodeRunID}
 
-	bindLeafCandidateHandles(context.Background(), args, nil, out, cand)
+	bindLeafCandidateHandles(context.Background(), args, out, cand, nil)
 
 	if len(out.Locks[0].ProducerCandidateHandle) != 0 {
 		t.Fatalf("claim_b (an unrelated claim from the same producer, iterated first) must NOT receive "+

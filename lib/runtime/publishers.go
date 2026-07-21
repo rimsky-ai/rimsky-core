@@ -35,8 +35,7 @@ const subscribeRetryAttempts = 3
 const subscribeRetryBase = 200 * time.Millisecond
 
 func StartPublisherSubscriptionsForInstance(
-	ctx context.Context, deps PublisherLifecycleDeps, tx persistence.Tx,
-	instanceID shared.UUID, params map[string]any, publishers []spec.PublisherSpec,
+	ctx context.Context, deps PublisherLifecycleDeps, instanceID shared.UUID, params map[string]any, publishers []spec.PublisherSpec, tx persistence.Tx,
 ) error {
 	if len(publishers) == 0 {
 		return nil
@@ -77,7 +76,7 @@ func StartPublisherSubscriptionsForInstance(
 			row.State = persistence.PublisherSubscriptionStateFailed
 			row.FailureReason = unknownPublisherReason(p.Name)
 		}
-		if err := deps.Persist.PublisherSubscriptions().Insert(ctx, tx, row); err != nil {
+		if err := deps.Persist.PublisherSubscriptions().Insert(ctx, row, tx); err != nil {
 			deps.Logger.Warn("publisher.subscribe.row_insert_failed",
 				"publisher_name", p.Name,
 				"instance_id", instanceID.String(),
@@ -543,7 +542,7 @@ func markSubscriptionActive(ctx context.Context, deps PublisherLifecycleDeps, su
 func getSubscriptionRow(ctx context.Context, deps PublisherLifecycleDeps, subID shared.UUID) (*persistence.PublisherSubscriptionRow, error) {
 	var row *persistence.PublisherSubscriptionRow
 	err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := deps.Persist.PublisherSubscriptions().Get(ctx, tx, subID)
+		r, err := deps.Persist.PublisherSubscriptions().Get(ctx, subID, tx)
 		row = r
 		return err
 	})

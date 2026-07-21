@@ -170,13 +170,13 @@ func seedTerminalRunWithSignalType(
 	runID := uuid.New()
 	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), 'fresh', $3, now(), $4, 0)
     `, runID, nodeID, frameID, mainScopeID)
 
 	sig := signalType
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFresh, &sig, false)
+		return h.persist.NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateFresh, &sig, false, tx)
 	}))
 	return runID
 }

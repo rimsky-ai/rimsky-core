@@ -34,9 +34,9 @@ type PublisherSubscriptionRow struct {
 }
 
 type PublisherSubscriptionTable interface {
-	Insert(ctx context.Context, tx Tx, row PublisherSubscriptionRow) error
+	Insert(ctx context.Context, row PublisherSubscriptionRow, tx Tx) error
 
-	Delete(ctx context.Context, tx Tx, id shared.UUID) error
+	Delete(ctx context.Context, id shared.UUID, tx Tx) error
 
 	ListByInstance(ctx context.Context, instanceID shared.UUID) ([]PublisherSubscriptionRow, error)
 
@@ -44,5 +44,5 @@ type PublisherSubscriptionTable interface {
 
 	CompareAndSetState(ctx context.Context, id shared.UUID, from, to, failureReason string) (bool, error)
 
-	Get(ctx context.Context, tx Tx, id shared.UUID) (*PublisherSubscriptionRow, error)
+	Get(ctx context.Context, id shared.UUID, tx Tx) (*PublisherSubscriptionRow, error)
 }

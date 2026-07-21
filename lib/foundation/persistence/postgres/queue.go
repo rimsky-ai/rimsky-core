@@ -44,21 +44,20 @@ func (q *queueImpl) q(tx persistence.Tx) querier {
 	return t.tx
 }
 
-func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest) error {
-	if q.tables == nil {
-		return fmt.Errorf("postgres.Enqueue: queue not wired with tables")
-	}
-	return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, req, tx)
-	})
-}
-
 // @concept: run-scope
 // @decision: non-cascade-direct-to-stale
-func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
-	stores := req.RequiredClaimProducers
-	if stores == nil {
-		stores = []string{}
+func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
+	if tx == nil {
+		if q.tables == nil {
+			return fmt.Errorf("postgres.Enqueue: queue not wired with tables")
+		}
+		return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return q.Enqueue(ctx, req, tx)
+		})
+	}
+	claimProducers := req.RequiredClaimProducers
+	if claimProducers == nil {
+		claimProducers = []string{}
 	}
 	executor := nullableString(req.ExecutorName)
 	if req.FrameID == (shared.UUID{}) {
@@ -82,7 +81,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	// @concept: executor
 	var newRunID shared.UUID
 	err := q.q(tx).QueryRow(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
 		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'stale', $7,
 		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = $1 AND run_scope_id = $6), 0) + 1,
 		        $5, rs.id, $8, $9, $10, $11, $12
@@ -90,7 +89,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		  WHERE rs.id = $6
 		    AND rs.closed_at IS NULL
 		 RETURNING id`,
-		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID, req.RunScopeID,
+		req.NodeID, executor, claimProducers, req.EnqueuedAt, req.FrameID, req.RunScopeID,
 		string(creationReason),
 		priorRunPtr, priorDisposition,
 		nilIfEmpty(req.InitialScratchInline), nullableString(req.InitialScratchHandle), nullableString(req.InitialScratchHandleBackend),
@@ -115,14 +114,14 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if err != nil {
 		return fmt.Errorf("postgres.Enqueue: %w", err)
 	}
-	if err := (*nodeAttributesImpl)(q.tables).SnapshotBagForNewRun(ctx, tx, newRunID, req.NodeID, req.RunScopeID); err != nil {
+	if err := (*nodeAttributesImpl)(q.tables).SnapshotBagForNewRun(ctx, newRunID, req.NodeID, req.RunScopeID, tx); err != nil {
 		return fmt.Errorf("postgres.Enqueue: snapshot bag: %w", err)
 	}
 	return nil
 }
 
 func (q *queueImpl) SelectCandidates(
-	ctx context.Context, tx persistence.Tx, req persistence.SelectCandidatesRequest,
+	ctx context.Context, req persistence.SelectCandidatesRequest, tx persistence.Tx,
 ) ([]persistence.Candidate, error) {
 	if tx == nil {
 		return nil, errors.New("postgres.SelectCandidates: tx required")
@@ -145,7 +144,7 @@ func (q *queueImpl) SelectCandidates(
 	}
 
 	rows, err := pgT.Query(ctx,
-		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
+		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_claim_producers, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
@@ -155,7 +154,7 @@ func (q *queueImpl) SelectCandidates(
 		    AND i.paused = false
 		    AND i.terminated_at IS NULL
 		    AND NOT EXISTS (
-		      SELECT 1 FROM unnest(d.required_stores) AS rs(name)
+		      SELECT 1 FROM unnest(d.required_claim_producers) AS rs(name)
 		      WHERE NOT (
 		        rs.name = ANY($1::text[])
 		        OR ($5 <> '' AND $5 = ANY($1::text[]) AND i.service_bindings ? rs.name)
@@ -163,7 +162,7 @@ func (q *queueImpl) SelectCandidates(
 		    )
 		    AND (
 		      d.executor_name = ANY($2::text[])
-		      OR (d.executor_name IS NULL AND d.required_stores IS NOT NULL AND cardinality(d.required_stores) > 0)
+		      OR (d.executor_name IS NULL AND d.required_claim_producers IS NOT NULL AND cardinality(d.required_claim_producers) > 0)
 		      OR (
 		        $4 <> ''
 		        AND $4 = ANY($2::text[])
@@ -229,7 +228,7 @@ func (q *queueImpl) SelectCandidates(
 }
 
 func (q *queueImpl) ClaimDispatchRow(
-	ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, supervisorID string,
+	ctx context.Context, nodeRunID shared.UUID, supervisorID string, tx persistence.Tx,
 ) (bool, error) {
 	if tx == nil {
 		return false, errors.New("postgres.ClaimDispatchRow: tx required")
@@ -254,7 +253,7 @@ func (q *queueImpl) ClaimDispatchRow(
 }
 
 func (q *queueImpl) PromoteClaimedToRunning(
-	ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, supervisorID string,
+	ctx context.Context, nodeRunID shared.UUID, supervisorID string, tx persistence.Tx,
 ) (bool, error) {
 	if tx == nil {
 		return false, errors.New("postgres.PromoteClaimedToRunning: tx required")
@@ -301,7 +300,7 @@ func (q *queueImpl) ForceComplete(ctx context.Context, nodeRunID shared.UUID) er
 }
 
 // @concept: run-scope
-func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
+func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL,
@@ -312,16 +311,12 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 		nodeID, runScopeID, expectedClaimedBy,
 	)
 	if err != nil {
-		return fmt.Errorf("postgres.RemoveForNodeInTx: %w", err)
+		return fmt.Errorf("postgres.RemoveForNode: %w", err)
 	}
 	return nil
 }
 
-func (q *queueImpl) ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) error {
-	return q.ForceRemoveForNodeInTx(ctx, nodeID, runScopeID, nil)
-}
-
-func (q *queueImpl) ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) error {
+func (q *queueImpl) ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) error {
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL,
@@ -332,14 +327,14 @@ func (q *queueImpl) ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UU
 		nodeID, runScopeID,
 	)
 	if err != nil {
-		return fmt.Errorf("postgres.ForceRemoveForNodeInTx: %w", err)
+		return fmt.Errorf("postgres.ForceRemoveForNode: %w", err)
 	}
 	return nil
 }
 
 func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.DispatchRow, error) {
 	rows, err := q.pool.Query(ctx,
-		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
+		`SELECT id, node_id, executor_name, required_claim_producers, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id, async_ack_registered_at,
 		        last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
@@ -422,12 +417,12 @@ func (q *queueImpl) ReleaseClaimWithDisposition(ctx context.Context, nodeRunID s
 }
 
 // @concept: node-run
-func (q *queueImpl) StampPriorDispatchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string) error {
+func (q *queueImpl) StampPriorDispatch(ctx context.Context, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string, tx persistence.Tx) error {
 	if tx == nil {
-		return errors.New("postgres.StampPriorDispatchInTx: tx required")
+		return errors.New("postgres.StampPriorDispatch: tx required")
 	}
 	if disposition == "" {
-		return errors.New("postgres.StampPriorDispatchInTx: disposition required")
+		return errors.New("postgres.StampPriorDispatch: disposition required")
 	}
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
@@ -436,19 +431,15 @@ func (q *queueImpl) StampPriorDispatchInTx(ctx context.Context, tx persistence.T
 		priorNodeRunID, disposition, nodeRunID,
 	)
 	if err != nil {
-		return fmt.Errorf("postgres.StampPriorDispatchInTx: %w", err)
+		return fmt.Errorf("postgres.StampPriorDispatch: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
-		return fmt.Errorf("postgres.StampPriorDispatchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("postgres.StampPriorDispatch: %s: %w", nodeRunID, persistence.ErrNotFound)
 	}
 	return nil
 }
 
-func (q *queueImpl) GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
-	return q.getDispatchNode(ctx, q.pool, nodeRunID)
-}
-
-func (q *queueImpl) GetDispatchNodeInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+func (q *queueImpl) GetDispatchNode(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) (shared.UUID, persistence.ClaimOwnership, error) {
 	return q.getDispatchNode(ctx, q.q(tx), nodeRunID)
 }
 
@@ -491,12 +482,12 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (pe
 	return persistence.ClaimOwnership{Kind: persistence.ClaimOwnershipKindClaimedBy, SupervisorID: *claimedBy}, nil
 }
 
-func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx, ackID string) (*persistence.DispatchRow, error) {
+func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, ackID string, tx persistence.Tx) (*persistence.DispatchRow, error) {
 	if tx == nil {
 		return nil, errors.New("postgres.LookupRunByAsyncAckID: tx required")
 	}
 	row := q.q(tx).QueryRow(ctx,
-		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
+		`SELECT id, node_id, executor_name, required_claim_producers, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id, async_ack_registered_at,
 		        last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
@@ -525,7 +516,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 	return &r, nil
 }
 
-func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string) error {
+func (q *queueImpl) RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, tx persistence.Tx) error {
 	if tx == nil {
 		return errors.New("postgres.RegisterAsyncAck: tx required")
 	}
@@ -547,12 +538,12 @@ func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, run
 		return fmt.Errorf("postgres.RegisterAsyncAck: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("postgres.RegisterAsyncAck: %s: %w", runID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("postgres.RegisterAsyncAck: %s: %w", runID, persistence.ErrNotFound)
 	}
 	return nil
 }
 
-func (q *queueImpl) BumpLastProgressAt(ctx context.Context, tx persistence.Tx, runID shared.UUID, now time.Time) (bool, error) {
+func (q *queueImpl) BumpLastProgressAt(ctx context.Context, runID shared.UUID, now time.Time, tx persistence.Tx) (bool, error) {
 	tag, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs SET last_progress_at = $2 WHERE id = $1`,
 		runID, now,
@@ -598,7 +589,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		instanceID = *filter.InstanceID
 	}
 	rows, err := q.pool.Query(ctx,
-		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_stores, d.enqueued_at,
+		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_claim_producers, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
@@ -695,7 +686,7 @@ func (q *queueImpl) CountParked(ctx context.Context) (int, error) {
 
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.pool.QueryRow(ctx,
-		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_stores, d.enqueued_at,
+		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_claim_producers, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
@@ -727,7 +718,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 }
 
 // @concept: run-scope
-func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, nodeID, runScopeID shared.UUID, tx persistence.Tx) (shared.UUID, bool, error) {
 	ex := q.q(tx)
 	var id shared.UUID
 	err := ex.QueryRow(ctx,
@@ -747,7 +738,7 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 }
 
 // @concept: run-scope
-func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, nodeID, runScopeID shared.UUID, tx persistence.Tx) (shared.UUID, bool, error) {
 	ex := q.q(tx)
 	var id shared.UUID
 	err := ex.QueryRow(ctx,
@@ -768,7 +759,7 @@ func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persi
 // @concept: wait-set
 // @concept: cascade
 func (q *queueImpl) ListInFlightRunStates(
-	ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID,
+	ctx context.Context, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID, tx persistence.Tx,
 ) (map[shared.UUID][]string, error) {
 	out := map[shared.UUID][]string{}
 	if len(nodeIDs) == 0 {

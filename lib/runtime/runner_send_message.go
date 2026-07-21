@@ -30,8 +30,7 @@ func sendCascadeMessage(
 	var replayed bool
 	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var ierr error
-		messageID, replayed, ierr = sendCascadeMessageInTx(ctx, tables, tx,
-			instanceID, nodeID, frameID, sendMessageType, body)
+		messageID, replayed, ierr = sendCascadeMessageInTx(ctx, tables, instanceID, nodeID, frameID, sendMessageType, body, tx)
 		return ierr
 	})
 	return messageID, replayed, err
@@ -40,12 +39,7 @@ func sendCascadeMessage(
 // @story: cascade-send
 // @concept: message-sender-node
 func sendCascadeMessageInTx(
-	ctx context.Context,
-	tables persistence.Tables,
-	tx persistence.Tx,
-	instanceID, nodeID, frameID shared.UUID,
-	sendMessageType string,
-	body []byte,
+	ctx context.Context, tables persistence.Tables, instanceID, nodeID, frameID shared.UUID, sendMessageType string, body []byte, tx persistence.Tx,
 ) (shared.UUID, bool, error) {
 	if instanceID == (shared.UUID{}) {
 		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: instance_id required")
@@ -69,14 +63,14 @@ func sendCascadeMessageInTx(
 
 	candidateID := shared.UUID(uuid.New())
 
-	dedupRow, inserted, err := tables.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
+	dedupRow, inserted, err := tables.MessageIdempotencies().InsertOrLookup(ctx, persistence.MessageIdempotencyRow{
 		InstanceID:     instanceID,
 		SenderKind:     senderKind,
 		Sender:         sender,
 		SenderSubject:  "",
 		IdempotencyKey: idempotencyKey,
 		MessageID:      candidateID,
-	})
+	}, tx)
 	if err != nil {
 		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: idempotency upsert: %w", err)
 	}
@@ -92,7 +86,7 @@ func sendCascadeMessageInTx(
 		SenderKind: senderKind,
 		Payload:    body,
 	}
-	if err := EnqueueMessage(ctx, tx, tables, enqueueReq); err != nil {
+	if err := EnqueueMessage(ctx, tables, enqueueReq, tx); err != nil {
 		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: insert envelope: %w", err)
 	}
 	return candidateID, false, nil

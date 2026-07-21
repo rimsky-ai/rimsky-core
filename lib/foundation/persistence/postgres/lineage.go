@@ -31,7 +31,7 @@ INSERT INTO rimsky_lineage (
     id, record_kind, instance_id, frame_id, observed_at, record, outcome
 ) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
-func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persistence.LineageRow) error {
+func (b *lineageImpl) Insert(ctx context.Context, row persistence.LineageRow, tx persistence.Tx) error {
 	if row.ObservedAt.IsZero() {
 		row.ObservedAt = time.Now().UTC()
 	}

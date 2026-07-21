@@ -46,21 +46,20 @@ func (q *queueImpl) q(tx persistence.Tx) querier {
 	return t.tx
 }
 
-func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest) error {
-	if q.tables == nil {
-		return fmt.Errorf("sqlite.Enqueue: queue not wired with tables")
-	}
-	return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, req, tx)
-	})
-}
-
 // @concept: run-scope
 // @decision: non-cascade-direct-to-stale
-func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
-	stores := req.RequiredClaimProducers
-	if stores == nil {
-		stores = []string{}
+func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
+	if tx == nil {
+		if q.tables == nil {
+			return fmt.Errorf("sqlite.Enqueue: queue not wired with tables")
+		}
+		return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return q.Enqueue(ctx, req, tx)
+		})
+	}
+	claimProducers := req.RequiredClaimProducers
+	if claimProducers == nil {
+		claimProducers = []string{}
 	}
 	if req.FrameID == (shared.UUID{}) {
 		return fmt.Errorf("sqlite.Enqueue: frame_id required for node %s", req.NodeID)
@@ -87,7 +86,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	}
 	newRunID := uuid.New()
 	res, err := q.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
 		 SELECT ?, ?, ?, ?, ?, 'stale', ?,
 		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
 		        ?, rs.id, ?, ?, ?, ?, ?
@@ -95,7 +94,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		  WHERE rs.id = ?
 		    AND rs.closed_at IS NULL`,
 		newRunID.String(), req.NodeID.String(),
-		nullableString(req.ExecutorName), marshalStringArray(stores),
+		nullableString(req.ExecutorName), marshalStringArray(claimProducers),
 		formatTime(req.EnqueuedAt), string(creationReason),
 		req.NodeID.String(), req.RunScopeID.String(),
 		req.FrameID.String(),
@@ -127,7 +126,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		}
 		return fmt.Errorf("sqlite.Enqueue: insert returned no rows")
 	}
-	if err := (*nodeAttributesImpl)(q.tables).SnapshotBagForNewRun(ctx, tx, shared.UUID(newRunID), req.NodeID, req.RunScopeID); err != nil {
+	if err := (*nodeAttributesImpl)(q.tables).SnapshotBagForNewRun(ctx, shared.UUID(newRunID), req.NodeID, req.RunScopeID, tx); err != nil {
 		return fmt.Errorf("sqlite.Enqueue: snapshot bag: %w", err)
 	}
 	return nil
@@ -143,7 +142,7 @@ func containsStr(list []string, v string) bool {
 }
 
 func (q *queueImpl) SelectCandidates(
-	ctx context.Context, tx persistence.Tx, req persistence.SelectCandidatesRequest,
+	ctx context.Context, req persistence.SelectCandidatesRequest, tx persistence.Tx,
 ) ([]persistence.Candidate, error) {
 	if tx == nil {
 		return nil, errors.New("sqlite.SelectCandidates: tx required")
@@ -165,7 +164,7 @@ func (q *queueImpl) SelectCandidates(
 	}
 
 	rows, err := q.q(tx).QueryContext(ctx,
-		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
+		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_claim_producers, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition, i.service_bindings
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
@@ -202,16 +201,16 @@ func (q *queueImpl) SelectCandidates(
 		_, ok := serviceBindings[name]
 		return ok
 	}
-	executorAccepted := func(executor string, requiredStores []string, serviceBindings map[string]json.RawMessage) bool {
+	executorAccepted := func(executor string, requiredClaimProducers []string, serviceBindings map[string]json.RawMessage) bool {
 		if executor == "" {
-			return len(requiredStores) > 0
+			return len(requiredClaimProducers) > 0
 		}
 		if containsStr(acceptedExecutors, executor) {
 			return true
 		}
 		return lateBoundIn(executor, serviceBindings, req.LateBindExecutorProxy, acceptedExecutors)
 	}
-	storeAccepted := func(required []string, serviceBindings map[string]json.RawMessage) bool {
+	claimProducerAccepted := func(required []string, serviceBindings map[string]json.RawMessage) bool {
 		for _, r := range required {
 			if containsStr(acceptedClaimProducers, r) {
 				continue
@@ -264,12 +263,12 @@ func (q *queueImpl) SelectCandidates(
 		if priorDispositionStr.Valid {
 			c.PriorDispatchDisposition = priorDispositionStr.String
 		}
-		stores, err := unmarshalStringArray(requiredClaimProducersStr)
+		claimProducers, err := unmarshalStringArray(requiredClaimProducersStr)
 		if err != nil {
 			return nil, err
 		}
-		c.RequiredClaimProducers = stores
-		if !executorAccepted(c.ExecutorName, c.RequiredClaimProducers, serviceBindings) || !storeAccepted(c.RequiredClaimProducers, serviceBindings) {
+		c.RequiredClaimProducers = claimProducers
+		if !executorAccepted(c.ExecutorName, c.RequiredClaimProducers, serviceBindings) || !claimProducerAccepted(c.RequiredClaimProducers, serviceBindings) {
 			continue
 		}
 		if c.NodeRunID, err = uuid.Parse(dispatchIDStr); err != nil {
@@ -305,7 +304,7 @@ func (q *queueImpl) SelectCandidates(
 }
 
 func (q *queueImpl) ClaimDispatchRow(
-	ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, supervisorID string,
+	ctx context.Context, nodeRunID shared.UUID, supervisorID string, tx persistence.Tx,
 ) (bool, error) {
 	if tx == nil {
 		return false, errors.New("sqlite.ClaimDispatchRow: tx required")
@@ -335,7 +334,7 @@ func (q *queueImpl) ClaimDispatchRow(
 }
 
 func (q *queueImpl) PromoteClaimedToRunning(
-	ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, supervisorID string,
+	ctx context.Context, nodeRunID shared.UUID, supervisorID string, tx persistence.Tx,
 ) (bool, error) {
 	if tx == nil {
 		return false, errors.New("sqlite.PromoteClaimedToRunning: tx required")
@@ -383,7 +382,7 @@ func (q *queueImpl) ForceComplete(ctx context.Context, nodeRunID shared.UUID) er
 }
 
 // @concept: run-scope
-func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
+func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	now := nowUTC()
 	_, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
@@ -397,11 +396,7 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 	return err
 }
 
-func (q *queueImpl) ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) error {
-	return q.ForceRemoveForNodeInTx(ctx, nodeID, runScopeID, nil)
-}
-
-func (q *queueImpl) ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) error {
+func (q *queueImpl) ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) error {
 	now := nowUTC()
 	_, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
@@ -417,7 +412,7 @@ func (q *queueImpl) ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UU
 
 func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.DispatchRow, error) {
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT id, node_id, state, executor_name, required_stores, enqueued_at,
+		`SELECT id, node_id, state, executor_name, required_claim_producers, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id,
 		        async_ack_registered_at, last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
@@ -481,12 +476,12 @@ func (q *queueImpl) ReleaseClaimWithDisposition(ctx context.Context, nodeRunID s
 }
 
 // @concept: node-run
-func (q *queueImpl) StampPriorDispatchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string) error {
+func (q *queueImpl) StampPriorDispatch(ctx context.Context, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string, tx persistence.Tx) error {
 	if tx == nil {
-		return errors.New("sqlite.StampPriorDispatchInTx: tx required")
+		return errors.New("sqlite.StampPriorDispatch: tx required")
 	}
 	if disposition == "" {
-		return errors.New("sqlite.StampPriorDispatchInTx: disposition required")
+		return errors.New("sqlite.StampPriorDispatch: disposition required")
 	}
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
@@ -495,23 +490,19 @@ func (q *queueImpl) StampPriorDispatchInTx(ctx context.Context, tx persistence.T
 		priorNodeRunID.String(), disposition, nodeRunID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("sqlite.StampPriorDispatchInTx: %w", err)
+		return fmt.Errorf("sqlite.StampPriorDispatch: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("sqlite.StampPriorDispatchInTx: rows affected: %w", err)
+		return fmt.Errorf("sqlite.StampPriorDispatch: rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("sqlite.StampPriorDispatchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("sqlite.StampPriorDispatch: %s: %w", nodeRunID, persistence.ErrNotFound)
 	}
 	return nil
 }
 
-func (q *queueImpl) GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
-	return q.getDispatchNode(ctx, q.db, nodeRunID)
-}
-
-func (q *queueImpl) GetDispatchNodeInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+func (q *queueImpl) GetDispatchNode(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) (shared.UUID, persistence.ClaimOwnership, error) {
 	return q.getDispatchNode(ctx, q.q(tx), nodeRunID)
 }
 
@@ -558,12 +549,12 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (pe
 	return persistence.ClaimOwnership{Kind: persistence.ClaimOwnershipKindClaimedBy, SupervisorID: claimedBy.String}, nil
 }
 
-func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx, ackID string) (*persistence.DispatchRow, error) {
+func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, ackID string, tx persistence.Tx) (*persistence.DispatchRow, error) {
 	if tx == nil {
 		return nil, errors.New("sqlite.LookupRunByAsyncAckID: tx required")
 	}
 	row := q.q(tx).QueryRowContext(ctx,
-		`SELECT id, node_id, state, executor_name, required_stores, enqueued_at,
+		`SELECT id, node_id, state, executor_name, required_claim_producers, enqueued_at,
 		        claimed_by, claimed_at, frame_id, async_ack_id,
 		        async_ack_registered_at, last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
@@ -582,7 +573,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx
 	return &r, nil
 }
 
-func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string) error {
+func (q *queueImpl) RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, tx persistence.Tx) error {
 	if tx == nil {
 		return errors.New("sqlite.RegisterAsyncAck: tx required")
 	}
@@ -615,12 +606,12 @@ func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, run
 		return fmt.Errorf("sqlite.RegisterAsyncAck: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("sqlite.RegisterAsyncAck: %s: %w", runID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("sqlite.RegisterAsyncAck: %s: %w", runID, persistence.ErrNotFound)
 	}
 	return nil
 }
 
-func (q *queueImpl) BumpLastProgressAt(ctx context.Context, tx persistence.Tx, runID shared.UUID, now time.Time) (bool, error) {
+func (q *queueImpl) BumpLastProgressAt(ctx context.Context, runID shared.UUID, now time.Time, tx persistence.Tx) (bool, error) {
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET last_progress_at = ? WHERE id = ?`,
 		formatTime(now), runID.String(),
@@ -654,7 +645,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		args = append(args, formatTime(oc), id.String())
 	}
 	args = append(args, limit)
-	q1 := `SELECT d.id, d.node_id, d.state, d.executor_name, d.required_stores, d.enqueued_at,
+	q1 := `SELECT d.id, d.node_id, d.state, d.executor_name, d.required_claim_producers, d.enqueued_at,
 	        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 	        d.async_ack_registered_at, d.last_progress_at, d.tags,
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
@@ -723,7 +714,7 @@ func (q *queueImpl) CountParked(ctx context.Context) (int, error) {
 
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.db.QueryRowContext(ctx,
-		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_stores, d.enqueued_at,
+		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_claim_producers, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
@@ -743,7 +734,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 }
 
 // @concept: run-scope
-func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, nodeID, runScopeID shared.UUID, tx persistence.Tx) (shared.UUID, bool, error) {
 	row := q.q(tx).QueryRowContext(ctx,
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ?
@@ -766,7 +757,7 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 }
 
 // @concept: run-scope
-func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, nodeID, runScopeID shared.UUID, tx persistence.Tx) (shared.UUID, bool, error) {
 	row := q.q(tx).QueryRowContext(ctx,
 		`SELECT id FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ?
@@ -790,7 +781,7 @@ func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persi
 // @concept: wait-set
 // @concept: cascade
 func (q *queueImpl) ListInFlightRunStates(
-	ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID,
+	ctx context.Context, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID, tx persistence.Tx,
 ) (map[shared.UUID][]string, error) {
 	out := map[shared.UUID][]string{}
 	if len(nodeIDs) == 0 {
@@ -890,11 +881,11 @@ func scanDispatchRow(row scannable) (persistence.DispatchRow, error) {
 		v := executorName.String
 		r.ExecutorName = &v
 	}
-	stores, err := unmarshalStringArray(requiredClaimProducersStr)
+	claimProducers, err := unmarshalStringArray(requiredClaimProducersStr)
 	if err != nil {
 		return persistence.DispatchRow{}, err
 	}
-	r.RequiredClaimProducers = stores
+	r.RequiredClaimProducers = claimProducers
 	if r.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
 		return persistence.DispatchRow{}, err
 	}

@@ -107,7 +107,7 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 		}
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_node_runs
-			   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+			   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 			 VALUES (?, ?, 'stub', '[]', ?, 'failed', 'cascade', 1, ?, ?)`,
 			runID, nodeID, rfc(endedAt), frameID, scopeID,
 		); err != nil {
@@ -145,7 +145,7 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 		 VALUES (?, ?, 'stub', '[]', ?, 'parked', 'cascade', 1, ?, ?)`,
 		heldRun, heldNode, rfc(oldTime), heldFrame, heldScopeID,
 	); err != nil {
@@ -438,7 +438,7 @@ func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *test
 			default:
 			}
 			err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				_, berr := d.Queue().BumpLastProgressAt(ctx, tx, runID, time.Now())
+				_, berr := d.Queue().BumpLastProgressAt(ctx, runID, time.Now(), tx)
 				return berr
 			})
 			if err != nil {

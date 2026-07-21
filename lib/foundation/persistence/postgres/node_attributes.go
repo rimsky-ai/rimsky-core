@@ -24,7 +24,7 @@ func (s *nodeAttributesImpl) GetByRun(ctx context.Context, runID shared.UUID, tx
 		   FROM rimsky_node_attributes
 		  WHERE node_run_id = $1`, runID,
 	)
-	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, tx, row, "GetByRun")
+	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetByRun", tx)
 }
 
 func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
@@ -37,7 +37,7 @@ func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.
 		  ORDER BY a.updated_at DESC, r.sequence DESC
 		  LIMIT 1`, nodeID, runScopeID,
 	)
-	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, tx, row, "GetLatestByNode")
+	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetLatestByNode", tx)
 }
 
 func blobWriteIsTransactional(bb persistence.BlobBackend) bool {
@@ -52,7 +52,7 @@ func blobBackendName(bb persistence.BlobBackend) string {
 	return bb.Name()
 }
 
-func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, tx persistence.Tx, row pgx.Row, op string) (*persistence.NodeAttributesRow, error) {
+func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row pgx.Row, op string, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
 	var (
 		out         persistence.NodeAttributesRow
 		raw         []byte
@@ -76,7 +76,7 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, tx persis
 			return nil, fmt.Errorf("node_attributes.%s: row has value_handle %q on backend %q, but active blob backend is %q",
 				op, *handle, rowBackend, blobBackendName(bb))
 		}
-		bytes, err := persistence.ReadBlobInTx(ctx, bb, tx, persistence.Handle(*handle))
+		bytes, err := persistence.ReadBlobInTx(ctx, bb, persistence.Handle(*handle), tx)
 		if err != nil {
 			if errors.Is(err, persistence.ErrBlobNotFound) {
 				slog.Error("node_attributes.spilled_value_missing",
@@ -128,10 +128,10 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		dataToSave = raw
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
-		h, werr := persistence.WriteBlobInTx(ctx, si.blob, tx, persistence.BlobKey{
+		h, werr := persistence.WriteBlobInTx(ctx, si.blob, persistence.BlobKey{
 			NodeID:        nodeID.String(),
 			AttributeName: "data",
-		}, raw)
+		}, raw, tx)
 		if werr != nil {
 			return fmt.Errorf("node_attributes.Upsert: blob.Write: %w", werr)
 		}
@@ -174,8 +174,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 
 	if priorHandle != "" && priorHandle != newHandle {
 		now := time.Now().UTC()
-		if err := persistence.QueueBlobOrphan(ctx, si.BlobOrphans(), tx,
-			priorHandle, priorBkend, now, si.blobRetention); err != nil {
+		if err := persistence.QueueBlobOrphan(ctx, si.BlobOrphans(), priorHandle, priorBkend, now, si.blobRetention, tx); err != nil {
 			return fmt.Errorf("node_attributes.Upsert: queue prior orphan: %w", err)
 		}
 	}
@@ -246,7 +245,7 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, 
 // @concept: cascade
 // @decision: mode-default-most-recent
 func (s *nodeAttributesImpl) SetDispatchInputBag(
-	ctx context.Context, tx persistence.Tx, runID, nodeID shared.UUID, bag map[string]any,
+	ctx context.Context, runID, nodeID shared.UUID, bag map[string]any, tx persistence.Tx,
 ) error {
 	if bag == nil {
 		bag = map[string]any{}
@@ -271,7 +270,7 @@ func (s *nodeAttributesImpl) SetDispatchInputBag(
 
 // @concept: cascade
 func (s *nodeAttributesImpl) GetDispatchInputBag(
-	ctx context.Context, tx persistence.Tx, runID shared.UUID,
+	ctx context.Context, runID shared.UUID, tx persistence.Tx,
 ) (map[string]any, error) {
 	var raw []byte
 	err := s.q(tx).QueryRow(ctx,
@@ -297,8 +296,7 @@ func (s *nodeAttributesImpl) GetDispatchInputBag(
 // @decision: non-cascade-direct-to-stale
 // @story: resume-preserves-snapshot
 func (s *nodeAttributesImpl) SnapshotBagForNewRun(
-	ctx context.Context, tx persistence.Tx,
-	newRunID, nodeID, runScopeID shared.UUID,
+	ctx context.Context, newRunID, nodeID, runScopeID shared.UUID, tx persistence.Tx,
 ) error {
 	var (
 		priorData          []byte
@@ -339,9 +337,7 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 	if priorHandleBackend != nil {
 		priorBackendStr = *priorHandleBackend
 	}
-	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob, tx,
-		persistence.BlobKey{NodeID: nodeID.String(), AttributeName: "data"},
-		priorData, priorHandleStr, priorBackendStr)
+	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob, persistence.BlobKey{NodeID: nodeID.String(), AttributeName: "data"}, priorData, priorHandleStr, priorBackendStr, tx)
 	if err != nil {
 		return fmt.Errorf("node_attributes.SnapshotBagForNewRun: carry forward blob: %w", err)
 	}
@@ -365,7 +361,7 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 // @concept: cascade
 // @decision: frame-isolation-is-structural
 func (s *nodeAttributesImpl) GetPriorRunData(
-	ctx context.Context, tx persistence.Tx, runID shared.UUID,
+	ctx context.Context, runID shared.UUID, tx persistence.Tx,
 ) (map[string]any, error) {
 	row := s.q(tx).QueryRow(ctx,
 		`SELECT a.node_run_id, a.node_id, a.data, a.updated_at, a.value_handle, a.value_handle_backend
@@ -379,7 +375,7 @@ func (s *nodeAttributesImpl) GetPriorRunData(
 		  LIMIT 1`,
 		runID,
 	)
-	prior, err := scanAttributeRow(ctx, (*tablesImpl)(s).blob, tx, row, "GetPriorRunData")
+	prior, err := scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetPriorRunData", tx)
 	if err != nil {
 		return nil, err
 	}

@@ -145,7 +145,7 @@ func runAcquireErrorPolicy(
 func reclaimDispatchRowShortTx(ctx context.Context, args RunArgs, cand persistence.Candidate, site string) bool {
 	var claimed bool
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		c, err := args.Queue.ClaimDispatchRow(ctx, tx, cand.NodeRunID, args.SupervisorID)
+		c, err := args.Queue.ClaimDispatchRow(ctx, cand.NodeRunID, args.SupervisorID, tx)
 		claimed = c
 		return err
 	}); err != nil {

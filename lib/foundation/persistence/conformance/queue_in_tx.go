@@ -28,7 +28,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 
 	rollbackErr := errors.New("rollback enqueue")
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -40,15 +40,15 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		}
 		return rollbackErr
 	}); !errors.Is(err, rollbackErr) {
-		t.Fatalf("EnqueueInTx rollback: expected rollbackErr, got %v", err)
+		t.Fatalf("Enqueue rollback: expected rollbackErr, got %v", err)
 	}
 
 	if found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID); found != (shared.UUID{}) {
-		t.Fatalf("EnqueueInTx rollback: row %v leaked through after rollback", found)
+		t.Fatalf("Enqueue rollback: row %v leaked through after rollback", found)
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -57,16 +57,16 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 			RunScopeID:             fix.MainRunScopeID,
 		}, tx)
 	}); err != nil {
-		t.Fatalf("EnqueueInTx commit: %v", err)
+		t.Fatalf("Enqueue commit: %v", err)
 	}
 
 	nodeRunID := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID)
 	if nodeRunID == (shared.UUID{}) {
-		t.Fatalf("EnqueueInTx commit: row not visible after commit")
+		t.Fatalf("Enqueue commit: row not visible after commit")
 	}
 
 	missingID := uuid.New()
-	gotNode, owner, err := q.GetDispatchNode(ctx, missingID)
+	gotNode, owner, err := q.GetDispatchNode(ctx, missingID, nil)
 	if err != nil {
 		t.Fatalf("GetDispatchNode not_found: err: %v", err)
 	}
@@ -77,7 +77,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetDispatchNode not_found: nodeID=%v want zero", gotNode)
 	}
 
-	gotNode, owner, err = q.GetDispatchNode(ctx, nodeRunID)
+	gotNode, owner, err = q.GetDispatchNode(ctx, nodeRunID, nil)
 	if err != nil {
 		t.Fatalf("GetDispatchNode unclaimed: err: %v", err)
 	}
@@ -89,43 +89,43 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		gotNode, owner, err := q.GetDispatchNodeInTx(ctx, tx, nodeRunID)
+		gotNode, owner, err := q.GetDispatchNode(ctx, nodeRunID, tx)
 		if err != nil {
 			return err
 		}
 		if owner.Kind != "unclaimed" {
-			t.Fatalf("GetDispatchNodeInTx unclaimed: kind=%q want %q", owner.Kind, "unclaimed")
+			t.Fatalf("GetDispatchNode unclaimed: kind=%q want %q", owner.Kind, "unclaimed")
 		}
 		if gotNode != fix.NodeID {
-			t.Fatalf("GetDispatchNodeInTx unclaimed: nodeID=%v want %v", gotNode, fix.NodeID)
+			t.Fatalf("GetDispatchNode unclaimed: nodeID=%v want %v", gotNode, fix.NodeID)
 		}
-		_, owner, err = q.GetDispatchNodeInTx(ctx, tx, uuid.New())
+		_, owner, err = q.GetDispatchNode(ctx, uuid.New(), tx)
 		if err != nil {
 			return err
 		}
 		if owner.Kind != "not_found" {
-			t.Fatalf("GetDispatchNodeInTx not_found: kind=%q want %q", owner.Kind, "not_found")
+			t.Fatalf("GetDispatchNode not_found: kind=%q want %q", owner.Kind, "not_found")
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("GetDispatchNodeInTx: %v", err)
+		t.Fatalf("GetDispatchNode: %v", err)
 	}
 
 	supID := "queue-in-tx-supervisor"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, supID)
+		ok, err := q.ClaimDispatchRow(ctx, nodeRunID, supID, tx)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			t.Fatalf("ClaimDispatchRow returned !ok on unclaimed row")
 		}
-		_, err = q.PromoteClaimedToRunning(ctx, tx, nodeRunID, supID)
+		_, err = q.PromoteClaimedToRunning(ctx, nodeRunID, supID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("claim tx: %v", err)
 	}
-	gotNode, owner, err = q.GetDispatchNode(ctx, nodeRunID)
+	gotNode, owner, err = q.GetDispatchNode(ctx, nodeRunID, nil)
 	if err != nil {
 		t.Fatalf("GetDispatchNode claimed_by: err: %v", err)
 	}
@@ -140,33 +140,33 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx); err != nil {
+		if err := q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx); err != nil {
 			return err
 		}
 		return rollbackErr
 	}); !errors.Is(err, rollbackErr) {
-		t.Fatalf("RemoveForNodeInTx rollback: expected rollbackErr, got %v", err)
+		t.Fatalf("RemoveForNode rollback: expected rollbackErr, got %v", err)
 	}
-	_, owner, err = q.GetDispatchNode(ctx, nodeRunID)
+	_, owner, err = q.GetDispatchNode(ctx, nodeRunID, nil)
 	if err != nil {
 		t.Fatalf("GetDispatchNode after rollback: err: %v", err)
 	}
 	if owner.Kind != persistence.ClaimOwnershipKindClaimedBy || owner.SupervisorID != supID {
-		t.Fatalf("RemoveForNodeInTx rollback failed: row gone or claim cleared (kind=%q, sup=%q)",
+		t.Fatalf("RemoveForNode rollback failed: row gone or claim cleared (kind=%q, sup=%q)",
 			owner.Kind, owner.SupervisorID)
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, "different-supervisor", tx)
+		return q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, "different-supervisor", tx)
 	}); err != nil {
-		t.Fatalf("RemoveForNodeInTx wrong sup: %v", err)
+		t.Fatalf("RemoveForNode wrong sup: %v", err)
 	}
-	_, owner, err = q.GetDispatchNode(ctx, nodeRunID)
+	_, owner, err = q.GetDispatchNode(ctx, nodeRunID, nil)
 	if err != nil {
 		t.Fatalf("GetDispatchNode after wrong-sup remove: err: %v", err)
 	}
 	if owner.Kind != persistence.ClaimOwnershipKindClaimedBy {
-		t.Fatalf("RemoveForNodeInTx with wrong supervisor was not a no-op: kind=%q", owner.Kind)
+		t.Fatalf("RemoveForNode with wrong supervisor was not a no-op: kind=%q", owner.Kind)
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -174,22 +174,22 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx); err != nil {
 			return err
 		}
-		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx)
+		return q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx)
 	}); err != nil {
-		t.Fatalf("RemoveForNodeInTx commit: %v", err)
+		t.Fatalf("RemoveForNode commit: %v", err)
 	}
-	_, owner, err = q.GetDispatchNode(ctx, nodeRunID)
+	_, owner, err = q.GetDispatchNode(ctx, nodeRunID, nil)
 	if err != nil {
 		t.Fatalf("GetDispatchNode after retire: err: %v", err)
 	}
 	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
-		t.Fatalf("RemoveForNodeInTx commit did not clear claim (expected kind=unclaimed): kind=%q", owner.Kind)
+		t.Fatalf("RemoveForNode commit did not clear claim (expected kind=unclaimed): kind=%q", owner.Kind)
 	}
 	if found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID); found != (shared.UUID{}) {
-		t.Fatalf("RemoveForNodeInTx commit left the retired row %s dispatchable via SelectCandidates", found)
+		t.Fatalf("RemoveForNode commit left the retired row %s dispatchable via SelectCandidates", found)
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -198,14 +198,14 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 			RunScopeID:             fix.MainRunScopeID,
 		}, tx)
 	}); err != nil {
-		t.Fatalf("EnqueueInTx after retire: %v", err)
+		t.Fatalf("Enqueue after retire: %v", err)
 	}
 	found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID)
 	if found == (shared.UUID{}) {
-		t.Fatalf("EnqueueInTx after retire: no fresh in-flight row visible")
+		t.Fatalf("Enqueue after retire: no fresh in-flight row visible")
 	}
 	if found == nodeRunID {
-		t.Fatalf("EnqueueInTx after retire surfaced the retired node_run_id %s again; "+
+		t.Fatalf("Enqueue after retire surfaced the retired node_run_id %s again; "+
 			"the retire-then-re-enqueue must produce a new row, not leave the old one dispatchable", nodeRunID)
 	}
 }
@@ -217,11 +217,11 @@ func selectCandidateIDForNode(ctx context.Context, t *testing.T,
 	probeErr := errors.New("rollback probe")
 	var found shared.UUID
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  100,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

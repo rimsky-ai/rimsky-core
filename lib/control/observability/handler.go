@@ -342,7 +342,7 @@ func handleGetInstance(deps Deps) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			g, err := computeCascadeGraph(ctx, deps, tx, nodes, template)
+			g, err := computeCascadeGraph(ctx, deps, nodes, template, tx)
 			if err != nil {
 				return err
 			}
@@ -466,7 +466,7 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 				return err
 			}
 			eventRes = e
-			latest, err := deps.Tables.Nodes().GetLatestRunForNode(ctx, tx, match.ID)
+			latest, err := deps.Tables.Nodes().GetLatestRunForNode(ctx, match.ID, tx)
 			if err != nil {
 				return err
 			}

@@ -193,13 +193,13 @@ func seedLineageInstance(t *testing.T, h *harness, prefix string) (instID uuid.U
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := h.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: shared.UUID(instID),
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := h.persist.Frames().InsertRunningFrame(ctx, shared.UUID(instID), msgID, rootScope, tx)
@@ -219,7 +219,7 @@ func insertLineageRow(t *testing.T, h *harness, instID, frameID uuid.UUID, recor
 	recBytes, err := json.Marshal(record)
 	require.NoError(t, err)
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+		return h.persist.Lineage().Insert(ctx, persistence.LineageRow{
 			ID:         shared.UUID(uuid.New()),
 			RecordKind: recordKind,
 			InstanceID: shared.UUID(instID),
@@ -227,7 +227,7 @@ func insertLineageRow(t *testing.T, h *harness, instID, frameID uuid.UUID, recor
 			ObservedAt: observedAt,
 			Record:     recBytes,
 			Outcome:    outcome,
-		})
+		}, tx)
 	}))
 }
 
@@ -561,14 +561,14 @@ func TestLineageEndpoints_BySourceScanPagesPastFirst500(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+		if err := h.persist.Lineage().Insert(ctx, persistence.LineageRow{
 			ID:         shared.UUID(uuid.New()),
 			RecordKind: persistence.LineageRecordKindLeafRun,
 			InstanceID: shared.UUID(instID),
 			FrameID:    shared.UUID(frameID),
 			ObservedAt: base.Add(-1 * time.Hour),
 			Record:     targetRec,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		for i := 0; i < 501; i++ {
@@ -576,14 +576,14 @@ func TestLineageEndpoints_BySourceScanPagesPastFirst500(t *testing.T) {
 			if merr != nil {
 				return merr
 			}
-			if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			if err := h.persist.Lineage().Insert(ctx, persistence.LineageRow{
 				ID:         shared.UUID(uuid.New()),
 				RecordKind: persistence.LineageRecordKindLeafRun,
 				InstanceID: shared.UUID(instID),
 				FrameID:    shared.UUID(frameID),
 				ObservedAt: base.Add(time.Duration(i) * time.Second),
 				Record:     rec,
-			}); err != nil {
+			}, tx); err != nil {
 				return err
 			}
 		}
@@ -616,7 +616,7 @@ func TestLineageEndpoints_ByProducerScanPagesPastFirst500(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+		if err := h.persist.Lineage().Insert(ctx, persistence.LineageRow{
 			ID:         shared.UUID(uuid.New()),
 			RecordKind: persistence.LineageRecordKindClaimTerminal,
 			InstanceID: shared.UUID(instID),
@@ -624,7 +624,7 @@ func TestLineageEndpoints_ByProducerScanPagesPastFirst500(t *testing.T) {
 			ObservedAt: base.Add(-1 * time.Hour),
 			Record:     targetRec,
 			Outcome:    persistence.LineageOutcomeCommitted,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		for i := 0; i < 501; i++ {
@@ -636,7 +636,7 @@ func TestLineageEndpoints_ByProducerScanPagesPastFirst500(t *testing.T) {
 			if merr != nil {
 				return merr
 			}
-			if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			if err := h.persist.Lineage().Insert(ctx, persistence.LineageRow{
 				ID:         shared.UUID(uuid.New()),
 				RecordKind: persistence.LineageRecordKindClaimTerminal,
 				InstanceID: shared.UUID(instID),
@@ -644,7 +644,7 @@ func TestLineageEndpoints_ByProducerScanPagesPastFirst500(t *testing.T) {
 				ObservedAt: base.Add(time.Duration(i) * time.Second),
 				Record:     rec,
 				Outcome:    persistence.LineageOutcomeCommitted,
-			}); err != nil {
+			}, tx); err != nil {
 				return err
 			}
 		}
@@ -778,24 +778,24 @@ func TestLineageRunDescendants_MatchesRuntimeWriterRecordShape(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+		if err := h.persist.Lineage().Insert(ctx, persistence.LineageRow{
 			ID:         shared.UUID(uuid.New()),
 			RecordKind: persistence.LineageRecordKindLeafRun,
 			InstanceID: shared.UUID(instID),
 			FrameID:    shared.UUID(frameID),
 			ObservedAt: base,
 			Record:     parentBytes,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+		return h.persist.Lineage().Insert(ctx, persistence.LineageRow{
 			ID:         shared.UUID(uuid.New()),
 			RecordKind: persistence.LineageRecordKindLeafRun,
 			InstanceID: shared.UUID(instID),
 			FrameID:    shared.UUID(frameID),
 			ObservedAt: base.Add(time.Second),
 			Record:     childBytes,
-		})
+		}, tx)
 	}))
 
 	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=1", parentRunID.String()), nil)

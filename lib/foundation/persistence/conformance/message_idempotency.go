@@ -26,7 +26,7 @@ func idempotencyInsertOrLookup(
 	var inserted bool
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		out, inserted, err = store.MessageIdempotencies().InsertOrLookup(ctx, tx, row)
+		out, inserted, err = store.MessageIdempotencies().InsertOrLookup(ctx, row, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("InsertOrLookup(%+v): %v", row, err)
@@ -136,7 +136,7 @@ func testMessageIdempotencyInsertOrLookupRace(t *testing.T, d persistence.Databa
 		var inserted bool
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
-			out, inserted, err = store.MessageIdempotencies().InsertOrLookup(ctx, tx, r)
+			out, inserted, err = store.MessageIdempotencies().InsertOrLookup(ctx, r, tx)
 			return err
 		}); err != nil {
 			t.Errorf("racing InsertOrLookup: %v", err)

@@ -142,10 +142,10 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		dataToSave = string(raw)
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
-		h, werr := persistence.WriteBlobInTx(ctx, si.blob, tx, persistence.BlobKey{
+		h, werr := persistence.WriteBlobInTx(ctx, si.blob, persistence.BlobKey{
 			NodeID:        nodeID.String(),
 			AttributeName: "data",
-		}, raw)
+		}, raw, tx)
 		if werr != nil {
 			return fmt.Errorf("node_attributes.Upsert: blob.Write: %w", werr)
 		}
@@ -186,8 +186,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 
 	if priorHandle != "" && priorHandle != newHandle {
 		now := time.Now().UTC()
-		if err := persistence.QueueBlobOrphan(ctx, si.BlobOrphans(), tx,
-			priorHandle, priorBkend, now, si.blobRetention); err != nil {
+		if err := persistence.QueueBlobOrphan(ctx, si.BlobOrphans(), priorHandle, priorBkend, now, si.blobRetention, tx); err != nil {
 			return fmt.Errorf("node_attributes.Upsert: queue prior orphan: %w", err)
 		}
 	}
@@ -286,7 +285,7 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, 
 // @concept: cascade
 // @decision: mode-default-most-recent
 func (s *nodeAttributesImpl) SetDispatchInputBag(
-	ctx context.Context, tx persistence.Tx, runID, nodeID shared.UUID, bag map[string]any,
+	ctx context.Context, runID, nodeID shared.UUID, bag map[string]any, tx persistence.Tx,
 ) error {
 	if bag == nil {
 		bag = map[string]any{}
@@ -311,7 +310,7 @@ func (s *nodeAttributesImpl) SetDispatchInputBag(
 
 // @concept: cascade
 func (s *nodeAttributesImpl) GetDispatchInputBag(
-	ctx context.Context, tx persistence.Tx, runID shared.UUID,
+	ctx context.Context, runID shared.UUID, tx persistence.Tx,
 ) (map[string]any, error) {
 	var raw sql.NullString
 	err := s.q(tx).QueryRowContext(ctx,
@@ -337,8 +336,7 @@ func (s *nodeAttributesImpl) GetDispatchInputBag(
 // @decision: non-cascade-direct-to-stale
 // @story: resume-preserves-snapshot
 func (s *nodeAttributesImpl) SnapshotBagForNewRun(
-	ctx context.Context, tx persistence.Tx,
-	newRunID, nodeID, runScopeID shared.UUID,
+	ctx context.Context, newRunID, nodeID, runScopeID shared.UUID, tx persistence.Tx,
 ) error {
 	var (
 		priorData          string
@@ -379,9 +377,7 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 	if priorHandleBackend.Valid {
 		priorBackendStr = priorHandleBackend.String
 	}
-	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob, tx,
-		persistence.BlobKey{NodeID: nodeID.String(), AttributeName: "data"},
-		[]byte(priorData), priorHandleStr, priorBackendStr)
+	carried, err := persistence.CarryForwardBag(ctx, (*tablesImpl)(s).blob, persistence.BlobKey{NodeID: nodeID.String(), AttributeName: "data"}, []byte(priorData), priorHandleStr, priorBackendStr, tx)
 	if err != nil {
 		return fmt.Errorf("node_attributes.SnapshotBagForNewRun: carry forward blob: %w", err)
 	}
@@ -406,7 +402,7 @@ func (s *nodeAttributesImpl) SnapshotBagForNewRun(
 // @concept: cascade
 // @decision: frame-isolation-is-structural
 func (s *nodeAttributesImpl) GetPriorRunData(
-	ctx context.Context, tx persistence.Tx, runID shared.UUID,
+	ctx context.Context, runID shared.UUID, tx persistence.Tx,
 ) (map[string]any, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT a.node_run_id, a.node_id, a.data, a.updated_at, a.value_handle, a.value_handle_backend

@@ -59,7 +59,7 @@ func seedRunForNode(
 		return nil
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 nodeID,
 			ExecutorName:           "stub",
 			RequiredClaimProducers: []string{},
@@ -69,11 +69,11 @@ func seedRunForNode(
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"stub"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -94,13 +94,13 @@ func seedFrame(ctx context.Context, t *testing.T, sb persistence.Tables, instanc
 	var frameID shared.UUID
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())
-		if err := sb.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := sb.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := sb.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, tx)
@@ -113,17 +113,16 @@ func seedFrame(ctx context.Context, t *testing.T, sb persistence.Tables, instanc
 	return frameID
 }
 
-func seedInstanceWithMainScope(ctx context.Context, t *testing.T, sb persistence.Tables,
-	tx persistence.Tx, templateHash string, ck *string,
+func seedInstanceWithMainScope(ctx context.Context, t *testing.T, sb persistence.Tables, templateHash string, ck *string, tx persistence.Tx,
 ) (persistence.InstanceRow, shared.UUID) {
 	t.Helper()
 	instID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
-	if err := sb.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+	if err := sb.RunScopes().Create(ctx, persistence.RunScopeRow{
 		ID:         mainScopeID,
 		GraphName:  "main",
 		InstanceID: instID,
-	}); err != nil {
+	}, tx); err != nil {
 		t.Fatalf("seedInstanceWithMainScope: RunScopes.Create: %v", err)
 	}
 	row, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -172,7 +171,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	var inst persistence.InstanceRow
 	var acqNode, inhNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -244,7 +243,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		post = pc
 		return err
 	}))
@@ -311,7 +310,7 @@ func TestCheckAndFireResolution_TransientInstancesLookupErrorPropagates(t *testi
 	var inst persistence.InstanceRow
 	var acqNode, inhNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -383,7 +382,7 @@ func TestCheckAndFireResolution_TransientInstancesLookupErrorPropagates(t *testi
 	}
 	args = withSyncVerbFlush(args)
 	err := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		_, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		return err
 	})
 	require.Error(t, err, "a transient Instances().Get failure must propagate, not be treated as legitimate row absence")
@@ -418,7 +417,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	var inst persistence.InstanceRow
 	var acqNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -476,7 +475,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		post = pc
 		return err
 	}))
@@ -506,7 +505,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 
 	var post2 func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		post2 = pc
 		return err
 	}))
@@ -598,7 +597,7 @@ func resolveSubclaimWithLifetime(
 	pname := producer.Name()
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, runtime.TerminalDecision{
 			ClaimHandleID:       subID,
 			SupervisorID:        args.SupervisorID,
 			Source:              runtime.ActiveTerminal,
@@ -609,7 +608,7 @@ func resolveSubclaimWithLifetime(
 			Lifetime:            lifetime,
 			ProducerName:        pname,
 			ParentClaimHandleID: &parentID,
-		})
+		}, tx)
 		post = pc
 		return err
 	}))
@@ -642,7 +641,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -700,7 +699,7 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -759,7 +758,7 @@ func TestResolveParentClaimChain_Threshold_AbandonsAtExactMax(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -819,7 +818,7 @@ func TestResolveParentClaimChain_ThresholdFullCount_SurvivingSiblingsKeepRunning
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -898,7 +897,7 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -956,7 +955,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 	var inst persistence.InstanceRow
 	var parentNode, coNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1029,7 +1028,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 	}))
 	var postCo func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, parentID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, parentID, tx)
 		postCo = pc
 		return err
 	}))
@@ -1055,7 +1054,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1107,7 +1106,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 
 	var postCq func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, parentID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, parentID, tx)
 		postCq = pc
 		return err
 	}))
@@ -1151,7 +1150,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	var inst persistence.InstanceRow
 	var acqNode, inhNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1222,7 +1221,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	args = withSyncVerbFlush(args)
 	var postG func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		postG = pc
 		return err
 	}))
@@ -1270,7 +1269,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1340,7 +1339,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1427,7 +1426,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1552,7 +1551,7 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 	var inst persistence.InstanceRow
 	var acqNode, inhANode, inhBNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1634,7 +1633,7 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 	args = withSyncVerbFlush(args)
 	var postA func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		postA = pc
 		return err
 	}))
@@ -1670,7 +1669,7 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 	}))
 	var postB func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		postB = pc
 		return err
 	}))
@@ -1725,7 +1724,7 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 	var inst persistence.InstanceRow
 	var acqNode, inhANode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1802,7 +1801,7 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		post = pc
 		return err
 	}))
@@ -1841,7 +1840,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -1945,7 +1944,7 @@ func TestSettleFromFanoutChild_MalformedAggregationPolicy_SafeFallback(t *testin
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -2065,7 +2064,7 @@ func TestCancelInFlightSiblings_DifferentSupervisorSkipped(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -2185,7 +2184,7 @@ func TestCancelDescendantClaims_DifferentSupervisorSkipped(t *testing.T) {
 	var inst persistence.InstanceRow
 	var rootNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -2257,7 +2256,7 @@ func TestCancelDescendantClaims_DifferentSupervisorSkipped(t *testing.T) {
 
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, runtime.TerminalDecision{
 			ClaimHandleID: rootID,
 			SupervisorID:  args.SupervisorID,
 			Source:        runtime.ActiveTerminal,
@@ -2274,7 +2273,7 @@ func TestCancelDescendantClaims_DifferentSupervisorSkipped(t *testing.T) {
 				NodeID:       rootNode.ID,
 				ProducerName: pName,
 			},
-		})
+		}, tx)
 		post = pc
 		return err
 	}))
@@ -2328,7 +2327,7 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 	var inst persistence.InstanceRow
 	var rootNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -2390,7 +2389,7 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, runtime.TerminalDecision{
 			ClaimHandleID: rootID,
 			SupervisorID:  args.SupervisorID,
 			Source:        runtime.ActiveTerminal,
@@ -2407,7 +2406,7 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 				NodeID:       rootNode.ID,
 				ProducerName: pName,
 			},
-		})
+		}, tx)
 		post = pc
 		return err
 	}))
@@ -2471,7 +2470,7 @@ func TestCheckAndFireResolution_ProducerVerbDeliveryFailure_DecisionHoldsAndRetr
 	var inst persistence.InstanceRow
 	var acqNode, coholderNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -2558,7 +2557,7 @@ func TestCheckAndFireResolution_ProducerVerbDeliveryFailure_DecisionHoldsAndRetr
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimID, tx)
 		post = pc
 		return err
 	}))
@@ -2636,7 +2635,7 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 	var inst persistence.InstanceRow
 	var acqNode, coholderNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -2667,12 +2666,12 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 	coholderRunID := seedRunForNode(ctx, t, backend, d.Queue(), coholderNode.ID, frameID)
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		claimed, err := d.Queue().ClaimDispatchRow(ctx, tx, coholderRunID, "sup-PHD")
+		claimed, err := d.Queue().ClaimDispatchRow(ctx, coholderRunID, "sup-PHD", tx)
 		if err != nil {
 			return err
 		}
 		require.True(t, claimed, "coholder run must be claimable")
-		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, tx, coholderRunID, "sup-PHD")
+		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, coholderRunID, "sup-PHD", tx)
 		if err != nil {
 			return err
 		}
@@ -2726,7 +2725,7 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimID, tx)
 		post = pc
 		return err
 	}))
@@ -2736,7 +2735,7 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 
 	var coholderRun *persistence.NodeRunForGate
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := backend.Nodes().GetRunForGate(ctx, tx, coholderRunID)
+		r, err := backend.Nodes().GetRunForGate(ctx, coholderRunID, tx)
 		coholderRun = r
 		return err
 	}))

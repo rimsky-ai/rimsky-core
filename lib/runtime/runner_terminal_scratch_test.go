@@ -36,7 +36,7 @@ type scratchRecorder struct {
 	}
 }
 
-func (r *scratchRecorder) WriteScratchInTx(_ context.Context, _ persistence.Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error {
+func (r *scratchRecorder) WriteScratch(_ context.Context, nodeRunID shared.UUID, inline []byte, handle, handleBackend string, _ persistence.Tx) error {
 	r.writes++
 	r.last.nodeRunID = nodeRunID
 	r.last.inline = append([]byte(nil), inline...)
@@ -45,7 +45,7 @@ func (r *scratchRecorder) WriteScratchInTx(_ context.Context, _ persistence.Tx, 
 	return nil
 }
 
-func (r *scratchRecorder) BumpLastProgressAt(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) (bool, error) {
+func (r *scratchRecorder) BumpLastProgressAt(_ context.Context, _ shared.UUID, _ time.Time, _ persistence.Tx) (bool, error) {
 	r.bumps++
 	return true, nil
 }
@@ -59,14 +59,14 @@ func TestApplyTerminalScratchInTx_EmptyScratchIsNoOp(t *testing.T) {
 		NodeID:    shared.UUID{2},
 	}
 
-	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, nil); err != nil {
+	if err := applyTerminalScratchInTx(context.Background(), args, acq, nil, nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx nil scratch: %v", err)
 	}
 	if rec.writes != 0 {
 		t.Fatalf("expected 0 writes for nil scratch, got %d", rec.writes)
 	}
 
-	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, []byte{}); err != nil {
+	if err := applyTerminalScratchInTx(context.Background(), args, acq, []byte{}, nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx empty scratch: %v", err)
 	}
 	if rec.writes != 0 {
@@ -83,7 +83,7 @@ func TestApplyTerminalScratchInTx_SubgraphExitIsNoOp(t *testing.T) {
 		NodeID:    shared.UUID{2},
 		NodeDef:   &node.TemplateNodeDef{IsSubgraphExit: true},
 	}
-	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, []byte("ignored")); err != nil {
+	if err := applyTerminalScratchInTx(context.Background(), args, acq, []byte("ignored"), nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx exit: %v", err)
 	}
 	if rec.writes != 0 {
@@ -100,7 +100,7 @@ func TestApplyTerminalScratchInTx_NonEmptyWritesInline(t *testing.T) {
 		NodeID:    shared.UUID{2},
 	}
 	payload := []byte("scratch-bytes")
-	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, payload); err != nil {
+	if err := applyTerminalScratchInTx(context.Background(), args, acq, payload, nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx: %v", err)
 	}
 	if rec.writes != 1 {
@@ -136,7 +136,7 @@ func TestApplyTerminalScratchInTx_OverThresholdSpillsToBlobBackend(t *testing.T)
 	}
 	payload := []byte("this scratch payload is well over the spill threshold")
 
-	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, payload); err != nil {
+	if err := applyTerminalScratchInTx(context.Background(), args, acq, payload, nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx: %v", err)
 	}
 	if rec.writes != 1 {
@@ -176,7 +176,7 @@ func TestApplyTerminalScratchInTx_AtOrBelowThresholdStaysInlineDespiteBlob(t *te
 	}
 	payload := []byte("small scratch")
 
-	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, payload); err != nil {
+	if err := applyTerminalScratchInTx(context.Background(), args, acq, payload, nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx: %v", err)
 	}
 	if rec.writes != 1 {
@@ -209,7 +209,7 @@ func TestApplyTerminalScratchInTx_BlobSpillFailureNeverLogsScratchContent(t *tes
 	marker := "top-secret-scratch-payload-marker-9f3a"
 	payload := []byte(strings.Repeat("x", 32) + marker)
 
-	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, payload); err != nil {
+	if err := applyTerminalScratchInTx(context.Background(), args, acq, payload, nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx: %v", err)
 	}
 	if string(rec.last.inline) != string(payload) {

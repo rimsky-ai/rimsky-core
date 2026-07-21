@@ -54,9 +54,9 @@ func seedStaleCandidateInternal(
 	instID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := sb.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := sb.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -75,9 +75,9 @@ func seedStaleCandidateInternal(
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())
-		if err := sb.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := sb.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := sb.Frames().InsertRunningFrame(ctx, instID, msgID, mainScopeID, tx)
@@ -85,15 +85,15 @@ func seedStaleCandidateInternal(
 		return err
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID: nodeID, ExecutorName: "stub", RequiredClaimProducers: []string{},
 			EnqueuedAt: time.Now().Add(-time.Second), FrameID: frameID, RunScopeID: mainScopeID,
 		}, tx)
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors: []string{"stub"}, AcceptedClaimProducers: []string{}, Limit: 16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -113,7 +113,7 @@ func runStateInternal(ctx context.Context, t *testing.T, sb persistence.Tables, 
 	t.Helper()
 	var state string
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := sb.Nodes().GetRunForGate(ctx, tx, nodeRunID)
+		row, err := sb.Nodes().GetRunForGate(ctx, nodeRunID, tx)
 		if err != nil {
 			return err
 		}
@@ -147,7 +147,7 @@ func TestTryAcquire_NullFrameIDCandidateReturnsSentinelWithFullContext(t *testin
 	var ok bool
 	var acquireErr error
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		acq, ok, acquireErr = tryAcquire(ctx, args, tx, cand, 5*time.Second)
+		acq, ok, acquireErr = tryAcquire(ctx, args, cand, 5*time.Second, tx)
 		return nil
 	}))
 	if !errors.Is(acquireErr, errAcquireNilFrameID) {
@@ -201,9 +201,9 @@ func TestHandleAcquireNilFrameID_TerminalizesPoisonRowInsteadOfLoopingForever(t 
 	}
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors: []string{"stub"}, AcceptedClaimProducers: []string{}, Limit: 16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -227,7 +227,7 @@ func TestAcquireFanOutIfDeclared_PartitionRequestSubstitutionFailureReturnsSenti
 
 	scopeID := shared.UUID(uuid.New())
 	scopes := &staticScopeTable{}
-	_ = scopes.Create(ctx, nil, persistence.RunScopeRow{ID: scopeID, GraphName: "main"})
+	_ = scopes.Create(ctx, persistence.RunScopeRow{ID: scopeID, GraphName: "main"}, nil)
 
 	nodeDef := &node.TemplateNodeDef{
 		Type:     "fan-root",
@@ -253,7 +253,7 @@ func TestAcquireFanOutIfDeclared_PartitionRequestSubstitutionFailureReturnsSenti
 		Logger:  shared.SilentLogger{},
 	}
 
-	err := acquireFanOutIfDeclared(ctx, args, nil, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second)
+	err := acquireFanOutIfDeclared(ctx, args, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second, nil)
 	if !errors.Is(err, errAcquireFanOutSubstitutionFailed) {
 		t.Fatalf("expected errAcquireFanOutSubstitutionFailed sentinel; got %v", err)
 	}
@@ -305,9 +305,9 @@ func TestHandleAcquireFanOutSubstitutionFailed_TerminalizesRowInsteadOfHotLoopin
 	}
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors: []string{"stub"}, AcceptedClaimProducers: []string{}, Limit: 16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

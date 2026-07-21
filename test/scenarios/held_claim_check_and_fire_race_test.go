@@ -76,7 +76,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	acqRunID := uuid.New()
 	inhRunID := uuid.New()
 	h.ExecSQL(
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, state, creation_reason, sequence)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, frame_id, run_scope_id, state, creation_reason, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '10 seconds', $3, $4, 'fresh', 'cascade', 1),
 		        ($5, $6, 'stub', '{}', NOW() - INTERVAL '10 seconds', $3, $4, 'fresh', 'cascade', 1)`,
 		acqRunID, acq.ID, frameID, mainScopeID, inhRunID, inh.ID,
@@ -123,7 +123,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		defer close(bDone)
 		var post func(context.Context)
 		bErr = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-			pc, err := runtime.CheckAndFireResolution(ctx, baseArgs, tx, chID)
+			pc, err := runtime.CheckAndFireResolution(ctx, baseArgs, chID, tx)
 			post = pc
 			return err
 		})
@@ -162,7 +162,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 
 	var postA func(context.Context)
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, argsA, tx, chID)
+		pc, err := runtime.CheckAndFireResolution(ctx, argsA, chID, tx)
 		postA = pc
 		return err
 	}))

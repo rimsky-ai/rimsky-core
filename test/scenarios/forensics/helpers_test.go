@@ -50,13 +50,13 @@ func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables,
 	var frameID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())
-		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := backend.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := backend.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, tx)
@@ -85,13 +85,13 @@ func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, n
 		return nil
 	}))
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return backend.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		return backend.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID:    runID,
 			NodeID:       nodeID,
 			FrameID:      frameID,
 			ExecutorName: "stub",
 			RunScopeID:   scopeID,
-		})
+		}, tx)
 	}))
 	return runID
 }

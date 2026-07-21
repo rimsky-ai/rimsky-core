@@ -24,8 +24,7 @@ type cancelWalkOpts struct {
 // @concept: fan-out
 // @concept: cancel-siblings
 func cancelClaimHandleWalk(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	rows []persistence.ClaimHandleRow, opts cancelWalkOpts,
+	ctx context.Context, args RunArgs, rows []persistence.ClaimHandleRow, opts cancelWalkOpts, tx persistence.Tx,
 ) (postCommitFn, error) {
 	var post postCommitFn
 	for _, row := range rows {
@@ -65,7 +64,7 @@ func cancelClaimHandleWalk(
 		if row.NodeRunID != nil {
 			hint.NodeRunID = *row.NodeRunID
 		}
-		instID, err := acquirerInstanceID(ctx, args, tx, row.HolderNodeID)
+		instID, err := acquirerInstanceID(ctx, args, row.HolderNodeID, tx)
 		if err != nil {
 			return nil, fmt.Errorf("cancelClaimHandleWalk: %w", err)
 		}
@@ -74,7 +73,7 @@ func cancelClaimHandleWalk(
 		if opts.parentClaimHandleID != nil {
 			parentClaimHandleID = opts.parentClaimHandleID(row)
 		}
-		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		pc, err := ResolveClaimHandleTerminal(ctx, args, TerminalDecision{
 			ClaimHandleID:              row.ID,
 			SupervisorID:               args.SupervisorID,
 			Source:                     HeldTerminal,
@@ -89,7 +88,7 @@ func cancelClaimHandleWalk(
 			LineageHint:                hint,
 			ParentClaimHandleID:        parentClaimHandleID,
 			LineageParentClaimHandleID: opts.lineageParentClaimHandleID,
-		})
+		}, tx)
 		if err != nil {
 			return nil, fmt.Errorf("cancelClaimHandleWalk: force-Abandon %s: %w", row.ID, err)
 		}
@@ -102,8 +101,7 @@ func cancelClaimHandleWalk(
 // @concept: fan-out
 // @concept: cancel-siblings
 func cancelInFlightSiblings(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	parentID shared.UUID, triggerID shared.UUID,
+	ctx context.Context, args RunArgs, parentID shared.UUID, triggerID shared.UUID, tx persistence.Tx,
 ) (postCommitFn, error) {
 	parent, err := args.ClaimHandles.Get(ctx, parentID, tx)
 	if err != nil {
@@ -131,7 +129,7 @@ func cancelInFlightSiblings(
 	if err != nil {
 		return nil, fmt.Errorf("cancelInFlightSiblings: ListChildClaimHandles: %w", err)
 	}
-	return cancelClaimHandleWalk(ctx, args, tx, siblings, cancelWalkOpts{
+	return cancelClaimHandleWalk(ctx, args, siblings, cancelWalkOpts{
 		outcome: OutcomeAbandonSiblingCancel,
 		skip: func(row persistence.ClaimHandleRow) bool {
 			return row.ID == triggerID
@@ -139,22 +137,21 @@ func cancelInFlightSiblings(
 		parentClaimHandleID: func(row persistence.ClaimHandleRow) *shared.UUID {
 			return row.ParentClaimHandleID
 		},
-	})
+	}, tx)
 }
 
 // @concept: claim-tree
 // @concept: fan-out
 // @concept: cancel-siblings
 func cancelDescendantClaims(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	rowID shared.UUID,
+	ctx context.Context, args RunArgs, rowID shared.UUID, tx persistence.Tx,
 ) (postCommitFn, error) {
 	descendants, err := args.ClaimHandles.ListChildClaimHandles(ctx, rowID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("cancelDescendantClaims: ListChildClaimHandles: %w", err)
 	}
-	return cancelClaimHandleWalk(ctx, args, tx, descendants, cancelWalkOpts{
+	return cancelClaimHandleWalk(ctx, args, descendants, cancelWalkOpts{
 		outcome:                    OutcomeAbandonDescendantCancel,
 		lineageParentClaimHandleID: &rowID,
-	})
+	}, tx)
 }

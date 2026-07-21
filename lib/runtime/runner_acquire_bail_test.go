@@ -73,9 +73,9 @@ func TestTryAcquire_TransientConflictBailAbandonsAlreadyOpenedLocks(t *testing.T
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -94,9 +94,9 @@ func TestTryAcquire_TransientConflictBailAbandonsAlreadyOpenedLocks(t *testing.T
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -125,15 +125,15 @@ func TestTryAcquire_TransientConflictBailAbandonsAlreadyOpenedLocks(t *testing.T
 
 	var cand persistence.Candidate
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := queue.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID: nodeID, ExecutorName: "stub", RequiredClaimProducers: []string{},
 			EnqueuedAt: time.Now().Add(-1 * time.Second), FrameID: frameID, RunScopeID: mainScopeID,
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := queue.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors: []string{"stub"}, AcceptedClaimProducers: []string{}, Limit: 16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

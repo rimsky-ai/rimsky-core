@@ -81,8 +81,7 @@ type ClaimTerminalRecord struct {
 }
 
 func WriteLeafRunLineage(
-	ctx context.Context, tx persistence.Tx, lt persistence.LineageTable,
-	instanceID shared.UUID, frameID shared.UUID, observedAt time.Time, rec LeafRunRecord,
+	ctx context.Context, lt persistence.LineageTable, instanceID shared.UUID, frameID shared.UUID, observedAt time.Time, rec LeafRunRecord, tx persistence.Tx,
 ) error {
 	if rec.State == "" {
 		return fmt.Errorf("WriteLeafRunLineage: state required")
@@ -94,19 +93,18 @@ func WriteLeafRunLineage(
 	if err != nil {
 		return fmt.Errorf("WriteLeafRunLineage: marshal: %w", err)
 	}
-	return lt.Insert(ctx, tx, persistence.LineageRow{
+	return lt.Insert(ctx, persistence.LineageRow{
 		ID:         shared.UUID(uuid.New()),
 		RecordKind: persistence.LineageRecordKindLeafRun,
 		InstanceID: instanceID,
 		FrameID:    frameID,
 		ObservedAt: observedAt,
 		Record:     payload,
-	})
+	}, tx)
 }
 
 func WriteClaimTerminalLineage(
-	ctx context.Context, tx persistence.Tx, lt persistence.LineageTable,
-	instanceID shared.UUID, frameID shared.UUID, observedAt time.Time, rec ClaimTerminalRecord,
+	ctx context.Context, lt persistence.LineageTable, instanceID shared.UUID, frameID shared.UUID, observedAt time.Time, rec ClaimTerminalRecord, tx persistence.Tx,
 ) error {
 	if rec.Outcome == "" {
 		return fmt.Errorf("WriteClaimTerminalLineage: outcome required (committed | abandoned | force_cancelled)")
@@ -115,7 +113,7 @@ func WriteClaimTerminalLineage(
 	if err != nil {
 		return fmt.Errorf("WriteClaimTerminalLineage: marshal: %w", err)
 	}
-	return lt.Insert(ctx, tx, persistence.LineageRow{
+	return lt.Insert(ctx, persistence.LineageRow{
 		ID:         shared.UUID(uuid.New()),
 		RecordKind: persistence.LineageRecordKindClaimTerminal,
 		InstanceID: instanceID,
@@ -123,7 +121,7 @@ func WriteClaimTerminalLineage(
 		ObservedAt: observedAt,
 		Record:     payload,
 		Outcome:    rec.Outcome,
-	})
+	}, tx)
 }
 
 func HashCanonicalJSON(v any) (string, error) {
@@ -246,7 +244,7 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 		SubstitutionRefs:   in.SubstitutionRefs,
 	}
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return WriteLeafRunLineage(ctx, tx, lt, in.InstanceID, in.FrameID, args.Clock.Now(), rec)
+		return WriteLeafRunLineage(ctx, lt, in.InstanceID, in.FrameID, args.Clock.Now(), rec, tx)
 	}); err != nil {
 		if args.Logger != nil {
 			args.Logger.Warn("EmitLeafRunLineage: write failed",

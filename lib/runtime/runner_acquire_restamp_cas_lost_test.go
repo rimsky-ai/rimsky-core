@@ -44,9 +44,9 @@ func TestRestampLinkedSubClaimHolders_CASLostSurfacesSentinelError(t *testing.T)
 		ClaimHandles: fake,
 		SupervisorID: "sup-mine",
 	}
-	err := restampLinkedSubClaimHolders(context.Background(), args, nil, persistence.Candidate{
+	err := restampLinkedSubClaimHolders(context.Background(), args, persistence.Candidate{
 		NodeRunID: shared.UUID(uuid.New()),
-	})
+	}, nil)
 	if err != errAcquireRestampLost {
 		t.Fatalf("restampLinkedSubClaimHolders: err = %v, want the errAcquireRestampLost sentinel", err)
 	}

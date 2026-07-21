@@ -26,7 +26,7 @@ func testPublisherSubscriptionLifecycle(t *testing.T, d persistence.Database) {
 		var row *persistence.PublisherSubscriptionRow
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
-			row, err = subs.Get(ctx, tx, id)
+			row, err = subs.Get(ctx, id, tx)
 			return err
 		}); err != nil {
 			t.Fatalf("Get: %v", err)
@@ -36,14 +36,14 @@ func testPublisherSubscriptionLifecycle(t *testing.T, d persistence.Database) {
 
 	subID := shared.UUID(uuid.New())
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return subs.Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		return subs.Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             subID,
 			InstanceID:     shared.UUID(fx.InstanceID),
 			PublisherName:  "sensor-alpha",
 			Kind:           "http",
 			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
 			StartedAt:      time.Now().UTC(),
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
@@ -90,14 +90,14 @@ func testPublisherSubscriptionLifecycle(t *testing.T, d persistence.Database) {
 
 	failedID := shared.UUID(uuid.New())
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return subs.Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		return subs.Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             failedID,
 			InstanceID:     shared.UUID(fx.InstanceID),
 			PublisherName:  "sensor-beta",
 			Kind:           "http",
 			ResolvedConfig: []byte(`{}`),
 			StartedAt:      time.Now().UTC(),
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Insert failed-row fixture: %v", err)
 	}

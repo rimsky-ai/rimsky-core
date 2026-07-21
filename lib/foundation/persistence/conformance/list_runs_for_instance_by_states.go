@@ -28,7 +28,7 @@ func testListRunsForInstanceByStates(t *testing.T, d persistence.Database) {
 		t.Helper()
 		var got []persistence.NodeRunLatest
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			m, err := store.Nodes().ListRunsForInstanceByStates(ctx, tx, instanceID, states)
+			m, err := store.Nodes().ListRunsForInstanceByStates(ctx, instanceID, states, tx)
 			got = m
 			return err
 		}); err != nil {
@@ -62,7 +62,7 @@ func testListRunsForInstanceByStates(t *testing.T, d persistence.Database) {
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return forceRunStateToFresh(ctx, tx, store, runID)
+		return forceRunStateToFresh(ctx, store, runID, tx)
 	}); err != nil {
 		t.Fatalf("settle to fresh: %v", err)
 	}

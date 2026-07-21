@@ -29,8 +29,7 @@ type CommittedDurableReleaseFailure struct {
 }
 
 func ReleaseCommittedDurableClaims(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	instanceID shared.UUID, log shared.Logger,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, log shared.Logger, tx persistence.Tx,
 ) (CommittedDurableReleaseReport, error) {
 	rows, err := args.ClaimHandles.ListByInstanceAndState(
 		ctx, instanceID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, tx,

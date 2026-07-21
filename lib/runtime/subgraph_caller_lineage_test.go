@@ -75,11 +75,11 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		ck := "ck-subgraph-emit"
 		instID := shared.UUID(uuid.New())
 		mainScopeID = shared.UUID(uuid.New())
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
 			InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -117,13 +117,13 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())
-		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := backend.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: inst.ID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := backend.Frames().InsertRunningFrame(ctx, inst.ID, msgID, mainScopeID, tx)
@@ -132,17 +132,16 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		}
 		frameID = fid
 		callerRunID = shared.UUID(uuid.New())
-		if err := backend.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := backend.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID:    callerRunID,
 			NodeID:       callerNode.ID,
 			FrameID:      frameID,
 			RunScopeID:   mainScopeID,
 			ExecutorName: "",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return backend.NodeRunTree().UpdateStateAndOutcome(ctx, tx, callerRunID,
-			cascade.NodeStateRunning, nil, false)
+		return backend.NodeRunTree().UpdateStateAndOutcome(ctx, callerRunID, cascade.NodeStateRunning, nil, false, tx)
 	}))
 
 	nodeDef := LookupNodeDef(&tmplSpec, "outer-caller")

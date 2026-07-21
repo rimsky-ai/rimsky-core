@@ -40,9 +40,9 @@ func seedCoHolderInstance(
 		if err := backend.Templates().UpdateState(ctx, tmplHash, persistence.TemplateStateDeployed, tx); err != nil {
 			return err
 		}
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -76,9 +76,9 @@ func seedCoHolderFrame(ctx context.Context, t *testing.T, backend persistence.Ta
 	var frameID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())
-		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := backend.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := backend.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -171,13 +171,13 @@ func TestInsertCoHolderClaimHoldersAtAcquire_HappyPathInsertsRow(t *testing.T) {
 
 	coHolderRunID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return backend.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		return backend.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID:    coHolderRunID,
 			NodeID:       coHolderNode.ID,
 			FrameID:      frameID,
 			RunScopeID:   mainScopeID,
 			ExecutorName: "stub",
-		})
+		}, tx)
 	}))
 
 	args := RunArgs{Persist: backend, ClaimHandles: backend.ClaimHandles(), Logger: shared.SilentLogger{}, SupervisorID: "sup-coholder-test"}
@@ -189,7 +189,7 @@ func TestInsertCoHolderClaimHoldersAtAcquire_HappyPathInsertsRow(t *testing.T) {
 	}
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return insertCoHolderClaimHoldersAtAcquire(ctx, args, tx, cand, coHolderDef, tmplSpec)
+		return insertCoHolderClaimHoldersAtAcquire(ctx, args, cand, coHolderDef, tmplSpec, tx)
 	}))
 
 	var holders []persistence.ClaimHolderRow
@@ -227,7 +227,7 @@ func TestInsertCoHolderClaimHoldersAtAcquire_UpstreamNodeMissingFailsLoud(t *tes
 	}
 
 	err := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return insertCoHolderClaimHoldersAtAcquire(ctx, args, tx, cand, &broken, tmplSpec)
+		return insertCoHolderClaimHoldersAtAcquire(ctx, args, cand, &broken, tmplSpec, tx)
 	})
 	require.Error(t, err,
 		"an unresolvable holds: upstream must fail the acquisition, not silently warn-and-continue "+
@@ -265,7 +265,7 @@ func TestInsertCoHolderClaimHoldersAtAcquire_NoActiveClaimInCurrentFrameFailsLou
 	}
 
 	err := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return insertCoHolderClaimHoldersAtAcquire(ctx, args, tx, cand, coHolderDef, tmplSpec)
+		return insertCoHolderClaimHoldersAtAcquire(ctx, args, cand, coHolderDef, tmplSpec, tx)
 	})
 	require.NoError(t, err,
 		"a frame-N co-holder must not bind against a non-durable frame-N-1 handle, but the acquire must not "+

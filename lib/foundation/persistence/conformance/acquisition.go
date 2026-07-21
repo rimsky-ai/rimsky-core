@@ -30,7 +30,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		EnqueuedAt:             time.Now().Add(-1 * time.Second),
 		FrameID:                fix.FrameID,
 		RunScopeID:             fix.MainRunScopeID,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 
@@ -41,11 +41,11 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 
 	var claimedNodeRunID shared.UUID
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  10,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -53,7 +53,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 			t.Fatalf("expected 1 candidate, got %d", len(cands))
 		}
 		claimedNodeRunID = cands[0].NodeRunID
-		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].NodeRunID, supID)
+		ok, err := q.ClaimDispatchRow(ctx, cands[0].NodeRunID, supID, tx)
 		if err != nil {
 			return err
 		}
@@ -101,18 +101,18 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 
 	addressBytes := json.RawMessage(`{"addr":"committed"}`)
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  10,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
 		if len(cands) != 1 {
 			t.Fatalf("expected 1 candidate after rollback released the claim, got %d", len(cands))
 		}
-		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].NodeRunID, supID)
+		ok, err := q.ClaimDispatchRow(ctx, cands[0].NodeRunID, supID, tx)
 		if err != nil {
 			return err
 		}

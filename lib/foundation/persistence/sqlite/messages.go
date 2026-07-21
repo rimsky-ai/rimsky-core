@@ -32,7 +32,7 @@ INSERT INTO rimsky_messages (
     id, instance_id, type, sender, sender_kind, payload, received_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?)`
 
-func (b *messagesImpl) Insert(ctx context.Context, tx persistence.Tx, req persistence.EnqueueMessageRequest) error {
+func (b *messagesImpl) Insert(ctx context.Context, req persistence.EnqueueMessageRequest, tx persistence.Tx) error {
 	if req.ReceivedAt.IsZero() {
 		req.ReceivedAt = time.Now().UTC()
 	}
@@ -50,7 +50,7 @@ UPDATE rimsky_messages
    SET delivered_at = ?, frame_id = ?
  WHERE id = ? AND delivered_at IS NULL AND cancelled = 0`
 
-func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error) {
+func (b *messagesImpl) MarkDelivered(ctx context.Context, id shared.UUID, frame shared.UUID, deliveredAt time.Time, tx persistence.Tx) (bool, error) {
 	res, err := b.q(tx).ExecContext(ctx, sqliteMarkDeliveredSQL, formatTime(deliveredAt), frame.String(), id.String())
 	if err != nil {
 		return false, fmt.Errorf("sqlite.Messages.MarkDelivered: %w", err)
@@ -69,7 +69,7 @@ SELECT id, instance_id, type, sender, sender_kind, payload,
  WHERE instance_id = ? AND delivered_at IS NULL AND cancelled = 0
  ORDER BY received_at ASC, id ASC`
 
-func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
+func (b *messagesImpl) ListPendingForInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) ([]persistence.MessageRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx, sqliteListPendingMessagesSQL, instanceID.String())
 	if err != nil {
 		return nil, fmt.Errorf("sqlite.Messages.ListPendingForInstance: %w", err)
@@ -85,7 +85,7 @@ SELECT id, instance_id, type, sender, sender_kind, payload,
  WHERE frame_id = ?
  ORDER BY received_at ASC, id ASC`
 
-func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, tx persistence.Tx, frame shared.UUID) ([]persistence.MessageRow, error) {
+func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, frame shared.UUID, tx persistence.Tx) ([]persistence.MessageRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx, sqliteListDeliveredForFrameSQL, frame.String())
 	if err != nil {
 		return nil, fmt.Errorf("sqlite.Messages.ListDeliveredForFrame: %w", err)
@@ -100,26 +100,10 @@ SELECT id, instance_id, type, sender, sender_kind, payload,
   FROM rimsky_messages
  WHERE id = ?`
 
-func (b *messagesImpl) Get(ctx context.Context, id shared.UUID) (*persistence.MessageRow, error) {
-	rows, err := (*tablesImpl)(b).db.QueryContext(ctx, sqliteGetMessageSQL, id.String())
-	if err != nil {
-		return nil, fmt.Errorf("sqlite.Messages.Get: %w", err)
-	}
-	defer rows.Close()
-	out, err := scanMessages(rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return &out[0], nil
-}
-
-func (b *messagesImpl) GetInTx(ctx context.Context, tx persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
+func (b *messagesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.MessageRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx, sqliteGetMessageSQL, id.String())
 	if err != nil {
-		return nil, fmt.Errorf("sqlite.Messages.GetInTx: %w", err)
+		return nil, fmt.Errorf("sqlite.Messages.Get: %w", err)
 	}
 	defer rows.Close()
 	out, err := scanMessages(rows)
@@ -238,7 +222,7 @@ UPDATE rimsky_messages
    SET cancelled = 1
  WHERE instance_id = ? AND delivered_at IS NULL AND cancelled = 0`
 
-func (b *messagesImpl) CancelPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) (int, error) {
+func (b *messagesImpl) CancelPendingForInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (int, error) {
 	res, err := b.q(tx).ExecContext(ctx, sqliteCancelPendingForInstanceSQL, instanceID.String())
 	if err != nil {
 		return 0, fmt.Errorf("sqlite.Messages.CancelPendingForInstance: %w", err)

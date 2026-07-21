@@ -110,7 +110,7 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 
 	var bLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, bNode.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, bNode.ID, tx)
 		bLatest = r
 		return err
 	}))

@@ -21,11 +21,7 @@ import (
 )
 
 func emitAttributeChangesForRunInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	nodeID foundationshared.UUID, nodeType string,
-	runID, instanceID, frameID foundationshared.UUID,
-	visited map[foundationshared.UUID]struct{},
-	filter receiverFilter,
+	ctx context.Context, args RunArgs, nodeID foundationshared.UUID, nodeType string, runID, instanceID, frameID foundationshared.UUID, visited map[foundationshared.UUID]struct{}, filter receiverFilter, tx persistence.Tx,
 ) error {
 	current, err := args.Persist.NodeAttributes().GetByRun(ctx, runID, tx)
 	if err != nil {
@@ -34,12 +30,12 @@ func emitAttributeChangesForRunInTx(
 	if current == nil {
 		return nil
 	}
-	prior, err := args.Persist.NodeAttributes().GetPriorRunData(ctx, tx, runID)
+	prior, err := args.Persist.NodeAttributes().GetPriorRunData(ctx, runID, tx)
 	if err != nil {
 		return fmt.Errorf("emitAttributeChangesForRunInTx: load prior attrs: %w", err)
 	}
 	if prior == nil {
-		prior, err = firstRunAttributeBaseline(ctx, args, tx, instanceID, nodeType)
+		prior, err = firstRunAttributeBaseline(ctx, args, instanceID, nodeType, tx)
 		if err != nil {
 			return fmt.Errorf("emitAttributeChangesForRunInTx: first-run baseline: %w", err)
 		}
@@ -59,9 +55,7 @@ func emitAttributeChangesForRunInTx(
 				"value": value,
 			},
 		}
-		if err := emitSignalInTxWithFilter(ctx, args, tx,
-			nodeID, nodeType, runID, instanceID, frameID,
-			attrSig, visited, filter); err != nil {
+		if err := emitSignalInTxWithFilter(ctx, args, nodeID, nodeType, runID, instanceID, frameID, attrSig, visited, filter, tx); err != nil {
 			return err
 		}
 	}
@@ -69,10 +63,9 @@ func emitAttributeChangesForRunInTx(
 }
 
 func firstRunAttributeBaseline(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	instanceID foundationshared.UUID, nodeType string,
+	ctx context.Context, args RunArgs, instanceID foundationshared.UUID, nodeType string, tx persistence.Tx,
 ) (map[string]any, error) {
-	tmpl, err := loadTemplateSpec(ctx, args, tx, instanceID)
+	tmpl, err := loadTemplateSpec(ctx, args, instanceID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("firstRunAttributeBaseline: load template: %w", err)
 	}
@@ -132,8 +125,7 @@ func attributesValueEqual(a, b any) bool {
 }
 
 func upsertDataFromDispatchInputBagIfEmpty(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	runID, nodeID foundationshared.UUID,
+	ctx context.Context, args RunArgs, runID, nodeID foundationshared.UUID, tx persistence.Tx,
 ) error {
 	current, err := args.Persist.NodeAttributes().GetByRun(ctx, runID, tx)
 	if err != nil {
@@ -142,7 +134,7 @@ func upsertDataFromDispatchInputBagIfEmpty(
 	if current != nil && len(current.Data) > 0 {
 		return nil
 	}
-	bag, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, tx, runID)
+	bag, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, runID, tx)
 	if err != nil {
 		return err
 	}

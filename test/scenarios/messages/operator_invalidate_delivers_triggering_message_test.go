@@ -26,17 +26,17 @@ func TestOperatorInvalidateDeliversTriggeringMessage(t *testing.T) {
 	msgID := shared.UUID(uuid.New())
 
 	now := time.Now().UTC()
-	if err := runtime.EnqueueMessage(ctx, nil, &fakeEnqueueDeps{msgs: m}, persistence.EnqueueMessageRequest{
+	if err := runtime.EnqueueMessage(ctx, &fakeEnqueueDeps{msgs: m}, persistence.EnqueueMessageRequest{
 		ID:         msgID,
 		InstanceID: instanceID,
 		Type:       "invalidate",
 		Sender:     "operator/admin",
 		SenderKind: "operator",
 		ReceivedAt: now,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("EnqueueMessage: %v", err)
 	}
-	delivered, err := runtime.DeliverTriggeringMessage(ctx, nil, m, instanceID, frameID, msgID, now)
+	delivered, err := runtime.DeliverTriggeringMessage(ctx, m, instanceID, frameID, msgID, now, nil)
 	if err != nil {
 		t.Fatalf("DeliverTriggeringMessage: %v", err)
 	}

@@ -48,9 +48,9 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: runScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -69,9 +69,9 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "fixture/message", Sender: "operator", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := store.Frames().InsertRunningFrame(ctx, instanceID, msgID, runScopeID, tx)
@@ -79,13 +79,13 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 			return err
 		}
 		frameID = fid
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID: nodeAID, ExecutorName: "test-executor", RequiredClaimProducers: []string{},
 			EnqueuedAt: time.Now().Add(-2 * time.Second), FrameID: frameID, RunScopeID: runScopeID,
 		}, tx); err != nil {
 			return err
 		}
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID: nodeBID, ExecutorName: "test-executor", RequiredClaimProducers: []string{},
 			EnqueuedAt: time.Now().Add(-1 * time.Second), FrameID: frameID, RunScopeID: runScopeID,
 		}, tx)
@@ -97,11 +97,11 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 
 	go func() {
 		holderDone <- store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 				AcceptedExecutors:      []string{"test-executor"},
 				AcceptedClaimProducers: []string{},
 				Limit:                  1,
-			})
+			}, tx)
 			close(holderReady)
 			<-release
 			if err != nil {
@@ -118,11 +118,11 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 
 	var probeCands []persistence.Candidate
 	require.NoError(t, store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  10,
-		})
+		}, tx)
 		probeCands = cands
 		return err
 	}), "SelectCandidates must not block while another transaction holds a FOR UPDATE lock on a "+

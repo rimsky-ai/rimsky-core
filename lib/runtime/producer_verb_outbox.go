@@ -49,7 +49,7 @@ func producerVerbForOutcome(o TerminalOutcome) (persistence.ProducerVerb, error)
 }
 
 func enqueueProducerVerb(
-	ctx context.Context, args RunArgs, tx persistence.Tx, td TerminalDecision,
+	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
 ) error {
 	outbox := ProducerVerbOutboxOf(args)
 	if outbox == nil {
@@ -285,7 +285,7 @@ func deliverProducerVerb(
 		if err != nil {
 			return err
 		}
-		applyDeferredCommitResult(ctx, args, tx, row, res)
+		applyDeferredCommitResult(ctx, args, row, res, tx)
 		return nil
 	case persistence.ProducerVerbAbandon:
 		return producer.Abandon(ctx, claimID, row.ClaimScopeData, row.Address, row.LeaseToken)
@@ -296,8 +296,7 @@ func deliverProducerVerb(
 }
 
 func applyDeferredCommitResult(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row persistence.ProducerVerbOutboxRow, res claimproducer.CommitResult,
+	ctx context.Context, args RunArgs, row persistence.ProducerVerbOutboxRow, res claimproducer.CommitResult, tx persistence.Tx,
 ) {
 	needsVersion := res.VersionID != "" && args.ClaimHandles != nil
 	needsMetadata := row.ParentClaimHandleID != nil && len(res.ProducerMetadata) > 0 &&
@@ -322,12 +321,12 @@ func applyDeferredCommitResult(
 			return nil
 		}
 		// @concept: fan-out
-		return recordChildCommitMetadata(ctx, args, tx, FanoutChildSettlementInput{
+		return recordChildCommitMetadata(ctx, args, FanoutChildSettlementInput{
 			ParentClaimHandleID:   *row.ParentClaimHandleID,
 			ChildClaimHandleID:    row.ClaimHandleID,
 			ChildOutcome:          OutcomeCommit,
 			ChildProducerMetadata: res.ProducerMetadata,
-		}, parent)
+		}, parent, tx)
 	}
 	var err error
 	if tx != nil {
@@ -345,8 +344,7 @@ func applyDeferredCommitResult(
 
 // @concept: claim-scope
 func producerVerbOutboxBarrier(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	producer claimproducer.ClaimProducer, producerName string, candidateScope []byte,
+	ctx context.Context, args RunArgs, producer claimproducer.ClaimProducer, producerName string, candidateScope []byte, tx persistence.Tx,
 ) error {
 	outbox := ProducerVerbOutboxOf(args)
 	if outbox == nil {

@@ -37,11 +37,11 @@ func seedLateBindDispatch(
 	runScopeID := shared.UUID(uuid.New())
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         runScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -52,13 +52,13 @@ func seedLateBindDispatch(
 			return err
 		}
 		messageID := shared.UUID(uuid.New())
-		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         messageID,
 			InstanceID: instanceID,
 			Type:       "fixture/message",
 			Sender:     "operator",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := store.Frames().InsertRunningFrame(ctx, instanceID, messageID, runScopeID, tx)
@@ -74,7 +74,7 @@ func seedLateBindDispatch(
 			}, tx); err != nil {
 				return err
 			}
-			if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+			if err := q.Enqueue(ctx, persistence.DispatchRequest{
 				NodeID:                 s.NodeID,
 				ExecutorName:           s.ExecutorName,
 				RequiredClaimProducers: s.RequiredClaimProducers,
@@ -98,7 +98,7 @@ func selectCandidateNodeIDs(ctx context.Context, t *testing.T, d persistence.Dat
 	probeErr := errors.New("rollback probe")
 	seen := map[shared.UUID]bool{}
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, req)
+		cands, err := q.SelectCandidates(ctx, req, tx)
 		if err != nil {
 			return err
 		}
@@ -134,7 +134,7 @@ func testSelectCandidatesLateBindMixedStores(t *testing.T, d persistence.Databas
 		Limit:                      100,
 	})
 	if !seen[boundNode] {
-		t.Errorf("node requiring a mix of statically-accepted and bound late-bind stores was not selectable")
+		t.Errorf("node requiring a mix of statically-accepted and bound late-bind claim producers was not selectable")
 	}
 	if seen[unboundNode] {
 		t.Errorf("node requiring an unbound store was selectable despite no matching service binding")

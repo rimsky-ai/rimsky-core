@@ -24,7 +24,7 @@ func FrameRunScopeTerminalFanout(
 	if lifecycleSubs == nil || peersForSpec == nil {
 		return nil
 	}
-	return func(ctx context.Context, tx persistence.Tx, instanceID, runScopeID shared.UUID, terminalReason string) {
+	return func(ctx context.Context, instanceID, runScopeID shared.UUID, terminalReason string, tx persistence.Tx) {
 		inst, err := persist.Instances().Get(ctx, instanceID, tx)
 		if err != nil || inst == nil {
 			slog.Warn("FrameRunScopeTerminalFanout: instance lookup failed; peers not notified",
@@ -37,8 +37,7 @@ func FrameRunScopeTerminalFanout(
 				"instance_id", instanceID.String(), "run_scope_id", runScopeID.String(), "error", err)
 			return
 		}
-		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec,
-			tpl.Spec, runScopeID, instanceID, terminalReason, tx, nil)
+		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec, tpl.Spec, runScopeID, instanceID, terminalReason, nil, tx)
 	}
 }
 
@@ -51,8 +50,7 @@ func warnFanOut(logger shared.Logger, msg string, kv ...any) {
 }
 
 func withOptionalFanOutTx(
-	ctx context.Context, persist persistence.Tables, tx persistence.Tx,
-	fn func(ctx context.Context, tx persistence.Tx) error,
+	ctx context.Context, persist persistence.Tables, fn func(ctx context.Context, tx persistence.Tx) error, tx persistence.Tx,
 ) error {
 	if tx != nil {
 		return fn(ctx, tx)
@@ -63,16 +61,7 @@ func withOptionalFanOutTx(
 // @concept: run-scope
 // @concept: lifecycle-subscriber
 func FanOutRunScopeEvent(
-	ctx context.Context,
-	persist persistence.Tables,
-	lifecycleSubs *locks.LifecycleRegistry,
-	peersForSpec func(tplSpec node.TemplateSpec) []string,
-	tplSpec node.TemplateSpec,
-	runScopeID shared.UUID,
-	instanceID shared.UUID,
-	terminalReason string,
-	tx persistence.Tx,
-	logger shared.Logger,
+	ctx context.Context, persist persistence.Tables, lifecycleSubs *locks.LifecycleRegistry, peersForSpec func(tplSpec node.TemplateSpec) []string, tplSpec node.TemplateSpec, runScopeID shared.UUID, instanceID shared.UUID, terminalReason string, logger shared.Logger, tx persistence.Tx,
 ) {
 	if lifecycleSubs == nil || peersForSpec == nil {
 		return
@@ -82,12 +71,12 @@ func FanOutRunScopeEvent(
 
 	for _, name := range peers {
 		var existing *persistence.LifecycleIdempotencyRow
-		if err := withOptionalFanOutTx(ctx, persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+		if err := withOptionalFanOutTx(ctx, persist, func(ctx context.Context, useTx persistence.Tx) error {
 			r, err := persist.LifecycleIdempotency().Get(
 				ctx, name, persistence.LifecycleIdempotencyScopeRunScope, scopeID, useTx)
 			existing = r
 			return err
-		}); err != nil {
+		}, tx); err != nil {
 			warnFanOut(logger, "FanOutRunScopeEvent: lifecycle row lookup failed; skipping peer",
 				"peer", name, "run_scope_id", scopeID, "error", err)
 			continue
@@ -112,7 +101,7 @@ func FanOutRunScopeEvent(
 			continue
 		}
 
-		if err := withOptionalFanOutTx(ctx, persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+		if err := withOptionalFanOutTx(ctx, persist, func(ctx context.Context, useTx persistence.Tx) error {
 			return persist.LifecycleIdempotency().Upsert(ctx,
 				persistence.LifecycleIdempotencyRow{
 					ClaimProducerName: name,
@@ -121,7 +110,7 @@ func FanOutRunScopeEvent(
 					State:             persistence.LifecycleIdempotencyStateRunScopeTerminal,
 				}, useTx,
 			)
-		}); err != nil {
+		}, tx); err != nil {
 			warnFanOut(logger, "FanOutRunScopeEvent: lifecycle row upsert failed after successful peer delivery; peer will be re-delivered on the next terminal fan-out for this scope",
 				"peer", name, "run_scope_id", scopeID, "error", err)
 			continue

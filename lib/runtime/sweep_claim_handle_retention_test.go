@@ -36,7 +36,7 @@ func seedClaimHandleForSweep(
 	var inst persistence.InstanceRow
 	var nd persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, nil)
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, nil, tx)
 		inst = i
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "n", Executor: "stub",

@@ -22,7 +22,7 @@ func resolveMostRecentRun(ctx context.Context, t *testing.T, d persistence.Datab
 	var found bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		id, found, err = q.GetMostRecentRunForNodeInScope(ctx, tx, nodeID, runScopeID)
+		id, found, err = q.GetMostRecentRunForNodeInScope(ctx, nodeID, runScopeID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("resolveMostRecentRun: %v", err)
@@ -43,11 +43,11 @@ func testScopeKeyedOps_GetMostRecentRunForNodeInScope(t *testing.T, d persistenc
 	var foundA, foundB bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		gotA, foundA, err = q.GetMostRecentRunForNodeInScope(ctx, tx, f.fix.NodeID, f.scopeA)
+		gotA, foundA, err = q.GetMostRecentRunForNodeInScope(ctx, f.fix.NodeID, f.scopeA, tx)
 		if err != nil {
 			return err
 		}
-		gotB, foundB, err = q.GetMostRecentRunForNodeInScope(ctx, tx, f.fix.NodeID, f.scopeB)
+		gotB, foundB, err = q.GetMostRecentRunForNodeInScope(ctx, f.fix.NodeID, f.scopeB, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("GetMostRecentRunForNodeInScope: %v", err)
@@ -68,7 +68,7 @@ func testScopeKeyedOps_HasAdvancedSiblingInScope(t *testing.T, d persistence.Dat
 	var advancedInA bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		advancedInA, err = store.Nodes().HasAdvancedSiblingInScope(ctx, tx, f.fix.NodeID, f.scopeA, f.runA)
+		advancedInA, err = store.Nodes().HasAdvancedSiblingInScope(ctx, f.fix.NodeID, f.scopeA, f.runA, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("HasAdvancedSiblingInScope(scopeA): %v", err)
@@ -86,11 +86,11 @@ func testScopeKeyedOps_ListPendingRunsInScopeForNodes(t *testing.T, d persistenc
 	var pendingA, pendingB shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		pendingA, err = store.Nodes().CreateCascadePending(ctx, tx, f.fix.NodeID, f.scopeA, f.fix.FrameID)
+		pendingA, err = store.Nodes().CreateCascadePending(ctx, f.fix.NodeID, f.scopeA, f.fix.FrameID, tx)
 		if err != nil {
 			return err
 		}
-		pendingB, err = store.Nodes().CreateCascadePending(ctx, tx, f.fix.NodeID, f.scopeB, f.fix.FrameID)
+		pendingB, err = store.Nodes().CreateCascadePending(ctx, f.fix.NodeID, f.scopeB, f.fix.FrameID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("seed pendings: %v", err)
@@ -99,11 +99,11 @@ func testScopeKeyedOps_ListPendingRunsInScopeForNodes(t *testing.T, d persistenc
 	var listA, listB []shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		listA, err = store.Nodes().ListPendingRunsInScopeForNodes(ctx, tx, f.scopeA, []shared.UUID{f.fix.NodeID})
+		listA, err = store.Nodes().ListPendingRunsInScopeForNodes(ctx, f.scopeA, []shared.UUID{f.fix.NodeID}, tx)
 		if err != nil {
 			return err
 		}
-		listB, err = store.Nodes().ListPendingRunsInScopeForNodes(ctx, tx, f.scopeB, []shared.UUID{f.fix.NodeID})
+		listB, err = store.Nodes().ListPendingRunsInScopeForNodes(ctx, f.scopeB, []shared.UUID{f.fix.NodeID}, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("ListPendingRunsInScopeForNodes: %v", err)
@@ -127,14 +127,14 @@ func testScopeKeyedOps_HasLaterCascadePending(t *testing.T, d persistence.Databa
 
 	var laterInA bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		row, err := store.Nodes().GetRunForGate(ctx, tx, f.runA)
+		row, err := store.Nodes().GetRunForGate(ctx, f.runA, tx)
 		if err != nil {
 			return err
 		}
 		if row == nil {
 			t.Fatalf("GetRunForGate(runA) returned nil")
 		}
-		laterInA, err = store.Nodes().HasLaterCascadePending(ctx, tx, f.fix.NodeID, f.scopeA, row.Sequence)
+		laterInA, err = store.Nodes().HasLaterCascadePending(ctx, f.fix.NodeID, f.scopeA, row.Sequence, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("HasLaterCascadePending(scopeA): %v", err)
@@ -156,19 +156,19 @@ func testScopeKeyedOps_GetPriorRunBySequence(t *testing.T, d persistence.Databas
 
 	var priorA, priorB *persistence.NodeRunForGate
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		curA, err := store.Nodes().GetRunForGate(ctx, tx, currentA)
+		curA, err := store.Nodes().GetRunForGate(ctx, currentA, tx)
 		if err != nil {
 			return err
 		}
-		curB, err := store.Nodes().GetRunForGate(ctx, tx, currentB)
+		curB, err := store.Nodes().GetRunForGate(ctx, currentB, tx)
 		if err != nil {
 			return err
 		}
-		priorA, err = store.Nodes().GetPriorRunBySequence(ctx, tx, f.fix.NodeID, f.scopeA, curA.Sequence)
+		priorA, err = store.Nodes().GetPriorRunBySequence(ctx, f.fix.NodeID, f.scopeA, curA.Sequence, tx)
 		if err != nil {
 			return err
 		}
-		priorB, err = store.Nodes().GetPriorRunBySequence(ctx, tx, f.fix.NodeID, f.scopeB, curB.Sequence)
+		priorB, err = store.Nodes().GetPriorRunBySequence(ctx, f.fix.NodeID, f.scopeB, curB.Sequence, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("GetPriorRunBySequence: %v", err)
@@ -187,7 +187,7 @@ func testScopeKeyedOps_DeletePriorCascadeStales(t *testing.T, d persistence.Data
 	store := d.Tables()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return forceRunStateToFresh(ctx, tx, store, f.runA)
+		return forceRunStateToFresh(ctx, store, f.runA, tx)
 	}); err != nil {
 		t.Fatalf("settle runA (scopeB's structural parent): %v", err)
 	}
@@ -199,11 +199,11 @@ func testScopeKeyedOps_DeletePriorCascadeStales(t *testing.T, d persistence.Data
 
 	var deleted int
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		curA, err := store.Nodes().GetRunForGate(ctx, tx, currentA)
+		curA, err := store.Nodes().GetRunForGate(ctx, currentA, tx)
 		if err != nil {
 			return err
 		}
-		deleted, err = store.Nodes().DeletePriorCascadeStales(ctx, tx, f.fix.NodeID, f.scopeA, curA.Sequence)
+		deleted, err = store.Nodes().DeletePriorCascadeStales(ctx, f.fix.NodeID, f.scopeA, curA.Sequence, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("DeletePriorCascadeStales(scopeA): %v", err)
@@ -215,16 +215,16 @@ func testScopeKeyedOps_DeletePriorCascadeStales(t *testing.T, d persistence.Data
 	var staleAGone bool
 	var runARow, runBRow *persistence.NodeRunForGate
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		row, err := store.Nodes().GetRunForGate(ctx, tx, staleA)
+		row, err := store.Nodes().GetRunForGate(ctx, staleA, tx)
 		if err != nil {
 			return err
 		}
 		staleAGone = row == nil
-		runARow, err = store.Nodes().GetRunForGate(ctx, tx, f.runA)
+		runARow, err = store.Nodes().GetRunForGate(ctx, f.runA, tx)
 		if err != nil {
 			return err
 		}
-		runBRow, err = store.Nodes().GetRunForGate(ctx, tx, f.runB)
+		runBRow, err = store.Nodes().GetRunForGate(ctx, f.runB, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("post-delete probe: %v", err)
@@ -252,19 +252,19 @@ func testScopeKeyedOps_GetPriorCascadeQueuedNotClaimed(t *testing.T, d persisten
 
 	var priorA, priorB *persistence.NodeRunForGate
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		curA, err := store.Nodes().GetRunForGate(ctx, tx, currentA)
+		curA, err := store.Nodes().GetRunForGate(ctx, currentA, tx)
 		if err != nil {
 			return err
 		}
-		curB, err := store.Nodes().GetRunForGate(ctx, tx, currentB)
+		curB, err := store.Nodes().GetRunForGate(ctx, currentB, tx)
 		if err != nil {
 			return err
 		}
-		priorA, err = store.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, tx, f.fix.NodeID, f.scopeA, curA.Sequence)
+		priorA, err = store.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, f.fix.NodeID, f.scopeA, curA.Sequence, tx)
 		if err != nil {
 			return err
 		}
-		priorB, err = store.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, tx, f.fix.NodeID, f.scopeB, curB.Sequence)
+		priorB, err = store.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, f.fix.NodeID, f.scopeB, curB.Sequence, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("GetPriorCascadeQueuedNotClaimed: %v", err)
@@ -283,10 +283,10 @@ func testScopeKeyedOps_GetMostRecentSettledRun(t *testing.T, d persistence.Datab
 	store := d.Tables()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := forceRunStateToFresh(ctx, tx, store, f.runA); err != nil {
+		if err := forceRunStateToFresh(ctx, store, f.runA, tx); err != nil {
 			return err
 		}
-		return forceRunStateToFresh(ctx, tx, store, f.runB)
+		return forceRunStateToFresh(ctx, store, f.runB, tx)
 	}); err != nil {
 		t.Fatalf("settle runA/runB: %v", err)
 	}
@@ -298,19 +298,19 @@ func testScopeKeyedOps_GetMostRecentSettledRun(t *testing.T, d persistence.Datab
 
 	var settledA, settledB *persistence.NodeRunForGate
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		curA, err := store.Nodes().GetRunForGate(ctx, tx, currentA)
+		curA, err := store.Nodes().GetRunForGate(ctx, currentA, tx)
 		if err != nil {
 			return err
 		}
-		curB, err := store.Nodes().GetRunForGate(ctx, tx, currentB)
+		curB, err := store.Nodes().GetRunForGate(ctx, currentB, tx)
 		if err != nil {
 			return err
 		}
-		settledA, err = store.Nodes().GetMostRecentSettledRun(ctx, tx, f.fix.NodeID, f.scopeA, curA.Sequence)
+		settledA, err = store.Nodes().GetMostRecentSettledRun(ctx, f.fix.NodeID, f.scopeA, curA.Sequence, tx)
 		if err != nil {
 			return err
 		}
-		settledB, err = store.Nodes().GetMostRecentSettledRun(ctx, tx, f.fix.NodeID, f.scopeB, curB.Sequence)
+		settledB, err = store.Nodes().GetMostRecentSettledRun(ctx, f.fix.NodeID, f.scopeB, curB.Sequence, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("GetMostRecentSettledRun: %v", err)

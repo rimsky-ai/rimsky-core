@@ -33,15 +33,15 @@ func applyTerminalPark(
 		ResumeAt:          t.ParkResumeAt,
 	}
 
-	if err := args.Queue.ParkActiveInTx(ctx, tx, in); err != nil {
+	if err := args.Queue.ParkActive(ctx, in, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	// @concept: executor
-	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
+	if err := applyTerminalScratchInTx(ctx, args, acq, t.Scratch, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	if maxRetries != nil {
-		if err := args.Queue.UpdateDispatchTuningInTx(ctx, tx, acq.NodeRunID, maxRetries); err != nil {
+		if err := args.Queue.UpdateDispatchTuning(ctx, acq.NodeRunID, maxRetries, tx); err != nil {
 			return nil, fmt.Errorf("applyTerminalPark: %w", err)
 		}
 	}

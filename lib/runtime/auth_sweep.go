@@ -37,7 +37,7 @@ func SweepRotationGrace(
 				KeyName: k.Name,
 				Reason:  auth.RevokeReasonRotationGrace,
 			}
-			if txErr := emitKeyRevoked(ctx, tables, tx, log, payload); txErr != nil {
+			if txErr := emitKeyRevoked(ctx, tables, log, payload, tx); txErr != nil {
 				return txErr
 			}
 		}
@@ -100,7 +100,7 @@ func registeredAuthMutationHooks() []AuthMutationHook {
 	return out
 }
 
-func emitKeyRevoked(ctx context.Context, tables persistence.Tables, tx persistence.Tx, log shared.Logger, p auth.KeyRevokedPayload) error {
+func emitKeyRevoked(ctx context.Context, tables persistence.Tables, log shared.Logger, p auth.KeyRevokedPayload, tx persistence.Tx) error {
 	data, err := json.Marshal(p)
 	if err != nil {
 		if log != nil {

@@ -128,7 +128,7 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		out := HeldFramesResponse{Frames: []HeldFrameEntry{}}
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			parked, err := listParkedDiagnostic(ctx, tx, deps)
+			parked, err := listParkedDiagnostic(ctx, deps, tx)
 			if err != nil {
 				return err
 			}
@@ -176,7 +176,7 @@ func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		out := ParkedNodesResponse{ParkedNodes: []ParkedNodeEntry{}}
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			parked, err := listParkedDiagnostic(ctx, tx, deps)
+			parked, err := listParkedDiagnostic(ctx, deps, tx)
 			if err != nil {
 				return err
 			}
@@ -202,7 +202,7 @@ func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-func listParkedDiagnostic(ctx context.Context, tx persistence.Tx, deps AppDeps) ([]persistence.ParkedDiagnosticRow, error) {
+func listParkedDiagnostic(ctx context.Context, deps AppDeps, tx persistence.Tx) ([]persistence.ParkedDiagnosticRow, error) {
 	if deps.Queue == nil {
 		return nil, nil
 	}

@@ -114,7 +114,7 @@ func seedPublisherSubscription(
 		}, tx); err != nil {
 			return err
 		}
-		return tables.PublisherSubscriptions().Insert(ctx, tx, row)
+		return tables.PublisherSubscriptions().Insert(ctx, row, tx)
 	}); err != nil {
 		t.Fatalf("seedPublisherSubscription: %v", err)
 	}
@@ -125,7 +125,7 @@ func getPublisherSubscriptionRow(t *testing.T, tables persistence.Tables, id sha
 	t.Helper()
 	var row *persistence.PublisherSubscriptionRow
 	if err := tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.PublisherSubscriptions().Get(ctx, tx, id)
+		r, err := tables.PublisherSubscriptions().Get(ctx, id, tx)
 		row = r
 		return err
 	}); err != nil {

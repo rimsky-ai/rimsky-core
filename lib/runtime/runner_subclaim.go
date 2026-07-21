@@ -57,7 +57,7 @@ func subClaimIdempotencyKey(nodeRunID shared.UUID, partitionKey string) string {
 }
 
 func AcquireSubClaims(
-	ctx context.Context, args RunArgs, tx persistence.Tx, in AcquireSubClaimsInput,
+	ctx context.Context, args RunArgs, in AcquireSubClaimsInput, tx persistence.Tx,
 ) (result []SubClaim, retErr error) {
 	if in.ParentIntent == "" {
 		return nil, fmt.Errorf("AcquireSubClaims: ParentIntent must be set (got empty); "+
@@ -167,7 +167,7 @@ func AcquireSubClaims(
 				claimHandleID:   subID.String(),
 				candidateHandle: candidateHandle,
 			})
-			emitSubclaimBeginCandidate(ctx, args, tx, parentID, subID, in.InstanceID, in.HolderNodeID, in.ProducerName, len(candidateHandle))
+			emitSubclaimBeginCandidate(ctx, args, parentID, subID, in.InstanceID, in.HolderNodeID, in.ProducerName, len(candidateHandle), tx)
 		}
 		intent := in.ParentIntent
 		insert := persistence.ClaimHandleInsertInput{
@@ -204,7 +204,7 @@ func AcquireSubClaims(
 			ProducerLeaseToken:      desc.LeaseToken,
 		})
 	}
-	emitSubclaimAcquired(ctx, args, tx, parentID, in.InstanceID, in.HolderNodeID, in.ProducerName, len(out))
+	emitSubclaimAcquired(ctx, args, parentID, in.InstanceID, in.HolderNodeID, in.ProducerName, len(out), tx)
 	return out, nil
 }
 
@@ -212,9 +212,7 @@ func AcquireSubClaims(
 // @concept: claim-tree
 // @story: sub-claim-payload-substitution
 func reuseLinkedSubClaim(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	claimSpec claimproducer.ClaimSpec, cand persistence.Candidate,
-	producer claimproducer.ClaimProducer, acquired []AcquiredLock, livenessInterval time.Duration,
+	ctx context.Context, args RunArgs, claimSpec claimproducer.ClaimSpec, cand persistence.Candidate, producer claimproducer.ClaimProducer, acquired []AcquiredLock, livenessInterval time.Duration, tx persistence.Tx,
 ) (AcquiredLock, bool, error) {
 	rows, err := args.ClaimHandles.ListByNodeRun(ctx, cand.NodeRunID, tx)
 	if err != nil {
@@ -238,7 +236,7 @@ func reuseLinkedSubClaim(
 		if lockAlreadyReused(acquired, row.ID) {
 			continue
 		}
-		if err := renewReusedRunExpiry(ctx, args, tx, cand.NodeRunID, livenessInterval); err != nil {
+		if err := renewReusedRunExpiry(ctx, args, cand.NodeRunID, livenessInterval, tx); err != nil {
 			return AcquiredLock{}, false, err
 		}
 		return AcquiredLock{
@@ -261,8 +259,7 @@ func reuseLinkedSubClaim(
 }
 
 func emitSubclaimBeginCandidate(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	parentID, subID, instanceID, holderNodeID shared.UUID, producerName string, candidateHandleSize int,
+	ctx context.Context, args RunArgs, parentID, subID, instanceID, holderNodeID shared.UUID, producerName string, candidateHandleSize int, tx persistence.Tx,
 ) {
 	if args.Persist == nil {
 		return
@@ -287,8 +284,7 @@ func emitSubclaimBeginCandidate(
 }
 
 func emitSubclaimAcquired(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	parentID, instanceID, holderNodeID shared.UUID, producerName string, subScopeCount int,
+	ctx context.Context, args RunArgs, parentID, instanceID, holderNodeID shared.UUID, producerName string, subScopeCount int, tx persistence.Tx,
 ) {
 	if args.Persist == nil || subScopeCount == 0 {
 		return

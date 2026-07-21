@@ -132,7 +132,7 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 			if isDryRun {
 				return errDryRunOK
 			}
-			n, err := applyDebugOverride(ctx, deps, tx, instUUID, body)
+			n, err := applyDebugOverride(ctx, deps, instUUID, body, tx)
 			if err != nil {
 				return err
 			}
@@ -200,11 +200,7 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 }
 
 func applyDebugOverride(
-	ctx context.Context,
-	deps AppDeps,
-	tx persistence.Tx,
-	instanceID shared.UUID,
-	body DebugOverrideRequest,
+	ctx context.Context, deps AppDeps, instanceID shared.UUID, body DebugOverrideRequest, tx persistence.Tx,
 ) (int, error) {
 	frameID, err := deps.Persist.Frames().GetRunningFrameID(ctx, instanceID, tx)
 	if err != nil {
@@ -229,28 +225,28 @@ func applyDebugOverride(
 		if n.NodeType != body.NodeType {
 			continue
 		}
-		inFrameLatest, err := resolveActiveFrameLatestRun(ctx, deps, tx, n, frameID)
+		inFrameLatest, err := resolveActiveFrameLatestRun(ctx, deps, n, frameID, tx)
 		if err != nil {
 			return mutated, err
 		}
 		touched := false
 		switch body.Action {
 		case debugActionSetAttribute:
-			wrote, err := setNodeAttributeForDebugOverride(ctx, deps, tx, n, frameID, inFrameLatest, body)
+			wrote, err := setNodeAttributeForDebugOverride(ctx, deps, n, frameID, inFrameLatest, body, tx)
 			if err != nil {
 				return mutated, err
 			}
 			touched = wrote
 		case debugActionInvalidateNode:
 			if inFrameLatest != nil {
-				if _, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+				if _, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, persistence.NonCascadeStaleInput{
 					NodeID:         n.ID,
 					RunScopeID:     inFrameLatest.RunScopeID,
 					FrameID:        *frameID,
 					ExecutorName:   n.Executor,
 					EnqueuedAt:     time.Now().UTC(),
 					CreationReason: cascade.CreationReasonOperatorInvalidate,
-				}); err != nil {
+				}, tx); err != nil {
 					return mutated, err
 				}
 				touched = true
@@ -264,13 +260,9 @@ func applyDebugOverride(
 }
 
 func resolveActiveFrameLatestRun(
-	ctx context.Context,
-	deps AppDeps,
-	tx persistence.Tx,
-	n persistence.NodeRow,
-	frameID *shared.UUID,
+	ctx context.Context, deps AppDeps, n persistence.NodeRow, frameID *shared.UUID, tx persistence.Tx,
 ) (*persistence.NodeRunLatest, error) {
-	latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
+	latest, err := deps.Persist.Nodes().GetLatestRunForNode(ctx, n.ID, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -289,27 +281,21 @@ func resolveActiveFrameLatestRun(
 }
 
 func setNodeAttributeForDebugOverride(
-	ctx context.Context,
-	deps AppDeps,
-	tx persistence.Tx,
-	n persistence.NodeRow,
-	frameID *shared.UUID,
-	inFrameLatest *persistence.NodeRunLatest,
-	body DebugOverrideRequest,
+	ctx context.Context, deps AppDeps, n persistence.NodeRow, frameID *shared.UUID, inFrameLatest *persistence.NodeRunLatest, body DebugOverrideRequest, tx persistence.Tx,
 ) (bool, error) {
 	if inFrameLatest == nil {
 		return false, nil
 	}
 	targetRunID := inFrameLatest.NodeRunID
 	if cascade.IsTerminal(inFrameLatest.State) {
-		newRunID, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+		newRunID, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, persistence.NonCascadeStaleInput{
 			NodeID:         n.ID,
 			RunScopeID:     inFrameLatest.RunScopeID,
 			FrameID:        *frameID,
 			ExecutorName:   n.Executor,
 			EnqueuedAt:     time.Now().UTC(),
 			CreationReason: cascade.CreationReasonOperatorInvalidate,
-		})
+		}, tx)
 		if err != nil {
 			return false, err
 		}
@@ -329,14 +315,14 @@ func setNodeAttributeForDebugOverride(
 	}
 	if isDispatchedInFlight(inFrameLatest.State) {
 		// @story: operator-invalidate-queues-during-flight
-		if _, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+		if _, err := deps.Persist.Nodes().CreateNonCascadeStale(ctx, persistence.NonCascadeStaleInput{
 			NodeID:         n.ID,
 			RunScopeID:     inFrameLatest.RunScopeID,
 			FrameID:        *frameID,
 			ExecutorName:   n.Executor,
 			EnqueuedAt:     time.Now().UTC(),
 			CreationReason: cascade.CreationReasonOperatorInvalidate,
-		}); err != nil {
+		}, tx); err != nil {
 			return false, err
 		}
 	}

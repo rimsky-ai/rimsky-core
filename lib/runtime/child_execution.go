@@ -59,12 +59,12 @@ type DispatchedChild struct {
 // @concept: run-scope
 // @decision: fan-out-and-delegation-are-distinct-mechanisms
 func DispatchChildren(
-	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildExecutionInput,
+	ctx context.Context, args RunArgs, in ChildExecutionInput, tx persistence.Tx,
 ) ([]DispatchedChild, error) {
 	if len(in.Partitions) == 0 || len(in.Children) == 0 {
 		return nil, nil
 	}
-	parentScope, err := args.Persist.RunScopes().GetByID(ctx, tx, in.ParentRunScopeID)
+	parentScope, err := args.Persist.RunScopes().GetByID(ctx, in.ParentRunScopeID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("DispatchChildren: load parent run scope: %w", err)
 	}
@@ -72,7 +72,7 @@ func DispatchChildren(
 		return nil, fmt.Errorf("DispatchChildren: parent run scope %s not found", in.ParentRunScopeID)
 	}
 	if in.EntryAbsorbed {
-		if err := rejectDelegateRecursionInChain(ctx, args.Persist.RunScopes(), tx, parentScope.ID, in.ChildGraphName); err != nil {
+		if err := rejectDelegateRecursionInChain(ctx, args.Persist.RunScopes(), parentScope.ID, in.ChildGraphName, tx); err != nil {
 			return nil, fmt.Errorf("DispatchChildren: %w", err)
 		}
 	}
@@ -84,7 +84,7 @@ func DispatchChildren(
 				p.PartitionKey, len(in.Children))
 		}
 		var childScopeID shared.UUID
-		existing, err := args.Persist.RunScopes().GetFanoutPartition(ctx, tx, in.ParentNodeRunID, p.PartitionKey)
+		existing, err := args.Persist.RunScopes().GetFanoutPartition(ctx, in.ParentNodeRunID, p.PartitionKey, tx)
 		if err != nil {
 			return nil, fmt.Errorf("DispatchChildren: lookup partition %q: %w", p.PartitionKey, err)
 		}
@@ -94,22 +94,20 @@ func DispatchChildren(
 			childScopeID = shared.UUID(uuid.New())
 			parentRunIDCopy := in.ParentNodeRunID
 			parentScopeIDCopy := parentScope.ID
-			if err := args.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			if err := args.Persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 				ID:               childScopeID,
 				ParentRunScopeID: &parentScopeIDCopy,
 				ParentNodeRunID:  &parentRunIDCopy,
 				GraphName:        in.ChildGraphName,
 				PartitionKey:     p.PartitionKey,
 				InstanceID:       in.InstanceID,
-			}); err != nil {
+			}, tx); err != nil {
 				return nil, fmt.Errorf("DispatchChildren: create partition %q: %w", p.PartitionKey, err)
 			}
 		}
 		for _, c := range in.Children {
 			runID, err := CreateChildNodeRun(
-				ctx, tx, args.Persist.NodeRunTree(), args.Queue, args.Clock,
-				c.NodeID, in.FrameID, childScopeID,
-				c.Executor, c.RequiredClaimProducers, in.AggregationPolicy)
+				ctx, args.Persist.NodeRunTree(), args.Queue, args.Clock, c.NodeID, in.FrameID, childScopeID, c.Executor, c.RequiredClaimProducers, in.AggregationPolicy, tx)
 			if err != nil {
 				return nil, fmt.Errorf("DispatchChildren: child run (partition %q, node %s): %w",
 					p.PartitionKey, c.NodeID, err)
@@ -138,10 +136,9 @@ func DispatchChildren(
 // @concept: sub-graph
 // @concept: run-scope
 func rejectDelegateRecursionInChain(
-	ctx context.Context, scopes persistence.RunScopeTable, tx persistence.Tx,
-	parentRunScopeID shared.UUID, childGraphName string,
+	ctx context.Context, scopes persistence.RunScopeTable, parentRunScopeID shared.UUID, childGraphName string, tx persistence.Tx,
 ) error {
-	chain, err := scopes.ListParentChain(ctx, tx, parentRunScopeID)
+	chain, err := scopes.ListParentChain(ctx, parentRunScopeID, tx)
 	if err != nil {
 		return fmt.Errorf("rejectDelegateRecursionInChain: walk parent chain of %s: %w", parentRunScopeID, err)
 	}
@@ -174,7 +171,7 @@ type FanoutChildSettlementInput struct {
 // @concept: run-scope
 // @concept: delegation
 func SettleFromDelegate(
-	ctx context.Context, args RunArgs, tx persistence.Tx, in DelegateSettlementInput,
+	ctx context.Context, args RunArgs, in DelegateSettlementInput, tx persistence.Tx,
 ) (postCommitFn, error) {
 	if args.Persist == nil {
 		return nil, fmt.Errorf("SettleFromDelegate: Persist is required")
@@ -187,14 +184,14 @@ func SettleFromDelegate(
 	if scopes == nil {
 		return nil, fmt.Errorf("SettleFromDelegate: RunScopes is required")
 	}
-	exit, err := rt.GetByID(ctx, tx, in.ExitNodeRunID)
+	exit, err := rt.GetByID(ctx, in.ExitNodeRunID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("SettleFromDelegate: load exit run %s: %w", in.ExitNodeRunID, err)
 	}
 	if exit == nil {
 		return nil, fmt.Errorf("SettleFromDelegate: run %s not found", in.ExitNodeRunID)
 	}
-	exitScope, err := scopes.GetByID(ctx, tx, exit.RunScopeID)
+	exitScope, err := scopes.GetByID(ctx, exit.RunScopeID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("SettleFromDelegate: load exit run scope %s: %w", exit.RunScopeID, err)
 	}
@@ -208,7 +205,7 @@ func SettleFromDelegate(
 		}
 	}
 	parentNodeRunID := *exitScope.ParentNodeRunID
-	parent, err := rt.GetByID(ctx, tx, parentNodeRunID)
+	parent, err := rt.GetByID(ctx, parentNodeRunID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("SettleFromDelegate: load parent run %s: %w", parentNodeRunID, err)
 	}
@@ -233,7 +230,7 @@ func SettleFromDelegate(
 		}
 	}
 	// @concept: run-scope
-	if err := scopes.Close(ctx, tx, exit.RunScopeID); err != nil {
+	if err := scopes.Close(ctx, exit.RunScopeID, tx); err != nil {
 		return nil, fmt.Errorf("SettleFromDelegate: close sub-graph run scope %s: %w", exit.RunScopeID, err)
 	}
 	var fanoutPC postCommitFn
@@ -257,7 +254,7 @@ func SettleFromDelegate(
 	}
 	// @concept: claim-handle
 	// @concept: claim-tree
-	callerClaimsPC, err := resolveDelegateCallerClaimsInTx(ctx, args, tx, *parent, in.InstanceID, OutcomeCommit)
+	callerClaimsPC, err := resolveDelegateCallerClaimsInTx(ctx, args, *parent, in.InstanceID, OutcomeCommit, tx)
 	if err != nil {
 		return nil, fmt.Errorf("SettleFromDelegate: resolve calling node's own claims: %w", err)
 	}
@@ -272,17 +269,13 @@ func SettleFromDelegate(
 	if callingNodeRow != nil {
 		parentFrameID := parent.FrameID
 		exitBridgeSig := signalpkg.BuildTerminalSuccessSignal(true, asMap, "subgraph_exit_carry", nil)
-		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-			parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID,
-			in.InstanceID, parentFrameID, exitBridgeSig); err != nil {
+		if err := cascadeSubscribersStaleInTx(ctx, args, parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID, in.InstanceID, parentFrameID, exitBridgeSig, tx); err != nil {
 			return nil, fmt.Errorf("SettleFromDelegate: cascade subscribers of calling node: %w", err)
 		}
-		if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-			parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID, in.InstanceID, parentFrameID,
-			nil, nil); err != nil {
+		if err := emitAttributeChangesForRunInTx(ctx, args, parent.NodeID, callingNodeRow.NodeType, parent.NodeRunID, in.InstanceID, parentFrameID, nil, nil, tx); err != nil {
 			return nil, fmt.Errorf("SettleFromDelegate: emit parent attribute changes: %w", err)
 		}
-		if err := drainWaitSetOnSettled(ctx, args, tx, parentFrameID, parent.NodeRunID); err != nil {
+		if err := drainWaitSetOnSettled(ctx, args, parentFrameID, parent.NodeRunID, tx); err != nil {
 			return nil, fmt.Errorf("SettleFromDelegate: drain wait-set for calling node: %w", err)
 		}
 	}
@@ -311,8 +304,7 @@ func fanOutRunScopeEventPostCommit(
 	args RunArgs, tplSpec node.TemplateSpec, runScopeID, instanceID shared.UUID, terminalReason string,
 ) postCommitFn {
 	return func(ctx context.Context) {
-		FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs,
-			args.LifecyclePeersForSpec, tplSpec, runScopeID, instanceID, terminalReason, nil, args.Logger)
+		FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs, args.LifecyclePeersForSpec, tplSpec, runScopeID, instanceID, terminalReason, args.Logger, nil)
 	}
 }
 
@@ -320,9 +312,7 @@ func fanOutRunScopeEventPostCommit(
 // @concept: claim-tree
 // @decision: fan-out-and-delegation-are-distinct-mechanisms
 func resolveDelegateCallerClaimsInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	parent persistence.NodeRunTreeRow, instanceID shared.UUID,
-	outcome TerminalOutcome,
+	ctx context.Context, args RunArgs, parent persistence.NodeRunTreeRow, instanceID shared.UUID, outcome TerminalOutcome, tx persistence.Tx,
 ) (postCommitFn, error) {
 	if args.ClaimHandles == nil {
 		return nil, nil
@@ -359,7 +349,7 @@ func resolveDelegateCallerClaimsInTx(
 			ProducerName: producerName,
 			VersionID:    row.VersionID,
 		}
-		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		pc, err := ResolveClaimHandleTerminal(ctx, args, TerminalDecision{
 			ClaimHandleID:       row.ID,
 			SupervisorID:        args.SupervisorID,
 			Source:              ActiveTerminal,
@@ -373,7 +363,7 @@ func resolveDelegateCallerClaimsInTx(
 			ProducerName:        producerName,
 			LineageHint:         hint,
 			ParentClaimHandleID: row.ParentClaimHandleID,
-		})
+		}, tx)
 		if err != nil {
 			return nil, fmt.Errorf("resolveDelegateCallerClaimsInTx: resolve claim %s: %w", row.ID, err)
 		}
@@ -386,7 +376,7 @@ func resolveDelegateCallerClaimsInTx(
 // @concept: fan-out
 // @concept: claim-tree
 func SettleFromFanoutChild(
-	ctx context.Context, args RunArgs, tx persistence.Tx, in FanoutChildSettlementInput,
+	ctx context.Context, args RunArgs, in FanoutChildSettlementInput, tx persistence.Tx,
 ) (postCommitFn, error) {
 	parent, err := args.ClaimHandles.LockForUpdate(ctx, in.ParentClaimHandleID, tx)
 	if err != nil {
@@ -395,7 +385,7 @@ func SettleFromFanoutChild(
 	if parent == nil {
 		return nil, nil
 	}
-	if err := recordChildCommitMetadata(ctx, args, tx, in, parent); err != nil {
+	if err := recordChildCommitMetadata(ctx, args, in, parent, tx); err != nil {
 		return nil, fmt.Errorf("SettleFromFanoutChild: record child producer_metadata: %w", err)
 	}
 	if parent.HolderSupervisorID == nil || parent.State != spec.ClaimHandleStateActive {
@@ -411,7 +401,7 @@ func SettleFromFanoutChild(
 	var post postCommitFn
 	// @concept: cancel-siblings
 	if in.ChildOutcome.IsAbandon() {
-		pc, err := cancelInFlightSiblings(ctx, args, tx, in.ParentClaimHandleID, in.ChildClaimHandleID)
+		pc, err := cancelInFlightSiblings(ctx, args, in.ParentClaimHandleID, in.ChildClaimHandleID, tx)
 		if err != nil {
 			return nil, fmt.Errorf("SettleFromFanoutChild: cancelInFlightSiblings: %w", err)
 		}
@@ -452,21 +442,21 @@ func SettleFromFanoutChild(
 			if c.NodeRunID == nil {
 				continue
 			}
-			childRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, *c.NodeRunID)
+			childRun, err := args.Persist.NodeRunTree().GetByID(ctx, *c.NodeRunID, tx)
 			if err != nil {
 				return nil, fmt.Errorf("SettleFromFanoutChild: load child run %s: %w", c.NodeRunID, err)
 			}
 			if childRun == nil {
 				continue
 			}
-			childScope, err := scopes.GetByID(ctx, tx, childRun.RunScopeID)
+			childScope, err := scopes.GetByID(ctx, childRun.RunScopeID, tx)
 			if err != nil {
 				return nil, fmt.Errorf("SettleFromFanoutChild: load child run scope %s: %w", childRun.RunScopeID, err)
 			}
 			if childScope == nil || childScope.PartitionKey == "" {
 				continue
 			}
-			if err := scopes.Close(ctx, tx, childRun.RunScopeID); err != nil {
+			if err := scopes.Close(ctx, childRun.RunScopeID, tx); err != nil {
 				return nil, fmt.Errorf("SettleFromFanoutChild: close partition scope %s: %w", childRun.RunScopeID, err)
 			}
 			if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
@@ -494,7 +484,7 @@ func SettleFromFanoutChild(
 	if parent.ProducerName != nil {
 		producerName = *parent.ProducerName
 	}
-	instID, err := acquirerInstanceID(ctx, args, tx, parent.HolderNodeID)
+	instID, err := acquirerInstanceID(ctx, args, parent.HolderNodeID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("SettleFromFanoutChild: %w", err)
 	}
@@ -522,7 +512,7 @@ func SettleFromFanoutChild(
 				in.ParentClaimHandleID, *parent.HolderSupervisorID, args.SupervisorID, err)
 		}
 	}
-	pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+	pc, err := ResolveClaimHandleTerminal(ctx, args, TerminalDecision{
 		ClaimHandleID:       in.ParentClaimHandleID,
 		SupervisorID:        args.SupervisorID,
 		Source:              HeldTerminal,
@@ -536,7 +526,7 @@ func SettleFromFanoutChild(
 		ProducerName:        producerName,
 		LineageHint:         parentHint,
 		ParentClaimHandleID: parent.ParentClaimHandleID,
-	})
+	}, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -549,8 +539,7 @@ func SettleFromFanoutChild(
 }
 
 func recordChildCommitMetadata(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	in FanoutChildSettlementInput, parent *persistence.ClaimHandleRow,
+	ctx context.Context, args RunArgs, in FanoutChildSettlementInput, parent *persistence.ClaimHandleRow, tx persistence.Tx,
 ) error {
 	if in.ChildOutcome != OutcomeCommit || len(in.ChildProducerMetadata) == 0 {
 		return nil
@@ -562,7 +551,7 @@ func recordChildCommitMetadata(
 	if attrs == nil {
 		return fmt.Errorf("NodeAttributes is required")
 	}
-	key, err := childPartitionWritebackKey(ctx, args, tx, in.ChildClaimHandleID)
+	key, err := childPartitionWritebackKey(ctx, args, in.ChildClaimHandleID, tx)
 	if err != nil {
 		return err
 	}
@@ -587,7 +576,7 @@ func recordChildCommitMetadata(
 }
 
 func childPartitionWritebackKey(
-	ctx context.Context, args RunArgs, tx persistence.Tx, childID shared.UUID,
+	ctx context.Context, args RunArgs, childID shared.UUID, tx persistence.Tx,
 ) (string, error) {
 	fallback := childID.String()
 	child, err := args.ClaimHandles.Get(ctx, childID, tx)
@@ -597,14 +586,14 @@ func childPartitionWritebackKey(
 	if child == nil || child.NodeRunID == nil {
 		return fallback, nil
 	}
-	childRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, *child.NodeRunID)
+	childRun, err := args.Persist.NodeRunTree().GetByID(ctx, *child.NodeRunID, tx)
 	if err != nil {
 		return "", fmt.Errorf("load child run %s: %w", child.NodeRunID, err)
 	}
 	if childRun == nil {
 		return fallback, nil
 	}
-	scope, err := args.Persist.RunScopes().GetByID(ctx, tx, childRun.RunScopeID)
+	scope, err := args.Persist.RunScopes().GetByID(ctx, childRun.RunScopeID, tx)
 	if err != nil {
 		return "", fmt.Errorf("load child run scope %s: %w", childRun.RunScopeID, err)
 	}

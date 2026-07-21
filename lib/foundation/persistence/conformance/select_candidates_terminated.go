@@ -29,11 +29,11 @@ func testSelectCandidatesSkipsTerminatedInstances(t *testing.T, d persistence.Da
 	terminatedRunScopeID := shared.UUID(uuid.New())
 	terminatedNodeID := shared.UUID(uuid.New())
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         terminatedRunScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: terminatedInstanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -51,20 +51,20 @@ func testSelectCandidatesSkipsTerminatedInstances(t *testing.T, d persistence.Da
 			return err
 		}
 		terminatedMessageID := shared.UUID(uuid.New())
-		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         terminatedMessageID,
 			InstanceID: terminatedInstanceID,
 			Type:       "fixture/message",
 			Sender:     "operator",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := store.Frames().InsertRunningFrame(ctx, terminatedInstanceID, terminatedMessageID, terminatedRunScopeID, tx)
 		if err != nil {
 			return err
 		}
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 terminatedNodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -80,7 +80,7 @@ func testSelectCandidatesSkipsTerminatedInstances(t *testing.T, d persistence.Da
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 activeFix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -95,11 +95,11 @@ func testSelectCandidatesSkipsTerminatedInstances(t *testing.T, d persistence.Da
 	probeErr := errors.New("rollback probe")
 	var sawActive, sawTerminated bool
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  100,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

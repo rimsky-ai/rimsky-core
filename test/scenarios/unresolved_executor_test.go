@@ -48,7 +48,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 
 	_, err := h.Pool.Exec(h.Ctx,
 		`UPDATE rimsky_node_runs
-		    SET required_stores = '{}',
+		    SET required_claim_producers = '{}',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
 		        enqueued_at = NOW() - INTERVAL '5 seconds'
@@ -58,11 +58,11 @@ func TestUnresolvedExecutor(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, n.ID, tx)
 		if err != nil {
 			return err
 		}
-		return h.Persist.NodeAttributes().SetDispatchInputBag(h.Ctx, tx, latest.NodeRunID, n.ID, map[string]any{})
+		return h.Persist.NodeAttributes().SetDispatchInputBag(h.Ctx, latest.NodeRunID, n.ID, map[string]any{}, tx)
 	}))
 
 	args := runtime.RunArgs{
@@ -86,7 +86,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, n.ID, tx)
 		latest = r
 		return err
 	}))
@@ -145,7 +145,7 @@ func TestUnresolvedExecutor_LateBindResolverMiss(t *testing.T) {
 
 	_, err = h.Pool.Exec(h.Ctx,
 		`UPDATE rimsky_node_runs
-		    SET required_stores = '{}',
+		    SET required_claim_producers = '{}',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
 		        enqueued_at = NOW() - INTERVAL '5 seconds'
@@ -155,11 +155,11 @@ func TestUnresolvedExecutor_LateBindResolverMiss(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, n.ID, tx)
 		if err != nil {
 			return err
 		}
-		return h.Persist.NodeAttributes().SetDispatchInputBag(h.Ctx, tx, latest.NodeRunID, n.ID, map[string]any{})
+		return h.Persist.NodeAttributes().SetDispatchInputBag(h.Ctx, latest.NodeRunID, n.ID, map[string]any{}, tx)
 	}))
 
 	lookupBindings := func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
@@ -210,7 +210,7 @@ func TestUnresolvedExecutor_LateBindResolverMiss(t *testing.T) {
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, n.ID, tx)
 		latest = r
 		return err
 	}))

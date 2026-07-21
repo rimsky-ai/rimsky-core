@@ -54,12 +54,12 @@ func TestAttributeWriteback_AppliesDeltaAndBumpsProgressInOneTx(t *testing.T) {
 
 	const supID = "sup-writeback"
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := d.Queue().ClaimDispatchRow(ctx, tx, runID, supID)
+		ok, err := d.Queue().ClaimDispatchRow(ctx, runID, supID, tx)
 		if err != nil {
 			return err
 		}
 		require.True(t, ok)
-		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, tx, runID, supID)
+		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, runID, supID, tx)
 		if err != nil {
 			return err
 		}

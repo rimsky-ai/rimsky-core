@@ -22,7 +22,7 @@ func testNodeAttributesGetPriorRunData(t *testing.T, d persistence.Database) {
 	var priorForFirstRun map[string]any
 	sawKey := false
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		p, err := store.NodeAttributes().GetPriorRunData(ctx, tx, runA)
+		p, err := store.NodeAttributes().GetPriorRunData(ctx, runA, tx)
 		priorForFirstRun = p
 		sawKey = true
 		return err
@@ -51,7 +51,7 @@ func testNodeAttributesGetPriorRunData(t *testing.T, d persistence.Database) {
 	}
 	var priorForSecondRun map[string]any
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		p, err := store.NodeAttributes().GetPriorRunData(ctx, tx, runB)
+		p, err := store.NodeAttributes().GetPriorRunData(ctx, runB, tx)
 		priorForSecondRun = p
 		return err
 	}); err != nil {
@@ -75,7 +75,7 @@ func testNodeAttributesGetPriorRunData(t *testing.T, d persistence.Database) {
 	}
 	var priorForThirdRun map[string]any
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		p, err := store.NodeAttributes().GetPriorRunData(ctx, tx, runC)
+		p, err := store.NodeAttributes().GetPriorRunData(ctx, runC, tx)
 		priorForThirdRun = p
 		return err
 	}); err != nil {

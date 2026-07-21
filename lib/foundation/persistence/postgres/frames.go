@@ -171,7 +171,7 @@ func (s *framesImpl) MarkSourceNodeStale(
 	// @concept: run-scope
 	tag, err := s.q(tx).Exec(ctx, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
         SELECT gen_random_uuid(), n.id, n.executor,
                COALESCE((
                  SELECT array_agg(store->>'name')
@@ -182,7 +182,7 @@ func (s *framesImpl) MarkSourceNodeStale(
                   WHERE i.id = n.instance_id
                     AND nd->>'type' = n.node_type
                     AND store IS NOT NULL
-               ), ARRAY[]::text[]) AS required_stores,
+               ), ARRAY[]::text[]) AS required_claim_producers,
                NOW(), 'stale', 'cascade',
                COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = $2 AND run_scope_id = f.root_run_scope_id), 0) + 1,
                $1, f.root_run_scope_id
@@ -407,7 +407,7 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 		}
 		now := time.Now().UTC()
 		for _, h := range append(scratchHandles, attrHandles...) {
-			if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), tx, h.handle, h.backend, now, ti.BlobRetention()); err != nil {
+			if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), h.handle, h.backend, now, ti.BlobRetention(), tx); err != nil {
 				return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
 			}
 		}

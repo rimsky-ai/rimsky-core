@@ -257,15 +257,15 @@ func TestMCPLineageAncestorsDescendants_ReachDedicatedRoutesNotTheRunItem(t *tes
 	rootScope := shared.UUID(uuid.New())
 	var frameID shared.UUID
 	require.NoError(t, h.db.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.db.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := h.db.Tables().RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: rootScope, GraphName: "main", InstanceID: shared.UUID(instUUID),
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := h.db.Tables().Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := h.db.Tables().Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: shared.UUID(instUUID), Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := h.db.Tables().Frames().InsertRunningFrame(ctx, shared.UUID(instUUID), msgID, rootScope, tx)
@@ -285,10 +285,10 @@ func TestMCPLineageAncestorsDescendants_ReachDedicatedRoutesNotTheRunItem(t *tes
 		recBytes, merr := json.Marshal(rec)
 		require.NoError(t, merr)
 		require.NoError(t, h.db.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-			return h.db.Tables().Lineage().Insert(ctx, tx, persistence.LineageRow{
+			return h.db.Tables().Lineage().Insert(ctx, persistence.LineageRow{
 				ID: shared.UUID(uuid.New()), RecordKind: persistence.LineageRecordKindLeafRun,
 				InstanceID: shared.UUID(instUUID), FrameID: frameID, ObservedAt: observedAt, Record: recBytes,
-			})
+			}, tx)
 		}))
 	}
 	insertLeaf(parentRunID, uuid.Nil, base)

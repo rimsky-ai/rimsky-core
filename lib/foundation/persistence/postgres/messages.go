@@ -31,7 +31,7 @@ INSERT INTO rimsky_messages (
     id, instance_id, type, sender, sender_kind, payload, received_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
-func (b *messagesImpl) Insert(ctx context.Context, tx persistence.Tx, req persistence.EnqueueMessageRequest) error {
+func (b *messagesImpl) Insert(ctx context.Context, req persistence.EnqueueMessageRequest, tx persistence.Tx) error {
 	if req.ReceivedAt.IsZero() {
 		req.ReceivedAt = time.Now().UTC()
 	}
@@ -49,7 +49,7 @@ UPDATE rimsky_messages
    SET delivered_at = $1, frame_id = $2
  WHERE id = $3 AND delivered_at IS NULL AND cancelled = FALSE`
 
-func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error) {
+func (b *messagesImpl) MarkDelivered(ctx context.Context, id shared.UUID, frame shared.UUID, deliveredAt time.Time, tx persistence.Tx) (bool, error) {
 	tag, err := b.q(tx).Exec(ctx, markDeliveredSQL, deliveredAt, frame, id)
 	if err != nil {
 		return false, fmt.Errorf("postgres.Messages.MarkDelivered: %w", err)
@@ -64,7 +64,7 @@ SELECT id, instance_id, type, sender, sender_kind, payload,
  WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE
  ORDER BY received_at ASC, id ASC`
 
-func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
+func (b *messagesImpl) ListPendingForInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) ([]persistence.MessageRow, error) {
 	rows, err := b.q(tx).Query(ctx, listPendingForInstanceSQL, instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.Messages.ListPendingForInstance: %w", err)
@@ -80,7 +80,7 @@ SELECT id, instance_id, type, sender, sender_kind, payload,
  WHERE frame_id = $1
  ORDER BY received_at ASC, id ASC`
 
-func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, tx persistence.Tx, frame shared.UUID) ([]persistence.MessageRow, error) {
+func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, frame shared.UUID, tx persistence.Tx) ([]persistence.MessageRow, error) {
 	rows, err := b.q(tx).Query(ctx, listDeliveredForFrameSQL, frame)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.Messages.ListDeliveredForFrame: %w", err)
@@ -95,26 +95,10 @@ SELECT id, instance_id, type, sender, sender_kind, payload,
   FROM rimsky_messages
  WHERE id = $1`
 
-func (b *messagesImpl) Get(ctx context.Context, id shared.UUID) (*persistence.MessageRow, error) {
-	rows, err := (*tablesImpl)(b).pool.Query(ctx, getMessageSQL, id)
-	if err != nil {
-		return nil, fmt.Errorf("postgres.Messages.Get: %w", err)
-	}
-	defer rows.Close()
-	out, err := collectMessages(rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return &out[0], nil
-}
-
-func (b *messagesImpl) GetInTx(ctx context.Context, tx persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
+func (b *messagesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.MessageRow, error) {
 	rows, err := b.q(tx).Query(ctx, getMessageSQL, id)
 	if err != nil {
-		return nil, fmt.Errorf("postgres.Messages.GetInTx: %w", err)
+		return nil, fmt.Errorf("postgres.Messages.Get: %w", err)
 	}
 	defer rows.Close()
 	out, err := collectMessages(rows)
@@ -232,7 +216,7 @@ UPDATE rimsky_messages
    SET cancelled = TRUE
  WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE`
 
-func (b *messagesImpl) CancelPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) (int, error) {
+func (b *messagesImpl) CancelPendingForInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (int, error) {
 	tag, err := b.q(tx).Exec(ctx, cancelPendingForInstanceSQL, instanceID)
 	if err != nil {
 		return 0, fmt.Errorf("postgres.Messages.CancelPendingForInstance: %w", err)

@@ -65,9 +65,9 @@ func subgraphNonMemberFilter(spec *node.TemplateSpec, senderNodeType string) rec
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
 func runHasActiveHeldClaims(
-	ctx context.Context, args RunArgs, tx persistence.Tx, runID foundationshared.UUID,
+	ctx context.Context, args RunArgs, runID foundationshared.UUID, tx persistence.Tx,
 ) (bool, error) {
-	active, err := listActiveHeldClaimHandleIDsForRun(ctx, args, tx, runID)
+	active, err := listActiveHeldClaimHandleIDsForRun(ctx, args, runID, tx)
 	if err != nil {
 		return false, err
 	}
@@ -77,7 +77,7 @@ func runHasActiveHeldClaims(
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
 func listActiveHeldClaimHandleIDsForRun(
-	ctx context.Context, args RunArgs, tx persistence.Tx, runID foundationshared.UUID,
+	ctx context.Context, args RunArgs, runID foundationshared.UUID, tx persistence.Tx,
 ) ([]foundationshared.UUID, error) {
 	if args.Persist == nil || args.Persist.ClaimHandles() == nil {
 		return nil, nil
@@ -136,7 +136,7 @@ type holderPortfolioStatus struct {
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
 func evaluateHolderPortfolio(
-	ctx context.Context, args RunArgs, tx persistence.Tx, runID foundationshared.UUID,
+	ctx context.Context, args RunArgs, runID foundationshared.UUID, tx persistence.Tx,
 ) (holderPortfolioStatus, error) {
 	out := holderPortfolioStatus{FullyResolved: true}
 	if args.Persist == nil || args.Persist.ClaimHandles() == nil {
@@ -185,7 +185,7 @@ func evaluateHolderPortfolio(
 // @decision: held-as-state-not-phase
 // @decision: terminal-error-abandoned-as-error-class
 func emitDeferredHeldCascade(
-	ctx context.Context, args RunArgs, tx persistence.Tx, td TerminalDecision,
+	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
 ) (postCommitFn, error) {
 	if td.Source != HeldTerminal {
 		return nil, nil
@@ -201,7 +201,7 @@ func emitDeferredHeldCascade(
 	visited := map[foundationshared.UUID]struct{}{}
 	for _, h := range holders {
 		visited[h.HolderNodeRunID] = struct{}{}
-		pc, err := transitionHolderIfFullyResolved(ctx, args, tx, h.HolderNodeRunID)
+		pc, err := transitionHolderIfFullyResolved(ctx, args, h.HolderNodeRunID, tx)
 		if err != nil {
 			return nil, fmt.Errorf("emitDeferredHeldCascade: holder %s: %w", h.HolderNodeRunID, err)
 		}
@@ -209,7 +209,7 @@ func emitDeferredHeldCascade(
 	}
 	if td.LineageHint.NodeRunID != (foundationshared.UUID{}) {
 		if _, seen := visited[td.LineageHint.NodeRunID]; !seen {
-			pc, err := transitionHolderIfFullyResolved(ctx, args, tx, td.LineageHint.NodeRunID)
+			pc, err := transitionHolderIfFullyResolved(ctx, args, td.LineageHint.NodeRunID, tx)
 			if err != nil {
 				return nil, fmt.Errorf("emitDeferredHeldCascade: acquirer %s: %w", td.LineageHint.NodeRunID, err)
 			}
@@ -222,14 +222,14 @@ func emitDeferredHeldCascade(
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
 func transitionThisHolderIfFullyResolved(
-	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition,
+	ctx context.Context, args RunArgs, acq *acquisition, tx persistence.Tx,
 ) (postCommitFn, error) {
-	return transitionHolderIfFullyResolved(ctx, args, tx, acq.NodeRunID)
+	return transitionHolderIfFullyResolved(ctx, args, acq.NodeRunID, tx)
 }
 
 // @decision: held-as-state-not-phase
 func holderSettlementAttributes(
-	ctx context.Context, args RunArgs, tx persistence.Tx, holderNodeRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, holderNodeRunID foundationshared.UUID, tx persistence.Tx,
 ) (map[string]any, error) {
 	if args.Persist == nil || args.Persist.NodeAttributes() == nil {
 		return nil, nil
@@ -247,12 +247,12 @@ func holderSettlementAttributes(
 // @concept: auto-terminal
 // @concept: run-scope
 func holderIsAggregatingParent(
-	ctx context.Context, args RunArgs, tx persistence.Tx, holderNodeRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, holderNodeRunID foundationshared.UUID, tx persistence.Tx,
 ) (bool, error) {
 	if args.Persist == nil || args.Persist.NodeRunTree() == nil {
 		return false, nil
 	}
-	children, err := args.Persist.NodeRunTree().ListChildren(ctx, tx, holderNodeRunID)
+	children, err := args.Persist.NodeRunTree().ListChildren(ctx, holderNodeRunID, tx)
 	if err != nil {
 		return false, fmt.Errorf("holderIsAggregatingParent: ListChildren: %w", err)
 	}
@@ -262,27 +262,26 @@ func holderIsAggregatingParent(
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
 func transitionHolderIfFullyResolved(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	holderNodeRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, holderNodeRunID foundationshared.UUID, tx persistence.Tx,
 ) (postCommitFn, error) {
 	if holderNodeRunID == (foundationshared.UUID{}) {
 		return nil, nil
 	}
-	holderRun, err := args.Persist.Nodes().GetRunForGate(ctx, tx, holderNodeRunID)
+	holderRun, err := args.Persist.Nodes().GetRunForGate(ctx, holderNodeRunID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("GetRunForGate: %w", err)
 	}
 	if holderRun == nil || holderRun.State != cascade.NodeStateHeld {
 		return nil, nil
 	}
-	aggregating, err := holderIsAggregatingParent(ctx, args, tx, holderNodeRunID)
+	aggregating, err := holderIsAggregatingParent(ctx, args, holderNodeRunID, tx)
 	if err != nil {
 		return nil, err
 	}
 	if aggregating {
 		return nil, nil
 	}
-	status, err := evaluateHolderPortfolio(ctx, args, tx, holderNodeRunID)
+	status, err := evaluateHolderPortfolio(ctx, args, holderNodeRunID, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +308,7 @@ func transitionHolderIfFullyResolved(
 		newState = cascade.NodeStateFresh
 		reason = cascade.ReasonAutoTerminalCommit
 		sigType = "terminal/success"
-		delta, err := holderSettlementAttributes(ctx, args, tx, holderNodeRunID)
+		delta, err := holderSettlementAttributes(ctx, args, holderNodeRunID, tx)
 		if err != nil {
 			return nil, err
 		}
@@ -327,25 +326,23 @@ func transitionHolderIfFullyResolved(
 		}
 		return nil, fmt.Errorf("UpdateState: %w", err)
 	}
-	if err := recordRunTreeChanged(ctx, args, tx, holderNodeRunID, newState, &sigType, false); err != nil {
+	if err := recordRunTreeChanged(ctx, args, holderNodeRunID, newState, &sigType, false, tx); err != nil {
 		return nil, fmt.Errorf("transitionHolderIfFullyResolved: %w", err)
 	}
 	holderNode, err := args.Persist.Nodes().Get(ctx, holderRun.NodeID, tx)
 	if err != nil || holderNode == nil {
 		return nil, err
 	}
-	tmplSpec, terr := loadTemplateSpec(ctx, args, tx, holderNode.InstanceID)
+	tmplSpec, terr := loadTemplateSpec(ctx, args, holderNode.InstanceID, tx)
 	if terr != nil {
 		return nil, fmt.Errorf("load template: %w", terr)
 	}
 	filter := subgraphNonMemberFilter(tmplSpec, holderNode.NodeType)
 	visited := map[foundationshared.UUID]struct{}{}
-	if err := emitSignalInTxWithFilter(ctx, args, tx,
-		holderRun.NodeID, holderNode.NodeType, holderRun.NodeRunID,
-		holderNode.InstanceID, holderRun.FrameID, sig, visited, filter); err != nil {
+	if err := emitSignalInTxWithFilter(ctx, args, holderRun.NodeID, holderNode.NodeType, holderRun.NodeRunID, holderNode.InstanceID, holderRun.FrameID, sig, visited, filter, tx); err != nil {
 		return nil, fmt.Errorf("emit signal: %w", err)
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, holderRun.FrameID, holderRun.NodeRunID); err != nil {
+	if err := drainWaitSetOnSettled(ctx, args, holderRun.FrameID, holderRun.NodeRunID, tx); err != nil {
 		return nil, err
 	}
 	runID := holderRun.NodeRunID

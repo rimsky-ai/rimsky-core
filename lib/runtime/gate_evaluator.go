@@ -22,15 +22,14 @@ import (
 // @concept: cascade
 // @decision: mode-default-most-recent
 func evaluateGatesAfterDrain(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	frameID, senderNodeRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, frameID, senderNodeRunID foundationshared.UUID, tx persistence.Tx,
 ) error {
 	receiverIDs, err := args.Persist.WaitSet().ListPendingReceiversForDrainedSender(ctx, frameID, senderNodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("evaluateGatesAfterDrain: list receivers: %w", err)
 	}
 	for _, receiverID := range receiverIDs {
-		if err := evaluateOneGate(ctx, args, tx, receiverID); err != nil {
+		if err := evaluateOneGate(ctx, args, receiverID, tx); err != nil {
 			return fmt.Errorf("evaluateGatesAfterDrain: receiver %s: %w", receiverID, err)
 		}
 	}
@@ -41,9 +40,9 @@ func evaluateGatesAfterDrain(
 // @concept: cascade-mode
 // @decision: mode-default-most-recent
 func evaluateOneGate(
-	ctx context.Context, args RunArgs, tx persistence.Tx, receiverNodeRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, receiverNodeRunID foundationshared.UUID, tx persistence.Tx,
 ) error {
-	row, err := args.Persist.Nodes().GetRunForGate(ctx, tx, receiverNodeRunID)
+	row, err := args.Persist.Nodes().GetRunForGate(ctx, receiverNodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("get run: %w", err)
 	}
@@ -57,21 +56,21 @@ func evaluateOneGate(
 	if undrained {
 		return nil
 	}
-	upstreamInFlight, err := anySubscribedUpstreamInFlight(ctx, args, tx, row)
+	upstreamInFlight, err := anySubscribedUpstreamInFlight(ctx, args, row, tx)
 	if err != nil {
 		return fmt.Errorf("upstream probe: %w", err)
 	}
 	if upstreamInFlight {
 		return nil
 	}
-	carryForward, err := loadReceiverCarryForward(ctx, args, tx, row)
+	carryForward, err := loadReceiverCarryForward(ctx, args, row, tx)
 	if err != nil {
 		return fmt.Errorf("carry-forward: %w", err)
 	}
-	resolved, err := buildResolvedBagAtGateEvalCarry(ctx, args, tx, row, carryForward)
+	resolved, err := buildResolvedBagAtGateEvalCarry(ctx, args, row, carryForward, tx)
 	if err != nil {
 		if isSubstitutionClassifiableError(err) {
-			return routeSubstitutionFailureAtGate(ctx, args, tx, row, err)
+			return routeSubstitutionFailureAtGate(ctx, args, row, err, tx)
 		}
 		return fmt.Errorf("resolve at gate-eval: %w", err)
 	}
@@ -79,14 +78,14 @@ func evaluateOneGate(
 	if err != nil {
 		return fmt.Errorf("get cascade mode: %w", err)
 	}
-	drop, err := applyCascadeModeRule(ctx, args, tx, row, resolved, mode)
+	drop, err := applyCascadeModeRule(ctx, args, row, resolved, mode, tx)
 	if err != nil {
 		return fmt.Errorf("mode rule: %w", err)
 	}
 	if drop {
-		return args.Persist.Nodes().DropPendingRun(ctx, tx, row.NodeRunID)
+		return args.Persist.Nodes().DropPendingRun(ctx, row.NodeRunID, tx)
 	}
-	advancedSibling, err := args.Persist.Nodes().HasAdvancedSiblingInScope(ctx, tx, row.NodeID, row.RunScopeID, row.NodeRunID)
+	advancedSibling, err := args.Persist.Nodes().HasAdvancedSiblingInScope(ctx, row.NodeID, row.RunScopeID, row.NodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("advanced sibling probe: %w", err)
 	}
@@ -96,10 +95,10 @@ func evaluateOneGate(
 	if err := args.Persist.NodeAttributes().Upsert(ctx, row.NodeRunID, row.NodeID, resolved, tx); err != nil {
 		return fmt.Errorf("seed live bag: %w", err)
 	}
-	if err := args.Persist.NodeAttributes().SetDispatchInputBag(ctx, tx, row.NodeRunID, row.NodeID, resolved); err != nil {
+	if err := args.Persist.NodeAttributes().SetDispatchInputBag(ctx, row.NodeRunID, row.NodeID, resolved, tx); err != nil {
 		return fmt.Errorf("persist dispatch bag: %w", err)
 	}
-	return args.Persist.Nodes().TransitionPendingToStale(ctx, tx, row.NodeRunID, args.Clock.Now())
+	return args.Persist.Nodes().TransitionPendingToStale(ctx, row.NodeRunID, args.Clock.Now(), tx)
 }
 
 // @concept: attribute
@@ -116,8 +115,7 @@ func isSubstitutionClassifiableError(err error) bool {
 // @concept: attribute
 // @decision: substitution-failure-routes-with-substitution
 func routeSubstitutionFailureAtGate(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row *persistence.NodeRunForGate, subErr error,
+	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, subErr error, tx persistence.Tx,
 ) error {
 	receiverNode, err := args.Persist.Nodes().Get(ctx, row.NodeID, tx)
 	if err != nil {
@@ -126,7 +124,7 @@ func routeSubstitutionFailureAtGate(
 	if receiverNode == nil {
 		return nil
 	}
-	tmplSpec, err := loadTemplateSpec(ctx, args, tx, receiverNode.InstanceID)
+	tmplSpec, err := loadTemplateSpec(ctx, args, receiverNode.InstanceID, tx)
 	if err != nil {
 		return fmt.Errorf("route substitution failure: load template: %w", err)
 	}
@@ -149,7 +147,7 @@ func routeSubstitutionFailureAtGate(
 	}, tx); err != nil {
 		return fmt.Errorf("route substitution failure: append event: %w", err)
 	}
-	if err := args.Persist.Nodes().TransitionPendingToStale(ctx, tx, row.NodeRunID, args.Clock.Now()); err != nil {
+	if err := args.Persist.Nodes().TransitionPendingToStale(ctx, row.NodeRunID, args.Clock.Now(), tx); err != nil {
 		return fmt.Errorf("route substitution failure: pending->stale: %w", err)
 	}
 	acq := &acquisition{
@@ -171,8 +169,7 @@ func routeSubstitutionFailureAtGate(
 
 // @concept: cascade
 func buildResolvedBagAtGateEvalCarry(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row *persistence.NodeRunForGate, carryForward map[string]any,
+	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, carryForward map[string]any, tx persistence.Tx,
 ) (map[string]any, error) {
 	receiverNode, err := args.Persist.Nodes().Get(ctx, row.NodeID, tx)
 	if err != nil || receiverNode == nil {
@@ -181,7 +178,7 @@ func buildResolvedBagAtGateEvalCarry(
 		}
 		return carryForward, nil
 	}
-	tmplSpec, err := loadTemplateSpec(ctx, args, tx, receiverNode.InstanceID)
+	tmplSpec, err := loadTemplateSpec(ctx, args, receiverNode.InstanceID, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +191,7 @@ func buildResolvedBagAtGateEvalCarry(
 	if schema == nil {
 		return map[string]any{}, nil
 	}
-	deps, err := BuildAttributeDeps(ctx, tx, args, row.NodeRunID, row.FrameID)
+	deps, err := BuildAttributeDeps(ctx, args, row.NodeRunID, row.FrameID, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +239,7 @@ func schemaForGateEval(args RunArgs, executor string, templateDefaults map[strin
 // @concept: cascade
 // @decision: held-as-state-not-phase
 func anySubscribedUpstreamInFlight(
-	ctx context.Context, args RunArgs, tx persistence.Tx, row *persistence.NodeRunForGate,
+	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, tx persistence.Tx,
 ) (bool, error) {
 	receiverNode, err := args.Persist.Nodes().Get(ctx, row.NodeID, tx)
 	if err != nil || receiverNode == nil {
@@ -282,12 +279,12 @@ func anySubscribedUpstreamInFlight(
 	if len(senderIDs) == 0 {
 		return false, nil
 	}
-	tmplSpec, err := loadTemplateSpec(ctx, args, tx, receiverNode.InstanceID)
+	tmplSpec, err := loadTemplateSpec(ctx, args, receiverNode.InstanceID, tx)
 	if err != nil {
 		return false, err
 	}
 	coMembers := subgraphMembersIncludingType(tmplSpec, receiverNode.NodeType)
-	phases, err := args.Queue.ListInFlightRunStates(ctx, tx, senderIDs, row.FrameID, row.RunScopeID)
+	phases, err := args.Queue.ListInFlightRunStates(ctx, senderIDs, row.FrameID, row.RunScopeID, tx)
 	if err != nil {
 		return false, err
 	}
@@ -310,9 +307,9 @@ func anySubscribedUpstreamInFlight(
 // @concept: cascade
 // @decision: mode-default-most-recent
 func loadReceiverCarryForward(
-	ctx context.Context, args RunArgs, tx persistence.Tx, row *persistence.NodeRunForGate,
+	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, tx persistence.Tx,
 ) (map[string]any, error) {
-	prior, err := args.Persist.Nodes().GetPriorRunBySequence(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence)
+	prior, err := args.Persist.Nodes().GetPriorRunBySequence(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx)
 	if err != nil {
 		return nil, fmt.Errorf("prior run: %w", err)
 	}
@@ -341,79 +338,76 @@ func loadReceiverCarryForward(
 // @concept: cascade-mode
 // @decision: mode-default-most-recent
 func applyCascadeModeRule(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row *persistence.NodeRunForGate, bag map[string]any, mode cascade.CascadeMode,
+	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, bag map[string]any, mode cascade.CascadeMode, tx persistence.Tx,
 ) (drop bool, err error) {
 	switch mode {
 	case cascade.CascadeModeMostRecent, "":
-		hasLater, herr := args.Persist.Nodes().HasLaterCascadePending(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence)
+		hasLater, herr := args.Persist.Nodes().HasLaterCascadePending(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx)
 		if herr != nil {
 			return false, fmt.Errorf("most-recent: has later: %w", herr)
 		}
 		if hasLater {
 			return true, nil
 		}
-		if _, derr := args.Persist.Nodes().DeletePriorCascadeStales(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence); derr != nil {
+		if _, derr := args.Persist.Nodes().DeletePriorCascadeStales(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx); derr != nil {
 			return false, fmt.Errorf("most-recent: delete prior: %w", derr)
 		}
 		return false, nil
 	case cascade.CascadeModeSequenced:
 		return false, nil
 	case cascade.CascadeModeIdempotentQueue:
-		return modeDropIfPriorEqual(ctx, args, tx, row, bag, false)
+		return modeDropIfPriorEqual(ctx, args, row, bag, false, tx)
 	case cascade.CascadeModeIdempotentSettled:
-		return modeDropIfPriorEqual(ctx, args, tx, row, bag, true)
+		return modeDropIfPriorEqual(ctx, args, row, bag, true, tx)
 	}
 	return false, fmt.Errorf("applyCascadeModeRule: unknown mode %q", mode)
 }
 
 // @concept: cascade
 func modeDropIfPriorEqual(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row *persistence.NodeRunForGate, bag map[string]any, includeSettled bool,
+	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, bag map[string]any, includeSettled bool, tx persistence.Tx,
 ) (bool, error) {
-	priorQueued, err := args.Persist.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence)
+	priorQueued, err := args.Persist.Nodes().GetPriorCascadeQueuedNotClaimed(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx)
 	if err != nil {
 		return false, fmt.Errorf("prior queued: %w", err)
 	}
 	if priorQueued != nil {
-		return bagsEqual(ctx, args, tx, priorQueued.NodeRunID, bag)
+		return bagsEqual(ctx, args, priorQueued.NodeRunID, bag, tx)
 	}
 	if !includeSettled {
 		return false, nil
 	}
-	priorSettled, err := args.Persist.Nodes().GetMostRecentSettledRun(ctx, tx, row.NodeID, row.RunScopeID, row.Sequence)
+	priorSettled, err := args.Persist.Nodes().GetMostRecentSettledRun(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx)
 	if err != nil {
 		return false, fmt.Errorf("prior settled: %w", err)
 	}
 	if priorSettled == nil {
 		return false, nil
 	}
-	return bagsEqual(ctx, args, tx, priorSettled.NodeRunID, bag)
+	return bagsEqual(ctx, args, priorSettled.NodeRunID, bag, tx)
 }
 
 // @concept: cascade
 func bagsEqual(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	priorRunID foundationshared.UUID, bag map[string]any,
+	ctx context.Context, args RunArgs, priorRunID foundationshared.UUID, bag map[string]any, tx persistence.Tx,
 ) (bool, error) {
-	prior, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, tx, priorRunID)
+	prior, err := args.Persist.NodeAttributes().GetDispatchInputBag(ctx, priorRunID, tx)
 	if err != nil {
 		return false, fmt.Errorf("prior input bag: %w", err)
 	}
 	if prior == nil {
-		priorRow, gerr := args.Persist.Nodes().GetRunForGate(ctx, tx, priorRunID)
+		priorRow, gerr := args.Persist.Nodes().GetRunForGate(ctx, priorRunID, tx)
 		if gerr != nil {
 			return false, fmt.Errorf("prior row for on-demand resolve: %w", gerr)
 		}
 		if priorRow == nil {
 			return false, nil
 		}
-		carry, cerr := loadReceiverCarryForward(ctx, args, tx, priorRow)
+		carry, cerr := loadReceiverCarryForward(ctx, args, priorRow, tx)
 		if cerr != nil {
 			return false, fmt.Errorf("prior carry: %w", cerr)
 		}
-		resolved, rerr := buildResolvedBagAtGateEvalCarry(ctx, args, tx, priorRow, carry)
+		resolved, rerr := buildResolvedBagAtGateEvalCarry(ctx, args, priorRow, carry, tx)
 		if rerr != nil {
 			return false, fmt.Errorf("prior on-demand resolve: %w", rerr)
 		}

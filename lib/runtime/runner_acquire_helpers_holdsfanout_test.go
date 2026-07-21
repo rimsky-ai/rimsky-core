@@ -71,9 +71,9 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 		if err := backend.Templates().UpdateState(ctx, tmplHash, persistence.TemplateStateDeployed, tx); err != nil {
 			return err
 		}
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -101,9 +101,9 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 	var frameID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())
-		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := backend.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := backend.Frames().InsertRunningFrame(ctx, instID, msgID, mainScopeID, tx)
@@ -157,7 +157,7 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 	}
 
 	err := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return acquireFanOutIfDeclared(ctx, args, tx, instID, out, cand, consumerDef, nil, 30*time.Second)
+		return acquireFanOutIfDeclared(ctx, args, instID, out, cand, consumerDef, nil, 30*time.Second, tx)
 	})
 	if !errors.Is(err, errStop) {
 		t.Fatalf("expected a holds:-bound fan_out.claim to be resolved via the co-held claim handle and "+

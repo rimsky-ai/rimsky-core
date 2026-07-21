@@ -37,11 +37,11 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 	messageID := uuid.New()
 	tables := d.Tables()
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		ck := "ck-" + instanceID.String()[:8]
@@ -52,14 +52,14 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 		}, tx); err != nil {
 			return err
 		}
-		return tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		return tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         foundationshared.UUID(messageID),
 			InstanceID: foundationshared.UUID(instanceID),
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
 			ReceivedAt: time.Now().UTC(),
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed template+instance+message: %v", err)
 	}
@@ -112,7 +112,7 @@ func seedNodeRun(t *testing.T, ctx context.Context, d persistence.Database,
 		[]any{instanceID}, &mainScopeID)
 	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, claimed_by, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, claimed_by, frame_id, run_scope_id)
         VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, 1, 'cascade', $3, $4, $5)
     `, nodeID, state, claimedByPtr, frameID, mainScopeID)
 }
@@ -261,7 +261,7 @@ func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T)
 	parentRunID := uuid.New()
 	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, NULL, ARRAY[]::text[], NOW(), 'fresh', 2, 'cascade', $3, $4)
     `, parentRunID, src, frameID, rootScope)
 	childScope := uuid.New()

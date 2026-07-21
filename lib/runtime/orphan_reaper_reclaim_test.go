@@ -53,9 +53,9 @@ func TestSweepExecutorDeadlines_ReleasedClaimReclaimedByDifferentSupervisor(t *t
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -69,26 +69,25 @@ func TestSweepExecutorDeadlines_ReleasedClaimReclaimedByDifferentSupervisor(t *t
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := tables.Frames().InsertRunningFrame(ctx, uuid.UUID(instanceID), msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: runID, NodeID: nodeID, FrameID: frameID, RunScopeID: mainScopeID, ExecutorName: "stub",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if _, err := d.Queue().ClaimDispatchRow(ctx, tx, runID, crashedSup); err != nil {
+		if _, err := d.Queue().ClaimDispatchRow(ctx, runID, crashedSup, tx); err != nil {
 			return err
 		}
 		maxQuiet := 1
-		return d.Queue().RegisterAsyncAck(ctx, tx, runID, "reclaim-fixture-ack",
-			time.Now().Add(-1*time.Hour), &maxQuiet, nil, "")
+		return d.Queue().RegisterAsyncAck(ctx, runID, "reclaim-fixture-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "", tx)
 	}); err != nil {
 		t.Fatalf("seed fixture: %v", err)
 	}
@@ -117,11 +116,11 @@ func TestSweepExecutorDeadlines_ReleasedClaimReclaimedByDifferentSupervisor(t *t
 
 	var reclaimed bool
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := d.Queue().SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := d.Queue().SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"stub"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -129,7 +128,7 @@ func TestSweepExecutorDeadlines_ReleasedClaimReclaimedByDifferentSupervisor(t *t
 			if c.NodeRunID != runID {
 				continue
 			}
-			ok, cErr := d.Queue().ClaimDispatchRow(ctx, tx, runID, newSup)
+			ok, cErr := d.Queue().ClaimDispatchRow(ctx, runID, newSup, tx)
 			if cErr != nil {
 				return cErr
 			}

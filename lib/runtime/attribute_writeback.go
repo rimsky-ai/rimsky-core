@@ -89,10 +89,10 @@ func (c *CallbackServer) handleAttributeWriteback(w http.ResponseWriter, r *http
 		} else if err := c.Persist.NodeAttributes().MergeDelta(ctx, runID, body.AttributesDelta, tx); err != nil {
 			return err
 		}
-		if _, err := c.Queue.BumpLastProgressAt(ctx, tx, runID, time.Now().UTC()); err != nil {
+		if _, err := c.Queue.BumpLastProgressAt(ctx, runID, time.Now().UTC(), tx); err != nil {
 			return err
 		}
-		return c.renewClaimExpiryForRun(ctx, tx, runID)
+		return c.renewClaimExpiryForRun(ctx, runID, tx)
 	}); txErr != nil {
 		c.Logger.Error("attribute writeback: apply failed",
 			"run_id", runID.String(), "error", txErr.Error())

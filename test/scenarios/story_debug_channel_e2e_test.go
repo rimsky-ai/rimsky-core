@@ -331,7 +331,7 @@ func getLatestRunID(t *testing.T, h *scenario.Harness, nodeID shared.UUID) *shar
 	t.Helper()
 	var out *shared.UUID
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
+		latest, err := h.Persist.Nodes().GetLatestRunForNode(ctx, nodeID, tx)
 		if err != nil {
 			return err
 		}

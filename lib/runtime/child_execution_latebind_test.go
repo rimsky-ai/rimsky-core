@@ -37,7 +37,7 @@ func TestSettleFromFanoutChild_LateBoundProducer_ResolvesViaContext(t *testing.T
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -88,7 +88,7 @@ func TestSettleFromFanoutChild_LateBoundProducer_ResolvesViaContext(t *testing.T
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, runtime.TerminalDecision{
 			ClaimHandleID:       subIDs[0],
 			SupervisorID:        args.SupervisorID,
 			Source:              runtime.ActiveTerminal,
@@ -99,7 +99,7 @@ func TestSettleFromFanoutChild_LateBoundProducer_ResolvesViaContext(t *testing.T
 			Lifetime:            spec.ClaimLifetimeSubgraph,
 			ProducerName:        lateBoundProducerName,
 			ParentClaimHandleID: &parentID,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

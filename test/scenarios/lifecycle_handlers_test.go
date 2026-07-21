@@ -50,7 +50,7 @@ func TestAlwaysPropagateResolution_NewShape(t *testing.T) {
 
 	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, a.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, a.ID, tx)
 		aLatest = r
 		return err
 	}))
@@ -96,7 +96,7 @@ func TestNeverPropagateResolution_NewShape(t *testing.T) {
 
 	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, a.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, a.ID, tx)
 		aLatest = r
 		return err
 	}))
@@ -138,7 +138,7 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, b.ID)
+			rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, b.ID, tx)
 			if err != nil {
 				return err
 			}
@@ -156,7 +156,7 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 
 	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, a.ID)
+		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, a.ID, tx)
 		aLatest = ra
 		return err
 	}))
@@ -201,7 +201,7 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, b.ID)
+			rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, b.ID, tx)
 			if err != nil {
 				return err
 			}
@@ -219,7 +219,7 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 
 	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, a.ID)
+		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, a.ID, tx)
 		aLatest = ra
 		return err
 	}))
@@ -259,7 +259,7 @@ func TestExecutorBlockedPassResolution_NewShape(t *testing.T) {
 	waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/")
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, worker.ID, tx)
 		wLatest = r
 		return err
 	}))
@@ -294,7 +294,7 @@ func TestExecutorErroredPassResolution_NewShape(t *testing.T) {
 	waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/")
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, worker.ID, tx)
 		wLatest = r
 		return err
 	}))
@@ -307,7 +307,7 @@ func waitForSettlingSignalType(t *testing.T, h *scenario.Harness, nodeID shared.
 	for {
 		var latest *persistence.NodeRunLatest
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, nodeID)
+			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, nodeID, tx)
 			latest = r
 			return err
 		})
@@ -323,7 +323,7 @@ func waitForSettlingSignalTypePrefix(t *testing.T, h *scenario.Harness, nodeID s
 	for {
 		var latest *persistence.NodeRunLatest
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, nodeID)
+			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, nodeID, tx)
 			latest = r
 			return err
 		})
@@ -359,7 +359,7 @@ func TestPureCascadeOutcomeColumn(t *testing.T) {
 
 	var pLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, p.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, p.ID, tx)
 		pLatest = r
 		return err
 	}))

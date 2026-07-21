@@ -32,50 +32,36 @@ func newInvTestQueueWithReal(real persistence.Queue) *invTestQueue {
 	return &invTestQueue{real: real}
 }
 
-func (f *invTestQueue) Enqueue(_ context.Context, req persistence.DispatchRequest) error {
+func (f *invTestQueue) Enqueue(_ context.Context, req persistence.DispatchRequest, _ persistence.Tx) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.enqueued = append(f.enqueued, req)
 	return nil
 }
 
-func (f *invTestQueue) EnqueueInTx(_ context.Context, req persistence.DispatchRequest, _ persistence.Tx) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.enqueued = append(f.enqueued, req)
-	return nil
-}
-
-func (f *invTestQueue) SelectCandidates(_ context.Context, _ persistence.Tx, _ persistence.SelectCandidatesRequest) ([]persistence.Candidate, error) {
+func (f *invTestQueue) SelectCandidates(_ context.Context, _ persistence.SelectCandidatesRequest, _ persistence.Tx) ([]persistence.Candidate, error) {
 	return nil, nil
 }
 
-func (f *invTestQueue) ClaimDispatchRow(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
+func (f *invTestQueue) ClaimDispatchRow(_ context.Context, _ shared.UUID, _ string, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
 
-func (f *invTestQueue) PromoteClaimedToRunning(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
+func (f *invTestQueue) PromoteClaimedToRunning(_ context.Context, _ shared.UUID, _ string, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
 
 func (f *invTestQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
 func (f *invTestQueue) ForceComplete(_ context.Context, _ shared.UUID) error      { return nil }
 
-func (f *invTestQueue) RemoveForNodeInTx(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
+func (f *invTestQueue) RemoveForNode(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removedNodes = append(f.removedNodes, nodeID)
 	return nil
 }
 
-func (f *invTestQueue) ForceRemoveForNode(_ context.Context, nodeID shared.UUID, _ shared.UUID) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.removedNodes = append(f.removedNodes, nodeID)
-	return nil
-}
-
-func (f *invTestQueue) ForceRemoveForNodeInTx(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ persistence.Tx) error {
+func (f *invTestQueue) ForceRemoveForNode(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ persistence.Tx) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removedNodes = append(f.removedNodes, nodeID)
@@ -89,7 +75,7 @@ func (f *invTestQueue) ReleaseClaim(_ context.Context, _ shared.UUID, _ string) 
 func (f *invTestQueue) ReleaseClaimWithDisposition(_ context.Context, _ shared.UUID, _ string, _ string) error {
 	return nil
 }
-func (f *invTestQueue) StampPriorDispatchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID, _ string) error {
+func (f *invTestQueue) StampPriorDispatch(_ context.Context, _ shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
 	return nil
 }
 
@@ -97,10 +83,7 @@ func (f *invTestQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error
 func (f *invTestQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
-func (f *invTestQueue) GetDispatchNode(_ context.Context, _ shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
-	return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
-}
-func (f *invTestQueue) GetDispatchNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+func (f *invTestQueue) GetDispatchNode(_ context.Context, _ shared.UUID, _ persistence.Tx) (shared.UUID, persistence.ClaimOwnership, error) {
 	return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
 func (f *invTestQueue) RefreshHeartbeat(_ context.Context, _ string) error { return nil }
@@ -113,57 +96,57 @@ func (f *invTestQueue) CountLive(_ context.Context, _ persistence.DispatchListFi
 func (f *invTestQueue) GetByID(_ context.Context, _ shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+func (f *invTestQueue) GetInFlightRunForNode(ctx context.Context, nodeID, runScopeID shared.UUID, tx persistence.Tx) (shared.UUID, bool, error) {
 	if f.real != nil {
-		return f.real.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
+		return f.real.GetInFlightRunForNode(ctx, nodeID, runScopeID, tx)
 	}
 	return shared.UUID{}, false, nil
 }
-func (f *invTestQueue) GetMostRecentRunForNodeInScope(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+func (f *invTestQueue) GetMostRecentRunForNodeInScope(ctx context.Context, nodeID, runScopeID shared.UUID, tx persistence.Tx) (shared.UUID, bool, error) {
 	if f.real != nil {
-		return f.real.GetMostRecentRunForNodeInScope(ctx, tx, nodeID, runScopeID)
+		return f.real.GetMostRecentRunForNodeInScope(ctx, nodeID, runScopeID, tx)
 	}
 	return shared.UUID{}, false, nil
 }
 
-func (f *invTestQueue) ListInFlightRunStates(ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error) {
+func (f *invTestQueue) ListInFlightRunStates(ctx context.Context, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID, tx persistence.Tx) (map[shared.UUID][]string, error) {
 	if f.real != nil {
-		return f.real.ListInFlightRunStates(ctx, tx, nodeIDs, frameID, runScopeID)
+		return f.real.ListInFlightRunStates(ctx, nodeIDs, frameID, runScopeID, tx)
 	}
 	return map[shared.UUID][]string{}, nil
 }
 
-func (f *invTestQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persistence.ParkActiveInput) error {
+func (f *invTestQueue) ParkActive(_ context.Context, _ persistence.ParkActiveInput, _ persistence.Tx) error {
 	return nil
 }
 func (f *invTestQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) GetParkedByNode(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
+func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (bool, error) {
+func (f *invTestQueue) ResumeParked(_ context.Context, _ shared.UUID, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *invTestQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int) error {
+func (f *invTestQueue) UpdateDispatchTuning(_ context.Context, _ shared.UUID, _ *int, _ persistence.Tx) error {
 	return nil
 }
 func (f *invTestQueue) CountParked(_ context.Context) (int, error) {
 	return 0, nil
 }
-func (f *invTestQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) (bool, error) {
+func (f *invTestQueue) BumpLastProgressAt(_ context.Context, _ shared.UUID, _ time.Time, _ persistence.Tx) (bool, error) {
 	return true, nil
 }
-func (f *invTestQueue) RegisterAsyncAck(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string, _ time.Time, _ *int, _ *int, _ string) error {
+func (f *invTestQueue) RegisterAsyncAck(_ context.Context, _ shared.UUID, _ string, _ time.Time, _ *int, _ *int, _ string, _ persistence.Tx) error {
 	return nil
 }
-func (f *invTestQueue) LookupRunByAsyncAckID(_ context.Context, _ persistence.Tx, _ string) (*persistence.DispatchRow, error) {
+func (f *invTestQueue) LookupRunByAsyncAckID(_ context.Context, _ string, _ persistence.Tx) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) LoadScratchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]byte, string, string, error) {
+func (f *invTestQueue) LoadScratch(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]byte, string, string, error) {
 	return nil, "", "", nil
 }
-func (f *invTestQueue) WriteScratchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []byte, _, _ string) error {
+func (f *invTestQueue) WriteScratch(_ context.Context, _ shared.UUID, _ []byte, _, _ string, _ persistence.Tx) error {
 	return nil
 }
 func (f *invTestQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx) ([]persistence.ParkedDiagnosticRow, error) {
@@ -211,11 +194,11 @@ func newFixtureWithNodes(t *testing.T, defs []nodepkg.TemplateNodeDef) *fixture 
 	instID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := d.Tables().RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
 			InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -288,7 +271,7 @@ func (f *fixture) createTypedNodeInState(t *testing.T, nodeType, executor string
 	}
 	pgdbtest.ExecForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES (gen_random_uuid(), $1, $2, ARRAY[]::text[], NOW(), $3, 1, 'cascade', $4, $5)
     `, n.ID, executor, string(state), frameID, f.mainScopeID)
 	return n
@@ -312,7 +295,7 @@ func TestRecalculateNode_FreshTarget_IsNoOp(t *testing.T) {
 
 	var afterLatest *persistence.NodeRunLatest
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, tx, n.ID)
+		r, err := f.persist.Nodes().GetLatestRunForNode(ctx, n.ID, tx)
 		afterLatest = r
 		return err
 	}))

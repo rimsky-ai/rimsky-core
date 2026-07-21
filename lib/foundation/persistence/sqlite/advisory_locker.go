@@ -62,11 +62,11 @@ func (c *advisoryLockerImpl) AcquireMigrationLock(ctx context.Context) (func() e
 	}
 }
 
-func (c *advisoryLockerImpl) TakeNamedLockInTx(_ context.Context, _ persistence.Tx, _ string) error {
+func (c *advisoryLockerImpl) TakeNamedLock(_ context.Context, _ string, _ persistence.Tx) error {
 	return nil
 }
 
-func (c *advisoryLockerImpl) TakeClaimScopeLockInTx(_ context.Context, _ persistence.Tx, _ string, _ []byte) error {
+func (c *advisoryLockerImpl) TakeClaimScopeLock(_ context.Context, _ string, _ []byte, _ persistence.Tx) error {
 	return nil
 }
 

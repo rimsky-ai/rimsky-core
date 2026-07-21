@@ -31,7 +31,7 @@ const runTreeCols = `
   state, settling_signal_type, aggregation_policy, changed
 `
 
-func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootNodeRunInput) error {
+func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, in persistence.CreateRootNodeRunInput, tx persistence.Tx) error {
 	policy, err := persistence.MarshalAggregationPolicy(in.AggregationPolicy)
 	if err != nil {
 		return fmt.Errorf("run_tree.CreateRootNodeRun: marshal policy: %w", err)
@@ -39,9 +39,9 @@ func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, 
 	if in.RunScopeID == (shared.UUID{}) {
 		return errors.New("run_tree.CreateRootNodeRun: run_scope_id required")
 	}
-	stores := in.RequiredClaimProducers
-	if stores == nil {
-		stores = []string{}
+	claimProducers := in.RequiredClaimProducers
+	if claimProducers == nil {
+		claimProducers = []string{}
 	}
 	executor := nullableString(in.ExecutorName)
 	enqueuedAt := in.EnqueuedAt
@@ -50,7 +50,7 @@ func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, 
 	}
 	tag, err := b.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (
-		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
+		   id, node_id, executor_name, required_claim_producers, enqueued_at, frame_id,
 		   run_scope_id, state, creation_reason, sequence, aggregation_policy
 		 ) VALUES (
 		   $1, $2, $3, $4, $5, $6,
@@ -59,20 +59,20 @@ func (b *runTreeImpl) CreateRootNodeRun(ctx context.Context, tx persistence.Tx, 
 		   $8
 		 )
 		 ON CONFLICT (id) DO NOTHING`,
-		in.NodeRunID, in.NodeID, executor, stores, enqueuedAt, in.FrameID, in.RunScopeID, nullableBytes(policy),
+		in.NodeRunID, in.NodeID, executor, claimProducers, enqueuedAt, in.FrameID, in.RunScopeID, nullableBytes(policy),
 	)
 	if err != nil {
 		return fmt.Errorf("run_tree.CreateRootNodeRun: %w", err)
 	}
 	if tag.RowsAffected() == 1 {
-		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, tx, in.NodeRunID, in.NodeID, in.RunScopeID); err != nil {
+		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, in.NodeRunID, in.NodeID, in.RunScopeID, tx); err != nil {
 			return fmt.Errorf("run_tree.CreateRootNodeRun: snapshot bag: %w", err)
 		}
 	}
 	return nil
 }
 
-func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx, in persistence.CreateChildNodeRunInput) error {
+func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, in persistence.CreateChildNodeRunInput, tx persistence.Tx) error {
 	if in.RunScopeID == (shared.UUID{}) {
 		return errors.New("run_tree.CreateChildNodeRun: run_scope_id required")
 	}
@@ -80,9 +80,9 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 	if err != nil {
 		return fmt.Errorf("run_tree.CreateChildNodeRun: marshal policy: %w", err)
 	}
-	stores := in.RequiredClaimProducers
-	if stores == nil {
-		stores = []string{}
+	claimProducers := in.RequiredClaimProducers
+	if claimProducers == nil {
+		claimProducers = []string{}
 	}
 	executor := nullableString(in.ExecutorName)
 	enqueuedAt := in.EnqueuedAt
@@ -91,7 +91,7 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 	}
 	tag, err := b.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (
-		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
+		   id, node_id, executor_name, required_claim_producers, enqueued_at, frame_id,
 		   run_scope_id, state, creation_reason, sequence, aggregation_policy
 		 )
 		 SELECT $1, $2, $3, $4, $5, $6, $7, 'stale', 'cascade',
@@ -106,20 +106,20 @@ func (b *runTreeImpl) CreateChildNodeRun(ctx context.Context, tx persistence.Tx,
 		      SELECT 1 FROM rimsky_run_scopes rs
 		       WHERE rs.id = $7 AND rs.closed_at IS NULL
 		    )`,
-		in.NodeRunID, in.NodeID, executor, stores, enqueuedAt, in.FrameID, in.RunScopeID, nullableBytes(policy),
+		in.NodeRunID, in.NodeID, executor, claimProducers, enqueuedAt, in.FrameID, in.RunScopeID, nullableBytes(policy),
 	)
 	if err != nil {
 		return fmt.Errorf("run_tree.CreateChildNodeRun: %w", err)
 	}
 	if tag.RowsAffected() == 1 {
-		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, tx, in.NodeRunID, in.NodeID, in.RunScopeID); err != nil {
+		if err := (*nodeAttributesImpl)((*tablesImpl)(b)).SnapshotBagForNewRun(ctx, in.NodeRunID, in.NodeID, in.RunScopeID, tx); err != nil {
 			return fmt.Errorf("run_tree.CreateChildNodeRun: snapshot bag: %w", err)
 		}
 	}
 	return nil
 }
 
-func (b *runTreeImpl) GetByID(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
+func (b *runTreeImpl) GetByID(ctx context.Context, runID shared.UUID, tx persistence.Tx) (*persistence.NodeRunTreeRow, error) {
 	row, err := scanRunTreeRow(b.q(tx).QueryRow(ctx,
 		`SELECT `+runTreeCols+` FROM rimsky_node_runs WHERE id = $1`,
 		runID))
@@ -132,7 +132,7 @@ func (b *runTreeImpl) GetByID(ctx context.Context, tx persistence.Tx, runID shar
 	return row, nil
 }
 
-func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
+func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, runID shared.UUID, tx persistence.Tx) (*persistence.NodeRunTreeRow, error) {
 	if tx == nil {
 		return nil, errors.New("run_tree.LockTreeForUpdate: tx required")
 	}
@@ -149,7 +149,7 @@ func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, 
 	return row, nil
 }
 
-func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID) ([]persistence.NodeRunTreeRow, error) {
+func (b *runTreeImpl) ListChildren(ctx context.Context, parentNodeRunID shared.UUID, tx persistence.Tx) ([]persistence.NodeRunTreeRow, error) {
 	rows, err := b.q(tx).Query(ctx,
 		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id,
 		        nr.state, nr.settling_signal_type, nr.aggregation_policy, nr.changed
@@ -177,8 +177,7 @@ func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, paren
 }
 
 func (b *runTreeImpl) UpdateStateAndOutcome(
-	ctx context.Context, tx persistence.Tx, runID shared.UUID,
-	state cascade.NodeState, settlingSignalType *string, changed bool,
+	ctx context.Context, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool, tx persistence.Tx,
 ) error {
 	if settlingSignalType == nil {
 		cmd, err := b.q(tx).Exec(ctx,
@@ -188,7 +187,7 @@ func (b *runTreeImpl) UpdateStateAndOutcome(
 			return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
 		}
 		if cmd.RowsAffected() == 0 {
-			return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", persistence.ErrRunRowMissing)
+			return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", persistence.ErrNotFound)
 		}
 		return nil
 	}
@@ -199,13 +198,13 @@ func (b *runTreeImpl) UpdateStateAndOutcome(
 		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
-		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", persistence.ErrRunRowMissing)
+		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", persistence.ErrNotFound)
 	}
 	return nil
 }
 
 func (b *runTreeImpl) UpdateAggregationPolicy(
-	ctx context.Context, tx persistence.Tx, runID shared.UUID, policy spec.AggregationPolicy,
+	ctx context.Context, runID shared.UUID, policy spec.AggregationPolicy, tx persistence.Tx,
 ) error {
 	bytes, err := persistence.MarshalAggregationPolicy(policy)
 	if err != nil {
@@ -218,7 +217,7 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 		return fmt.Errorf("run_tree.UpdateAggregationPolicy: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
-		return fmt.Errorf("run_tree.UpdateAggregationPolicy: %w", persistence.ErrRunRowMissing)
+		return fmt.Errorf("run_tree.UpdateAggregationPolicy: %w", persistence.ErrNotFound)
 	}
 	return nil
 }

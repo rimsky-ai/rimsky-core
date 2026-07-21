@@ -80,7 +80,7 @@ func TestAcquireUnavailable_ExplicitRetryAction(t *testing.T) {
 			}
 		}
 		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, worker.ID, tx)
 			if err != nil {
 				return err
 			}

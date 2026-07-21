@@ -25,9 +25,9 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	if accepts == nil {
 		accepts = []string{}
 	}
-	stores := in.AcceptedClaimProducers
-	if stores == nil {
-		stores = []string{}
+	claimProducers := in.AcceptedClaimProducers
+	if claimProducers == nil {
+		claimProducers = []string{}
 	}
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_supervisors
@@ -39,7 +39,7 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 		       concurrency              = EXCLUDED.concurrency,
 		       callback_host            = EXCLUDED.callback_host,
 		       callback_port            = EXCLUDED.callback_port`,
-		in.ID, accepts, stores, in.Concurrency,
+		in.ID, accepts, claimProducers, in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort),
 	)
 	if err != nil {

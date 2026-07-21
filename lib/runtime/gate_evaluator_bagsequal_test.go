@@ -78,9 +78,9 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 		if err := tables.Templates().UpdateState(ctx, templateHash, persistence.TemplateStateDeployed, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -95,9 +95,9 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/fixture-seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -114,7 +114,7 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 	}
 	_, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
-		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,
+		   id, node_id, executor_name, required_claim_producers, enqueued_at, frame_id,
 		   run_scope_id, state, creation_reason, sequence
 		 ) VALUES (?, ?, 'stub', '[]', ?, ?, ?, 'stale', 'cascade', 1)`,
 		priorRunID.String(), nodeID.String(), time.Now().UTC().Format(bagsEqualTestTimeLayout),
@@ -124,7 +124,7 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 		"rimsky_node_attributes row (and thus no dispatch_input_bag) is ever created for it")
 
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		bag, err := tables.NodeAttributes().GetDispatchInputBag(ctx, tx, priorRunID)
+		bag, err := tables.NodeAttributes().GetDispatchInputBag(ctx, priorRunID, tx)
 		require.NoError(t, err)
 		require.Nil(t, bag, "fixture bug: prior run must have no dispatch_input_bag row yet")
 		return nil
@@ -136,7 +136,7 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 	}
 
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		equal, err := bagsEqual(ctx, args, tx, priorRunID, map[string]any{"seed": "abc"})
+		equal, err := bagsEqual(ctx, args, priorRunID, map[string]any{"seed": "abc"}, tx)
 		require.NoError(t, err)
 		require.True(t, equal,
 			"bagsEqual must fall back to on-demand resolution (GetRunForGate + buildResolvedBagAtGateEvalCarry) "+
@@ -146,7 +146,7 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 	}))
 
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		equal, err := bagsEqual(ctx, args, tx, priorRunID, map[string]any{"seed": "different"})
+		equal, err := bagsEqual(ctx, args, priorRunID, map[string]any{"seed": "different"}, tx)
 		require.NoError(t, err)
 		require.False(t, equal,
 			"the on-demand resolution path must perform a genuine comparison, not unconditionally report "+
@@ -159,7 +159,7 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 		Logger:  shared.SilentLogger{},
 	}
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := bagsEqual(ctx, failingArgs, tx, priorRunID, map[string]any{"seed": "abc"})
+		_, err := bagsEqual(ctx, failingArgs, priorRunID, map[string]any{"seed": "abc"}, tx)
 		require.ErrorIs(t, err, errBagsEqualTemplateLoad,
 			"an on-demand resolve failure must propagate to the caller, not silently report the bags as unequal")
 		return nil

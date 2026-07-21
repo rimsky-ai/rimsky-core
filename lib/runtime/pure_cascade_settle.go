@@ -16,26 +16,17 @@ import (
 // @concept: signal
 // @concept: wait-set
 func EmitTerminalSuccessAndDrainInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	senderNodeID foundationshared.UUID,
-	senderNodeType string,
-	senderNodeRunID foundationshared.UUID,
-	instanceID foundationshared.UUID,
-	senderFrameID foundationshared.UUID,
-	changeSummary string,
+	ctx context.Context, args RunArgs, senderNodeID foundationshared.UUID, senderNodeType string, senderNodeRunID foundationshared.UUID, instanceID foundationshared.UUID, senderFrameID foundationshared.UUID, changeSummary string, tx persistence.Tx,
 ) error {
 	successSig := signalpkg.BuildTerminalSuccessSignal(false, map[string]any{}, changeSummary, nil)
-	if err := emitSignalInTxOnce(ctx, args, tx,
-		senderNodeID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, successSig); err != nil {
+	if err := emitSignalInTxOnce(ctx, args, senderNodeID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, successSig, tx); err != nil {
 		return err
 	}
-	if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, tx, senderNodeRunID, senderNodeID); err != nil {
+	if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, senderNodeRunID, senderNodeID, tx); err != nil {
 		return err
 	}
-	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		senderNodeID, senderNodeType, senderNodeRunID, instanceID, senderFrameID,
-		nil, nil); err != nil {
+	if err := emitAttributeChangesForRunInTx(ctx, args, senderNodeID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, nil, nil, tx); err != nil {
 		return err
 	}
-	return drainWaitSetOnSettled(ctx, args, tx, senderFrameID, senderNodeRunID)
+	return drainWaitSetOnSettled(ctx, args, senderFrameID, senderNodeRunID, tx)
 }

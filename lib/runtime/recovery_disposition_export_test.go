@@ -26,7 +26,7 @@ type ErrorPolicyTestInput struct {
 }
 
 func ApplyErrorPolicyForTest(
-	ctx context.Context, args RunArgs, tx persistence.Tx, in ErrorPolicyTestInput,
+	ctx context.Context, args RunArgs, in ErrorPolicyTestInput, tx persistence.Tx,
 ) (priorDispatchID *shared.UUID, priorDisposition string, err error) {
 	acq := &acquisition{
 		NodeRunID:  in.NodeRunID,

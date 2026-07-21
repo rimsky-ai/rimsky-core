@@ -16,8 +16,7 @@ import (
 )
 
 func insertHeldClaimHoldersAtAcquire(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	claimHandleID shared.UUID, cand persistence.Candidate, isHeld bool,
+	ctx context.Context, args RunArgs, claimHandleID shared.UUID, cand persistence.Candidate, isHeld bool, tx persistence.Tx,
 ) error {
 	if !isHeld {
 		return nil
@@ -34,8 +33,7 @@ func insertHeldClaimHoldersAtAcquire(
 
 // @concept: claim-co-holdership
 func insertCoHolderClaimHoldersAtAcquire(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	cand persistence.Candidate, nodeDef *node.TemplateNodeDef, tmpl *node.TemplateSpec,
+	ctx context.Context, args RunArgs, cand persistence.Candidate, nodeDef *node.TemplateNodeDef, tmpl *node.TemplateSpec, tx persistence.Tx,
 ) error {
 	if nodeDef == nil || tmpl == nil {
 		return nil
@@ -50,7 +48,7 @@ func insertCoHolderClaimHoldersAtAcquire(
 	if nd == nil {
 		return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: node %s not found", cand.NodeID.String())
 	}
-	resolved, err := resolveHolds(ctx, args, tx, nd.InstanceID, tmpl, nodeDef, cand.FrameID, true)
+	resolved, err := resolveHolds(ctx, args, nd.InstanceID, tmpl, nodeDef, cand.FrameID, true, tx)
 	if err != nil {
 		return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: %w", err)
 	}

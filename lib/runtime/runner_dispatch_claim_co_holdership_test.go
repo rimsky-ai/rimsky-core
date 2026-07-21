@@ -120,7 +120,7 @@ func TestSubstituteFanOutPartitionRequest_AliasCollisionOpenedWins(t *testing.T)
 		{Alias: "dup", ClaimResult: claimproducer.ClaimResult{Address: json.RawMessage(`{"source":"opened"}`)}},
 	}
 
-	got, err := substituteFanOutPartitionRequest(ctx, RunArgs{}, nil, shared.UUID{}, out, acquiredLocks, "{{claim.dup.address}}")
+	got, err := substituteFanOutPartitionRequest(ctx, RunArgs{}, shared.UUID{}, out, acquiredLocks, "{{claim.dup.address}}", nil)
 	if err != nil {
 		t.Fatalf("substituteFanOutPartitionRequest: %v", err)
 	}

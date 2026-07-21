@@ -29,10 +29,10 @@ func applyTerminalError(
 		if err := validateCommitWriteback(ctx, args, acq, schema, merged, tx); err != nil {
 			return nil
 		}
-		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+		if err := upsertFinalAttributesTx(ctx, args, acq, merged, tx); err != nil {
 			return fmt.Errorf("applyTerminalError: upsert attributes_delta: %w", err)
 		}
 		return nil
 	}
-	return applyErrorPolicyWithScratchAndSettleHook(ctx, args, acq, errorClass, "", payload, tags, attributesDel, scratch, tx, onSettle)
+	return applyErrorPolicyWithScratchAndSettleHook(ctx, args, acq, errorClass, "", payload, tags, attributesDel, scratch, onSettle, tx)
 }

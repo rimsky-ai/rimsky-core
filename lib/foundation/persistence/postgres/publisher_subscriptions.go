@@ -30,7 +30,7 @@ INSERT INTO rimsky_publisher_subscriptions (
     message_type, started_at, state, failure_reason
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''))`
 
-func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.Tx, row persistence.PublisherSubscriptionRow) error {
+func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, row persistence.PublisherSubscriptionRow, tx persistence.Tx) error {
 	if row.State == "" {
 		row.State = persistence.PublisherSubscriptionStateMounting
 	}
@@ -46,7 +46,7 @@ func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.
 
 const deletePublisherSubscriptionSQL = `DELETE FROM rimsky_publisher_subscriptions WHERE id = $1`
 
-func (b *publisherSubscriptionsImpl) Delete(ctx context.Context, tx persistence.Tx, id shared.UUID) error {
+func (b *publisherSubscriptionsImpl) Delete(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
 	if _, err := b.q(tx).Exec(ctx, deletePublisherSubscriptionSQL, id); err != nil {
 		return fmt.Errorf("postgres.PublisherSubscriptions.Delete: %w", err)
 	}
@@ -93,7 +93,7 @@ SELECT id, instance_id, publisher_name, kind, resolved_config,
   FROM rimsky_publisher_subscriptions
  WHERE id = $1`
 
-func (b *publisherSubscriptionsImpl) Get(ctx context.Context, tx persistence.Tx, id shared.UUID) (*persistence.PublisherSubscriptionRow, error) {
+func (b *publisherSubscriptionsImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.PublisherSubscriptionRow, error) {
 	rows, err := b.q(tx).Query(ctx, getPublisherSubscriptionSQL, id)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.PublisherSubscriptions.Get: %w", err)

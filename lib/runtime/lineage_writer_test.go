@@ -24,7 +24,7 @@ type fakeLineageTable struct {
 	rows []persistence.LineageRow
 }
 
-func (f *fakeLineageTable) Insert(_ context.Context, _ persistence.Tx, row persistence.LineageRow) error {
+func (f *fakeLineageTable) Insert(_ context.Context, row persistence.LineageRow, _ persistence.Tx) error {
 	f.rows = append(f.rows, row)
 	return nil
 }
@@ -62,7 +62,7 @@ func TestWriteLeafRunLineage_PayloadRoundtrip(t *testing.T) {
 		SettlingSignalType: "terminal/success",
 		ParamsSnapshotHash: HashBytes([]byte(`{"key":"value"}`)),
 	}
-	if err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, now, rec); err != nil {
+	if err := WriteLeafRunLineage(ctx, lt, inst, frame, now, rec, nil); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)
 	}
 	if len(lt.rows) != 1 {
@@ -96,7 +96,7 @@ func TestWriteLeafRunLineage_RejectsEmptySettlingSignalType(t *testing.T) {
 		FrameID:   frame,
 		State:     "fresh",
 	}
-	err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, now, rec)
+	err := WriteLeafRunLineage(ctx, lt, inst, frame, now, rec, nil)
 	if err == nil {
 		t.Fatal("WriteLeafRunLineage: expected an error for empty SettlingSignalType, got nil")
 	}
@@ -125,7 +125,7 @@ func TestWriteClaimTerminalLineage_VersionIDPersisted(t *testing.T) {
 		ClaimScopeDataHash: HashBytes([]byte(`{"dataset":"d"}`)),
 		Outcome:            persistence.LineageOutcomeCommitted,
 	}
-	if err := WriteClaimTerminalLineage(ctx, nil, lt, inst, frame, now, rec); err != nil {
+	if err := WriteClaimTerminalLineage(ctx, lt, inst, frame, now, rec, nil); err != nil {
 		t.Fatalf("WriteClaimTerminalLineage: %v", err)
 	}
 	if len(lt.rows) != 1 {
@@ -152,7 +152,7 @@ func TestWriteClaimTerminalLineage_AbandonedOutcome(t *testing.T) {
 		ProducerName:  "store",
 		Outcome:       persistence.LineageOutcomeAbandoned,
 	}
-	if err := WriteClaimTerminalLineage(ctx, nil, lt, inst, frame, time.Now().UTC(), rec); err != nil {
+	if err := WriteClaimTerminalLineage(ctx, lt, inst, frame, time.Now().UTC(), rec, nil); err != nil {
 		t.Fatalf("WriteClaimTerminalLineage: %v", err)
 	}
 	if lt.rows[0].Outcome != persistence.LineageOutcomeAbandoned {
@@ -171,7 +171,7 @@ func TestWriteClaimTerminalLineage_ForceCancelledOutcome(t *testing.T) {
 		Outcome:       persistence.LineageOutcomeForceCancelled,
 		Cause:         "sibling_cancel",
 	}
-	if err := WriteClaimTerminalLineage(ctx, nil, lt, shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec); err != nil {
+	if err := WriteClaimTerminalLineage(ctx, lt, shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec, nil); err != nil {
 		t.Fatalf("WriteClaimTerminalLineage: %v", err)
 	}
 	if lt.rows[0].Outcome != persistence.LineageOutcomeForceCancelled {
@@ -195,8 +195,7 @@ func TestWriteClaimTerminalLineage_EmptyOutcomeRejected(t *testing.T) {
 		FrameID:       shared.UUID(uuid.New()),
 		ProducerName:  "store",
 	}
-	err := WriteClaimTerminalLineage(context.Background(), nil, lt,
-		shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec)
+	err := WriteClaimTerminalLineage(context.Background(), lt, shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec, nil)
 	if err == nil {
 		t.Fatal("expected error when Outcome is empty; got nil")
 	}
@@ -220,7 +219,7 @@ func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 		SettlingSignalType: "terminal/success",
 		ParentNodeRunID:    parent.String(),
 	}
-	if err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, time.Now().UTC(), rec); err != nil {
+	if err := WriteLeafRunLineage(ctx, lt, inst, frame, time.Now().UTC(), rec, nil); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)
 	}
 	rows, err := lt.QueryByParentNodeRunID(ctx, parent, 10)
@@ -298,7 +297,7 @@ func seedLeafRunForMostRecentLookup(
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
 	}
-	if err := WriteLeafRunLineage(context.Background(), nil, lt, instanceID, rec.FrameID, time.Now().UTC(), rec); err != nil {
+	if err := WriteLeafRunLineage(context.Background(), lt, instanceID, rec.FrameID, time.Now().UTC(), rec, nil); err != nil {
 		t.Fatalf("seedLeafRunForMostRecentLookup: %v", err)
 	}
 }

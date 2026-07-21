@@ -29,7 +29,7 @@ func (b *runScopesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q
 
 const sqliteRunScopeCols = `id, parent_run_scope_id, parent_run_id, graph_name, partition_key, instance_id, created_at, closed_at`
 
-func (b *runScopesImpl) Create(ctx context.Context, tx persistence.Tx, row persistence.RunScopeRow) error {
+func (b *runScopesImpl) Create(ctx context.Context, row persistence.RunScopeRow, tx persistence.Tx) error {
 	var parentScope any
 	if row.ParentRunScopeID != nil {
 		parentScope = row.ParentRunScopeID.String()
@@ -58,7 +58,7 @@ func (b *runScopesImpl) Create(ctx context.Context, tx persistence.Tx, row persi
 	return nil
 }
 
-func (b *runScopesImpl) GetByID(ctx context.Context, tx persistence.Tx, id shared.UUID) (*persistence.RunScopeRow, error) {
+func (b *runScopesImpl) GetByID(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.RunScopeRow, error) {
 	r, err := scanSqliteRunScopeRow(b.q(tx).QueryRowContext(ctx,
 		`SELECT `+sqliteRunScopeCols+` FROM rimsky_run_scopes WHERE id = ?`, id.String()))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -70,7 +70,7 @@ func (b *runScopesImpl) GetByID(ctx context.Context, tx persistence.Tx, id share
 	return r, nil
 }
 
-func (b *runScopesImpl) GetFanoutPartition(ctx context.Context, tx persistence.Tx, parentNodeRunID shared.UUID, partitionKey string) (*persistence.RunScopeRow, error) {
+func (b *runScopesImpl) GetFanoutPartition(ctx context.Context, parentNodeRunID shared.UUID, partitionKey string, tx persistence.Tx) (*persistence.RunScopeRow, error) {
 	r, err := scanSqliteRunScopeRow(b.q(tx).QueryRowContext(ctx,
 		`SELECT `+sqliteRunScopeCols+` FROM rimsky_run_scopes
 		   WHERE parent_run_id = ? AND partition_key = ? AND closed_at IS NULL`,
@@ -84,7 +84,7 @@ func (b *runScopesImpl) GetFanoutPartition(ctx context.Context, tx persistence.T
 	return r, nil
 }
 
-func (b *runScopesImpl) Close(ctx context.Context, tx persistence.Tx, id shared.UUID) error {
+func (b *runScopesImpl) Close(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
 	_, err := b.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_run_scopes SET closed_at = ? WHERE id = ? AND closed_at IS NULL`,
 		formatTime(time.Now().UTC()), id.String())
@@ -94,7 +94,7 @@ func (b *runScopesImpl) Close(ctx context.Context, tx persistence.Tx, id shared.
 	return nil
 }
 
-func (b *runScopesImpl) ListParentChain(ctx context.Context, tx persistence.Tx, id shared.UUID) ([]persistence.RunScopeRow, error) {
+func (b *runScopesImpl) ListParentChain(ctx context.Context, id shared.UUID, tx persistence.Tx) ([]persistence.RunScopeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
 		`WITH RECURSIVE chain AS (
 		     SELECT `+sqliteRunScopeCols+`, 0 AS depth FROM rimsky_run_scopes WHERE id = ?
@@ -125,7 +125,7 @@ func (b *runScopesImpl) ListParentChain(ctx context.Context, tx persistence.Tx, 
 	return out, nil
 }
 
-func (b *runScopesImpl) ListTreeDeepestFirst(ctx context.Context, tx persistence.Tx, rootRunScopeID shared.UUID) ([]persistence.RunScopeRow, error) {
+func (b *runScopesImpl) ListTreeDeepestFirst(ctx context.Context, rootRunScopeID shared.UUID, tx persistence.Tx) ([]persistence.RunScopeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
 		`WITH RECURSIVE tree AS (
 		     SELECT `+sqliteRunScopeCols+`, 0 AS depth FROM rimsky_run_scopes WHERE id = ?

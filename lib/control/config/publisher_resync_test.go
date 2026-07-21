@@ -110,11 +110,11 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainRunScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -123,7 +123,7 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		return store.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		return store.PublisherSubscriptions().Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             droppedSubID,
 			InstanceID:     instanceID,
 			PublisherName:  publisherName,
@@ -133,7 +133,7 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 			MessageType: "fixture/ping",
 			State:       persistence.PublisherSubscriptionStateActive,
 			StartedAt:   time.Now().UTC(),
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed subscription: %v", err)
 	}

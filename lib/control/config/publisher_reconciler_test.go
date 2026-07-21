@@ -36,11 +36,11 @@ func seedInstanceForSubscriptions(t *testing.T, store persistence.Tables) shared
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainRunScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -59,7 +59,7 @@ func getSubscriptionRow(t *testing.T, store persistence.Tables, id shared.UUID) 
 	var row *persistence.PublisherSubscriptionRow
 	if err := store.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		row, err = store.PublisherSubscriptions().Get(ctx, tx, id)
+		row, err = store.PublisherSubscriptions().Get(ctx, id, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("getSubscriptionRow: %v", err)
@@ -122,9 +122,9 @@ func TestStartPublisherSubscriptions_InsertsMountingNoInlineRPC(t *testing.T) {
 		Logger:     shared.SilentLogger{},
 	}
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.StartPublisherSubscriptionsForInstance(ctx, deps, tx, instanceID, nil, []spec.PublisherSpec{
+		return runtime.StartPublisherSubscriptionsForInstance(ctx, deps, instanceID, nil, []spec.PublisherSpec{
 			{Name: "pub-a", Kind: "object_store", Config: json.RawMessage(`{"bucket":"b"}`), MessageType: "fixture/ping"},
-		})
+		}, tx)
 	})
 	if err != nil {
 		t.Fatalf("StartPublisherSubscriptionsForInstance: %v", err)
@@ -163,9 +163,9 @@ func TestStartPublisherSubscriptions_UnknownPublisherFailsWithReason(t *testing.
 		Logger:     shared.SilentLogger{},
 	}
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return runtime.StartPublisherSubscriptionsForInstance(ctx, deps, tx, instanceID, nil, []spec.PublisherSpec{
+		return runtime.StartPublisherSubscriptionsForInstance(ctx, deps, instanceID, nil, []spec.PublisherSpec{
 			{Name: "no-such-publisher", Kind: "object_store", Config: json.RawMessage(`{}`), MessageType: "fixture/ping"},
-		})
+		}, tx)
 	})
 	if err != nil {
 		t.Fatalf("StartPublisherSubscriptionsForInstance: %v", err)
@@ -195,7 +195,7 @@ func TestPublisherSubscriptionReconciler_RetriesPastBudgetThenActivates(t *testi
 
 	subID := shared.UUID(uuid.New())
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+		return store.PublisherSubscriptions().Insert(ctx, persistence.PublisherSubscriptionRow{
 			ID:             subID,
 			InstanceID:     instanceID,
 			PublisherName:  "pub-a",
@@ -204,7 +204,7 @@ func TestPublisherSubscriptionReconciler_RetriesPastBudgetThenActivates(t *testi
 
 			State:     persistence.PublisherSubscriptionStateMounting,
 			StartedAt: time.Now().UTC(),
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed mounting row: %v", err)
 	}

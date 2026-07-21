@@ -37,7 +37,7 @@ func TestResolveClaimHandleTerminal_LineageRecordsTerminatingSupervisorAfterProm
 	var inst persistence.InstanceRow
 	var workerNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -87,7 +87,7 @@ func TestResolveClaimHandleTerminal_LineageRecordsTerminatingSupervisorAfterProm
 	}
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		_, err := runtime.ResolveClaimHandleTerminal(ctx, args, runtime.TerminalDecision{
 			ClaimHandleID: claimID,
 			SupervisorID:  terminatingSupervisor,
 			Source:        runtime.ActiveTerminal,
@@ -103,7 +103,7 @@ func TestResolveClaimHandleTerminal_LineageRecordsTerminatingSupervisorAfterProm
 				NodeID:       workerNode.ID,
 				ProducerName: producerName,
 			},
-		})
+		}, tx)
 		return err
 	}))
 

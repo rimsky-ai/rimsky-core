@@ -30,11 +30,11 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 	pausedNodeID := shared.UUID(uuid.New())
 	var pausedFrameID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         pausedRunScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: pausedInstanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -53,13 +53,13 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 			return err
 		}
 		pausedMessageID := shared.UUID(uuid.New())
-		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         pausedMessageID,
 			InstanceID: pausedInstanceID,
 			Type:       "fixture/message",
 			Sender:     "operator",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := store.Frames().InsertRunningFrame(ctx, pausedInstanceID, pausedMessageID, pausedRunScopeID, tx)
@@ -67,7 +67,7 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 			return err
 		}
 		pausedFrameID = fid
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 pausedNodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -80,7 +80,7 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 activeFix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -95,11 +95,11 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 	probeErr := errors.New("rollback probe")
 	var sawActive, sawPaused bool
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  100,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -132,11 +132,11 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 
 	sawPaused = false
 	err = store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  100,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

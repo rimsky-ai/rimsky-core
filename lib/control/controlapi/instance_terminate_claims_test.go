@@ -30,7 +30,7 @@ func seedNodeRunInState(
 	var runID shared.UUID
 	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
          VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), $2, $3, $4, 0)
          RETURNING id`,
 		[]any{uuid.UUID(nodeID), state, uuid.UUID(frameID), uuid.UUID(runScopeID)}, &runID,

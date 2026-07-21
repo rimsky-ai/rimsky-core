@@ -31,7 +31,7 @@ func testFramePruneEnrollsScratchAndAttributeBlobOrphans(t *testing.T, d persist
 
 	var runID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := d.Queue().EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := d.Queue().Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                      fix.NodeID,
 			ExecutorName:                "test-executor",
 			RequiredClaimProducers:      []string{},
@@ -43,11 +43,11 @@ func testFramePruneEnrollsScratchAndAttributeBlobOrphans(t *testing.T, d persist
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := d.Queue().SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := d.Queue().SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

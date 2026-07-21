@@ -29,7 +29,7 @@ func testListInFlightRunStates(t *testing.T, d persistence.Database) {
 		t.Helper()
 		var got map[shared.UUID][]string
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			m, err := q.ListInFlightRunStates(ctx, tx, nodeIDs, frameID, scopeID)
+			m, err := q.ListInFlightRunStates(ctx, nodeIDs, frameID, scopeID, tx)
 			got = m
 			return err
 		}); err != nil {
@@ -65,7 +65,7 @@ func testListInFlightRunStates(t *testing.T, d persistence.Database) {
 		t.Fatalf("ForceComplete: %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return forceRunStateToFresh(ctx, tx, store, runID)
+		return forceRunStateToFresh(ctx, store, runID, tx)
 	}); err != nil {
 		t.Fatalf("settle to fresh: %v", err)
 	}

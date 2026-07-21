@@ -71,7 +71,7 @@ func TestReleaseClaim_SkipsAlreadyResolvedRowInsteadOfDuplicateVerb(t *testing.T
 	}
 	var post postCommitFn
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := releaseClaim(ctx, args, tx, acq, lk, claimSpec, true)
+		pc, err := releaseClaim(ctx, args, acq, lk, claimSpec, true, tx)
 		post = pc
 		return err
 	}))
@@ -138,7 +138,7 @@ func TestResolveLinkedSubClaimsInTx_SkipsAlreadyResolvedRowInsteadOfDuplicateVer
 
 	var post postCommitFn
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := resolveLinkedSubClaimsInTx(ctx, args, tx, acq, true)
+		pc, err := resolveLinkedSubClaimsInTx(ctx, args, acq, true, tx)
 		post = pc
 		return err
 	}))

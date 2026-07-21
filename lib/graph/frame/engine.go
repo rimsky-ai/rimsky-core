@@ -22,7 +22,7 @@ type MetricsHook interface {
 }
 
 // @concept: run-scope
-type RunScopeTerminalFanout func(ctx context.Context, tx persistence.Tx, instanceID, runScopeID shared.UUID, terminalReason string)
+type RunScopeTerminalFanout func(ctx context.Context, instanceID, runScopeID shared.UUID, terminalReason string, tx persistence.Tx)
 
 const settledScopeTerminalReason = "frame_settled"
 
@@ -72,7 +72,7 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 			return gerr
 		}
 		if row != nil {
-			triggeringMsg, merr := store.Messages().GetInTx(ctx, tx, row.TriggeringMessageID)
+			triggeringMsg, merr := store.Messages().Get(ctx, row.TriggeringMessageID, tx)
 			if merr != nil {
 				return merr
 			}
@@ -86,7 +86,7 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 		}
 		result = res
 		if res.Transitioned && row != nil && row.RootRunScopeID != (shared.UUID{}) {
-			if err := closeSettledFrameScopeTree(ctx, store, tx, row.RootRunScopeID, frameID, instanceID, logger, scopeFanout); err != nil {
+			if err := closeSettledFrameScopeTree(ctx, store, row.RootRunScopeID, frameID, instanceID, logger, scopeFanout, tx); err != nil {
 				return err
 			}
 		}
@@ -109,11 +109,9 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 // @concept: run-scope
 // @concept: frame
 func closeSettledFrameScopeTree(
-	ctx context.Context, store persistence.Tables, tx persistence.Tx,
-	rootRunScopeID, frameID, instanceID shared.UUID,
-	logger Logger, scopeFanout RunScopeTerminalFanout,
+	ctx context.Context, store persistence.Tables, rootRunScopeID, frameID, instanceID shared.UUID, logger Logger, scopeFanout RunScopeTerminalFanout, tx persistence.Tx,
 ) error {
-	tree, err := store.RunScopes().ListTreeDeepestFirst(ctx, tx, rootRunScopeID)
+	tree, err := store.RunScopes().ListTreeDeepestFirst(ctx, rootRunScopeID, tx)
 	if err != nil {
 		return fmt.Errorf("list run-scope tree for settled frame %s: %w", frameID, err)
 	}
@@ -126,12 +124,12 @@ func closeSettledFrameScopeTree(
 					"run_scope_id", scope.ID,
 					"root_run_scope_id", rootRunScopeID)
 			}
-			if err := store.RunScopes().Close(ctx, tx, scope.ID); err != nil {
+			if err := store.RunScopes().Close(ctx, scope.ID, tx); err != nil {
 				return fmt.Errorf("close run scope %s for settled frame %s: %w", scope.ID, frameID, err)
 			}
 		}
 		if scopeFanout != nil {
-			scopeFanout(ctx, tx, instanceID, scope.ID, settledScopeTerminalReason)
+			scopeFanout(ctx, instanceID, scope.ID, settledScopeTerminalReason, tx)
 		}
 	}
 	return nil
@@ -153,7 +151,7 @@ func runOpenNewFrames(ctx context.Context, store persistence.Tables, logger Logg
 	for _, p := range picks {
 		var frameID shared.UUID
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			fid, oerr := openRunningFrameForMessage(ctx, store, tx, p.InstanceID, p.MessageID)
+			fid, oerr := openRunningFrameForMessage(ctx, store, p.InstanceID, p.MessageID, tx)
 			if oerr != nil {
 				return oerr
 			}

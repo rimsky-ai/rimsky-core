@@ -23,16 +23,12 @@ import (
 // @decision: substitution-grammar-closed
 // @decision: substitution-deps-from-persisted-senders
 func BuildAttributeDeps(
-	ctx context.Context,
-	tx persistence.Tx,
-	args RunArgs,
-	receiverNodeRunID foundationshared.UUID,
-	frameID foundationshared.UUID,
+	ctx context.Context, args RunArgs, receiverNodeRunID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx,
 ) (map[string]json.RawMessage, error) {
 	out := make(map[string]json.RawMessage)
 
 	if receiverNodeRunID != (foundationshared.UUID{}) {
-		if err := populateSubscribedSenderDeps(ctx, tx, args, receiverNodeRunID, out); err != nil {
+		if err := populateSubscribedSenderDeps(ctx, args, receiverNodeRunID, out, tx); err != nil {
 			return nil, err
 		}
 	}
@@ -40,7 +36,7 @@ func BuildAttributeDeps(
 	// @concept: message
 	// @concept: message-schema
 	if args.Persist != nil && args.Persist.Messages() != nil {
-		msgs, msgErr := args.Persist.Messages().ListDeliveredForFrame(ctx, tx, frameID)
+		msgs, msgErr := args.Persist.Messages().ListDeliveredForFrame(ctx, frameID, tx)
 		if msgErr != nil {
 			return nil, fmt.Errorf("BuildAttributeDeps: list delivered messages: %w", msgErr)
 		}
@@ -66,10 +62,9 @@ func BuildAttributeDeps(
 // @concept: cascade
 // @story: sequenced-preserves-cascade-rounds
 func populateSubscribedSenderDeps(
-	ctx context.Context, tx persistence.Tx, args RunArgs,
-	receiverNodeRunID foundationshared.UUID, out map[string]json.RawMessage,
+	ctx context.Context, args RunArgs, receiverNodeRunID foundationshared.UUID, out map[string]json.RawMessage, tx persistence.Tx,
 ) error {
-	rec, err := args.Persist.Nodes().GetRunForGate(ctx, tx, receiverNodeRunID)
+	rec, err := args.Persist.Nodes().GetRunForGate(ctx, receiverNodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("populateSubscribedSenderDeps: get receiver run: %w", err)
 	}
@@ -105,10 +100,10 @@ func populateSubscribedSenderDeps(
 	for _, t := range senderTypes {
 		senderTypeSet[t] = struct{}{}
 	}
-	if err := populateEntryAliasDepsViaCallingNode(ctx, tx, args, rec, edges, receiverNode.NodeType, out); err != nil {
+	if err := populateEntryAliasDepsViaCallingNode(ctx, args, rec, edges, receiverNode.NodeType, out, tx); err != nil {
 		return err
 	}
-	pinned, err := pinnedSenderRunsForReceiver(ctx, tx, args, rec.FrameID, receiverNodeRunID)
+	pinned, err := pinnedSenderRunsForReceiver(ctx, args, rec.FrameID, receiverNodeRunID, tx)
 	if err != nil {
 		return err
 	}
@@ -125,7 +120,7 @@ func populateSubscribedSenderDeps(
 		}
 		sourceRunID, pinnedRound := pinned[n.ID]
 		if !pinnedRound {
-			latest, latestErr := args.Persist.Nodes().GetMostRecentSettledRun(ctx, tx, n.ID, rec.RunScopeID, math.MaxInt64)
+			latest, latestErr := args.Persist.Nodes().GetMostRecentSettledRun(ctx, n.ID, rec.RunScopeID, math.MaxInt64, tx)
 			if latestErr != nil {
 				return fmt.Errorf("populateSubscribedSenderDeps: latest fresh run for %s: %w", n.NodeType, latestErr)
 			}
@@ -134,7 +129,7 @@ func populateSubscribedSenderDeps(
 			}
 			sourceRunID = latest.NodeRunID
 		}
-		raw, rawErr := senderAttrsRaw(ctx, tx, args, sourceRunID, n.NodeType)
+		raw, rawErr := senderAttrsRaw(ctx, args, sourceRunID, n.NodeType, tx)
 		if rawErr != nil {
 			return rawErr
 		}
@@ -146,22 +141,20 @@ func populateSubscribedSenderDeps(
 // @concept: attribute
 // @concept: node-run
 func populateEntryAliasDepsViaCallingNode(
-	ctx context.Context, tx persistence.Tx, args RunArgs,
-	rec *persistence.NodeRunForGate, edges *node.SubscriptionEdgeMap,
-	receiverNodeType string, out map[string]json.RawMessage,
+	ctx context.Context, args RunArgs, rec *persistence.NodeRunForGate, edges *node.SubscriptionEdgeMap, receiverNodeType string, out map[string]json.RawMessage, tx persistence.Tx,
 ) error {
 	aliasSenders := edges.CallingNodeSenderTypesForReceiver(receiverNodeType)
 	if len(aliasSenders) == 0 {
 		return nil
 	}
-	scope, err := args.Persist.RunScopes().GetByID(ctx, tx, rec.RunScopeID)
+	scope, err := args.Persist.RunScopes().GetByID(ctx, rec.RunScopeID, tx)
 	if err != nil {
 		return fmt.Errorf("populateEntryAliasDepsViaCallingNode: load run scope: %w", err)
 	}
 	if scope == nil || scope.ParentNodeRunID == nil {
 		return nil
 	}
-	callerRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, *scope.ParentNodeRunID)
+	callerRun, err := args.Persist.NodeRunTree().GetByID(ctx, *scope.ParentNodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("populateEntryAliasDepsViaCallingNode: load calling node run: %w", err)
 	}
@@ -169,7 +162,7 @@ func populateEntryAliasDepsViaCallingNode(
 		return nil
 	}
 	for _, alias := range aliasSenders {
-		raw, err := senderAttrsRaw(ctx, tx, args, callerRun.NodeRunID, alias)
+		raw, err := senderAttrsRaw(ctx, args, callerRun.NodeRunID, alias, tx)
 		if err != nil {
 			return err
 		}
@@ -181,8 +174,7 @@ func populateEntryAliasDepsViaCallingNode(
 // @concept: wait-set
 // @story: sequenced-preserves-cascade-rounds
 func pinnedSenderRunsForReceiver(
-	ctx context.Context, tx persistence.Tx, args RunArgs,
-	frameID, receiverNodeRunID foundationshared.UUID,
+	ctx context.Context, args RunArgs, frameID, receiverNodeRunID foundationshared.UUID, tx persistence.Tx,
 ) (map[foundationshared.UUID]foundationshared.UUID, error) {
 	rows, err := args.Persist.WaitSet().ListForReceiver(ctx, frameID, receiverNodeRunID, tx)
 	if err != nil {
@@ -196,7 +188,7 @@ func pinnedSenderRunsForReceiver(
 			continue
 		}
 		seenRun[w.SenderNodeRunID] = struct{}{}
-		senderRun, runErr := args.Persist.Nodes().GetRunForGate(ctx, tx, w.SenderNodeRunID)
+		senderRun, runErr := args.Persist.Nodes().GetRunForGate(ctx, w.SenderNodeRunID, tx)
 		if runErr != nil {
 			return nil, fmt.Errorf("pinnedSenderRunsForReceiver: get sender run: %w", runErr)
 		}
@@ -212,8 +204,7 @@ func pinnedSenderRunsForReceiver(
 }
 
 func senderAttrsRaw(
-	ctx context.Context, tx persistence.Tx, args RunArgs,
-	runID foundationshared.UUID, nodeType string,
+	ctx context.Context, args RunArgs, runID foundationshared.UUID, nodeType string, tx persistence.Tx,
 ) (json.RawMessage, error) {
 	attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, runID, tx)
 	if err != nil {
@@ -230,13 +221,9 @@ func senderAttrsRaw(
 }
 
 func buildResolveContextForAcquisition(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	frameID, receiverNodeRunID foundationshared.UUID,
-	templateHash string,
-	params json.RawMessage,
-	claims map[string]claimproducer.ClaimResult,
+	ctx context.Context, args RunArgs, frameID, receiverNodeRunID foundationshared.UUID, templateHash string, params json.RawMessage, claims map[string]claimproducer.ClaimResult, tx persistence.Tx,
 ) (attributes.ResolveContext, error) {
-	deps, err := BuildAttributeDeps(ctx, tx, args, receiverNodeRunID, frameID)
+	deps, err := BuildAttributeDeps(ctx, args, receiverNodeRunID, frameID, tx)
 	if err != nil {
 		return attributes.ResolveContext{}, fmt.Errorf("buildResolveContextForAcquisition: %w", err)
 	}

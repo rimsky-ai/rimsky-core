@@ -74,11 +74,11 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 		}, tx); err != nil {
 			return err
 		}
-		if err := f.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := f.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -88,13 +88,13 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 			return err
 		}
 		msgID := uuid.New()
-		if err := f.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := f.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := f.persist.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx); err != nil {
@@ -313,9 +313,9 @@ func TestInstanceTerminator_MultiStorePartialFailureInSameTick(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := f.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := f.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -325,13 +325,13 @@ func TestInstanceTerminator_MultiStorePartialFailureInSameTick(t *testing.T) {
 			return err
 		}
 		msgID := uuid.New()
-		if err := f.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := f.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := f.persist.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx); err != nil {

@@ -34,7 +34,7 @@ const (
 )
 
 // @concept: message-schema
-func EnqueueMessage(ctx context.Context, tx persistence.Tx, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest) error {
+func EnqueueMessage(ctx context.Context, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest, tx persistence.Tx) error {
 	if req.ID == (shared.UUID{}) {
 		return errors.New("EnqueueMessage: id required")
 	}
@@ -72,11 +72,11 @@ func EnqueueMessage(ctx context.Context, tx persistence.Tx, deps EnqueueMessageD
 		}
 	}
 	if inst != nil && inst.MessageQueueMode == node.MessageQueueModeCoalesce {
-		if _, err := deps.Messages().CancelPendingForInstance(ctx, tx, req.InstanceID); err != nil {
+		if _, err := deps.Messages().CancelPendingForInstance(ctx, req.InstanceID, tx); err != nil {
 			return fmt.Errorf("EnqueueMessage: coalesce prior pending: %w", err)
 		}
 	}
-	return deps.Messages().Insert(ctx, tx, req)
+	return deps.Messages().Insert(ctx, req, tx)
 }
 
 type DeliveredMessages struct {
@@ -140,8 +140,7 @@ func deliverForRunningFrame(
 		if frameRow == nil {
 			return nil
 		}
-		delivered, err := DeliverTriggeringMessage(ctx, tx, persist.Messages(),
-			instanceID, frameID, frameRow.TriggeringMessageID, now)
+		delivered, err := DeliverTriggeringMessage(ctx, persist.Messages(), instanceID, frameID, frameRow.TriggeringMessageID, now, tx)
 		if err != nil {
 			return err
 		}
@@ -149,8 +148,7 @@ func deliverForRunningFrame(
 			return nil
 		}
 		for _, msg := range delivered.Messages {
-			if err := deliverNamedMessageInTx(ctx, persist, logger, tx,
-				instanceID, frameID, msg, frameRow.RootRunScopeID, now); err != nil {
+			if err := deliverNamedMessageInTx(ctx, persist, logger, instanceID, frameID, msg, frameRow.RootRunScopeID, now, tx); err != nil {
 				return err
 			}
 		}
@@ -161,15 +159,9 @@ func deliverForRunningFrame(
 // @concept: message
 // @concept: node-run
 func deliverNamedMessageInTx(
-	ctx context.Context, persist persistence.Tables,
-	logger shared.Logger,
-	tx persistence.Tx,
-	instanceID, frameID shared.UUID,
-	msg persistence.MessageRow,
-	frameRootRunScopeID shared.UUID,
-	now time.Time,
+	ctx context.Context, persist persistence.Tables, logger shared.Logger, instanceID, frameID shared.UUID, msg persistence.MessageRow, frameRootRunScopeID shared.UUID, now time.Time, tx persistence.Tx,
 ) error {
-	receiver, err := findMessageReceiverNode(ctx, persist, tx, instanceID, msg.Type)
+	receiver, err := findMessageReceiverNode(ctx, persist, instanceID, msg.Type, tx)
 	if err != nil {
 		return fmt.Errorf("deliverNamedMessageInTx: find message-receiver-node for %q: %w", msg.Type, err)
 	}
@@ -194,14 +186,14 @@ func deliverNamedMessageInTx(
 		}
 		return nil
 	}
-	runID, err := persist.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+	runID, err := persist.Nodes().CreateNonCascadeStale(ctx, persistence.NonCascadeStaleInput{
 		NodeID:         receiver.ID,
 		RunScopeID:     frameRootRunScopeID,
 		FrameID:        frameID,
 		ExecutorName:   "",
 		EnqueuedAt:     now,
 		CreationReason: cascade.CreationReasonMessageDelivery,
-	})
+	}, tx)
 	if err != nil {
 		return fmt.Errorf("deliverNamedMessageInTx: create message-receiver run for %q: %w", msg.Type, err)
 	}
@@ -209,7 +201,7 @@ func deliverNamedMessageInTx(
 	if err := persist.NodeAttributes().Upsert(ctx, runID, receiver.ID, body, tx); err != nil {
 		return fmt.Errorf("deliverNamedMessageInTx: upsert message body bag for %q: %w", msg.Type, err)
 	}
-	if err := persist.NodeAttributes().SetDispatchInputBag(ctx, tx, runID, receiver.ID, body); err != nil {
+	if err := persist.NodeAttributes().SetDispatchInputBag(ctx, runID, receiver.ID, body, tx); err != nil {
 		return fmt.Errorf("deliverNamedMessageInTx: persist dispatch input bag for %q: %w", msg.Type, err)
 	}
 	return nil
@@ -218,8 +210,7 @@ func deliverNamedMessageInTx(
 // @concept: message
 // @concept: node
 func findMessageReceiverNode(
-	ctx context.Context, persist persistence.Tables, tx persistence.Tx,
-	instanceID shared.UUID, messageType string,
+	ctx context.Context, persist persistence.Tables, instanceID shared.UUID, messageType string, tx persistence.Tx,
 ) (*persistence.NodeRow, error) {
 	nodes, err := persist.Nodes().ListByInstance(ctx, instanceID, tx)
 	if err != nil {
@@ -264,10 +255,9 @@ func messagePayloadAsMap(payload []byte) map[string]any {
 }
 
 func DeliverTriggeringMessage(
-	ctx context.Context, tx persistence.Tx, m persistence.MessageTable,
-	instanceID shared.UUID, frameID shared.UUID, triggeringMessageID shared.UUID, now time.Time,
+	ctx context.Context, m persistence.MessageTable, instanceID shared.UUID, frameID shared.UUID, triggeringMessageID shared.UUID, now time.Time, tx persistence.Tx,
 ) (DeliveredMessages, error) {
-	msg, err := m.GetInTx(ctx, tx, triggeringMessageID)
+	msg, err := m.Get(ctx, triggeringMessageID, tx)
 	if err != nil {
 		return DeliveredMessages{}, fmt.Errorf("DeliverTriggeringMessage: get trigger %s: %w", triggeringMessageID, err)
 	}
@@ -280,7 +270,7 @@ func DeliverTriggeringMessage(
 	if msg.DeliveredAt != nil || msg.Cancelled {
 		return DeliveredMessages{}, nil
 	}
-	ok, err := m.MarkDelivered(ctx, tx, triggeringMessageID, frameID, now)
+	ok, err := m.MarkDelivered(ctx, triggeringMessageID, frameID, now, tx)
 	if err != nil {
 		return DeliveredMessages{}, fmt.Errorf("DeliverTriggeringMessage: mark delivered %s: %w", triggeringMessageID, err)
 	}

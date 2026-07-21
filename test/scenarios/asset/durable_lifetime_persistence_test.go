@@ -43,9 +43,9 @@ func TestDurableLifetimePersistence_InsertInputCarriesLifetime(t *testing.T) {
 	ck := "ck-durable-lifetime-persistence"
 	var acqNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{

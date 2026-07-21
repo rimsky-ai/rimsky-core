@@ -14,13 +14,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-const storeLifecycleCols = `store_registration_name, scope_kind, scope_id, state, last_event_at`
+const lifecycleIdempotencyCols = `claim_producer_name, scope_kind, scope_id, state, last_event_at`
 
 func (s *lifecycleIdempotencyImpl) Get(ctx context.Context, claimProducerName string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) (*persistence.LifecycleIdempotencyRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT `+storeLifecycleCols+`
+		`SELECT `+lifecycleIdempotencyCols+`
 		 FROM rimsky_lifecycle_idempotencies
-		 WHERE store_registration_name = ? AND scope_kind = ? AND scope_id = ?`,
+		 WHERE claim_producer_name = ? AND scope_kind = ? AND scope_id = ?`,
 		claimProducerName, string(scopeKind), scopeID,
 	)
 	r, err := scanLifecycleIdempotency(row)
@@ -39,9 +39,9 @@ func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.Li
 		lastEventAt = time.Now()
 	}
 	_, err := s.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_lifecycle_idempotencies (store_registration_name, scope_kind, scope_id, state, last_event_at)
+		`INSERT INTO rimsky_lifecycle_idempotencies (claim_producer_name, scope_kind, scope_id, state, last_event_at)
 		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(store_registration_name, scope_kind, scope_id)
+		 ON CONFLICT(claim_producer_name, scope_kind, scope_id)
 		 DO UPDATE SET state = excluded.state, last_event_at = excluded.last_event_at`,
 		in.ClaimProducerName, string(in.ScopeKind), in.ScopeID, string(in.State), formatTime(lastEventAt),
 	)
@@ -54,7 +54,7 @@ func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.Li
 func (s *lifecycleIdempotencyImpl) Delete(ctx context.Context, claimProducerName string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_lifecycle_idempotencies
-		 WHERE store_registration_name = ? AND scope_kind = ? AND scope_id = ?`,
+		 WHERE claim_producer_name = ? AND scope_kind = ? AND scope_id = ?`,
 		claimProducerName, string(scopeKind), scopeID,
 	)
 	if err != nil {
@@ -77,10 +77,10 @@ func (s *lifecycleIdempotencyImpl) DeleteByScope(ctx context.Context, scopeKind 
 
 func (s *lifecycleIdempotencyImpl) ListByScope(ctx context.Context, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) ([]persistence.LifecycleIdempotencyRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+storeLifecycleCols+`
+		`SELECT `+lifecycleIdempotencyCols+`
 		 FROM rimsky_lifecycle_idempotencies
 		 WHERE scope_kind = ? AND scope_id = ?
-		 ORDER BY store_registration_name ASC`,
+		 ORDER BY claim_producer_name ASC`,
 		string(scopeKind), scopeID,
 	)
 	if err != nil {
@@ -101,9 +101,9 @@ func (s *lifecycleIdempotencyImpl) ListByScope(ctx context.Context, scopeKind pe
 
 func (s *lifecycleIdempotencyImpl) ListByClaimProducer(ctx context.Context, claimProducerName string, tx persistence.Tx) ([]persistence.LifecycleIdempotencyRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+storeLifecycleCols+`
+		`SELECT `+lifecycleIdempotencyCols+`
 		 FROM rimsky_lifecycle_idempotencies
-		 WHERE store_registration_name = ?
+		 WHERE claim_producer_name = ?
 		 ORDER BY scope_kind ASC, scope_id ASC`,
 		claimProducerName,
 	)

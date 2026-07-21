@@ -18,13 +18,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
-func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx, specs []any) error {
+func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, specs []any, tx persistence.Tx) error {
 	for _, sp := range specs {
 		named, ok := sp.(locks.NamedLockSpec)
 		if !ok {
 			continue
 		}
-		if err := args.AdvisoryLocker.TakeNamedLockInTx(ctx, tx, named.Name); err != nil {
+		if err := args.AdvisoryLocker.TakeNamedLock(ctx, named.Name, tx); err != nil {
 			return fmt.Errorf("takeNamedAdvisoryLocks(%q): %w", named.Name, err)
 		}
 	}
@@ -32,19 +32,17 @@ func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx
 }
 
 func acquireOneLock(
-	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
-	sp any, cand persistence.Candidate, livenessInterval time.Duration,
-	heldSubgraphs []node.HoldingSubgraph, acquired []AcquiredLock,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, sp any, cand persistence.Candidate, livenessInterval time.Duration, heldSubgraphs []node.HoldingSubgraph, acquired []AcquiredLock, tx persistence.Tx,
 ) (AcquiredLock, openResult, error) {
 	switch spec := sp.(type) {
 	case locks.NamedLockSpec:
 		// @concept: parked-state
-		if al, reused, err := reuseHeldNamedLock(ctx, args, tx, spec, cand, acquired, livenessInterval); err != nil {
+		if al, reused, err := reuseHeldNamedLock(ctx, args, spec, cand, acquired, livenessInterval, tx); err != nil {
 			return AcquiredLock{}, openResultBail, err
 		} else if reused {
 			return al, openResultAcquired, nil
 		}
-		al, ok, err := acquireNamedLock(ctx, args, tx, spec, cand, livenessInterval)
+		al, ok, err := acquireNamedLock(ctx, args, spec, cand, livenessInterval, tx)
 		if err != nil {
 			return AcquiredLock{}, openResultBail, err
 		}
@@ -53,15 +51,14 @@ func acquireOneLock(
 		}
 		return al, openResultAcquired, nil
 	case claimproducer.ClaimSpec:
-		return acquireClaim(ctx, args, tx, instanceID, spec, cand, livenessInterval, heldSubgraphs, acquired)
+		return acquireClaim(ctx, args, instanceID, spec, cand, livenessInterval, heldSubgraphs, acquired, tx)
 	}
 	return AcquiredLock{}, openResultBail, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
 }
 
 // @concept: named-lock
 func acquireNamedLock(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	spec locks.NamedLockSpec, cand persistence.Candidate, livenessInterval time.Duration,
+	ctx context.Context, args RunArgs, spec locks.NamedLockSpec, cand persistence.Candidate, livenessInterval time.Duration, tx persistence.Tx,
 ) (AcquiredLock, bool, error) {
 	if cfg, ok := args.NamedLocks.Get(spec.Name); ok {
 		count, err := args.ClaimHandles.CountByNamedLock(ctx, spec.Name, tx)

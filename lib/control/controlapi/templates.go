@@ -36,7 +36,7 @@ func callerCanSetTag(req *http.Request, tag string) bool {
 	return auth.CheckGrant(ident.Permissions, "tag:set", map[string]string{"template_tag": tag}).Allowed
 }
 
-func upsertTagIfNotConflicting(ctx context.Context, deps AppDeps, tx persistence.Tx, req *http.Request, tag, hash string) error {
+func upsertTagIfNotConflicting(ctx context.Context, deps AppDeps, req *http.Request, tag, hash string, tx persistence.Tx) error {
 	existing, err := deps.Persist.TemplateTags().Get(ctx, tag, tx)
 	if err != nil {
 		return err
@@ -293,7 +293,7 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 			}
 			if tag != "" {
 				err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-					return upsertTagIfNotConflicting(ctx, deps, tx, req, tag, hash)
+					return upsertTagIfNotConflicting(ctx, deps, req, tag, hash, tx)
 				})
 				if errors.Is(err, errTagMoveForbidden) {
 					writeJSON(w, http.StatusForbidden, map[string]any{"error": errTagMoveForbidden.Error()})
@@ -340,7 +340,7 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			if tag != "" {
-				if err := upsertTagIfNotConflicting(ctx, deps, tx, req, tag, hash); err != nil {
+				if err := upsertTagIfNotConflicting(ctx, deps, req, tag, hash, tx); err != nil {
 					return err
 				}
 			}

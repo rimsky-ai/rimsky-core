@@ -40,7 +40,7 @@ func TestAcquireNamedLock_AtCapacityRejectsWithoutInsert(t *testing.T) {
 	}
 	cand := persistence.Candidate{NodeRunID: shared.UUID{}, NodeID: shared.UUID{}}
 
-	_, ok, err := acquireNamedLock(context.Background(), args, nil, locks.NamedLockSpec{Name: "budget"}, cand, time.Second)
+	_, ok, err := acquireNamedLock(context.Background(), args, locks.NamedLockSpec{Name: "budget"}, cand, time.Second, nil)
 	if err != nil {
 		t.Fatalf("acquireNamedLock: unexpected error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestAcquireNamedLock_UnderCapacityAcquires(t *testing.T) {
 	}
 	cand := persistence.Candidate{NodeRunID: shared.UUID{}, NodeID: shared.UUID{}}
 
-	_, ok, err := acquireNamedLock(context.Background(), args, nil, locks.NamedLockSpec{Name: "budget"}, cand, time.Second)
+	_, ok, err := acquireNamedLock(context.Background(), args, locks.NamedLockSpec{Name: "budget"}, cand, time.Second, nil)
 	if err != nil {
 		t.Fatalf("acquireNamedLock: unexpected error: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestAcquireNamedLock_UnconfiguredNameIsUnlimited(t *testing.T) {
 	}
 	cand := persistence.Candidate{NodeRunID: shared.UUID{}, NodeID: shared.UUID{}}
 
-	_, ok, err := acquireNamedLock(context.Background(), args, nil, locks.NamedLockSpec{Name: "unbounded"}, cand, time.Second)
+	_, ok, err := acquireNamedLock(context.Background(), args, locks.NamedLockSpec{Name: "unbounded"}, cand, time.Second, nil)
 	if err != nil {
 		t.Fatalf("acquireNamedLock: unexpected error: %v", err)
 	}

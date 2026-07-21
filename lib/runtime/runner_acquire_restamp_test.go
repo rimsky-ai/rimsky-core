@@ -59,9 +59,9 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -75,23 +75,23 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: leafRunID, NodeID: nodeID, FrameID: frameID,
 			RunScopeID: mainScopeID, ExecutorName: "stub",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if err := tables.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
@@ -133,9 +133,9 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		SupervisorID: supLeaf,
 	}
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return restampLinkedSubClaimHolders(ctx, args, tx, persistence.Candidate{
+		return restampLinkedSubClaimHolders(ctx, args, persistence.Candidate{
 			NodeRunID: leafRunID, NodeID: nodeID, NodeType: "leaf",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("restampLinkedSubClaimHolders: %v", err)
 	}

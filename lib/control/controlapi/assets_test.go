@@ -171,13 +171,13 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 		}
 		producerNodeID = uuid.UUID(prodNodeUUID)
 		msgID := shared.UUID(uuid.New())
-		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := h.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: shared.UUID(instID),
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		_ = prodNodeUUID
@@ -193,7 +193,7 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 	nodeRunID := uuid.New()
 	pgdbtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+			(id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 0)
 	`, nodeRunID, producerNodeID, frameID, mainScopeID)
 
@@ -224,7 +224,7 @@ func (ah *assetHarness) seedNonDataProcessingClaim(
 	nodeRunID := uuid.New()
 	pgdbtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+			(id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 1)
 	`, nodeRunID, producerNodeID, frameID, mainScopeID)
 
@@ -293,7 +293,7 @@ func TestClaimHandles_DeleteResolvedIfNoActiveHolders_RefusesWithActiveHolder(t 
 		[]any{frameID}, &mainScopeID)
 	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+			(id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
 	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
@@ -401,7 +401,7 @@ func TestAssetEndpoints_MaterializationHistoryJoinsLineage(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NoError(t, ah.harness.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return ah.harness.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			return ah.harness.persist.Lineage().Insert(ctx, persistence.LineageRow{
 				ID:         shared.UUID(uuid.New()),
 				RecordKind: persistence.LineageRecordKindClaimTerminal,
 				InstanceID: shared.UUID(instID),
@@ -409,7 +409,7 @@ func TestAssetEndpoints_MaterializationHistoryJoinsLineage(t *testing.T) {
 				ObservedAt: observedAt,
 				Record:     rec,
 				Outcome:    persistence.LineageOutcomeCommitted,
-			})
+			}, tx)
 		}))
 	}
 	base := time.Now().UTC()
@@ -495,7 +495,7 @@ func TestAssetEndpoints_DeleteDryRunRefusesWithActiveHolder(t *testing.T) {
 		[]any{frameID}, &mainScopeID)
 	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+			(id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
 	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
@@ -547,7 +547,7 @@ func TestAssetEndpoints_ListExcludesRowWithNoResolvableAlias(t *testing.T) {
 	nodeRunID := uuid.New()
 	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+			(id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 2)
 	`, nodeRunID, uuid.UUID(downstreamNodeID), frameID, mainScopeID)
 
@@ -583,7 +583,7 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 		[]any{frameID}, &mainScopeID)
 	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+			(id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
 	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `

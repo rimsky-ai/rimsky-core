@@ -88,7 +88,7 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	for i, r := range runs {
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_node_runs
-			   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+			   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 			 VALUES (?, ?, 'stub', '[]', datetime('now'), 'running', 'cascade', ?, ?, ?)`,
 			r.runID, r.nodeID, i+1, frameID, scopeID,
 		); err != nil {

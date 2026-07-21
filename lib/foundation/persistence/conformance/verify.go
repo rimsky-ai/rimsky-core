@@ -27,18 +27,18 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 		EnqueuedAt:             time.Now().Add(-1 * time.Second),
 		FrameID:                fix.FrameID,
 		RunScopeID:             fix.MainRunScopeID,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 
 	supID := "verify-supervisor"
 	var nodeRunID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  10,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -46,7 +46,7 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 			t.Fatalf("expected 1 candidate, got %d", len(cands))
 		}
 		nodeRunID = cands[0].NodeRunID
-		ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].NodeRunID, supID)
+		ok, err := q.ClaimDispatchRow(ctx, cands[0].NodeRunID, supID, tx)
 		if err != nil {
 			return err
 		}

@@ -278,7 +278,7 @@ func TestProducerVerbOutboxBarrier_DrainsMatchingScopeBeforeOpen(t *testing.T) {
 	enqueueOutboxVerb(ctx, t, outbox, blockingClaim, "store-a", persistence.ProducerVerbCommit, sameScope, start)
 	enqueueOutboxVerb(ctx, t, outbox, unrelatedClaim, "store-a", persistence.ProducerVerbAbandon, otherScope, start)
 
-	require.NoError(t, producerVerbOutboxBarrier(ctx, args, nil, fake, "store-a", sameScope))
+	require.NoError(t, producerVerbOutboxBarrier(ctx, args, fake, "store-a", sameScope, nil))
 	require.Equal(t, 1, callCountFor(fake, blockingClaim, "commit"),
 		"the barrier must deliver the scope's undelivered terminal before Open proceeds")
 	require.Equal(t, 0, callCountFor(fake, unrelatedClaim, "abandon"),
@@ -311,7 +311,7 @@ func TestProducerVerbOutboxBarrier_UndeliverableTerminalBlocksOpen(t *testing.T)
 	claimID := shared.UUID(uuid.New())
 	enqueueOutboxVerb(ctx, t, outbox, claimID, "store-a", persistence.ProducerVerbAbandon, scope, start)
 
-	err := producerVerbOutboxBarrier(ctx, args, nil, fake, "store-a", scope)
+	err := producerVerbOutboxBarrier(ctx, args, fake, "store-a", scope, nil)
 	require.Error(t, err, "an undeliverable terminal for the same scope must block Open")
 	rows, lerr := outbox.ListAll(ctx, nil)
 	require.NoError(t, lerr)

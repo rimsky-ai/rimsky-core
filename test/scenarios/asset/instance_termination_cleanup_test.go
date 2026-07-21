@@ -38,9 +38,9 @@ func TestInstanceTerminationCleanup_PreservesFailedReleaseForRetry(t *testing.T)
 	ck := "ck-instance-termination-cleanup"
 	var acqNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -110,7 +110,7 @@ func TestInstanceTerminationCleanup_PreservesFailedReleaseForRetry(t *testing.T)
 	}
 	var report runtime.CommittedDurableReleaseReport
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := runtime.ReleaseCommittedDurableClaims(ctx, args, tx, instID, shared.SilentLogger{})
+		r, err := runtime.ReleaseCommittedDurableClaims(ctx, args, instID, shared.SilentLogger{}, tx)
 		report = r
 		return err
 	}))
@@ -186,9 +186,9 @@ func TestInstanceTerminationCleanup_DeleteResolvedFailureAbortsWithoutOrphaningT
 	ck := "ck-instance-termination-cleanup-delete-fail"
 	var acqNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -249,7 +249,7 @@ func TestInstanceTerminationCleanup_DeleteResolvedFailureAbortsWithoutOrphaningT
 		Clock:         clock,
 	}
 	txErr := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := runtime.ReleaseCommittedDurableClaims(ctx, args, tx, instID, shared.SilentLogger{})
+		_, err := runtime.ReleaseCommittedDurableClaims(ctx, args, instID, shared.SilentLogger{}, tx)
 		return err
 	})
 	require.Error(t, txErr)

@@ -134,11 +134,11 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 	)
 	mainScopeID := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := h.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
 			InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		ck := "ck-" + uuid.NewString()
@@ -189,7 +189,7 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 	)
 	var runID shared.UUID
 	pgdbtest.QueryRowForTest(ctx, t, h.driver,
-		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
 		 VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), 'stale', $2, $3, 0)
 		 RETURNING id`,
 		[]any{nodeID, frameID, mainScopeID}, &runID,

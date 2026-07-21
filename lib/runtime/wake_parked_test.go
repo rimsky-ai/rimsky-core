@@ -33,14 +33,14 @@ func TestSweepParkedNodes_WakesCorrectScopeDespiteNewerRunInAnotherScope(t *test
 
 	otherScopeID := shared.UUID(uuid.New())
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         otherScopeID,
 			GraphName:  "sub",
 			InstanceID: acq.InstanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 acq.NodeID,
 			ExecutorName:           acq.Executor,
 			RequiredClaimProducers: []string{},
@@ -63,7 +63,7 @@ func TestSweepParkedNodes_WakesCorrectScopeDespiteNewerRunInAnotherScope(t *test
 	}
 	var stillParked *persistence.NodeRunTreeRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.NodeRunTree().GetByID(ctx, tx, acq.NodeRunID)
+		r, err := tables.NodeRunTree().GetByID(ctx, acq.NodeRunID, tx)
 		stillParked = r
 		return err
 	}); err != nil {
@@ -91,7 +91,7 @@ func TestSweepParkedNodes_WakesCorrectScopeDespiteNewerRunInAnotherScope(t *test
 
 	var row *persistence.NodeRunTreeRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.NodeRunTree().GetByID(ctx, tx, acq.NodeRunID)
+		r, err := tables.NodeRunTree().GetByID(ctx, acq.NodeRunID, tx)
 		row = r
 		return err
 	}); err != nil {

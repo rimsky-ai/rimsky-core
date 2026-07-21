@@ -17,18 +17,17 @@ import (
 
 // @decision: empty-message-as-root-trigger
 func openRunningFrameForMessage(
-	ctx context.Context, store persistence.Tables, tx persistence.Tx,
-	instanceID, triggeringMessageID uuid.UUID,
+	ctx context.Context, store persistence.Tables, instanceID, triggeringMessageID uuid.UUID, tx persistence.Tx,
 ) (uuid.UUID, error) {
 
 	// @concept: run-scope
 	rootRunScopeID := shared.UUID(uuid.New())
-	if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+	if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 		ID:           rootRunScopeID,
 		GraphName:    spec.MainGraphName,
 		InstanceID:   instanceID,
 		PartitionKey: "",
-	}); err != nil {
+	}, tx); err != nil {
 		return uuid.Nil, fmt.Errorf("frame.openRunningFrameForMessage: create root run scope: %w", err)
 	}
 	return store.Frames().InsertRunningFrame(ctx, instanceID, triggeringMessageID, rootRunScopeID, tx)

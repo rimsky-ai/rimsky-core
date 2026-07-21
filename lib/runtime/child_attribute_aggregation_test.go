@@ -36,7 +36,7 @@ func TestSettleFromFanoutChild_ChildOwnAttributesNeverAggregateOntoParentBag(t *
 	var inst persistence.InstanceRow
 	var parentNode, childNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{

@@ -92,8 +92,8 @@ func TestFindMessageReceiverNode_EmptyTypeUnifiedWithUnmatchedType(t *testing.T)
 	var emptyReceiver, unmatchedReceiver *persistence.NodeRow
 	var emptyErr, unmatchedErr error
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		emptyReceiver, emptyErr = findMessageReceiverNode(ctx, tables, tx, instanceID, "")
-		unmatchedReceiver, unmatchedErr = findMessageReceiverNode(ctx, tables, tx, instanceID, "totally-unregistered-type")
+		emptyReceiver, emptyErr = findMessageReceiverNode(ctx, tables, instanceID, "", tx)
+		unmatchedReceiver, unmatchedErr = findMessageReceiverNode(ctx, tables, instanceID, "totally-unregistered-type", tx)
 		return nil
 	}); err != nil {
 		t.Fatalf("transaction: %v", err)
@@ -136,8 +136,7 @@ func TestDeliverNamedMessageInTx_EmptyTypeIsANoOpDeadLetterLikeAnyUnmatchedType(
 			SenderKind: "operator",
 		}
 		if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return deliverNamedMessageInTx(ctx, tables, shared.SilentLogger{}, tx,
-				instanceID, frameID, msg, shared.UUID(uuid.New()), time.Now())
+			return deliverNamedMessageInTx(ctx, tables, shared.SilentLogger{}, instanceID, frameID, msg, shared.UUID(uuid.New()), time.Now(), tx)
 		}); err != nil {
 			t.Fatalf("deliverNamedMessageInTx(type=%q): %v", msgType, err)
 		}

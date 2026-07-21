@@ -29,39 +29,39 @@ func testCreateChildNodeRunRefusesClosedScope(t *testing.T, d persistence.Databa
 
 	fanoutScopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               fanoutScopeID,
 			ParentRunScopeID: &fix.MainRunScopeID,
 			ParentNodeRunID:  &mainScopeRunID,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "closed-part",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Create fanout RunScope: %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunScopes().Close(ctx, tx, fanoutScopeID)
+		return store.RunScopes().Close(ctx, fanoutScopeID, tx)
 	}); err != nil {
 		t.Fatalf("Close fanout RunScope: %v", err)
 	}
 
 	childRunID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+		return store.NodeRunTree().CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 			NodeRunID:    childRunID,
 			NodeID:       fix.NodeID,
 			FrameID:      fix.FrameID,
 			RunScopeID:   fanoutScopeID,
 			ExecutorName: "test-executor",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("CreateChildNodeRun into closed scope: %v", err)
 	}
 
 	var got *persistence.NodeRunTreeRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.NodeRunTree().GetByID(ctx, tx, childRunID)
+		r, err := store.NodeRunTree().GetByID(ctx, childRunID, tx)
 		got = r
 		return err
 	}); err != nil {
@@ -84,54 +84,54 @@ func testInstancesDeleteCascadeRunScopeTree(
 
 	fanoutScopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               fanoutScopeID,
 			ParentRunScopeID: &fix.MainRunScopeID,
 			ParentNodeRunID:  &mainScopeRunID,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "part-a",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Create fanout RunScope: %v", err)
 	}
 
 	fanoutRunID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+		return store.NodeRunTree().CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 			NodeRunID:    fanoutRunID,
 			NodeID:       fix.NodeID,
 			FrameID:      fix.FrameID,
 			RunScopeID:   fanoutScopeID,
 			ExecutorName: "test-executor",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("CreateChildNodeRun fanout: %v", err)
 	}
 
 	subgraphScopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               subgraphScopeID,
 			ParentRunScopeID: &fanoutScopeID,
 			ParentNodeRunID:  &fanoutRunID,
 			GraphName:        "subgraph",
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Create subgraph RunScope: %v", err)
 	}
 
 	subgraphRunID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+		return store.NodeRunTree().CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 			NodeRunID:    subgraphRunID,
 			NodeID:       fix.NodeID,
 			FrameID:      fix.FrameID,
 			RunScopeID:   subgraphScopeID,
 			ExecutorName: "test-executor",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("CreateChildNodeRun subgraph: %v", err)
 	}

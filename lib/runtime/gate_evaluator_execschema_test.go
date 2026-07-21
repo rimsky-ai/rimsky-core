@@ -54,9 +54,9 @@ func seedGateEvalSchemaFixture(
 		if err := tables.Templates().UpdateState(ctx, templateHash, persistence.TemplateStateDeployed, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -70,9 +70,9 @@ func seedGateEvalSchemaFixture(
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/fixture-seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -113,7 +113,7 @@ func TestBuildResolvedBagAtGateEvalCarry_ExecSchemaOnlyNodeUsesExecutorSchema(t 
 	}
 
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resolved, err := buildResolvedBagAtGateEvalCarry(ctx, args, tx, row, map[string]any{})
+		resolved, err := buildResolvedBagAtGateEvalCarry(ctx, args, row, map[string]any{}, tx)
 		require.NoError(t, err)
 		require.Equal(t, "hi", resolved["greeting"],
 			"a node with no declared attributes block must still resolve the executor's expected-attributes "+
@@ -150,7 +150,7 @@ func TestBuildResolvedBagAtGateEvalCarry_IncludesTemplateAttributeDefaults(t *te
 	}
 
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resolved, err := buildResolvedBagAtGateEvalCarry(ctx, args, tx, row, map[string]any{})
+		resolved, err := buildResolvedBagAtGateEvalCarry(ctx, args, row, map[string]any{}, tx)
 		require.NoError(t, err)
 		require.Equal(t, "us-east", resolved["region"],
 			"gate-eval schema assembly must include template-level attribute defaults for the executor, "+

@@ -60,14 +60,14 @@ func TestBuildAttributeDeps_SkipsEmptyWakeMessages(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: emptyWakeMsgID, InstanceID: instanceID, Type: "", Sender: "operator", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, emptyWakeMsgID, mainScopeID, tx)
@@ -75,16 +75,16 @@ func TestBuildAttributeDeps_SkipsEmptyWakeMessages(t *testing.T) {
 			return err
 		}
 		frameID = fid
-		if _, err := tables.Messages().MarkDelivered(ctx, tx, emptyWakeMsgID, frameID, now); err != nil {
+		if _, err := tables.Messages().MarkDelivered(ctx, emptyWakeMsgID, frameID, now, tx); err != nil {
 			return err
 		}
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: namedMsgID, InstanceID: instanceID, Type: "named-event", Sender: "operator", SenderKind: "operator",
 			Payload: json.RawMessage(`{"k":"v"}`),
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if _, err := tables.Messages().MarkDelivered(ctx, tx, namedMsgID, frameID, now); err != nil {
+		if _, err := tables.Messages().MarkDelivered(ctx, namedMsgID, frameID, now, tx); err != nil {
 			return err
 		}
 		return nil
@@ -96,7 +96,7 @@ func TestBuildAttributeDeps_SkipsEmptyWakeMessages(t *testing.T) {
 
 	var deps map[string]json.RawMessage
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		d, err := BuildAttributeDeps(ctx, tx, args, shared.UUID{}, frameID)
+		d, err := BuildAttributeDeps(ctx, args, shared.UUID{}, frameID, tx)
 		deps = d
 		return err
 	}); err != nil {

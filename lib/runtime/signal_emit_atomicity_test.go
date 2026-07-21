@@ -85,9 +85,9 @@ func seedSignalAtomicityFixture(t *testing.T) (tables persistence.Tables, sender
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -106,9 +106,9 @@ func seedSignalAtomicityFixture(t *testing.T) (tables persistence.Tables, sender
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -116,7 +116,7 @@ func seedSignalAtomicityFixture(t *testing.T) (tables persistence.Tables, sender
 			return err
 		}
 		frameID = fid
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 senderNodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -126,11 +126,11 @@ func seedSignalAtomicityFixture(t *testing.T) (tables persistence.Tables, sender
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -142,14 +142,14 @@ func seedSignalAtomicityFixture(t *testing.T) (tables persistence.Tables, sender
 		if senderRunID == (shared.UUID{}) {
 			t.Fatalf("seedSignalAtomicityFixture: candidate not surfaced for sender %s", senderNodeID)
 		}
-		claimed, err := q.ClaimDispatchRow(ctx, tx, senderRunID, "sup-signal-atomicity")
+		claimed, err := q.ClaimDispatchRow(ctx, senderRunID, "sup-signal-atomicity", tx)
 		if err != nil {
 			return err
 		}
 		if !claimed {
 			t.Fatalf("seedSignalAtomicityFixture: run %s not claimable", senderRunID)
 		}
-		promoted, err := q.PromoteClaimedToRunning(ctx, tx, senderRunID, "sup-signal-atomicity")
+		promoted, err := q.PromoteClaimedToRunning(ctx, senderRunID, "sup-signal-atomicity", tx)
 		if err != nil {
 			return err
 		}
@@ -177,7 +177,7 @@ func TestEmitSignalInTx_CascadeStagingAndAuditAreBothOrNeitherAtomic(t *testing.
 	sig := signalpkg.BuildTerminalSuccessSignal(true, nil, "atomicity-check", nil)
 
 	err := realTables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return emitSignalInTxOnce(ctx, args, tx, senderNodeID, "sender", senderRunID, instanceID, frameID, sig)
+		return emitSignalInTxOnce(ctx, args, senderNodeID, "sender", senderRunID, instanceID, frameID, sig, tx)
 	})
 	if err == nil {
 		t.Fatalf("expected the injected audit-append failure to propagate out of emitSignalInTxOnce")
@@ -185,7 +185,7 @@ func TestEmitSignalInTx_CascadeStagingAndAuditAreBothOrNeitherAtomic(t *testing.
 
 	var receiverRunAfterFailure *persistence.NodeRunLatest
 	if err := realTables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := realTables.Nodes().GetLatestRunForNode(ctx, tx, receiverNodeID)
+		r, err := realTables.Nodes().GetLatestRunForNode(ctx, receiverNodeID, tx)
 		receiverRunAfterFailure = r
 		return err
 	}); err != nil {
@@ -219,14 +219,14 @@ func TestEmitSignalInTx_CascadeStagingAndAuditAreBothOrNeitherAtomic(t *testing.
 		SupervisorID: "sup-signal-atomicity",
 	}
 	if err := realTables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return emitSignalInTxOnce(ctx, nonFaulting, tx, senderNodeID, "sender", senderRunID, instanceID, frameID, sig)
+		return emitSignalInTxOnce(ctx, nonFaulting, senderNodeID, "sender", senderRunID, instanceID, frameID, sig, tx)
 	}); err != nil {
 		t.Fatalf("emitSignalInTxOnce without fault injection: %v", err)
 	}
 
 	var receiverRunAfterSuccess *persistence.NodeRunLatest
 	if err := realTables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := realTables.Nodes().GetLatestRunForNode(ctx, tx, receiverNodeID)
+		r, err := realTables.Nodes().GetLatestRunForNode(ctx, receiverNodeID, tx)
 		receiverRunAfterSuccess = r
 		return err
 	}); err != nil {

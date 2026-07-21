@@ -33,9 +33,9 @@ func writeScratchThroughSpillDecision(
 		inline = payload
 	}
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return d.Queue().WriteScratchInTx(ctx, tx, runID, inline, handle, handleBackend)
+		return d.Queue().WriteScratch(ctx, runID, inline, handle, handleBackend, tx)
 	}); err != nil {
-		t.Fatalf("WriteScratchInTx: %v", err)
+		t.Fatalf("WriteScratch: %v", err)
 	}
 }
 
@@ -59,10 +59,10 @@ func testScratchOverThresholdSpillsThroughRealBackend(t *testing.T, d persistenc
 	var gotHandle, gotHandleBackend string
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		gotInline, gotHandle, gotHandleBackend, err = d.Queue().LoadScratchInTx(ctx, tx, runID)
+		gotInline, gotHandle, gotHandleBackend, err = d.Queue().LoadScratch(ctx, runID, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("LoadScratchInTx: %v", err)
+		t.Fatalf("LoadScratch: %v", err)
 	}
 
 	if len(gotInline) != 0 {
@@ -101,10 +101,10 @@ func testScratchAtOrBelowThresholdStaysInlineThroughRealBackend(t *testing.T, d 
 	var gotHandle, gotHandleBackend string
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		gotInline, gotHandle, gotHandleBackend, err = d.Queue().LoadScratchInTx(ctx, tx, runID)
+		gotInline, gotHandle, gotHandleBackend, err = d.Queue().LoadScratch(ctx, runID, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("LoadScratchInTx: %v", err)
+		t.Fatalf("LoadScratch: %v", err)
 	}
 
 	if string(gotInline) != string(payload) {

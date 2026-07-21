@@ -36,7 +36,7 @@ func TestApplyTerminalComplete_CommitWritebackSchemaViolation_RoutesToAttributes
 
 	var runRow *persistence.NodeRunForGate
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return err
 	}); err != nil {
@@ -92,7 +92,7 @@ func TestApplyTerminalComplete_CommitWritebackSchemaSatisfied_Succeeds(t *testin
 
 	var runRow *persistence.NodeRunForGate
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return err
 	}); err != nil {

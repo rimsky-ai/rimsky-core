@@ -30,7 +30,7 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		EnqueuedAt:             time.Now().Add(-1 * time.Second),
 		FrameID:                fix.FrameID,
 		RunScopeID:             fix.MainRunScopeID,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 
@@ -46,11 +46,11 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 	tryClaim := func(supID string) {
 		defer wg.Done()
 		err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 				AcceptedExecutors:      []string{"test-executor"},
 				AcceptedClaimProducers: []string{},
 				Limit:                  10,
-			})
+			}, tx)
 			if err != nil {
 				return err
 			}
@@ -58,7 +58,7 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 				if c.NodeID != fix.NodeID {
 					continue
 				}
-				ok, err := q.ClaimDispatchRow(ctx, tx, c.NodeRunID, supID)
+				ok, err := q.ClaimDispatchRow(ctx, c.NodeRunID, supID, tx)
 				if err != nil {
 					return err
 				}
@@ -164,7 +164,7 @@ func testDispatchReleaseClaimSkipsTerminalRun(t *testing.T, d persistence.Databa
 
 	var gate *persistence.NodeRunForGate
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		g, err := d.Tables().Nodes().GetRunForGate(ctx, tx, nodeRunID)
+		g, err := d.Tables().Nodes().GetRunForGate(ctx, nodeRunID, tx)
 		gate = g
 		return err
 	}); err != nil {

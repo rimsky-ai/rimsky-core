@@ -53,7 +53,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage(t *testing.T)
 	deliverMessage := func(msgs *fakeMessagesTable, payload string) {
 		t.Helper()
 		id := shared.UUID(uuid.New())
-		if err := msgs.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+		if err := msgs.Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         id,
 			InstanceID: instanceID,
 			Type:       "invalidate",
@@ -61,10 +61,10 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage(t *testing.T)
 			SenderKind: "operator",
 			Payload:    json.RawMessage(payload),
 			ReceivedAt: time.Now().UTC(),
-		}); err != nil {
+		}, nil); err != nil {
 			t.Fatalf("insert: %v", err)
 		}
-		if ok, err := msgs.MarkDelivered(ctx, nil, id, frameID, time.Now().UTC()); err != nil || !ok {
+		if ok, err := msgs.MarkDelivered(ctx, id, frameID, time.Now().UTC(), nil); err != nil || !ok {
 			t.Fatalf("MarkDelivered: ok=%v err=%v", ok, err)
 		}
 	}
@@ -79,7 +79,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage(t *testing.T)
 
 	msgs := newFakeMessages()
 	deliverMessage(msgs, `{"partition_request_override":{"partition_keys":["region-x","region-y"]}}`)
-	got, err := substituteFanOutPartitionRequest(ctx, newArgs(msgs), nil, frameID, out, nil, directive)
+	got, err := substituteFanOutPartitionRequest(ctx, newArgs(msgs), frameID, out, nil, directive, nil)
 	if err != nil {
 		t.Fatalf("substitute (override present): %v", err)
 	}
@@ -93,7 +93,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage(t *testing.T)
 		t.Fatalf("override did not reach SplitScope: got partition_keys=%v, want [region-x region-y]", override.PartitionKeys)
 	}
 
-	gotDefault, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), nil, frameID, out, nil, directive)
+	gotDefault, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), frameID, out, nil, directive, nil)
 	if err != nil {
 		t.Fatalf("substitute (no message): %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage(t *testing.T)
 		t.Fatalf("fallback default not used: got %q want %q", gotDefault, "all")
 	}
 
-	literal, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), nil, frameID, out, nil, "all")
+	literal, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), frameID, out, nil, "all", nil)
 	if err != nil {
 		t.Fatalf("substitute (literal): %v", err)
 	}
@@ -124,7 +124,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage_NonZeroReceiv
 
 	msgs := newFakeMessages()
 	id := shared.UUID(uuid.New())
-	if err := msgs.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+	if err := msgs.Insert(ctx, persistence.EnqueueMessageRequest{
 		ID:         id,
 		InstanceID: instanceID,
 		Type:       "invalidate",
@@ -132,10 +132,10 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage_NonZeroReceiv
 		SenderKind: "operator",
 		Payload:    json.RawMessage(`{"partition_request_override":{"partition_keys":["region-x","region-y"]}}`),
 		ReceivedAt: time.Now().UTC(),
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	if ok, err := msgs.MarkDelivered(ctx, nil, id, frameID, time.Now().UTC()); err != nil || !ok {
+	if ok, err := msgs.MarkDelivered(ctx, id, frameID, time.Now().UTC(), nil); err != nil || !ok {
 		t.Fatalf("MarkDelivered: ok=%v err=%v", ok, err)
 	}
 
@@ -157,7 +157,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromMessage_NonZeroReceiv
 		FrameID:    frameID,
 	}
 
-	got, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, directive)
+	got, err := substituteFanOutPartitionRequest(ctx, args, frameID, out, nil, directive, nil)
 	if err != nil {
 		t.Fatalf("substitute (production-path, non-zero receiverNodeRunID): %v", err)
 	}
@@ -181,7 +181,7 @@ func TestSubstituteFanOutPartitionRequest_StrictDirectiveRefusesWithoutMessage(t
 	out := &acquisition{InstanceID: shared.UUID(uuid.New())}
 	args := RunArgs{Logger: shared.SilentLogger{}, Persist: &messagesPersist{msgs: newFakeMessages()}}
 
-	_, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, `{{messages.invalidate.partition_request_override}}`)
+	_, err := substituteFanOutPartitionRequest(ctx, args, frameID, out, nil, `{{messages.invalidate.partition_request_override}}`, nil)
 	if err == nil {
 		t.Fatal("expected ErrMissingSource for a strict directive with no delivered message; got nil")
 	}
@@ -200,7 +200,7 @@ func TestSubstituteFanOutPartitionRequest_UnmarshalableInstanceParamsErrors(t *t
 	}
 	args := RunArgs{Logger: shared.SilentLogger{}, Persist: &messagesPersist{msgs: newFakeMessages()}}
 
-	_, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, "all")
+	_, err := substituteFanOutPartitionRequest(ctx, args, frameID, out, nil, "all", nil)
 	if err == nil {
 		t.Fatal("substituteFanOutPartitionRequest: expected an error for unmarshalable InstanceParams, got nil")
 	}
@@ -210,7 +210,7 @@ type staticScopeTable struct {
 	rows map[shared.UUID]*persistence.RunScopeRow
 }
 
-func (s *staticScopeTable) Create(_ context.Context, _ persistence.Tx, row persistence.RunScopeRow) error {
+func (s *staticScopeTable) Create(_ context.Context, row persistence.RunScopeRow, _ persistence.Tx) error {
 	if s.rows == nil {
 		s.rows = make(map[shared.UUID]*persistence.RunScopeRow)
 	}
@@ -218,7 +218,7 @@ func (s *staticScopeTable) Create(_ context.Context, _ persistence.Tx, row persi
 	return nil
 }
 
-func (s *staticScopeTable) GetByID(_ context.Context, _ persistence.Tx, id shared.UUID) (*persistence.RunScopeRow, error) {
+func (s *staticScopeTable) GetByID(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.RunScopeRow, error) {
 	if r, ok := s.rows[id]; ok {
 		c := *r
 		return &c, nil
@@ -226,16 +226,16 @@ func (s *staticScopeTable) GetByID(_ context.Context, _ persistence.Tx, id share
 	return nil, nil
 }
 
-func (s *staticScopeTable) GetFanoutPartition(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (*persistence.RunScopeRow, error) {
+func (s *staticScopeTable) GetFanoutPartition(_ context.Context, _ shared.UUID, _ string, _ persistence.Tx) (*persistence.RunScopeRow, error) {
 	return nil, nil
 }
-func (s *staticScopeTable) Close(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
+func (s *staticScopeTable) Close(_ context.Context, _ shared.UUID, _ persistence.Tx) error {
 	return nil
 }
-func (s *staticScopeTable) ListParentChain(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.RunScopeRow, error) {
+func (s *staticScopeTable) ListParentChain(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.RunScopeRow, error) {
 	return nil, nil
 }
-func (s *staticScopeTable) ListTreeDeepestFirst(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.RunScopeRow, error) {
+func (s *staticScopeTable) ListTreeDeepestFirst(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.RunScopeRow, error) {
 	return nil, nil
 }
 
@@ -245,12 +245,12 @@ func TestAcquireFanOutIfDeclared_ChildRunsSkipSplitScope(t *testing.T) {
 	parentRun := shared.UUID{1, 2, 3}
 	scopeID := shared.UUID{9, 9, 9}
 	scopes := &staticScopeTable{}
-	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{
+	_ = scopes.Create(context.Background(), persistence.RunScopeRow{
 		ID:              scopeID,
 		ParentNodeRunID: &parentRun,
 		PartitionKey:    "a",
 		GraphName:       "main",
-	})
+	}, nil)
 	out := &acquisition{RunScopeID: scopeID}
 	nodeDef := &node.TemplateNodeDef{
 		Type:     "fan-leaf",
@@ -263,15 +263,7 @@ func TestAcquireFanOutIfDeclared_ChildRunsSkipSplitScope(t *testing.T) {
 	}
 	args := RunArgs{Persist: &scopeOnlyPersist{scopes: scopes}}
 	err := acquireFanOutIfDeclared(
-		context.Background(),
-		args,
-		(persistence.Tx)(nil),
-		shared.UUID{},
-		out,
-		persistence.Candidate{},
-		nodeDef,
-		nil,
-		30*time.Second,
+		context.Background(), args, shared.UUID{}, out, persistence.Candidate{}, nodeDef, nil, 30*time.Second, (persistence.Tx)(nil),
 	)
 	if err != nil {
 		t.Fatalf("expected nil error for child-run short-circuit; got %v", err)
@@ -286,10 +278,10 @@ func TestAcquireFanOutIfDeclared_RootRunWithoutMatchingAliasIsNoOp(t *testing.T)
 	t.Parallel()
 	scopeID := shared.UUID{8, 8, 8}
 	scopes := &staticScopeTable{}
-	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{
+	_ = scopes.Create(context.Background(), persistence.RunScopeRow{
 		ID:        scopeID,
 		GraphName: "main",
-	})
+	}, nil)
 	out := &acquisition{RunScopeID: scopeID}
 	nodeDef := &node.TemplateNodeDef{
 		Type: "fan-root",
@@ -301,15 +293,7 @@ func TestAcquireFanOutIfDeclared_RootRunWithoutMatchingAliasIsNoOp(t *testing.T)
 	}
 	args := RunArgs{Persist: &scopeOnlyPersist{scopes: scopes}}
 	err := acquireFanOutIfDeclared(
-		context.Background(),
-		args,
-		(persistence.Tx)(nil),
-		shared.UUID{},
-		out,
-		persistence.Candidate{},
-		nodeDef,
-		nil,
-		30*time.Second,
+		context.Background(), args, shared.UUID{}, out, persistence.Candidate{}, nodeDef, nil, 30*time.Second, (persistence.Tx)(nil),
 	)
 	if err != nil {
 		t.Fatalf("expected nil error for root run with no matching alias; got %v", err)
@@ -325,10 +309,10 @@ func TestAcquireFanOutIfDeclared_NoFanOutSpecIsNoOp(t *testing.T) {
 	childScopeID := shared.UUID{2}
 	parentRun := shared.UUID{3}
 	scopes := &staticScopeTable{}
-	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{ID: rootScopeID, GraphName: "main"})
-	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{
+	_ = scopes.Create(context.Background(), persistence.RunScopeRow{ID: rootScopeID, GraphName: "main"}, nil)
+	_ = scopes.Create(context.Background(), persistence.RunScopeRow{
 		ID: childScopeID, ParentNodeRunID: &parentRun, PartitionKey: "a", GraphName: "main",
-	})
+	}, nil)
 	args := RunArgs{Persist: &scopeOnlyPersist{scopes: scopes}}
 	for _, scopeID := range []shared.UUID{rootScopeID, childScopeID} {
 		out := &acquisition{RunScopeID: scopeID}
@@ -336,15 +320,7 @@ func TestAcquireFanOutIfDeclared_NoFanOutSpecIsNoOp(t *testing.T) {
 			Type: "plain-node", Executor: "stub",
 		}
 		err := acquireFanOutIfDeclared(
-			context.Background(),
-			args,
-			(persistence.Tx)(nil),
-			shared.UUID{},
-			out,
-			persistence.Candidate{},
-			nodeDef,
-			nil,
-			30*time.Second,
+			context.Background(), args, shared.UUID{}, out, persistence.Candidate{}, nodeDef, nil, 30*time.Second, (persistence.Tx)(nil),
 		)
 		if err != nil {
 			t.Fatalf("scope=%v: expected nil error; got %v", scopeID, err)
@@ -364,11 +340,11 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	rootScopeID := shared.UUID(uuid.New())
 
 	scopes := &staticScopeTable{}
-	_ = scopes.Create(ctx, nil, persistence.RunScopeRow{ID: rootScopeID, GraphName: "main"})
+	_ = scopes.Create(ctx, persistence.RunScopeRow{ID: rootScopeID, GraphName: "main"}, nil)
 
 	msgs := newFakeMessages()
 	msgID := shared.UUID(uuid.New())
-	if err := msgs.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+	if err := msgs.Insert(ctx, persistence.EnqueueMessageRequest{
 		ID:         msgID,
 		InstanceID: instanceID,
 		Type:       "invalidate",
@@ -376,10 +352,10 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 		SenderKind: "operator",
 		Payload:    json.RawMessage(`{"partition_request_override":{"partition_keys":["region-x","region-y"]}}`),
 		ReceivedAt: time.Now().UTC(),
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
-	if ok, err := msgs.MarkDelivered(ctx, nil, msgID, frameID, time.Now().UTC()); err != nil || !ok {
+	if ok, err := msgs.MarkDelivered(ctx, msgID, frameID, time.Now().UTC(), nil); err != nil || !ok {
 		t.Fatalf("MarkDelivered: ok=%v err=%v", ok, err)
 	}
 
@@ -428,7 +404,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 		NodeRunID: shared.UUID(uuid.New()),
 	}
 
-	err := acquireFanOutIfDeclared(ctx, args, nil, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second)
+	err := acquireFanOutIfDeclared(ctx, args, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second, nil)
 
 	if !errors.Is(err, errStop) {
 		t.Fatalf("expected the sentinel short-circuit error from SplitScope, got %v", err)
@@ -464,9 +440,9 @@ func TestAcquireFanOutIfDeclared_SubgraphDelegationScopeStillFansOut(t *testing.
 	delegationScopeID := shared.UUID(uuid.New())
 
 	scopes := &staticScopeTable{}
-	_ = scopes.Create(ctx, nil, persistence.RunScopeRow{
+	_ = scopes.Create(ctx, persistence.RunScopeRow{
 		ID: delegationScopeID, ParentNodeRunID: &parentRun, PartitionKey: "", GraphName: "staging",
-	})
+	}, nil)
 
 	errStop := errors.New("stop-after-capture")
 	store := storetest.NewFake(storeName, claimproducer.Capabilities{
@@ -507,7 +483,7 @@ func TestAcquireFanOutIfDeclared_SubgraphDelegationScopeStillFansOut(t *testing.
 		NodeRunID: shared.UUID(uuid.New()),
 	}
 
-	err := acquireFanOutIfDeclared(ctx, args, nil, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second)
+	err := acquireFanOutIfDeclared(ctx, args, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second, nil)
 	if !errors.Is(err, errStop) {
 		t.Fatalf("expected fan-out to reach SplitScope from a sub-graph delegation scope "+
 			"(ParentNodeRunID set, PartitionKey empty) — the recursion guard must only suppress "+
@@ -521,7 +497,7 @@ type erroringScopeTable struct {
 	err error
 }
 
-func (s *erroringScopeTable) GetByID(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.RunScopeRow, error) {
+func (s *erroringScopeTable) GetByID(_ context.Context, _ shared.UUID, _ persistence.Tx) (*persistence.RunScopeRow, error) {
 	return nil, s.err
 }
 
@@ -540,8 +516,7 @@ func TestAcquireFanOutIfDeclared_RunScopeLookupErrorPropagates(t *testing.T) {
 	}
 	args := RunArgs{Persist: &scopeOnlyPersist{scopes: scopes}}
 	err := acquireFanOutIfDeclared(
-		context.Background(), args, (persistence.Tx)(nil), shared.UUID{}, out,
-		persistence.Candidate{}, nodeDef, nil, 30*time.Second,
+		context.Background(), args, shared.UUID{}, out, persistence.Candidate{}, nodeDef, nil, 30*time.Second, (persistence.Tx)(nil),
 	)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected acquireFanOutIfDeclared to propagate the RunScopes.GetByID error instead of "+
@@ -644,7 +619,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromNodeAttribute(t *testing.T) {
 	}
 
 	directive := "{{nodes." + upstreamType + ".attribute.items}}"
-	got, err := substituteFanOutPartitionRequest(ctx, args, nil, frameID, out, nil, directive)
+	got, err := substituteFanOutPartitionRequest(ctx, args, frameID, out, nil, directive, nil)
 	if err != nil {
 		t.Fatalf("substitute: %v", err)
 	}
@@ -685,13 +660,13 @@ type fakeRunTreeDeps struct {
 	rows map[shared.UUID]*persistence.NodeRunTreeRow
 }
 
-func (f *fakeRunTreeDeps) CreateRootNodeRun(_ context.Context, _ persistence.Tx, _ persistence.CreateRootNodeRunInput) error {
+func (f *fakeRunTreeDeps) CreateRootNodeRun(_ context.Context, _ persistence.CreateRootNodeRunInput, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeRunTreeDeps) CreateChildNodeRun(_ context.Context, _ persistence.Tx, _ persistence.CreateChildNodeRunInput) error {
+func (f *fakeRunTreeDeps) CreateChildNodeRun(_ context.Context, _ persistence.CreateChildNodeRunInput, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeRunTreeDeps) GetByID(_ context.Context, _ persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
+func (f *fakeRunTreeDeps) GetByID(_ context.Context, runID shared.UUID, _ persistence.Tx) (*persistence.NodeRunTreeRow, error) {
 	r, ok := f.rows[runID]
 	if !ok {
 		return nil, nil
@@ -699,16 +674,16 @@ func (f *fakeRunTreeDeps) GetByID(_ context.Context, _ persistence.Tx, runID sha
 	c := *r
 	return &c, nil
 }
-func (f *fakeRunTreeDeps) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.NodeRunTreeRow, error) {
-	return f.GetByID(ctx, tx, runID)
+func (f *fakeRunTreeDeps) LockTreeForUpdate(ctx context.Context, runID shared.UUID, tx persistence.Tx) (*persistence.NodeRunTreeRow, error) {
+	return f.GetByID(ctx, runID, tx)
 }
-func (f *fakeRunTreeDeps) ListChildren(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]persistence.NodeRunTreeRow, error) {
+func (f *fakeRunTreeDeps) ListChildren(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.NodeRunTreeRow, error) {
 	return nil, nil
 }
-func (f *fakeRunTreeDeps) UpdateStateAndOutcome(_ context.Context, _ persistence.Tx, _ shared.UUID, _ cascade.NodeState, _ *string, _ bool) error {
+func (f *fakeRunTreeDeps) UpdateStateAndOutcome(_ context.Context, _ shared.UUID, _ cascade.NodeState, _ *string, _ bool, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeRunTreeDeps) UpdateAggregationPolicy(_ context.Context, _ persistence.Tx, _ shared.UUID, _ spec.AggregationPolicy) error {
+func (f *fakeRunTreeDeps) UpdateAggregationPolicy(_ context.Context, _ shared.UUID, _ spec.AggregationPolicy, _ persistence.Tx) error {
 	return nil
 }
 
@@ -778,10 +753,10 @@ func (f *fakeNodesDeps) GetFailedTerminalRunScopeID(_ context.Context, _ shared.
 func (f *fakeNodesDeps) HasRunForNodeInFrame(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *fakeNodesDeps) HasAdvancedSiblingInScope(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) (bool, error) {
+func (f *fakeNodesDeps) HasAdvancedSiblingInScope(_ context.Context, _, _, _ shared.UUID, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *fakeNodesDeps) ListPendingSiblingRunsInScope(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]shared.UUID, error) {
+func (f *fakeNodesDeps) ListPendingSiblingRunsInScope(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]shared.UUID, error) {
 	return nil, nil
 }
 func (f *fakeNodesDeps) GetRunByDispatchIDForUpdate(_ context.Context, _ shared.UUID, _ persistence.Tx) (*persistence.NodeRunForCallback, error) {
@@ -796,25 +771,25 @@ func (f *fakeNodesDeps) GetRunSummary(_ context.Context, _ shared.UUID, _ persis
 func (f *fakeNodesDeps) GetRunSummaryForNodes(_ context.Context, _ []shared.UUID, _ persistence.Tx) (map[shared.UUID]persistence.NodeRunSummary, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) FindLatestCascadePending(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) (*persistence.NodeRunForGate, error) {
+func (f *fakeNodesDeps) FindLatestCascadePending(_ context.Context, _, _, _ shared.UUID, _ persistence.Tx) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) CreateCascadePending(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) (shared.UUID, error) {
+func (f *fakeNodesDeps) CreateCascadePending(_ context.Context, _, _, _ shared.UUID, _ persistence.Tx) (shared.UUID, error) {
 	return shared.UUID{}, nil
 }
-func (f *fakeNodesDeps) LockReceiverCascade(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) error {
+func (f *fakeNodesDeps) LockReceiverCascade(_ context.Context, _, _, _ shared.UUID, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodesDeps) GetLatestRunForNode(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.NodeRunLatest, error) {
+func (f *fakeNodesDeps) GetLatestRunForNode(_ context.Context, _ shared.UUID, _ persistence.Tx) (*persistence.NodeRunLatest, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) GetLatestRunForNodes(_ context.Context, _ persistence.Tx, _ []shared.UUID) (map[shared.UUID]persistence.NodeRunLatest, error) {
+func (f *fakeNodesDeps) GetLatestRunForNodes(_ context.Context, _ []shared.UUID, _ persistence.Tx) (map[shared.UUID]persistence.NodeRunLatest, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) ListRunsForInstanceByStates(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []cascade.NodeState) ([]persistence.NodeRunLatest, error) {
+func (f *fakeNodesDeps) ListRunsForInstanceByStates(_ context.Context, _ shared.UUID, _ []cascade.NodeState, _ persistence.Tx) ([]persistence.NodeRunLatest, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) GetRunForGate(_ context.Context, _ persistence.Tx, runID shared.UUID) (*persistence.NodeRunForGate, error) {
+func (f *fakeNodesDeps) GetRunForGate(_ context.Context, runID shared.UUID, _ persistence.Tx) (*persistence.NodeRunForGate, error) {
 	r, ok := f.gateRows[runID]
 	if !ok {
 		return nil, nil
@@ -822,22 +797,22 @@ func (f *fakeNodesDeps) GetRunForGate(_ context.Context, _ persistence.Tx, runID
 	c := *r
 	return &c, nil
 }
-func (f *fakeNodesDeps) GetPriorRunBySequence(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
+func (f *fakeNodesDeps) GetPriorRunBySequence(_ context.Context, _, _ shared.UUID, _ int64, _ persistence.Tx) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) DeletePriorCascadeStales(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (int, error) {
+func (f *fakeNodesDeps) DeletePriorCascadeStales(_ context.Context, _, _ shared.UUID, _ int64, _ persistence.Tx) (int, error) {
 	return 0, nil
 }
-func (f *fakeNodesDeps) HasLaterCascadePending(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (bool, error) {
+func (f *fakeNodesDeps) HasLaterCascadePending(_ context.Context, _, _ shared.UUID, _ int64, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *fakeNodesDeps) ListPendingRunsInScopeForNodes(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []shared.UUID) ([]shared.UUID, error) {
+func (f *fakeNodesDeps) ListPendingRunsInScopeForNodes(_ context.Context, _ shared.UUID, _ []shared.UUID, _ persistence.Tx) ([]shared.UUID, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) GetPriorCascadeQueuedNotClaimed(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
+func (f *fakeNodesDeps) GetPriorCascadeQueuedNotClaimed(_ context.Context, _, _ shared.UUID, _ int64, _ persistence.Tx) (*persistence.NodeRunForGate, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) GetMostRecentSettledRun(_ context.Context, _ persistence.Tx, nodeID, runScopeID shared.UUID, _ int64) (*persistence.NodeRunForGate, error) {
+func (f *fakeNodesDeps) GetMostRecentSettledRun(_ context.Context, nodeID, runScopeID shared.UUID, _ int64, _ persistence.Tx) (*persistence.NodeRunForGate, error) {
 	r, ok := f.freshByNodeInScope[freshKey{nodeID: nodeID, runScopeID: runScopeID}]
 	if !ok {
 		return nil, nil
@@ -845,16 +820,16 @@ func (f *fakeNodesDeps) GetMostRecentSettledRun(_ context.Context, _ persistence
 	c := *r
 	return &c, nil
 }
-func (f *fakeNodesDeps) TransitionPendingToStale(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) error {
+func (f *fakeNodesDeps) TransitionPendingToStale(_ context.Context, _ shared.UUID, _ time.Time, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodesDeps) DropPendingRun(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
+func (f *fakeNodesDeps) DropPendingRun(_ context.Context, _ shared.UUID, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodesDeps) SetRunRequiredStores(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []string) (bool, error) {
+func (f *fakeNodesDeps) SetRunRequiredClaimProducers(_ context.Context, _ shared.UUID, _ []string, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *fakeNodesDeps) CreateNonCascadeStale(_ context.Context, _ persistence.Tx, _ persistence.NonCascadeStaleInput) (shared.UUID, error) {
+func (f *fakeNodesDeps) CreateNonCascadeStale(_ context.Context, _ persistence.NonCascadeStaleInput, _ persistence.Tx) (shared.UUID, error) {
 	return shared.UUID{}, nil
 }
 func (f *fakeNodesDeps) UpdateRunEvaluatorState(_ context.Context, _ shared.UUID, _ spec.EvaluatorState, _ persistence.Tx) error {
@@ -885,16 +860,16 @@ func (f *fakeNodeAttrs) Upsert(_ context.Context, _, _ shared.UUID, _ map[string
 func (f *fakeNodeAttrs) MergeDelta(_ context.Context, _ shared.UUID, _ map[string]any, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodeAttrs) SetDispatchInputBag(_ context.Context, _ persistence.Tx, _, _ shared.UUID, _ map[string]any) error {
+func (f *fakeNodeAttrs) SetDispatchInputBag(_ context.Context, _, _ shared.UUID, _ map[string]any, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodeAttrs) GetDispatchInputBag(_ context.Context, _ persistence.Tx, _ shared.UUID) (map[string]any, error) {
+func (f *fakeNodeAttrs) GetDispatchInputBag(_ context.Context, _ shared.UUID, _ persistence.Tx) (map[string]any, error) {
 	return nil, nil
 }
-func (f *fakeNodeAttrs) SnapshotBagForNewRun(_ context.Context, _ persistence.Tx, _, _, _ shared.UUID) error {
+func (f *fakeNodeAttrs) SnapshotBagForNewRun(_ context.Context, _, _, _ shared.UUID, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeNodeAttrs) GetPriorRunData(_ context.Context, _ persistence.Tx, _ shared.UUID) (map[string]any, error) {
+func (f *fakeNodeAttrs) GetPriorRunData(_ context.Context, _ shared.UUID, _ persistence.Tx) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
@@ -938,8 +913,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromAcquiredClaim(t *testing.T) {
 	}
 
 	got, err := substituteFanOutPartitionRequest(
-		ctx, args, nil, frameID, out, acquiredLocks,
-		`{"list":{{claim.data.payload.items}}}`,
+		ctx, args, frameID, out, acquiredLocks, `{"list":{{claim.data.payload.items}}}`, nil,
 	)
 	if err != nil {
 		t.Fatalf("substitute: %v", err)
@@ -979,8 +953,7 @@ func TestSubstituteFanOutPartitionRequest_BindsFromHeldClaim(t *testing.T) {
 	}
 
 	got, err := substituteFanOutPartitionRequest(
-		ctx, args, nil, frameID, out, nil,
-		`{"list":{{claim.inherited.payload.items}}}`,
+		ctx, args, frameID, out, nil, `{"list":{{claim.inherited.payload.items}}}`, nil,
 	)
 	if err != nil {
 		t.Fatalf("substitute: %v", err)

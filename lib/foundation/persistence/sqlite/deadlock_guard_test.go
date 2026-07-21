@@ -85,7 +85,7 @@ func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Datab
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id,
+		   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id,
 		    run_scope_id, claimed_by, claimed_at, last_progress_at)
 		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'running', 'cascade', 1, ?, ?,
 		         'sup-test', datetime('now'), datetime('now'))`,
@@ -131,7 +131,7 @@ func TestQueue_BumpLastProgressAt_NoDeadlockUnderContention(t *testing.T) {
 						default:
 						}
 						err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-							_, berr := d.Queue().BumpLastProgressAt(ctx, tx, runID, time.Now())
+							_, berr := d.Queue().BumpLastProgressAt(ctx, runID, time.Now(), tx)
 							return berr
 						})
 						if err != nil {
@@ -183,7 +183,7 @@ func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < bumpsEach; i++ {
 				err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-					_, berr := d.Queue().BumpLastProgressAt(ctx, tx, runID, time.Now())
+					_, berr := d.Queue().BumpLastProgressAt(ctx, runID, time.Now(), tx)
 					return berr
 				})
 				if err != nil {
@@ -236,7 +236,7 @@ func TestQueue_PoolWidthDoesNotStarveLockFreeRead(t *testing.T) {
 	bumperErr := make(chan error, 1)
 	go func() {
 		bumperErr <- store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if _, berr := d.Queue().BumpLastProgressAt(ctx, tx, runID, time.Now()); berr != nil {
+			if _, berr := d.Queue().BumpLastProgressAt(ctx, runID, time.Now(), tx); berr != nil {
 				return berr
 			}
 			close(bumperStarted)
@@ -269,14 +269,14 @@ func TestQueue_RegisterAsyncAckAndLookupRoundTrip(t *testing.T) {
 
 	const ackID = "ack-roundtrip"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return d.Queue().RegisterAsyncAck(ctx, tx, runID, ackID, time.Now(), nil, nil, "")
+		return d.Queue().RegisterAsyncAck(ctx, runID, ackID, time.Now(), nil, nil, "", tx)
 	}); err != nil {
 		t.Fatalf("RegisterAsyncAck: %v", err)
 	}
 
 	var got *persistence.DispatchRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, lerr := d.Queue().LookupRunByAsyncAckID(ctx, tx, ackID)
+		row, lerr := d.Queue().LookupRunByAsyncAckID(ctx, ackID, tx)
 		got = row
 		return lerr
 	}); err != nil {

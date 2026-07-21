@@ -29,7 +29,7 @@ func resolveAcqScope(ctx context.Context, args RunArgs, acq *acquisition) acqSco
 	}
 	var out acqScopeTuple
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		t, err := resolveAcqScopeInTx(ctx, scopes, tx, acq)
+		t, err := resolveAcqScopeInTx(ctx, scopes, acq, tx)
 		out = t
 		return err
 	}); err != nil {
@@ -44,13 +44,12 @@ func resolveAcqScope(ctx context.Context, args RunArgs, acq *acquisition) acqSco
 }
 
 func resolveAcqScopeInTx(
-	ctx context.Context, scopes persistence.RunScopeTable, tx persistence.Tx,
-	acq *acquisition,
+	ctx context.Context, scopes persistence.RunScopeTable, acq *acquisition, tx persistence.Tx,
 ) (acqScopeTuple, error) {
 	if acq == nil || acq.RunScopeID == (shared.UUID{}) || scopes == nil {
 		return acqScopeTuple{}, nil
 	}
-	rs, err := scopes.GetByID(ctx, tx, acq.RunScopeID)
+	rs, err := scopes.GetByID(ctx, acq.RunScopeID, tx)
 	if err != nil {
 		return acqScopeTuple{}, fmt.Errorf("resolveAcqScopeInTx: load run scope %s: %w", acq.RunScopeID, err)
 	}

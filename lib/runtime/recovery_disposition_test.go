@@ -33,7 +33,7 @@ func seedDispositionFixture(ctx context.Context, t *testing.T, d persistence.Dat
 		mainScopeID shared.UUID
 	)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -86,7 +86,7 @@ func TestErrorPolicyRetry_StampsRetryAfterErrorAndBumpsProgressWithScratch(t *te
 		gotDisposition string
 	)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, disp, err := runtime.ApplyErrorPolicyForTest(ctx, args, tx, runtime.ErrorPolicyTestInput{
+		p, disp, err := runtime.ApplyErrorPolicyForTest(ctx, args, runtime.ErrorPolicyTestInput{
 			NodeRunID:  runID,
 			NodeID:     workerNode.ID,
 			InstanceID: inst.ID,
@@ -97,7 +97,7 @@ func TestErrorPolicyRetry_StampsRetryAfterErrorAndBumpsProgressWithScratch(t *te
 			ErrorClass: "stub/boom",
 			NodeDef:    nodeDef,
 			Scratch:    []byte("scratch-after-error"),
-		})
+		}, tx)
 		gotPrior = p
 		gotDisposition = disp
 		return err
@@ -131,12 +131,12 @@ func TestSweepExecutorDeadlines_StampsStaleRecoveryOnReleasedRow(t *testing.T) {
 
 	maxQuiet := 1
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := d.Queue().ClaimDispatchRow(ctx, tx, runID, "sup-reaped")
+		ok, err := d.Queue().ClaimDispatchRow(ctx, runID, "sup-reaped", tx)
 		if err != nil {
 			return err
 		}
 		require.True(t, ok, "seeded run must claim")
-		return d.Queue().RegisterAsyncAck(ctx, tx, runID, "ack-"+uuid.NewString(), time.Now().UTC(), &maxQuiet, nil, "")
+		return d.Queue().RegisterAsyncAck(ctx, runID, "ack-"+uuid.NewString(), time.Now().UTC(), &maxQuiet, nil, "", tx)
 	}))
 
 	farFuture := shared.NewControllableClock(time.Now().UTC().Add(24 * time.Hour))

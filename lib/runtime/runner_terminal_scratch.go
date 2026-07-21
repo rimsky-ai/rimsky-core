@@ -20,7 +20,7 @@ func shouldSpillBlob(args RunArgs, size int) bool {
 
 // @concept: executor
 func applyTerminalScratchInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, scratch []byte,
+	ctx context.Context, args RunArgs, acq *acquisition, scratch []byte, tx persistence.Tx,
 ) error {
 	if len(scratch) == 0 {
 		return nil
@@ -54,7 +54,7 @@ func applyTerminalScratchInTx(
 	} else {
 		inline = scratch
 	}
-	if err := args.Queue.WriteScratchInTx(ctx, tx, acq.NodeRunID, inline, handle, handleBackend); err != nil {
+	if err := args.Queue.WriteScratch(ctx, acq.NodeRunID, inline, handle, handleBackend, tx); err != nil {
 		return fmt.Errorf("applyTerminalScratchInTx: %w", err)
 	}
 	now := time.Now().UTC()
@@ -62,7 +62,7 @@ func applyTerminalScratchInTx(
 		now = args.Clock.Now().UTC()
 	}
 	// @decision: writeback-bumps-progress
-	if _, err := args.Queue.BumpLastProgressAt(ctx, tx, acq.NodeRunID, now); err != nil {
+	if _, err := args.Queue.BumpLastProgressAt(ctx, acq.NodeRunID, now, tx); err != nil {
 		return fmt.Errorf("applyTerminalScratchInTx: bump last_progress_at: %w", err)
 	}
 	return nil

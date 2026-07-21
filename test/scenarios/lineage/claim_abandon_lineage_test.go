@@ -57,7 +57,7 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+		pc, err := runtime.ResolveClaimHandleTerminal(ctx, args, runtime.TerminalDecision{
 			ClaimHandleID: claimHandleID,
 			SupervisorID:  args.SupervisorID,
 			Source:        runtime.ActiveTerminal,
@@ -68,7 +68,7 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 			Lifetime:      "subgraph",
 			ProducerName:  "abandon-store",
 			LineageHint:   hint,
-		})
+		}, tx)
 		post = pc
 		return err
 	}))
@@ -120,9 +120,9 @@ func seedAbandonScenario(
 	instID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{

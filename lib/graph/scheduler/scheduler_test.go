@@ -51,11 +51,11 @@ func newSchedFixture(t *testing.T) *schedFixture {
 	instID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
 	inTxTest(t, ctx, d.Tables(), func(tx persistence.Tx) error {
-		if err := d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := d.Tables().RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
 			InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -105,7 +105,7 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 		frameID = insertRunningFrame(ctx, t, f, f.instance.ID, n.ID)
 	}
 	pgdbtest.ExecForTest(ctx, t, f.driver,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers,
 		                               enqueued_at, claimed_by, claimed_at,
 		                               state, sequence, creation_reason, frame_id, run_scope_id)
 		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), NULL, NULL,
@@ -319,21 +319,21 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		NodeID: n.ID, ExecutorName: "worker", EnqueuedAt: time.Now().Add(-time.Second),
 		FrameID:    frameID,
 		RunScopeID: f.mainScopeID,
-	}))
+	}, nil))
 
 	var nodeRunID shared.UUID
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		candidates, err := f.queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		candidates, err := f.queue.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"worker"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  1,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
 		require.Len(t, candidates, 1)
 		nodeRunID = candidates[0].NodeRunID
-		ok, err := f.queue.ClaimDispatchRow(ctx, tx, nodeRunID, "sup-dead")
+		ok, err := f.queue.ClaimDispatchRow(ctx, nodeRunID, "sup-dead", tx)
 		if err != nil {
 			return err
 		}

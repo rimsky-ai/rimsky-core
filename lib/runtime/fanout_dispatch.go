@@ -151,10 +151,10 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}},
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := args.Persist.NodeRunTree().UpdateAggregationPolicy(ctx, tx, acq.NodeRunID, policy); err != nil {
+		if err := args.Persist.NodeRunTree().UpdateAggregationPolicy(ctx, acq.NodeRunID, policy, tx); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: snapshot policy: %w", err)
 		}
-		children, err := DispatchChildren(ctx, args, tx, in)
+		children, err := DispatchChildren(ctx, args, in, tx)
 		if err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: %w", err)
 		}
@@ -164,7 +164,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 			cascade.NodeStateHeld, cascade.ReasonFanoutDispatched, nil, tx); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: parent → held: %w", err)
 		}
-		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+		if err := args.Queue.RemoveForNode(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: release parent queue claim: %w", err)
 		}
 		childKeys := make([]string, 0, len(children))

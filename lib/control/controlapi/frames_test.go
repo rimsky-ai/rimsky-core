@@ -25,11 +25,11 @@ func mainRunScopeIDForInstance(t *testing.T, h *harness, instanceID shared.UUID)
 	t.Helper()
 	scopeID := shared.UUID(uuid.New())
 	require.NoError(t, h.persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return h.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         scopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instanceID,
-		})
+		}, tx)
 	}))
 	return scopeID
 }
@@ -43,14 +43,14 @@ func seedFrameForTest(
 	var frameID shared.UUID
 	rootScope := mainRunScopeIDForInstance(t, h, instanceID)
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := h.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       msgType,
 			Sender:     "test-frame-seed",
 			SenderKind: "operator",
 			ReceivedAt: time.Now().UTC(),
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		priorRunning, err := h.persist.Frames().GetRunningFrameID(ctx, instanceID, tx)
@@ -202,7 +202,7 @@ func markFrameFailed(t *testing.T, ctx context.Context, h *harness, instanceID, 
 		[]any{uuid.UUID(frameID)}, &runScopeID)
 	pgdbtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
-			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+			(id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'failed', $3, $4, 0)
 	`, uuid.New(), uuid.UUID(nodeID), uuid.UUID(frameID), uuid.UUID(runScopeID))
 	endFrameForTest(t, ctx, h, frameID)

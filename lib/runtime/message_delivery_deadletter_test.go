@@ -69,8 +69,7 @@ func TestDeliverNamedMessageInTx_NoReceiverRecordsDeadLetterAuditEvent(t *testin
 		}
 	}
 	require(tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return deliverNamedMessageInTx(ctx, tables, shared.SilentLogger{}, tx,
-			instanceID, shared.UUID(uuid.New()), msg, shared.UUID(uuid.New()), time.Now())
+		return deliverNamedMessageInTx(ctx, tables, shared.SilentLogger{}, instanceID, shared.UUID(uuid.New()), msg, shared.UUID(uuid.New()), time.Now(), tx)
 	}))
 
 	var evs persistence.EventListResult

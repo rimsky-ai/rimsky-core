@@ -323,7 +323,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					return nil
 				}
 			}
-			provisioned, err := provisionInstanceTx(ctx, deps, tx, row, provisionArgs{
+			provisioned, err := provisionInstanceTx(ctx, deps, row, provisionArgs{
 				InstanceKey:        body.InstanceKey,
 				Params:             params,
 				AttributeOverrides: body.AttributeOverrides,
@@ -331,7 +331,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				ServiceBindings:    body.ServiceBindings,
 				CreatedByAPIKeyID:  ident.KeyID,
 				MessageQueueMode:   body.MessageQueueMode,
-			})
+			}, tx)
 			if err != nil {
 				return err
 			}
@@ -348,7 +348,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					Publishers: deps.Publishers,
 					Clock:      deps.Clock,
 					Logger:     deps.Logger,
-				}, tx, foundationshared.UUID(instUUID), params, row.Spec.Publishers); subErr != nil {
+				}, foundationshared.UUID(instUUID), params, row.Spec.Publishers, tx); subErr != nil {
 					deps.Logger.Error("instance.publisher_subscriptions.insert_failed",
 						"instance_id", provisioned.InstanceID,
 						"template_hash", hash,
@@ -647,14 +647,13 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		}
 		if deps.ClaimProducers != nil {
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-				_, rErr := runtime.ReleaseCommittedDurableClaims(ctx,
-					runtime.RunArgs{
-						Persist:       deps.Persist,
-						ClaimHandles:  deps.Persist.ClaimHandles(),
-						StoreRegistry: deps.ClaimProducers,
-						Clock:         deps.Clock,
-						Logger:        deps.Logger,
-					}, tx, inst.ID, deps.Logger)
+				_, rErr := runtime.ReleaseCommittedDurableClaims(ctx, runtime.RunArgs{
+					Persist:       deps.Persist,
+					ClaimHandles:  deps.Persist.ClaimHandles(),
+					StoreRegistry: deps.ClaimProducers,
+					Clock:         deps.Clock,
+					Logger:        deps.Logger,
+				}, inst.ID, deps.Logger, tx)
 				return rErr
 			}); err != nil && deps.Logger != nil {
 				deps.Logger.Warn("handleDeleteInstance: ReleaseCommittedDurableClaims failed",
@@ -712,7 +711,7 @@ func collectRunScopeIDsForInstance(ctx context.Context, deps AppDeps, instanceID
 			seenRoots[root] = struct{}{}
 			var tree []persistence.RunScopeRow
 			if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				rows, err := deps.Persist.RunScopes().ListTreeDeepestFirst(ctx, tx, root)
+				rows, err := deps.Persist.RunScopes().ListTreeDeepestFirst(ctx, root, tx)
 				tree = rows
 				return err
 			}); err != nil {
@@ -767,7 +766,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		if isDryRun {
 			var toFail []persistence.NodeRunLatest
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-				runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, inst.ID, cascade.InFlightStates)
+				runs, err := deps.Persist.Nodes().ListRunsForInstanceByStates(ctx, inst.ID, cascade.InFlightStates, tx)
 				if err != nil {
 					return err
 				}
@@ -807,13 +806,13 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 				alreadyTerminated = true
 				return nil
 			}
-			post, err := runtime.ForceFailInFlightRunsForInstance(ctx, terminateRunArgs(deps), tx, inst.ID)
+			post, err := runtime.ForceFailInFlightRunsForInstance(ctx, terminateRunArgs(deps), inst.ID, tx)
 			if err != nil {
 				return err
 			}
 			killPostCommit = post
 			// @concept: message
-			if _, err := deps.Persist.Messages().CancelPendingForInstance(ctx, tx, inst.ID); err != nil {
+			if _, err := deps.Persist.Messages().CancelPendingForInstance(ctx, inst.ID, tx); err != nil {
 				return err
 			}
 			// @concept: frame
@@ -906,11 +905,7 @@ type provisionArgs struct {
 }
 
 func provisionInstanceTx(
-	ctx context.Context,
-	deps AppDeps,
-	tx persistence.Tx,
-	tpl *persistence.TemplateRow,
-	args provisionArgs,
+	ctx context.Context, deps AppDeps, tpl *persistence.TemplateRow, args provisionArgs, tx persistence.Tx,
 ) (createInstanceResponse, error) {
 	instanceID := foundationshared.UUID(uuid.New())
 	queueMode := tpl.Spec.MessageQueueMode

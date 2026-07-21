@@ -31,11 +31,11 @@ func (f *fakeMigratorLocker) AcquireMigrationLock(context.Context) (func() error
 	}, nil
 }
 
-func (f *fakeMigratorLocker) TakeNamedLockInTx(context.Context, Tx, string) error {
+func (f *fakeMigratorLocker) TakeNamedLock(context.Context, string, Tx) error {
 	return nil
 }
 
-func (f *fakeMigratorLocker) TakeClaimScopeLockInTx(context.Context, Tx, string, []byte) error {
+func (f *fakeMigratorLocker) TakeClaimScopeLock(context.Context, string, []byte, Tx) error {
 	return nil
 }
 

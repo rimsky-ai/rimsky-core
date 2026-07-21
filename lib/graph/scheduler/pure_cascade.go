@@ -78,11 +78,10 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		if err := sb.Nodes().UpdateState(ctx, n.NodeRunID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx); err != nil {
 			return err
 		}
-		if err := args.Queue.ForceRemoveForNodeInTx(ctx, n.NodeID, n.RunScopeID, tx); err != nil {
+		if err := args.Queue.ForceRemoveForNode(ctx, n.NodeID, n.RunScopeID, tx); err != nil {
 			return err
 		}
-		return runtime.EmitTerminalSuccessAndDrainInTx(ctx, runArgs, tx,
-			n.NodeID, n.NodeType, n.NodeRunID, n.InstanceID, n.FrameID, "pure_cascade")
+		return runtime.EmitTerminalSuccessAndDrainInTx(ctx, runArgs, n.NodeID, n.NodeType, n.NodeRunID, n.InstanceID, n.FrameID, "pure_cascade", tx)
 	}); err != nil {
 		log.Warn("ProcessPureCascade: state transition + cascade failed",
 			"node_id", n.NodeID.String(), "error", err.Error())
@@ -110,7 +109,7 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 func evaluateAfterTerminalBreakpoint(ctx context.Context, runArgs runtime.RunArgs, n persistence.PureCascadeReadyRow, log shared.Logger) {
 	var scope persistence.RunScopeRow
 	if err := runArgs.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rs, err := runArgs.Persist.RunScopes().GetByID(ctx, tx, n.RunScopeID)
+		rs, err := runArgs.Persist.RunScopes().GetByID(ctx, n.RunScopeID, tx)
 		if err != nil {
 			return err
 		}
@@ -146,7 +145,7 @@ func prepareNativeClaimRouting(ctx context.Context, args PureCascadeArgs, n pers
 	}
 	var prepared bool
 	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := args.Persist.Nodes().SetRunRequiredStores(ctx, tx, n.NodeRunID, required)
+		ok, err := args.Persist.Nodes().SetRunRequiredClaimProducers(ctx, n.NodeRunID, required, tx)
 		prepared = ok
 		return err
 	})

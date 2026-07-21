@@ -30,7 +30,7 @@ type AdvisoryLocker interface {
 
 	AcquireMigrationLock(ctx context.Context) (release func() error, err error)
 
-	TakeNamedLockInTx(ctx context.Context, tx Tx, name string) error
+	TakeNamedLock(ctx context.Context, name string, tx Tx) error
 
-	TakeClaimScopeLockInTx(ctx context.Context, tx Tx, claimProducerName string, claimScopeData []byte) error
+	TakeClaimScopeLock(ctx context.Context, claimProducerName string, claimScopeData []byte, tx Tx) error
 }

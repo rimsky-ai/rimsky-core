@@ -19,7 +19,7 @@ type queueFailingRemoveForNode struct {
 	err error
 }
 
-func (q queueFailingRemoveForNode) RemoveForNodeInTx(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
+func (q queueFailingRemoveForNode) RemoveForNode(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
 	return q.err
 }
 
@@ -41,7 +41,7 @@ func TestApplyTerminalComplete_MidTransactionFailureRollsBackVerdictAndAttribute
 		return err
 	})
 	if err == nil {
-		t.Fatalf("applyTerminalComplete: expected the injected RemoveForNodeInTx failure to propagate, got nil")
+		t.Fatalf("applyTerminalComplete: expected the injected RemoveForNode failure to propagate, got nil")
 	}
 	if !errors.Is(err, injected) {
 		t.Fatalf("applyTerminalComplete error = %v; want it to wrap the injected failure %v", err, injected)
@@ -49,7 +49,7 @@ func TestApplyTerminalComplete_MidTransactionFailureRollsBackVerdictAndAttribute
 
 	var runRow *persistence.NodeRunForGate
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, gerr := tables.Nodes().GetRunForGate(ctx, tx, acq.NodeRunID)
+		r, gerr := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return gerr
 	}); err != nil {

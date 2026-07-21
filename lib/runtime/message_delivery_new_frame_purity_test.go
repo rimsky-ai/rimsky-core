@@ -34,7 +34,7 @@ func TestSweepDeliverMessages_NewFrameReceiverRunNeverProbesPriorFrameParkedRow(
 	var inst persistence.InstanceRow
 	var receiverNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -88,13 +88,13 @@ func TestSweepDeliverMessages_NewFrameReceiverRunNeverProbesPriorFrameParkedRow(
 	var msgID, frame2ID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID = shared.UUID(uuid.New())
-		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := backend.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: inst.ID,
 			Type:       "notify-webhook",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := backend.Frames().InsertRunningFrame(ctx, inst.ID, msgID, mainScopeID, tx)
@@ -107,7 +107,7 @@ func TestSweepDeliverMessages_NewFrameReceiverRunNeverProbesPriorFrameParkedRow(
 
 	var priorRunAfter *persistence.NodeRunForGate
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		g, err := backend.Nodes().GetRunForGate(ctx, tx, parkedRunID)
+		g, err := backend.Nodes().GetRunForGate(ctx, parkedRunID, tx)
 		priorRunAfter = g
 		return err
 	}))
@@ -119,7 +119,7 @@ func TestSweepDeliverMessages_NewFrameReceiverRunNeverProbesPriorFrameParkedRow(
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		l, err := backend.Nodes().GetLatestRunForNode(ctx, tx, receiverNode.ID)
+		l, err := backend.Nodes().GetLatestRunForNode(ctx, receiverNode.ID, tx)
 		latest = l
 		return err
 	}))

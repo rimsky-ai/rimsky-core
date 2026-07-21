@@ -96,11 +96,11 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	scope2 := shared.UUID(uuid.New())
 	var f2 shared.UUID
 	frameOp(ctx, t, d, "InsertRunningFrame f2 (after terminal)", func(tx persistence.Tx) error {
-		if err := d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := d.Tables().RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         scope2,
 			GraphName:  spec.MainGraphName,
 			InstanceID: fix.InstanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		var err error
@@ -136,11 +136,11 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 
 	scope3 := shared.UUID(uuid.New())
 	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
-		return d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return d.Tables().RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         scope3,
 			GraphName:  spec.MainGraphName,
 			InstanceID: fix.InstanceID,
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed scope3: %v", err)
 	}
@@ -160,11 +160,11 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	}
 	fkScope := shared.UUID(uuid.New())
 	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
-		return d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return d.Tables().RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         fkScope,
 			GraphName:  spec.MainGraphName,
 			InstanceID: fkFix.InstanceID,
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed fkScope: %v", err)
 	}
@@ -183,7 +183,7 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 
 	failedRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, f2)
 	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
-		return d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, failedRunID, cascade.NodeStateFailed, nil, false)
+		return d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, failedRunID, cascade.NodeStateFailed, nil, false, tx)
 	}); err != nil {
 		t.Fatalf("seed failed node_run for f2: %v", err)
 	}
@@ -280,10 +280,10 @@ func testFrameRowCascadeImmutable(t *testing.T, d persistence.Database) {
 
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	frameOp(ctx, t, d, "cascade write set: run state transitions", func(tx persistence.Tx) error {
-		if err := d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateRunning, nil, false); err != nil {
+		if err := d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateRunning, nil, false, tx); err != nil {
 			return err
 		}
-		return d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFresh, nil, false)
+		return d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateFresh, nil, false, tx)
 	})
 
 	var after *persistence.FrameRow

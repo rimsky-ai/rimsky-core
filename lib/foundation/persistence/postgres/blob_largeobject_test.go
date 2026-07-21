@@ -143,7 +143,7 @@ func TestPgLargeObjectBackendWriteInTxRollsBackWithCallerTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin caller tx: %v", err)
 	}
-	h, err := be.WriteInTx(ctx, pgpersist.WrapPgxTxForTest(callerTx), persistence.BlobKey{}, []byte("leak-me-not"))
+	h, err := be.WriteInTx(ctx, persistence.BlobKey{}, []byte("leak-me-not"), pgpersist.WrapPgxTxForTest(callerTx))
 	if err != nil {
 		t.Fatalf("WriteInTx: %v", err)
 	}
@@ -168,11 +168,11 @@ func TestPgLargeObjectBackendWriteInTxCommitsWithCallerTx(t *testing.T) {
 		t.Fatalf("begin caller tx: %v", err)
 	}
 	wrapped := pgpersist.WrapPgxTxForTest(callerTx)
-	h, err := be.WriteInTx(ctx, wrapped, persistence.BlobKey{}, []byte("payload"))
+	h, err := be.WriteInTx(ctx, persistence.BlobKey{}, []byte("payload"), wrapped)
 	if err != nil {
 		t.Fatalf("WriteInTx: %v", err)
 	}
-	gotInTx, err := be.ReadInTx(ctx, wrapped, h)
+	gotInTx, err := be.ReadInTx(ctx, h, wrapped)
 	if err != nil {
 		t.Fatalf("ReadInTx: %v", err)
 	}
@@ -217,11 +217,11 @@ func TestPgLargeObjectBackendWriteInTxDoesNotAcquireSecondConnection(t *testing.
 	defer func() { _ = callerTx.Rollback(ctx) }()
 	wrapped := pgpersist.WrapPgxTxForTest(callerTx)
 
-	h, err := be.WriteInTx(ctx, wrapped, persistence.BlobKey{}, []byte("no-deadlock"))
+	h, err := be.WriteInTx(ctx, persistence.BlobKey{}, []byte("no-deadlock"), wrapped)
 	if err != nil {
 		t.Fatalf("WriteInTx under a single-connection pool with the connection already pinned: %v", err)
 	}
-	got, err := be.ReadInTx(ctx, wrapped, h)
+	got, err := be.ReadInTx(ctx, h, wrapped)
 	if err != nil {
 		t.Fatalf("ReadInTx under a single-connection pool with the connection already pinned: %v", err)
 	}

@@ -166,7 +166,7 @@ func tryAcquireBatch(
 		}
 		var promoted bool
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			p, err := args.Queue.PromoteClaimedToRunning(ctx, tx, acq.NodeRunID, args.SupervisorID)
+			p, err := args.Queue.PromoteClaimedToRunning(ctx, acq.NodeRunID, args.SupervisorID, tx)
 			promoted = p
 			return err
 		}); err != nil {
@@ -192,7 +192,7 @@ func tryAcquireBatch(
 				return err
 			}
 			for _, lk := range acq.Locks {
-				if err := emitLockAcquired(ctx, args, tx, acq, lk); err != nil {
+				if err := emitLockAcquired(ctx, args, acq, lk, tx); err != nil {
 					return err
 				}
 			}
@@ -294,7 +294,7 @@ func selectCandidatesShortTx(
 	}
 	var candidates []persistence.Candidate
 	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		out, err := args.Queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		out, err := args.Queue.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:          args.AcceptedExecutors,
 			AcceptedClaimProducers:     args.AcceptedClaimProducers,
 			Limit:                      limit,
@@ -302,7 +302,7 @@ func selectCandidatesShortTx(
 			LateBindClaimProducerProxy: args.LateBindServiceProxies["claim_producer"],
 			CursorEnqueuedAfter:        cursorEnqueued,
 			CursorAfterNodeRunID:       cursorID,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -325,7 +325,7 @@ func tryAcquireWithTx(
 	)
 	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var inner error
-		acq, ok, inner = tryAcquire(ctx, args, tx, cand, livenessInterval)
+		acq, ok, inner = tryAcquire(ctx, args, cand, livenessInterval, tx)
 		if inner != nil {
 			return inner
 		}
@@ -364,8 +364,7 @@ func tryAcquireWithTx(
 var errTryAcquireRollback = fmt.Errorf("supervisor: tryAcquire rollback (sentinel)")
 
 func tryAcquire(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	cand persistence.Candidate, livenessInterval time.Duration,
+	ctx context.Context, args RunArgs, cand persistence.Candidate, livenessInterval time.Duration, tx persistence.Tx,
 ) (acquisition, bool, error) {
 	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, tx)
 	if err != nil {
@@ -378,7 +377,7 @@ func tryAcquire(
 	if err != nil {
 		return acquisition{}, false, fmt.Errorf("tryAcquire: instances.Get: %w", err)
 	}
-	tmpl := lookupTemplate(ctx, args, tx, inst)
+	tmpl := lookupTemplate(ctx, args, inst, tx)
 	nodeDef := LookupNodeDef(tmpl, nd.NodeType)
 	templateAttributeDefaults := templateAttributeDefaultsFor(tmpl, nd.Executor)
 	// @concept: attribute
@@ -388,7 +387,7 @@ func tryAcquire(
 	}
 	var runScopeID shared.UUID
 	if rt := args.Persist.NodeRunTree(); rt != nil {
-		row, err := rt.GetByID(ctx, tx, cand.NodeRunID)
+		row, err := rt.GetByID(ctx, cand.NodeRunID, tx)
 		if err != nil {
 			return acquisition{}, false, fmt.Errorf("tryAcquire: run-tree GetByID: %w", err)
 		}
@@ -424,7 +423,7 @@ func tryAcquire(
 		return out, false, errAcquireNilFrameID
 	}
 	// @decision: walker-rule-per-sender-node
-	specs, heldClaims, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, tmpl, inst, cand.NodeRunID, cand.FrameID, runScopeID)
+	specs, heldClaims, err := buildLockSpecs(ctx, args, nd, nodeDef, tmpl, inst, cand.NodeRunID, cand.FrameID, runScopeID, tx)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
 			"node_id", cand.NodeID.String(), "error", err.Error())
@@ -432,11 +431,11 @@ func tryAcquire(
 	}
 	sortLockSpecs(specs)
 
-	if err := takeNamedAdvisoryLocks(ctx, args, tx, specs); err != nil {
+	if err := takeNamedAdvisoryLocks(ctx, args, specs, tx); err != nil {
 		return acquisition{}, false, err
 	}
 
-	claimed, err := args.Queue.ClaimDispatchRow(ctx, tx, cand.NodeRunID, args.SupervisorID)
+	claimed, err := args.Queue.ClaimDispatchRow(ctx, cand.NodeRunID, args.SupervisorID, tx)
 	if err != nil {
 		return acquisition{}, false, fmt.Errorf("tryAcquire: ClaimDispatchRow: %w", err)
 	}
@@ -448,7 +447,7 @@ func tryAcquire(
 
 	acquiredLocks := make([]AcquiredLock, 0, len(specs))
 	for _, sp := range specs {
-		al, res, err := acquireOneLock(ctx, args, tx, nd.InstanceID, sp, cand, livenessInterval, heldSubgraphs, acquiredLocks)
+		al, res, err := acquireOneLock(ctx, args, nd.InstanceID, sp, cand, livenessInterval, heldSubgraphs, acquiredLocks, tx)
 		if res == openResultErrored {
 			erroredSpec, _ := sp.(claimproducer.ClaimSpec)
 			out := acquisition{
@@ -537,32 +536,32 @@ func tryAcquire(
 	if len(heldClaims) > 0 {
 		out.HeldClaims = heldClaims
 	}
-	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, livenessInterval); err != nil {
+	if err := acquireFanOutIfDeclared(ctx, args, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, livenessInterval, tx); err != nil {
 		if err == errAcquireFanOutSubstitutionFailed {
 			out.PartialLocks = acquiredLocks
 			return out, false, errAcquireFanOutSubstitutionFailed
 		}
 		return acquisition{PartialLocks: acquiredLocks}, false, err
 	}
-	if err := restampLinkedSubClaimHolders(ctx, args, tx, cand); err != nil {
+	if err := restampLinkedSubClaimHolders(ctx, args, cand, tx); err != nil {
 		return acquisition{PartialLocks: acquiredLocks}, false, err
 	}
 	// @concept: fan-out
-	bindLeafCandidateHandles(ctx, args, tx, &out, cand)
+	bindLeafCandidateHandles(ctx, args, &out, cand, tx)
 	// @concept: claim-co-holdership
-	if err := insertCoHolderClaimHoldersAtAcquire(ctx, args, tx, cand, nodeDef, tmpl); err != nil {
+	if err := insertCoHolderClaimHoldersAtAcquire(ctx, args, cand, nodeDef, tmpl, tx); err != nil {
 		return acquisition{PartialLocks: acquiredLocks}, false, fmt.Errorf("tryAcquire: co-holder rows: %w", err)
 	}
 
 	// @concept: executor
-	loadScratchIntoAcquisition(ctx, args, tx, &out, cand)
+	loadScratchIntoAcquisition(ctx, args, &out, cand, tx)
 	return out, true, nil
 }
 
 // @concept: claim-tree
 // @concept: fan-out
 func restampLinkedSubClaimHolders(
-	ctx context.Context, args RunArgs, tx persistence.Tx, cand persistence.Candidate,
+	ctx context.Context, args RunArgs, cand persistence.Candidate, tx persistence.Tx,
 ) error {
 	ch := args.ClaimHandles
 	if ch == nil {
@@ -593,7 +592,7 @@ func restampLinkedSubClaimHolders(
 
 // @concept: fan-out
 // @concept: data-processing
-func bindLeafCandidateHandles(ctx context.Context, args RunArgs, tx persistence.Tx, out *acquisition, cand persistence.Candidate) {
+func bindLeafCandidateHandles(ctx context.Context, args RunArgs, out *acquisition, cand persistence.Candidate, tx persistence.Tx) {
 	if out == nil || len(out.Locks) == 0 {
 		return
 	}

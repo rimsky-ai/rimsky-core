@@ -26,16 +26,16 @@ type NodeAttributeTable interface {
 
 	// @concept: cascade
 	// @decision: mode-default-most-recent
-	SetDispatchInputBag(ctx context.Context, tx Tx, runID, nodeID shared.UUID, bag map[string]any) error
+	SetDispatchInputBag(ctx context.Context, runID, nodeID shared.UUID, bag map[string]any, tx Tx) error
 
 	// @concept: cascade
-	GetDispatchInputBag(ctx context.Context, tx Tx, runID shared.UUID) (map[string]any, error)
+	GetDispatchInputBag(ctx context.Context, runID shared.UUID, tx Tx) (map[string]any, error)
 
 	// @concept: cascade
 	// @decision: non-cascade-direct-to-stale
 	// @story: resume-preserves-snapshot
-	SnapshotBagForNewRun(ctx context.Context, tx Tx, newRunID, nodeID, runScopeID shared.UUID) error
+	SnapshotBagForNewRun(ctx context.Context, newRunID, nodeID, runScopeID shared.UUID, tx Tx) error
 
 	// @concept: cascade
-	GetPriorRunData(ctx context.Context, tx Tx, runID shared.UUID) (map[string]any, error)
+	GetPriorRunData(ctx context.Context, runID shared.UUID, tx Tx) (map[string]any, error)
 }

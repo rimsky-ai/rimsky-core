@@ -23,9 +23,7 @@ import (
 )
 
 func acquireClaim(
-	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
-	spec claimproducer.ClaimSpec, cand persistence.Candidate, livenessInterval time.Duration,
-	heldSubgraphs []node.HoldingSubgraph, acquired []AcquiredLock,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, spec claimproducer.ClaimSpec, cand persistence.Candidate, livenessInterval time.Duration, heldSubgraphs []node.HoldingSubgraph, acquired []AcquiredLock, tx persistence.Tx,
 ) (AcquiredLock, openResult, error) {
 	acquireStart := args.Clock.Now()
 	s, ok := args.StoreRegistry.GetWithContext(ctx, spec.ProducerName, instanceID.String())
@@ -36,11 +34,11 @@ func acquireClaim(
 	if err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: marshal selector: %w", err)
 	}
-	if err := args.AdvisoryLocker.TakeClaimScopeLockInTx(ctx, tx, spec.ProducerName, scopeInitial); err != nil {
-		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: TakeClaimScopeLockInTx: %w", err)
+	if err := args.AdvisoryLocker.TakeClaimScopeLock(ctx, spec.ProducerName, scopeInitial, tx); err != nil {
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: TakeClaimScopeLock: %w", err)
 	}
 	// @concept: parked-state
-	if al, reused, rErr := reuseHeldRunClaim(ctx, args, tx, spec, cand, scopeInitial, s, acquired, livenessInterval); rErr != nil {
+	if al, reused, rErr := reuseHeldRunClaim(ctx, args, spec, cand, scopeInitial, s, acquired, livenessInterval, tx); rErr != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: reuse held run claim: %w", rErr)
 	} else if reused {
 		metricsOf(args).IncClaimAcquisition(spec.ProducerName, "acquired")
@@ -48,7 +46,7 @@ func acquireClaim(
 		return al, openResultAcquired, nil
 	}
 	// @concept: fan-out
-	if al, reused, rErr := reuseLinkedSubClaim(ctx, args, tx, spec, cand, s, acquired, livenessInterval); rErr != nil {
+	if al, reused, rErr := reuseLinkedSubClaim(ctx, args, spec, cand, s, acquired, livenessInterval, tx); rErr != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: %w", rErr)
 	} else if reused {
 		metricsOf(args).IncClaimAcquisition(spec.ProducerName, "acquired")
@@ -56,7 +54,7 @@ func acquireClaim(
 		return al, openResultAcquired, nil
 	}
 	// @story: claim-handoff-durable
-	conflicted, persistent, err := evaluateClaimScopeConflict(ctx, args, tx, s, spec, cand)
+	conflicted, persistent, err := evaluateClaimScopeConflict(ctx, args, s, spec, cand, tx)
 	if err != nil {
 		return AcquiredLock{}, openResultBail, err
 	}
@@ -96,7 +94,7 @@ func acquireClaim(
 	}
 
 	// @concept: terminal-resolution
-	if err := producerVerbOutboxBarrier(ctx, args, tx, s, spec.ProducerName, scopeInitial); err != nil {
+	if err := producerVerbOutboxBarrier(ctx, args, s, spec.ProducerName, scopeInitial, tx); err != nil {
 		var pcErr *peer.ProducerCallError
 		if errors.As(err, &pcErr) {
 			recordClaimAcquisitionErrored(args, spec.ProducerName, acquireStart)
@@ -142,7 +140,7 @@ func acquireClaim(
 		}
 	}
 
-	if err := insertHeldClaimHoldersAtAcquire(ctx, args, tx, rowID, cand, isHeld); err != nil {
+	if err := insertHeldClaimHoldersAtAcquire(ctx, args, rowID, cand, isHeld, tx); err != nil {
 		return AcquiredLock{}, openResultBail, err
 	}
 
@@ -166,8 +164,7 @@ func recordClaimAcquisitionErrored(args RunArgs, producerName string, acquireSta
 
 // @story: claim-handoff-durable
 func evaluateClaimScopeConflict(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	s claimproducer.ClaimProducer, spec claimproducer.ClaimSpec, cand persistence.Candidate,
+	ctx context.Context, args RunArgs, s claimproducer.ClaimProducer, spec claimproducer.ClaimSpec, cand persistence.Candidate, tx persistence.Tx,
 ) (bool, bool, error) {
 	holders, err := args.ClaimHandles.ListByProducerClaimScope(ctx, spec.ProducerName, tx)
 	if err != nil {

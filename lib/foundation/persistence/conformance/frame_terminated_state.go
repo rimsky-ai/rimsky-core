@@ -115,30 +115,30 @@ func testRunScopeListTreeDeepestFirst(t *testing.T, d persistence.Database) {
 	frameOp(ctx, t, d, "seed scope tree", func(tx persistence.Tx) error {
 		rootID := root
 		childID := child
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: child, ParentRunScopeID: &rootID, ParentNodeRunID: &parentRunID,
 			GraphName: "sub", InstanceID: fix.InstanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: grandchild, ParentRunScopeID: &childID, ParentNodeRunID: &parentRunID,
 			GraphName: spec.MainGraphName, PartitionKey: "partition-a", InstanceID: fix.InstanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: closedChild, ParentRunScopeID: &rootID, ParentNodeRunID: &parentRunID,
 			GraphName: "sub-closed", InstanceID: fix.InstanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return store.RunScopes().Close(ctx, tx, closedChild)
+		return store.RunScopes().Close(ctx, closedChild, tx)
 	})
 
 	var tree []persistence.RunScopeRow
 	frameOp(ctx, t, d, "ListTreeDeepestFirst", func(tx persistence.Tx) error {
-		rows, err := store.RunScopes().ListTreeDeepestFirst(ctx, tx, root)
+		rows, err := store.RunScopes().ListTreeDeepestFirst(ctx, root, tx)
 		tree = rows
 		return err
 	})

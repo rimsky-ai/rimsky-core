@@ -569,7 +569,7 @@ func requireSettlingSignalTypePrefix(t *testing.T, h *scenario.Harness, nodeID s
 	t.Helper()
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, nodeID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, nodeID, tx)
 		latest = r
 		return err
 	}))

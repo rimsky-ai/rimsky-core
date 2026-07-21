@@ -316,7 +316,7 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 	}
 	var row *persistence.DispatchRow
 	if err := c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := c.Queue.LookupRunByAsyncAckID(ctx, tx, ackID)
+		r, err := c.Queue.LookupRunByAsyncAckID(ctx, ackID, tx)
 		row = r
 		return err
 	}); err != nil {
@@ -336,7 +336,7 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 		FrameID:   row.FrameID,
 	}
 	if err := c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return c.reconstructAcquisition(ctx, args, tx, row, &acq)
+		return c.reconstructAcquisition(ctx, args, row, &acq, tx)
 	}); err != nil {
 		return nil, fmt.Errorf("lookupAsyncCtxByAck: reconstruct acquisition: %w", err)
 	}
@@ -371,8 +371,7 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 
 // @decision: async-callback-persistent-registry
 func (c *CallbackServer) reconstructAcquisition(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row *persistence.DispatchRow, acq *acquisition,
+	ctx context.Context, args RunArgs, row *persistence.DispatchRow, acq *acquisition, tx persistence.Tx,
 ) error {
 	nd, err := c.Persist.Nodes().Get(ctx, row.NodeID, tx)
 	if err != nil {
@@ -388,7 +387,7 @@ func (c *CallbackServer) reconstructAcquisition(
 	if err != nil {
 		return err
 	}
-	tmpl := lookupTemplate(ctx, args, tx, inst)
+	tmpl := lookupTemplate(ctx, args, inst, tx)
 	acq.NodeDef = LookupNodeDef(tmpl, nd.NodeType)
 	acq.TemplateAttributeDefaults = templateAttributeDefaultsFor(tmpl, nd.Executor)
 	acq.GraphName = spec.MainGraphName
@@ -401,7 +400,7 @@ func (c *CallbackServer) reconstructAcquisition(
 		acq.TemplateHash = inst.TemplateHash
 	}
 	if rt := c.Persist.NodeRunTree(); rt != nil {
-		treeRow, err := rt.GetByID(ctx, tx, row.ID)
+		treeRow, err := rt.GetByID(ctx, row.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -409,12 +408,12 @@ func (c *CallbackServer) reconstructAcquisition(
 			acq.RunScopeID = treeRow.RunScopeID
 		}
 	}
-	acqLocks, err := reconstructAcquiredLocks(ctx, args, tx, row.ID, acq.NodeDef)
+	acqLocks, err := reconstructAcquiredLocks(ctx, args, row.ID, acq.NodeDef, tx)
 	if err != nil {
 		return err
 	}
 	acq.Locks = acqLocks
-	held, err := loadInheritedClaimsForNode(ctx, args, tx, nd.InstanceID, tmpl, acq.NodeDef, acq.FrameID)
+	held, err := loadInheritedClaimsForNode(ctx, args, nd.InstanceID, tmpl, acq.NodeDef, acq.FrameID, tx)
 	if err != nil {
 		return fmt.Errorf("reconstructAcquisition: load inherited claims: %w", err)
 	}
@@ -426,8 +425,7 @@ func (c *CallbackServer) reconstructAcquisition(
 
 // @decision: async-callback-persistent-registry
 func reconstructAcquiredLocks(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	nodeRunID shared.UUID, nodeDef *node.TemplateNodeDef,
+	ctx context.Context, args RunArgs, nodeRunID shared.UUID, nodeDef *node.TemplateNodeDef, tx persistence.Tx,
 ) ([]AcquiredLock, error) {
 	if args.ClaimHandles == nil {
 		return nil, nil
@@ -542,7 +540,7 @@ func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncCon
 		if row == nil {
 			return nil
 		}
-		nextID, ok, err := c.Queue.GetInFlightRunForNode(ctx, tx, row.NodeID, row.RunScopeID)
+		nextID, ok, err := c.Queue.GetInFlightRunForNode(ctx, row.NodeID, row.RunScopeID, tx)
 		if err != nil {
 			return err
 		}

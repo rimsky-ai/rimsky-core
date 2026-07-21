@@ -82,11 +82,11 @@ func makeFixture(t *testing.T) carryFixture {
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  tmplspec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -108,13 +108,13 @@ func makeFixture(t *testing.T) carryFixture {
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -122,27 +122,27 @@ func makeFixture(t *testing.T) carryFixture {
 			return err
 		}
 		frameID = fid
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: parentNodeRunID, NodeID: callerNodeID, FrameID: frameID,
 			RunScopeID: mainScopeID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		parentRunIDCopy := parentNodeRunID
 		mainScopeIDCopy := mainScopeID
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               exitScopeID,
 			ParentRunScopeID: &mainScopeIDCopy,
 			ParentNodeRunID:  &parentRunIDCopy,
 			GraphName:        "inner",
 			InstanceID:       instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+		return tables.NodeRunTree().CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 			NodeRunID: exitNodeRunID, NodeID: exitNodeID, FrameID: frameID,
 			RunScopeID: exitScopeID, ExecutorName: "test-executor",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed fixture: %v", err)
 	}
@@ -161,13 +161,13 @@ func makeFixture(t *testing.T) carryFixture {
 func settleCarry(fx carryFixture, exitNodeRunID shared.UUID, writeback json.RawMessage) error {
 	args := runtime.RunArgs{Persist: fx.tables, Logger: shared.SilentLogger{}, Clock: shared.SystemClock{}}
 	return fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		_, err := runtime.SettleFromDelegate(ctx, args, tx, runtime.DelegateSettlementInput{
+		_, err := runtime.SettleFromDelegate(ctx, args, runtime.DelegateSettlementInput{
 			ExitNodeRunID: exitNodeRunID,
 			ExitNodeID:    fx.exitNodeID,
 			ExitNodeAlias: "inner-exit",
 			InstanceID:    fx.instanceID,
 			Writeback:     writeback,
-		})
+		}, tx)
 		return err
 	})
 }
@@ -209,7 +209,7 @@ func TestSettleFromDelegate_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 	var scope *persistence.RunScopeRow
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		scope, err = fx.tables.RunScopes().GetByID(ctx, tx, fx.exitScopeID)
+		scope, err = fx.tables.RunScopes().GetByID(ctx, fx.exitScopeID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("load exit scope: %v", err)
@@ -275,7 +275,7 @@ func TestSettleFromDelegate_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(
 	var scope *persistence.RunScopeRow
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		scope, err = fx.tables.RunScopes().GetByID(ctx, tx, fx.exitScopeID)
+		scope, err = fx.tables.RunScopes().GetByID(ctx, fx.exitScopeID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("load exit scope: %v", err)
@@ -299,7 +299,7 @@ func TestSettleFromDelegate_DrainsWaitSetAndClearsReceiverGate(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		runID, err := fx.tables.Nodes().CreateCascadePending(ctx, tx, receiverNodeID, fx.mainScopeID, fx.frameID)
+		runID, err := fx.tables.Nodes().CreateCascadePending(ctx, receiverNodeID, fx.mainScopeID, fx.frameID, tx)
 		if err != nil {
 			return err
 		}
@@ -319,7 +319,7 @@ func TestSettleFromDelegate_DrainsWaitSetAndClearsReceiverGate(t *testing.T) {
 		var run *persistence.NodeRunTreeRow
 		if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
-			run, err = fx.tables.NodeRunTree().GetByID(ctx, tx, receiverRunID)
+			run, err = fx.tables.NodeRunTree().GetByID(ctx, receiverRunID, tx)
 			return err
 		}); err != nil {
 			t.Fatalf("load receiver run: %v", err)

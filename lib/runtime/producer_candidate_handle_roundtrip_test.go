@@ -37,7 +37,7 @@ func TestCheckAndFireResolution_ProducerCandidateHandleRoundTripsFromDBToDataPro
 	var inst persistence.InstanceRow
 	var acqNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -100,7 +100,7 @@ func TestCheckAndFireResolution_ProducerCandidateHandleRoundTripsFromDBToDataPro
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		post = pc
 		return err
 	}))

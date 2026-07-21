@@ -99,7 +99,7 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	mintRunningFrame := func(label string) shared.UUID {
 		var fid shared.UUID
 		frameOp(ctx, t, d, "mint "+label, func(tx persistence.Tx) error {
-			scope := seedMainRunScopeForInstance(ctx, t, tx, d.Tables(), fix.InstanceID)
+			scope := seedMainRunScopeForInstance(ctx, t, d.Tables(), fix.InstanceID, tx)
 			var err error
 			fid, err = frames.InsertRunningFrame(ctx, fix.InstanceID, fix.MessageID, scope, tx)
 			if err != nil {
@@ -117,7 +117,7 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 			t.Fatalf("assertRootScope(%s): no root scope recorded for frame %s", label, fid)
 		}
 		frameOp(ctx, t, d, "check root scope "+label, func(tx persistence.Tx) error {
-			row, err := d.Tables().RunScopes().GetByID(ctx, tx, scopeID)
+			row, err := d.Tables().RunScopes().GetByID(ctx, scopeID, tx)
 			if err != nil {
 				return err
 			}

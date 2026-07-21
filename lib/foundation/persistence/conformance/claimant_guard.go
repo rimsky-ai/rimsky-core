@@ -128,7 +128,7 @@ func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Databa
 	q := d.Queue()
 	var nodeRunID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -138,11 +138,11 @@ func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Databa
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  10,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -150,14 +150,14 @@ func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Databa
 			if c.NodeID != fix.NodeID {
 				continue
 			}
-			ok, err := q.ClaimDispatchRow(ctx, tx, c.NodeRunID, supID)
+			ok, err := q.ClaimDispatchRow(ctx, c.NodeRunID, supID, tx)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				t.Fatalf("seedClaimedGuardRun: claim was not successful")
 			}
-			if _, err := q.PromoteClaimedToRunning(ctx, tx, c.NodeRunID, supID); err != nil {
+			if _, err := q.PromoteClaimedToRunning(ctx, c.NodeRunID, supID, tx); err != nil {
 				return err
 			}
 			nodeRunID = c.NodeRunID
@@ -635,7 +635,7 @@ func testClaimantGuardRunClaimSteal(t *testing.T, d persistence.Database) {
 	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, guardSupB)
+		ok, err := q.ClaimDispatchRow(ctx, nodeRunID, guardSupB, tx)
 		if err != nil {
 			return err
 		}
@@ -655,7 +655,7 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 	q := d.Queue()
 	var nodeRunID shared.UUID
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -665,11 +665,11 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  10,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -677,7 +677,7 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 			if c.NodeID != fix.NodeID {
 				continue
 			}
-			ok, err := q.ClaimDispatchRow(ctx, tx, c.NodeRunID, guardSupA)
+			ok, err := q.ClaimDispatchRow(ctx, c.NodeRunID, guardSupA, tx)
 			if err != nil {
 				return err
 			}
@@ -694,7 +694,7 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, guardSupA)
+		ok, err := q.ClaimDispatchRow(ctx, nodeRunID, guardSupA, tx)
 		if err != nil {
 			return err
 		}
@@ -716,7 +716,7 @@ func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
 
 	var nodeRunID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -726,11 +726,11 @@ func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  10,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -738,7 +738,7 @@ func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
 			t.Fatalf("RunPromote: candidate not surfaced")
 		}
 		nodeRunID = cands[0].NodeRunID
-		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, guardSupA)
+		ok, err := q.ClaimDispatchRow(ctx, nodeRunID, guardSupA, tx)
 		if err != nil {
 			return err
 		}
@@ -751,7 +751,7 @@ func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		promoted, err := q.PromoteClaimedToRunning(ctx, tx, nodeRunID, guardSupB)
+		promoted, err := q.PromoteClaimedToRunning(ctx, nodeRunID, guardSupB, tx)
 		if err != nil {
 			return err
 		}
@@ -764,7 +764,7 @@ func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, fix.NodeID, tx)
 		if err != nil {
 			return err
 		}
@@ -783,7 +783,7 @@ func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		promoted, err := q.PromoteClaimedToRunning(ctx, tx, nodeRunID, guardSupA)
+		promoted, err := q.PromoteClaimedToRunning(ctx, nodeRunID, guardSupA, tx)
 		if err != nil {
 			return err
 		}
@@ -796,7 +796,7 @@ func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, fix.NodeID, tx)
 		if err != nil {
 			return err
 		}
@@ -902,23 +902,23 @@ func testClaimantGuardRunRemoveForNode(t *testing.T, d persistence.Database) {
 	nodeRunID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, guardSupB, tx)
+		return q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, guardSupB, tx)
 	}); err != nil {
-		t.Fatalf("wrong-claimant RemoveForNodeInTx: %v", err)
+		t.Fatalf("wrong-claimant RemoveForNode: %v", err)
 	}
-	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "RemoveForNodeInTx")
+	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "RemoveForNode")
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, guardSupA, tx)
+		return q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, guardSupA, tx)
 	}); err != nil {
-		t.Fatalf("owner RemoveForNodeInTx: %v", err)
+		t.Fatalf("owner RemoveForNode: %v", err)
 	}
 	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after owner remove: %v", err)
 	}
 	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
-		t.Fatalf("owner RemoveForNodeInTx did not release claim: %s/%s", owner.Kind, owner.SupervisorID)
+		t.Fatalf("owner RemoveForNode did not release claim: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 }
 
@@ -938,27 +938,27 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 	}
 
 	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.ParkActiveInTx(ctx, tx, parkInput(guardSupB))
+		return q.ParkActive(ctx, parkInput(guardSupB), tx)
 	})
 	if !errors.Is(err, persistence.ErrRunClaimantMismatch) {
-		t.Fatalf("wrong-claimant ParkActiveInTx: got err %v, want ErrRunClaimantMismatch", err)
+		t.Fatalf("wrong-claimant ParkActive: got err %v, want ErrRunClaimantMismatch", err)
 	}
-	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ParkActiveInTx")
-	parked, perr := q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
+	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ParkActive")
+	parked, perr := q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID, nil)
 	if perr != nil {
 		t.Fatalf("GetParkedByNode after wrong-claimant park: %v", perr)
 	}
 	if parked != nil {
-		t.Fatalf("wrong-claimant ParkActiveInTx parked the row")
+		t.Fatalf("wrong-claimant ParkActive parked the row")
 	}
 
 	parkRun(ctx, t, d, parkInput(guardSupA))
-	parked, perr = q.GetParkedByNode(ctx, nil, fix.NodeID, fix.MainRunScopeID)
+	parked, perr = q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID, nil)
 	if perr != nil {
 		t.Fatalf("GetParkedByNode after owner park: %v", perr)
 	}
 	if parked == nil || parked.NodeRunID != nodeRunID {
-		t.Fatalf("owner ParkActiveInTx did not park the row: %v", parked)
+		t.Fatalf("owner ParkActive did not park the row: %v", parked)
 	}
 	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
@@ -992,14 +992,14 @@ func testClaimantGuardRunForceOverride(t *testing.T, d persistence.Database) {
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, guardSupA)
+		ok, err := q.ClaimDispatchRow(ctx, nodeRunID, guardSupA, tx)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			t.Fatalf("re-claim as A failed")
 		}
-		_, err = q.PromoteClaimedToRunning(ctx, tx, nodeRunID, guardSupA)
+		_, err = q.PromoteClaimedToRunning(ctx, nodeRunID, guardSupA, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("re-claim tx: %v", err)
@@ -1029,23 +1029,23 @@ func testClaimantGuardRunForceOverride(t *testing.T, d persistence.Database) {
 
 	dispatchID2 := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, "", tx)
+		return q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, "", tx)
 	}); err != nil {
-		t.Fatalf("empty-claimant RemoveForNodeInTx: %v", err)
+		t.Fatalf("empty-claimant RemoveForNode: %v", err)
 	}
-	assertRunOwnedBy(ctx, t, d, dispatchID2, guardSupA, "RemoveForNodeInTx(empty claimant)")
+	assertRunOwnedBy(ctx, t, d, dispatchID2, guardSupA, "RemoveForNode(empty claimant)")
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.ForceRemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, tx)
+		return q.ForceRemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, tx)
 	}); err != nil {
-		t.Fatalf("ForceRemoveForNodeInTx: %v", err)
+		t.Fatalf("ForceRemoveForNode: %v", err)
 	}
 	rowner, err := q.GetClaimedBy(ctx, dispatchID2)
 	if err != nil {
-		t.Fatalf("GetClaimedBy after ForceRemoveForNodeInTx: %v", err)
+		t.Fatalf("GetClaimedBy after ForceRemoveForNode: %v", err)
 	}
 	if rowner.Kind != persistence.ClaimOwnershipKindUnclaimed {
-		t.Fatalf("ForceRemoveForNodeInTx did not release A's row: %s/%s", rowner.Kind, rowner.SupervisorID)
+		t.Fatalf("ForceRemoveForNode did not release A's row: %s/%s", rowner.Kind, rowner.SupervisorID)
 	}
 }
 

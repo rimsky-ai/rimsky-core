@@ -466,7 +466,7 @@ func testWaitSetGateEvaluatorMethods(t *testing.T, d persistence.Database) {
 
 	var pendingReceiverRunID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		id, err := store.Nodes().CreateCascadePending(ctx, tx, pendingReceiverID, fix.MainRunScopeID, fix.FrameID)
+		id, err := store.Nodes().CreateCascadePending(ctx, pendingReceiverID, fix.MainRunScopeID, fix.FrameID, tx)
 		pendingReceiverRunID = id
 		return err
 	}); err != nil {

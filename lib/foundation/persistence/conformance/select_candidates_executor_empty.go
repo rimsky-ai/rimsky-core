@@ -43,7 +43,7 @@ func testSelectCandidatesExcludesPureCascadeAdmitsClaimRouting(t *testing.T, d p
 		}, tx); err != nil {
 			return err
 		}
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 pureCascadeNodeID,
 			ExecutorName:           "",
 			RequiredClaimProducers: []string{},
@@ -53,7 +53,7 @@ func testSelectCandidatesExcludesPureCascadeAdmitsClaimRouting(t *testing.T, d p
 		}, tx); err != nil {
 			return err
 		}
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 claimRoutingNodeID,
 			ExecutorName:           "",
 			RequiredClaimProducers: []string{"fixture-store"},
@@ -68,11 +68,11 @@ func testSelectCandidatesExcludesPureCascadeAdmitsClaimRouting(t *testing.T, d p
 	probeErr := errors.New("rollback probe")
 	var sawPureCascade, sawClaimRouting bool
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{"fixture-store"},
 			Limit:                  100,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

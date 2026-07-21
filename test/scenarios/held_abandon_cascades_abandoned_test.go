@@ -111,7 +111,7 @@ func TestHeldAbandonCascadesAbandoned(t *testing.T) {
 
 	var acquirerLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, acquirer.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, acquirer.ID, tx)
 		acquirerLatest = r
 		return err
 	}))
@@ -125,7 +125,7 @@ func TestHeldAbandonCascadesAbandoned(t *testing.T) {
 
 	var observerLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, observer.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, observer.ID, tx)
 		observerLatest = r
 		return err
 	}))

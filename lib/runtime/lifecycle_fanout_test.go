@@ -41,7 +41,7 @@ func fanOutRunScopeEventInTx(
 ) {
 	t.Helper()
 	require.NoError(t, persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec, tplSpec, runScopeID, instanceID, terminalReason, tx, nil)
+		FanOutRunScopeEvent(ctx, persist, lifecycleSubs, peersForSpec, tplSpec, runScopeID, instanceID, terminalReason, nil, tx)
 		return nil
 	}))
 }
@@ -101,8 +101,7 @@ func TestFanOutRunScopeEvent_NilTxCommitsIndependently(t *testing.T) {
 	runScopeID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 
-	FanOutRunScopeEvent(context.Background(), persist, lcReg, peersForSpec, tplSpec,
-		runScopeID, instanceID, "subgraph_exit", nil, nil)
+	FanOutRunScopeEvent(context.Background(), persist, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit", nil, nil)
 	require.Len(t, fake.Calls(), 1,
 		"a nil tx must still deliver to the peer, managing its own short transactions for the idempotency read/write")
 

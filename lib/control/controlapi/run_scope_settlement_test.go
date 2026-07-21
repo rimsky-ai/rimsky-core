@@ -62,7 +62,7 @@ func TestFrameSettlement_ClosesRootScopeAndFansOutExactlyOnce(t *testing.T) {
 		}
 		require.NotNil(t, row)
 		require.NotNil(t, row.EndedAt, "settled frame must be ended by frame-end detection")
-		scope, err := f.deps.Persist.RunScopes().GetByID(ctx, tx, shared.UUID(rootScope))
+		scope, err := f.deps.Persist.RunScopes().GetByID(ctx, shared.UUID(rootScope), tx)
 		if err != nil {
 			return err
 		}

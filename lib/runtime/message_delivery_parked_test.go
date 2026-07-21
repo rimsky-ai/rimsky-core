@@ -34,7 +34,7 @@ func TestSweepDeliverMessages_TypedMessageAfterParkDoesNotTransitionTheParkedRun
 	var inst persistence.InstanceRow
 	var receiverNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
@@ -62,20 +62,20 @@ func TestSweepDeliverMessages_TypedMessageAfterParkDoesNotTransitionTheParkedRun
 	var msg2ID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msg2ID = shared.UUID(uuid.New())
-		return backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		return backend.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msg2ID,
 			InstanceID: inst.ID,
 			Type:       "notify-webhook",
 			Sender:     "test",
 			SenderKind: "operator",
-		})
+		}, tx)
 	}))
 
 	require.NoError(t, runtime.SweepDeliverTriggeringMessagesForRunningFrames(ctx, backend, shared.SilentLogger{}, time.Now()))
 
 	var gateAfter *persistence.NodeRunForGate
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		g, err := backend.Nodes().GetRunForGate(ctx, tx, parkedRunID)
+		g, err := backend.Nodes().GetRunForGate(ctx, parkedRunID, tx)
 		gateAfter = g
 		return err
 	}))
@@ -87,7 +87,7 @@ func TestSweepDeliverMessages_TypedMessageAfterParkDoesNotTransitionTheParkedRun
 
 	var msg2After *persistence.MessageRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		m, err := backend.Messages().GetInTx(ctx, tx, msg2ID)
+		m, err := backend.Messages().Get(ctx, msg2ID, tx)
 		msg2After = m
 		return err
 	}))
@@ -98,7 +98,7 @@ func TestSweepDeliverMessages_TypedMessageAfterParkDoesNotTransitionTheParkedRun
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		l, err := backend.Nodes().GetLatestRunForNode(ctx, tx, receiverNode.ID)
+		l, err := backend.Nodes().GetLatestRunForNode(ctx, receiverNode.ID, tx)
 		latest = l
 		return err
 	}))

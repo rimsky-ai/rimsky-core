@@ -66,7 +66,7 @@ func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error 
 		if lk.Producer == nil {
 			return args.ClaimHandles.Delete(ctx, lk.ClaimHandleID, args.SupervisorID, tx)
 		}
-		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		pc, err := ResolveClaimHandleTerminal(ctx, args, TerminalDecision{
 			ClaimHandleID: lk.ClaimHandleID,
 			SupervisorID:  args.SupervisorID,
 			Source:        OwnershipBail,
@@ -75,7 +75,7 @@ func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error 
 			Scope:         claimScope(lk),
 			Address:       claimAddress(lk),
 			LeaseToken:    lk.ProducerLeaseToken,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -91,7 +91,7 @@ func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error 
 }
 
 func emitLockAcquired(
-	ctx context.Context, args RunArgs, tx persistence.Tx, acq acquisition, lk AcquiredLock,
+	ctx context.Context, args RunArgs, acq acquisition, lk AcquiredLock, tx persistence.Tx,
 ) error {
 	payload := map[string]any{
 		"holder_id":     lk.ClaimHandleID.String(),

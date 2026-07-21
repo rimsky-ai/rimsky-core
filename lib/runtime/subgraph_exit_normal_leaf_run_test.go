@@ -58,9 +58,9 @@ func TestApplyTerminalComplete_SubgraphExit_EmitsNormalLeafRunRow(t *testing.T) 
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -79,35 +79,35 @@ func TestApplyTerminalComplete_SubgraphExit_EmitsNormalLeafRunRow(t *testing.T) 
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: parentNodeRunID, NodeID: callerNodeID, FrameID: frameID, RunScopeID: mainScopeID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		parentRunIDCopy := parentNodeRunID
 		mainScopeIDCopy := mainScopeID
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: exitScopeID, ParentRunScopeID: &mainScopeIDCopy, ParentNodeRunID: &parentRunIDCopy,
 			GraphName: "inner", InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+		if err := tables.NodeRunTree().CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 			NodeRunID: exitNodeRunID, NodeID: exitNodeID, FrameID: frameID,
 			RunScopeID: exitScopeID, ExecutorName: "test-executor",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return tables.NodeRunTree().UpdateStateAndOutcome(ctx, tx, exitNodeRunID, cascade.NodeStateRunning, nil, false)
+		return tables.NodeRunTree().UpdateStateAndOutcome(ctx, exitNodeRunID, cascade.NodeStateRunning, nil, false, tx)
 	}))
 
 	args := RunArgs{

@@ -28,17 +28,17 @@ func seedNodeRunInState(
 	runID := shared.UUID(uuid.New())
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: runScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if err := store.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := store.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: runID, NodeID: nodeID, FrameID: frameID, RunScopeID: runScopeID, ExecutorName: "test-executor",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, state, nil, false)
+		return store.NodeRunTree().UpdateStateAndOutcome(ctx, runID, state, nil, false, tx)
 	}); err != nil {
 		t.Fatalf("seedNodeRunInState(%s): %v", state, err)
 	}

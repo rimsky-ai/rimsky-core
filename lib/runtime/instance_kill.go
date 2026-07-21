@@ -22,15 +22,15 @@ import (
 )
 
 func ForceFailInFlightRunsForInstance(
-	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, tx persistence.Tx,
 ) (func(context.Context), error) {
-	runs, err := args.Persist.Nodes().ListRunsForInstanceByStates(ctx, tx, instanceID, cascade.InFlightStates)
+	runs, err := args.Persist.Nodes().ListRunsForInstanceByStates(ctx, instanceID, cascade.InFlightStates, tx)
 	if err != nil {
 		return nil, err
 	}
 	var post postCommitFn
 	for _, r := range runs {
-		pc, err := forceFailRunInstanceKilled(ctx, args, tx, instanceID, r)
+		pc, err := forceFailRunInstanceKilled(ctx, args, instanceID, r, tx)
 		if err != nil {
 			return nil, err
 		}
@@ -43,10 +43,9 @@ func ForceFailInFlightRunsForInstance(
 }
 
 func forceFailRunInstanceKilled(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	instanceID shared.UUID, run persistence.NodeRunLatest,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, run persistence.NodeRunLatest, tx persistence.Tx,
 ) (postCommitFn, error) {
-	current, err := args.Persist.Nodes().GetRunForGate(ctx, tx, run.NodeRunID)
+	current, err := args.Persist.Nodes().GetRunForGate(ctx, run.NodeRunID, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -78,14 +77,14 @@ func forceFailRunInstanceKilled(
 		args.Logger.Warn("forceFailRunInstanceKilled: terminal signal audit failed; kill stands",
 			"node_run_id", run.NodeRunID.String(), "error", err.Error())
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, run.FrameID, run.NodeRunID); err != nil && args.Logger != nil {
+	if err := drainWaitSetOnSettled(ctx, args, run.FrameID, run.NodeRunID, tx); err != nil && args.Logger != nil {
 		args.Logger.Warn("forceFailRunInstanceKilled: wait-set drain failed; kill stands",
 			"node_run_id", run.NodeRunID.String(), "error", err.Error())
 	}
 	if current.State == cascade.NodeStateHeld {
-		failHeldCoHolderRows(ctx, args, tx, run.NodeRunID)
+		failHeldCoHolderRows(ctx, args, run.NodeRunID, tx)
 	}
-	post := abandonRunClaimsThroughProducers(ctx, args, tx, instanceID, run)
+	post := abandonRunClaimsThroughProducers(ctx, args, instanceID, run, tx)
 	runID := run.NodeRunID
 	propagate := func(pctx context.Context) {
 		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID); err != nil && args.Logger != nil {
@@ -99,7 +98,7 @@ func forceFailRunInstanceKilled(
 // @concept: claim-handle
 // @decision: held-as-state-not-phase
 func failHeldCoHolderRows(
-	ctx context.Context, args RunArgs, tx persistence.Tx, holderNodeRunID shared.UUID,
+	ctx context.Context, args RunArgs, holderNodeRunID shared.UUID, tx persistence.Tx,
 ) {
 	if args.Persist.ClaimHolders() == nil {
 		return
@@ -134,8 +133,7 @@ func failHeldCoHolderRows(
 // @concept: claim-handle
 // @concept: terminal-resolution
 func abandonRunClaimsThroughProducers(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	instanceID shared.UUID, run persistence.NodeRunLatest,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, run persistence.NodeRunLatest, tx persistence.Tx,
 ) postCommitFn {
 	if args.ClaimHandles == nil {
 		return nil
@@ -161,15 +159,14 @@ func abandonRunClaimsThroughProducers(
 			}
 			continue
 		}
-		pc := resolveKilledClaimTerminal(ctx, args, tx, instanceID, run, h)
+		pc := resolveKilledClaimTerminal(ctx, args, instanceID, run, h, tx)
 		post = chainPostCommit(post, pc)
 	}
 	return post
 }
 
 func resolveKilledClaimTerminal(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	instanceID shared.UUID, run persistence.NodeRunLatest, h persistence.ClaimHandleRow,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, run persistence.NodeRunLatest, h persistence.ClaimHandleRow, tx persistence.Tx,
 ) postCommitFn {
 	producerName := ""
 	if h.ProducerName != nil {
@@ -181,7 +178,7 @@ func resolveKilledClaimTerminal(
 		producer, producerOK = args.StoreRegistry.Get(producerName)
 	}
 	if producerOK {
-		pc, err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		pc, err := ResolveClaimHandleTerminal(ctx, args, TerminalDecision{
 			ClaimHandleID:   h.ID,
 			SupervisorID:    *h.HolderSupervisorID,
 			Source:          ActiveTerminal,
@@ -202,7 +199,7 @@ func resolveKilledClaimTerminal(
 				VersionID:    h.VersionID,
 			},
 			ParentClaimHandleID: h.ParentClaimHandleID,
-		})
+		}, tx)
 		if err == nil {
 			return pc
 		}

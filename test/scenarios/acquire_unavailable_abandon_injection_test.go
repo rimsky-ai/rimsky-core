@@ -197,7 +197,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 
 	var failedLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+		r, gerr := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, worker.ID, tx)
 		failedLatest = r
 		return gerr
 	}))

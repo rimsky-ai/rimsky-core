@@ -18,34 +18,17 @@ import (
 // @concept: signal
 // @concept: wait-set
 func emitSignalInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	senderID foundationshared.UUID,
-	senderNodeType string,
-	senderNodeRunID foundationshared.UUID,
-	instanceID foundationshared.UUID,
-	senderFrameID foundationshared.UUID,
-	sig signalpkg.Signal,
-	visited map[foundationshared.UUID]struct{},
+	ctx context.Context, args RunArgs, senderID foundationshared.UUID, senderNodeType string, senderNodeRunID foundationshared.UUID, instanceID foundationshared.UUID, senderFrameID foundationshared.UUID, sig signalpkg.Signal, visited map[foundationshared.UUID]struct{}, tx persistence.Tx,
 ) error {
-	return emitSignalInTxWithFilter(ctx, args, tx, senderID, senderNodeType, senderNodeRunID,
-		instanceID, senderFrameID, sig, visited, nil)
+	return emitSignalInTxWithFilter(ctx, args, senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig, visited, nil, tx)
 }
 
 // @concept: cascade
 // @decision: held-as-state-not-phase
 func emitSignalInTxWithFilter(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	senderID foundationshared.UUID,
-	senderNodeType string,
-	senderNodeRunID foundationshared.UUID,
-	instanceID foundationshared.UUID,
-	senderFrameID foundationshared.UUID,
-	sig signalpkg.Signal,
-	visited map[foundationshared.UUID]struct{},
-	filter receiverFilter,
+	ctx context.Context, args RunArgs, senderID foundationshared.UUID, senderNodeType string, senderNodeRunID foundationshared.UUID, instanceID foundationshared.UUID, senderFrameID foundationshared.UUID, sig signalpkg.Signal, visited map[foundationshared.UUID]struct{}, filter receiverFilter, tx persistence.Tx,
 ) error {
-	if err := cascadeSignalInTxWithFilter(ctx, args, tx, senderID, senderNodeType, senderNodeRunID,
-		instanceID, senderFrameID, sig, visited, filter); err != nil {
+	if err := cascadeSignalInTxWithFilter(ctx, args, senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig, visited, filter, tx); err != nil {
 		return err
 	}
 	return signalaudit.EmitSignal(ctx, args.Persist.Events(),
@@ -55,23 +38,14 @@ func emitSignalInTxWithFilter(
 // @concept: cascade
 // @decision: held-as-state-not-phase
 func cascadeSignalInTxWithFilter(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	senderID foundationshared.UUID,
-	senderNodeType string,
-	senderNodeRunID foundationshared.UUID,
-	instanceID foundationshared.UUID,
-	senderFrameID foundationshared.UUID,
-	sig signalpkg.Signal,
-	visited map[foundationshared.UUID]struct{},
-	filter receiverFilter,
+	ctx context.Context, args RunArgs, senderID foundationshared.UUID, senderNodeType string, senderNodeRunID foundationshared.UUID, instanceID foundationshared.UUID, senderFrameID foundationshared.UUID, sig signalpkg.Signal, visited map[foundationshared.UUID]struct{}, filter receiverFilter, tx persistence.Tx,
 ) error {
 	if err := signalpkg.ValidateTypePath(sig.Type); err != nil {
 		return fmt.Errorf("cascadeSignalInTxWithFilter: %w", err)
 	}
 	var zeroUUID foundationshared.UUID
 	if senderNodeRunID != zeroUUID && senderFrameID != zeroUUID {
-		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-			senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig, visited, filter); err != nil {
+		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig, visited, filter, tx); err != nil {
 			return err
 		}
 	}
@@ -79,14 +53,7 @@ func cascadeSignalInTxWithFilter(
 }
 
 func emitSignalInTxOnce(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	senderID foundationshared.UUID,
-	senderNodeType string,
-	senderNodeRunID foundationshared.UUID,
-	instanceID foundationshared.UUID,
-	senderFrameID foundationshared.UUID,
-	sig signalpkg.Signal,
+	ctx context.Context, args RunArgs, senderID foundationshared.UUID, senderNodeType string, senderNodeRunID foundationshared.UUID, instanceID foundationshared.UUID, senderFrameID foundationshared.UUID, sig signalpkg.Signal, tx persistence.Tx,
 ) error {
-	return emitSignalInTx(ctx, args, tx, senderID, senderNodeType, senderNodeRunID,
-		instanceID, senderFrameID, sig, map[foundationshared.UUID]struct{}{})
+	return emitSignalInTx(ctx, args, senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig, map[foundationshared.UUID]struct{}{}, tx)
 }

@@ -29,16 +29,16 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		if _, err := store.Frames().MarkFrameEnded(ctx, frameA, tx); err != nil {
 			return err
 		}
-		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         frameBMsgID,
 			InstanceID: fix.InstanceID,
 			Type:       "fixture/message",
 			Sender:     "operator",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		frameBScope := seedMainRunScopeForInstance(ctx, t, tx, store, fix.InstanceID)
+		frameBScope := seedMainRunScopeForInstance(ctx, t, store, fix.InstanceID, tx)
 		fid, err := store.Frames().InsertRunningFrame(ctx, fix.InstanceID, frameBMsgID, frameBScope, tx)
 		if err != nil {
 			return err
@@ -57,7 +57,7 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 			t.Fatalf("marshal payload: %v", err)
 		}
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			return store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 				ID:         msgID,
 				InstanceID: fix.InstanceID,
 				Type:       "fixture/message",
@@ -65,13 +65,13 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 				SenderKind: "operator",
 				Payload:    body,
 				ReceivedAt: time.Now().UTC(),
-			})
+			}, tx)
 		}); err != nil {
 			t.Fatalf("Messages.Insert: %v", err)
 		}
 		if frame != (shared.UUID{}) {
 			if err := inTx(ctx, store, func(tx persistence.Tx) error {
-				ok, err := store.Messages().MarkDelivered(ctx, tx, msgID, frame, time.Now().UTC())
+				ok, err := store.Messages().MarkDelivered(ctx, msgID, frame, time.Now().UTC(), tx)
 				if err != nil {
 					return err
 				}
@@ -167,7 +167,7 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 
 	var deliveredA []persistence.MessageRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.Messages().ListDeliveredForFrame(ctx, tx, frameA)
+		r, err := store.Messages().ListDeliveredForFrame(ctx, frameA, tx)
 		deliveredA = r
 		return err
 	}); err != nil {
@@ -178,7 +178,7 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	}
 	var deliveredUnknown []persistence.MessageRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.Messages().ListDeliveredForFrame(ctx, tx, unknownFrame)
+		r, err := store.Messages().ListDeliveredForFrame(ctx, unknownFrame, tx)
 		deliveredUnknown = r
 		return err
 	}); err != nil {
@@ -199,20 +199,20 @@ func testMessagesMarkDeliveredExcludesCancelled(t *testing.T, d persistence.Data
 
 	msgID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		return store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: fix.InstanceID,
 			Type:       "fixture/message",
 			Sender:     "operator",
 			SenderKind: "operator",
 			ReceivedAt: time.Now().UTC(),
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Messages.Insert: %v", err)
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		n, err := store.Messages().CancelPendingForInstance(ctx, tx, fix.InstanceID)
+		n, err := store.Messages().CancelPendingForInstance(ctx, fix.InstanceID, tx)
 		if err != nil {
 			return err
 		}
@@ -225,7 +225,7 @@ func testMessagesMarkDeliveredExcludesCancelled(t *testing.T, d persistence.Data
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		ok, err := store.Messages().MarkDelivered(ctx, tx, msgID, fix.FrameID, time.Now().UTC())
+		ok, err := store.Messages().MarkDelivered(ctx, msgID, fix.FrameID, time.Now().UTC(), tx)
 		if err != nil {
 			return err
 		}
@@ -238,7 +238,7 @@ func testMessagesMarkDeliveredExcludesCancelled(t *testing.T, d persistence.Data
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		row, err := store.Messages().GetInTx(ctx, tx, msgID)
+		row, err := store.Messages().Get(ctx, msgID, tx)
 		if err != nil {
 			return err
 		}
@@ -253,7 +253,7 @@ func testMessagesMarkDeliveredExcludesCancelled(t *testing.T, d persistence.Data
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("Messages.GetInTx: %v", err)
+		t.Fatalf("Messages.Get: %v", err)
 	}
 }
 
@@ -269,14 +269,14 @@ func testMessagesListBySender(t *testing.T, d persistence.Database) {
 		t.Helper()
 		id := shared.UUID(uuid.New())
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			return store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 				ID:         id,
 				InstanceID: fix.InstanceID,
 				Type:       "fixture/message",
 				Sender:     sender,
 				SenderKind: senderKind,
 				ReceivedAt: time.Now().UTC(),
-			})
+			}, tx)
 		}); err != nil {
 			t.Fatalf("Messages.Insert(sender=%s): %v", sender, err)
 		}
@@ -326,19 +326,23 @@ func testMessagesScanNullPayload(t *testing.T, d persistence.Database) {
 	msgID := shared.UUID(uuid.New())
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		return messages.Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: fix.InstanceID,
 			Type:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Messages.Insert: %v", err)
 	}
 
-	row, err := messages.Get(ctx, msgID)
-	if err != nil {
+	var row *persistence.MessageRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, gerr := messages.Get(ctx, msgID, tx)
+		row = r
+		return gerr
+	}); err != nil {
 		t.Fatalf("Messages.Get: %v (NULL payload must scan without error)", err)
 	}
 	if row == nil {
@@ -367,7 +371,7 @@ func testMessagesScanNullPayload(t *testing.T, d persistence.Database) {
 
 	var pending []persistence.MessageRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := messages.ListPendingForInstance(ctx, tx, fix.InstanceID)
+		r, err := messages.ListPendingForInstance(ctx, fix.InstanceID, tx)
 		pending = r
 		return err
 	}); err != nil {
@@ -396,19 +400,23 @@ func testMessagesScanNonNullPayload(t *testing.T, d persistence.Database) {
 
 	payload := json.RawMessage(`{"hello":"world"}`)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		return messages.Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: fix.InstanceID,
 			Type:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
 			Payload:    payload,
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Messages.Insert: %v", err)
 	}
-	row, err := messages.Get(ctx, msgID)
-	if err != nil {
+	var row *persistence.MessageRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, gerr := messages.Get(ctx, msgID, tx)
+		row = r
+		return gerr
+	}); err != nil {
 		t.Fatalf("Messages.Get: %v", err)
 	}
 	if row == nil {
@@ -432,17 +440,17 @@ func testMessagesListDeliveredAfterBefore(t *testing.T, d persistence.Database) 
 	for i, tt := range []time.Time{t1, t2, t3} {
 		ids[i] = shared.UUID(uuid.New())
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			if err := messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			if err := messages.Insert(ctx, persistence.EnqueueMessageRequest{
 				ID:         ids[i],
 				InstanceID: fix.InstanceID,
 				Type:       "ping/recheck",
 				Sender:     "operator",
 				SenderKind: "operator",
 				ReceivedAt: tt.Add(-time.Hour),
-			}); err != nil {
+			}, tx); err != nil {
 				return err
 			}
-			ok, err := messages.MarkDelivered(ctx, tx, ids[i], fix.FrameID, tt)
+			ok, err := messages.MarkDelivered(ctx, ids[i], fix.FrameID, tt, tx)
 			if err != nil {
 				return err
 			}
@@ -505,14 +513,14 @@ func testMessagesListCursorPagination(t *testing.T, d persistence.Database) {
 	for i := 0; i < total; i++ {
 		ids[i] = shared.UUID(uuid.New())
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			return messages.Insert(ctx, persistence.EnqueueMessageRequest{
 				ID:         ids[i],
 				InstanceID: fix.InstanceID,
 				Type:       "ping/recheck",
 				Sender:     "operator",
 				SenderKind: "operator",
 				ReceivedAt: base.Add(time.Duration(i) * time.Minute),
-			})
+			}, tx)
 		}); err != nil {
 			t.Fatalf("Messages.Insert[%d]: %v", i, err)
 		}
@@ -566,14 +574,14 @@ func testMessagesListFiltersByType(t *testing.T, d persistence.Database) {
 		t.Helper()
 		id := shared.UUID(uuid.New())
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			return store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 				ID:         id,
 				InstanceID: fix.InstanceID,
 				Type:       msgType,
 				Sender:     "fixture-sender",
 				SenderKind: "operator",
 				ReceivedAt: time.Now().UTC(),
-			})
+			}, tx)
 		}); err != nil {
 			t.Fatalf("Messages.Insert(type=%q): %v", msgType, err)
 		}
@@ -622,14 +630,14 @@ func testMessagesListPendingForInstanceReturnsAllPending(t *testing.T, d persist
 	for i := range msgIDs {
 		msgIDs[i] = shared.UUID(uuid.New())
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			return store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 				ID:         msgIDs[i],
 				InstanceID: fix.InstanceID,
 				Type:       "fixture/message",
 				Sender:     "operator",
 				SenderKind: "operator",
 				ReceivedAt: time.Now().UTC().Add(time.Duration(i) * time.Millisecond),
-			})
+			}, tx)
 		}); err != nil {
 			t.Fatalf("Messages.Insert(%d): %v", i, err)
 		}
@@ -637,7 +645,7 @@ func testMessagesListPendingForInstanceReturnsAllPending(t *testing.T, d persist
 
 	var pending []persistence.MessageRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.Messages().ListPendingForInstance(ctx, tx, fix.InstanceID)
+		r, err := store.Messages().ListPendingForInstance(ctx, fix.InstanceID, tx)
 		pending = r
 		return err
 	}); err != nil {

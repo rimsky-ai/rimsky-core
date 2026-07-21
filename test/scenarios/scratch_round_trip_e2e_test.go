@@ -181,11 +181,11 @@ func runDispositionVariant(t *testing.T, disposition string) {
 	runScopeID := shared.UUID(runScopeUUIDParsed)
 
 	require.NoError(t, harness.Persist.Transaction(harness.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		inline, handle, backend, lerr := harness.Queue.LoadScratchInTx(ctx, tx, priorRunPtr)
+		inline, handle, backend, lerr := harness.Queue.LoadScratch(ctx, priorRunPtr, tx)
 		if lerr != nil {
 			return lerr
 		}
-		return harness.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return harness.Queue.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                      n.ID,
 			ExecutorName:                url,
 			RequiredClaimProducers:      []string{},
@@ -198,7 +198,7 @@ func runDispositionVariant(t *testing.T, disposition string) {
 			InitialScratchHandle:        handle,
 			InitialScratchHandleBackend: backend,
 		}, tx)
-	}), "recovery EnqueueInTx")
+	}), "recovery Enqueue")
 
 	var gotInline []byte
 	harness.QueryRowSQL(`

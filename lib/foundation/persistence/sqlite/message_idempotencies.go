@@ -37,7 +37,7 @@ SELECT message_id, created_at
   FROM rimsky_message_idempotencies
  WHERE instance_id = ? AND sender_kind = ? AND sender = ? AND sender_subject = ? AND idempotency_key = ?`
 
-func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persistence.Tx, row persistence.MessageIdempotencyRow) (persistence.MessageIdempotencyRow, bool, error) {
+func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, row persistence.MessageIdempotencyRow, tx persistence.Tx) (persistence.MessageIdempotencyRow, bool, error) {
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = time.Now().UTC()
 	}

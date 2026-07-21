@@ -184,7 +184,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				if parseErr != nil {
 					return errPublisherSubscriptionNotLive
 				}
-				row, err := deps.Persist.PublisherSubscriptions().Get(ctx, tx, shared.UUID(subID))
+				row, err := deps.Persist.PublisherSubscriptions().Get(ctx, shared.UUID(subID), tx)
 				if err != nil {
 					return err
 				}
@@ -197,14 +197,14 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				sender = row.PublisherName
 				senderSubject = row.ID.String()
 			}
-			dedupRow, inserted, err := deps.Persist.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
+			dedupRow, inserted, err := deps.Persist.MessageIdempotencies().InsertOrLookup(ctx, persistence.MessageIdempotencyRow{
 				InstanceID:     instUUID,
 				SenderKind:     dedupSenderKind(senderKind, ident),
 				Sender:         sender,
 				SenderSubject:  senderSubject,
 				IdempotencyKey: idempotencyKey,
 				MessageID:      msgID,
-			})
+			}, tx)
 			if err != nil {
 				return err
 			}
@@ -227,7 +227,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				SenderKind: senderKind,
 				Payload:    body.Payload,
 			}
-			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist, enqueueReq); err != nil {
+			if err := runtime.EnqueueMessage(ctx, deps.Persist, enqueueReq, tx); err != nil {
 				return err
 			}
 			return nil
@@ -375,8 +375,12 @@ func handleGetMessage(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid message id")
 			return
 		}
-		row, err := deps.Persist.Messages().Get(req.Context(), shared.UUID(id))
-		if err != nil {
+		var row *persistence.MessageRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, gerr := deps.Persist.Messages().Get(ctx, shared.UUID(id), tx)
+			row = r
+			return gerr
+		}); err != nil {
 			writeError(w, err)
 			return
 		}

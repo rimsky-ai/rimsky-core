@@ -39,14 +39,13 @@ type PropagationArgs struct {
 }
 
 func PropagateFromChildState(
-	ctx context.Context, args PropagationArgs, tx persistence.Tx,
-	childRunID shared.UUID,
+	ctx context.Context, args PropagationArgs, childRunID shared.UUID, tx persistence.Tx,
 ) ([]CancelAction, []ParentSettlement, error) {
 	if args.NodeRunTree == nil {
 		return nil, nil, fmt.Errorf("PropagateFromChildState: NodeRunTree is required")
 	}
 
-	childRow, err := args.NodeRunTree.GetByID(ctx, tx, childRunID)
+	childRow, err := args.NodeRunTree.GetByID(ctx, childRunID, tx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("PropagateFromChildState: load child %s: %w", childRunID, err)
 	}
@@ -56,32 +55,31 @@ func PropagateFromChildState(
 	if args.RunScopes == nil {
 		return nil, nil, fmt.Errorf("PropagateFromChildState: RunScopes is required")
 	}
-	scope, err := args.RunScopes.GetByID(ctx, tx, childRow.RunScopeID)
+	scope, err := args.RunScopes.GetByID(ctx, childRow.RunScopeID, tx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("PropagateFromChildState: load run scope %s: %w", childRow.RunScopeID, err)
 	}
 	if scope == nil || scope.ParentNodeRunID == nil {
 		return nil, nil, nil
 	}
-	return walkUpwards(ctx, args, tx, *scope.ParentNodeRunID)
+	return walkUpwards(ctx, args, *scope.ParentNodeRunID, tx)
 }
 
 func walkUpwards(
-	ctx context.Context, args PropagationArgs, tx persistence.Tx,
-	parentNodeRunID shared.UUID,
+	ctx context.Context, args PropagationArgs, parentNodeRunID shared.UUID, tx persistence.Tx,
 ) ([]CancelAction, []ParentSettlement, error) {
 	var actions []CancelAction
 	var settlements []ParentSettlement
 	current := parentNodeRunID
 	for {
-		parent, err := args.NodeRunTree.LockTreeForUpdate(ctx, tx, current)
+		parent, err := args.NodeRunTree.LockTreeForUpdate(ctx, current, tx)
 		if err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: lock %s: %w", current, err)
 		}
 		if parent == nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: parent %s not found", current)
 		}
-		children, err := args.NodeRunTree.ListChildren(ctx, tx, current)
+		children, err := args.NodeRunTree.ListChildren(ctx, current, tx)
 		if err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: list children %s: %w", current, err)
 		}
@@ -99,7 +97,7 @@ func walkUpwards(
 		}
 		if isSettled(parent.State) && parent.State == result.ParentState {
 			newSig := string(result.ParentSettlingSignalType)
-			if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, &newSig, result.ParentChanged); err != nil {
+			if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, current, result.ParentState, &newSig, result.ParentChanged, tx); err != nil {
 				return actions, settlements, fmt.Errorf("walkUpwards: correct settled parent %s signal: %w", current, err)
 			}
 			return actions, settlements, nil
@@ -115,7 +113,7 @@ func walkUpwards(
 		if newSig != "" {
 			newSigArg = &newSig
 		}
-		if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, newSigArg, result.ParentChanged); err != nil {
+		if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, current, result.ParentState, newSigArg, result.ParentChanged, tx); err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: update parent %s: %w", current, err)
 		}
 		if result.Action != AggregateActionNone {
@@ -140,7 +138,7 @@ func walkUpwards(
 			return actions, settlements, nil
 		}
 		// @concept: run-scope
-		parentScope, err := args.RunScopes.GetByID(ctx, tx, parent.RunScopeID)
+		parentScope, err := args.RunScopes.GetByID(ctx, parent.RunScopeID, tx)
 		if err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: load run scope %s: %w", parent.RunScopeID, err)
 		}
@@ -191,11 +189,11 @@ func PropagateIfChildAfterTerminal(
 	// @concept: run-scope
 	var parentID *shared.UUID
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := rt.GetByID(ctx, tx, runID)
+		row, err := rt.GetByID(ctx, runID, tx)
 		if err != nil || row == nil {
 			return err
 		}
-		scope, err := scopes.GetByID(ctx, tx, row.RunScopeID)
+		scope, err := scopes.GetByID(ctx, row.RunScopeID, tx)
 		if err != nil || scope == nil {
 			return err
 		}
@@ -214,14 +212,14 @@ func PropagateIfChildAfterTerminal(
 		outActions, outSettlements, err := PropagateFromChildState(ctx, PropagationArgs{
 			NodeRunTree: rt,
 			RunScopes:   scopes,
-		}, tx, runID)
+		}, runID, tx)
 		actions = outActions
 		settlements = outSettlements
 		if err != nil {
 			return err
 		}
 		// @concept: cancel-siblings
-		cancelPC, err := executeCancelActions(ctx, args, tx, rt, actions)
+		cancelPC, err := executeCancelActions(ctx, args, rt, actions, tx)
 		if err != nil {
 			return fmt.Errorf("PropagateIfChildAfterTerminal: execute cancel actions: %w", err)
 		}
@@ -249,30 +247,22 @@ func PropagateIfChildAfterTerminal(
 			// @concept: signal
 			parentSig := parentSettlementSignal(s.NewState, s.NewSettlingSignalType, s.NewChanged)
 			if err := emitSignalInTxOnce(
-				ctx, args, tx,
-				s.ParentNodeID,
-				nodeRow.NodeType,
-				s.ParentNodeRunID,
-				nodeRow.InstanceID,
-				s.FrameID,
-				parentSig,
+				ctx, args, s.ParentNodeID, nodeRow.NodeType, s.ParentNodeRunID, nodeRow.InstanceID, s.FrameID, parentSig, tx,
 			); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: cascade parent %s: %w", s.ParentNodeRunID, err)
 			}
-			if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, tx, s.ParentNodeRunID, s.ParentNodeID); err != nil {
+			if err := upsertDataFromDispatchInputBagIfEmpty(ctx, args, s.ParentNodeRunID, s.ParentNodeID, tx); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: upsert parent attrs %s: %w", s.ParentNodeRunID, err)
 			}
-			if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-				s.ParentNodeID, nodeRow.NodeType, s.ParentNodeRunID, nodeRow.InstanceID, s.FrameID,
-				nil, nil); err != nil {
+			if err := emitAttributeChangesForRunInTx(ctx, args, s.ParentNodeID, nodeRow.NodeType, s.ParentNodeRunID, nodeRow.InstanceID, s.FrameID, nil, nil, tx); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: emit parent attribute changes %s: %w", s.ParentNodeRunID, err)
 			}
 			// @concept: wait-set
 			// @decision: walker-rule-per-sender-node
-			if err := drainWaitSetOnSettled(ctx, args, tx, s.FrameID, s.ParentNodeRunID); err != nil {
+			if err := drainWaitSetOnSettled(ctx, args, s.FrameID, s.ParentNodeRunID, tx); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: drain wait-set for parent %s: %w", s.ParentNodeRunID, err)
 			}
-			pc, err := resolveSettledDelegateCallerClaimsInTx(ctx, args, tx, s, nodeRow)
+			pc, err := resolveSettledDelegateCallerClaimsInTx(ctx, args, s, nodeRow, tx)
 			if err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: resolve delegate caller claims for %s: %w", s.ParentNodeRunID, err)
 			}
@@ -290,8 +280,7 @@ func PropagateIfChildAfterTerminal(
 
 // @concept: cancel-siblings
 func executeCancelActions(
-	ctx context.Context, args RunArgs, tx persistence.Tx, rt persistence.NodeRunTreeTable,
-	actions []CancelAction,
+	ctx context.Context, args RunArgs, rt persistence.NodeRunTreeTable, actions []CancelAction, tx persistence.Tx,
 ) (postCommitFn, error) {
 	var post postCommitFn
 	for _, action := range actions {
@@ -299,7 +288,7 @@ func executeCancelActions(
 			continue
 		}
 		for _, child := range action.Children {
-			pc, err := cancelInFlightRunTreeSubtree(ctx, args, tx, rt, child.NodeRunID)
+			pc, err := cancelInFlightRunTreeSubtree(ctx, args, rt, child.NodeRunID, tx)
 			if err != nil {
 				return nil, fmt.Errorf("executeCancelActions: cancel %s under parent %s: %w",
 					child.NodeRunID, action.ParentNodeRunID, err)
@@ -312,25 +301,25 @@ func executeCancelActions(
 
 // @concept: cancel-siblings
 func cancelInFlightRunTreeSubtree(
-	ctx context.Context, args RunArgs, tx persistence.Tx, rt persistence.NodeRunTreeTable, runID shared.UUID,
+	ctx context.Context, args RunArgs, rt persistence.NodeRunTreeTable, runID shared.UUID, tx persistence.Tx,
 ) (postCommitFn, error) {
-	current, err := args.Persist.Nodes().GetRunForGate(ctx, tx, runID)
+	current, err := args.Persist.Nodes().GetRunForGate(ctx, runID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("cancelInFlightRunTreeSubtree: GetRunForGate %s: %w", runID, err)
 	}
 	if current == nil || cascade.IsTerminal(current.State) {
 		return nil, nil
 	}
-	post, err := cancelInFlightRunTreeChild(ctx, args, tx, current)
+	post, err := cancelInFlightRunTreeChild(ctx, args, current, tx)
 	if err != nil {
 		return nil, err
 	}
-	children, err := rt.ListChildren(ctx, tx, runID)
+	children, err := rt.ListChildren(ctx, runID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("cancelInFlightRunTreeSubtree: ListChildren %s: %w", runID, err)
 	}
 	for _, c := range children {
-		childPost, err := cancelInFlightRunTreeSubtree(ctx, args, tx, rt, c.NodeRunID)
+		childPost, err := cancelInFlightRunTreeSubtree(ctx, args, rt, c.NodeRunID, tx)
 		if err != nil {
 			return nil, err
 		}
@@ -341,7 +330,7 @@ func cancelInFlightRunTreeSubtree(
 
 // @concept: cancel-siblings
 func cancelInFlightRunTreeChild(
-	ctx context.Context, args RunArgs, tx persistence.Tx, current *persistence.NodeRunForGate,
+	ctx context.Context, args RunArgs, current *persistence.NodeRunForGate, tx persistence.Tx,
 ) (postCommitFn, error) {
 	sig := cascade.SettlingSignalSiblingFailed
 	if err := args.Persist.Nodes().UpdateState(ctx, current.NodeRunID,
@@ -376,12 +365,12 @@ func cancelInFlightRunTreeChild(
 		args.Logger.Warn("cancelInFlightRunTreeChild: terminal signal audit failed; cancellation stands",
 			"node_run_id", current.NodeRunID.String(), "error", err.Error())
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, current.FrameID, current.NodeRunID); err != nil && args.Logger != nil {
+	if err := drainWaitSetOnSettled(ctx, args, current.FrameID, current.NodeRunID, tx); err != nil && args.Logger != nil {
 		args.Logger.Warn("cancelInFlightRunTreeChild: wait-set drain failed; cancellation stands",
 			"node_run_id", current.NodeRunID.String(), "error", err.Error())
 	}
 	if current.State == cascade.NodeStateHeld {
-		failHeldCoHolderRows(ctx, args, tx, current.NodeRunID)
+		failHeldCoHolderRows(ctx, args, current.NodeRunID, tx)
 	}
 	run := persistence.NodeRunLatest{
 		NodeRunID:  current.NodeRunID,
@@ -390,7 +379,7 @@ func cancelInFlightRunTreeChild(
 		FrameID:    current.FrameID,
 		State:      current.State,
 	}
-	post := abandonRunClaimsThroughProducers(ctx, args, tx, instanceID, run)
+	post := abandonRunClaimsThroughProducers(ctx, args, instanceID, run, tx)
 	runID := current.NodeRunID
 	propagate := func(pctx context.Context) {
 		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID); err != nil && args.Logger != nil {
@@ -402,10 +391,9 @@ func cancelInFlightRunTreeChild(
 }
 
 func resolveSettledDelegateCallerClaimsInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	s ParentSettlement, parentNode *persistence.NodeRow,
+	ctx context.Context, args RunArgs, s ParentSettlement, parentNode *persistence.NodeRow, tx persistence.Tx,
 ) (postCommitFn, error) {
-	tmplSpec, err := loadTemplateSpec(ctx, args, tx, parentNode.InstanceID)
+	tmplSpec, err := loadTemplateSpec(ctx, args, parentNode.InstanceID, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +404,7 @@ func resolveSettledDelegateCallerClaimsInTx(
 	if def == nil || def.Delegate == "" {
 		return nil, nil
 	}
-	parentRun, err := args.Persist.NodeRunTree().GetByID(ctx, tx, s.ParentNodeRunID)
+	parentRun, err := args.Persist.NodeRunTree().GetByID(ctx, s.ParentNodeRunID, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -427,5 +415,5 @@ func resolveSettledDelegateCallerClaimsInTx(
 	if s.NewState == cascade.NodeStateFresh {
 		outcome = OutcomeCommit
 	}
-	return resolveDelegateCallerClaimsInTx(ctx, args, tx, *parentRun, parentNode.InstanceID, outcome)
+	return resolveDelegateCallerClaimsInTx(ctx, args, *parentRun, parentNode.InstanceID, outcome, tx)
 }

@@ -45,7 +45,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	_, err = tx.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
 	_, err = tx.Exec(h.Ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, frame_id, run_scope_id, sequence)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, claimed_by, claimed_at, frame_id, run_scope_id, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), $3, $4, 1)`,
 		nodeRunID, n.ID, frameID, mainScopeID,
 	)
@@ -78,7 +78,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, n.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, n.ID, tx)
 		latest = r
 		return err
 	}))

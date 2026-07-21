@@ -24,7 +24,7 @@ type MessageIdempotencyRow struct {
 }
 
 type MessageIdempotencyTable interface {
-	InsertOrLookup(ctx context.Context, tx Tx, row MessageIdempotencyRow) (MessageIdempotencyRow, bool, error)
+	InsertOrLookup(ctx context.Context, row MessageIdempotencyRow, tx Tx) (MessageIdempotencyRow, bool, error)
 
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 }

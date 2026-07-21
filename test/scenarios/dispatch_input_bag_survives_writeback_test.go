@@ -62,13 +62,13 @@ func TestDispatchInputBagSurvivesExecutorWriteback(t *testing.T) {
 	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
 
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, b.ID)
+		latest, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, b.ID, tx)
 		if err != nil {
 			return err
 		}
 		require.NotNil(t, latest)
 
-		dispatchBag, err := h.Persist.NodeAttributes().GetDispatchInputBag(h.Ctx, tx, latest.NodeRunID)
+		dispatchBag, err := h.Persist.NodeAttributes().GetDispatchInputBag(h.Ctx, latest.NodeRunID, tx)
 		if err != nil {
 			return err
 		}

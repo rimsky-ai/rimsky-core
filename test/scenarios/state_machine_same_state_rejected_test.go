@@ -38,7 +38,7 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 
 	var runID shared.UUID
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		id, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, tx, persistence.NonCascadeStaleInput{
+		id, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, persistence.NonCascadeStaleInput{
 			NodeID:                 n.ID,
 			RunScopeID:             scopeID,
 			FrameID:                frameID,
@@ -46,7 +46,7 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 			RequiredClaimProducers: []string{},
 			EnqueuedAt:             time.Now(),
 			CreationReason:         cascade.CreationReasonOperatorInvalidate,
-		})
+		}, tx)
 		runID = id
 		return err
 	}))

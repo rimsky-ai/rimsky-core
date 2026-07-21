@@ -60,9 +60,9 @@ func TestApplyTerminalComplete_LeafChangedPersistsAndPropagatesToRunTreeParent(t
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -81,9 +81,9 @@ func TestApplyTerminalComplete_LeafChangedPersistsAndPropagatesToRunTreeParent(t
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -93,30 +93,30 @@ func TestApplyTerminalComplete_LeafChangedPersistsAndPropagatesToRunTreeParent(t
 		frameID = fid
 
 		parentRunID = shared.UUID(uuid.New())
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: parentRunID, NodeID: parentNodeID, FrameID: frameID, RunScopeID: mainScopeID,
 			AggregationPolicy: spec.AggregationPolicy{Kind: spec.AggregationKindStrict},
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().UpdateStateAndOutcome(ctx, tx, parentRunID, cascade.NodeStateRunning, nil, false); err != nil {
+		if err := tables.NodeRunTree().UpdateStateAndOutcome(ctx, parentRunID, cascade.NodeStateRunning, nil, false, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: childScopeID, ParentRunScopeID: &mainScopeID, ParentNodeRunID: &parentRunID,
 			PartitionKey: "only", GraphName: "staging", InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID: childNodeID, ExecutorName: "test-executor", RequiredClaimProducers: []string{},
 			EnqueuedAt: time.Now().Add(-time.Second), FrameID: frameID, RunScopeID: childScopeID,
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors: []string{"test-executor"}, AcceptedClaimProducers: []string{}, Limit: 16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -128,11 +128,11 @@ func TestApplyTerminalComplete_LeafChangedPersistsAndPropagatesToRunTreeParent(t
 		if childRunID == (shared.UUID{}) {
 			return fmt.Errorf("child candidate not surfaced")
 		}
-		claimed, err := q.ClaimDispatchRow(ctx, tx, childRunID, "sup-changed-propagation")
+		claimed, err := q.ClaimDispatchRow(ctx, childRunID, "sup-changed-propagation", tx)
 		if err != nil || !claimed {
 			return fmt.Errorf("claim child: ok=%v err=%v", claimed, err)
 		}
-		promoted, err := q.PromoteClaimedToRunning(ctx, tx, childRunID, "sup-changed-propagation")
+		promoted, err := q.PromoteClaimedToRunning(ctx, childRunID, "sup-changed-propagation", tx)
 		if err != nil || !promoted {
 			return fmt.Errorf("promote child: ok=%v err=%v", promoted, err)
 		}
@@ -163,7 +163,7 @@ func TestApplyTerminalComplete_LeafChangedPersistsAndPropagatesToRunTreeParent(t
 
 	var childRow *persistence.NodeRunTreeRow
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.NodeRunTree().GetByID(ctx, tx, childRunID)
+		r, err := tables.NodeRunTree().GetByID(ctx, childRunID, tx)
 		childRow = r
 		return err
 	}))
@@ -173,7 +173,7 @@ func TestApplyTerminalComplete_LeafChangedPersistsAndPropagatesToRunTreeParent(t
 
 	var parentRow *persistence.NodeRunTreeRow
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.NodeRunTree().GetByID(ctx, tx, parentRunID)
+		r, err := tables.NodeRunTree().GetByID(ctx, parentRunID, tx)
 		parentRow = r
 		return err
 	}))

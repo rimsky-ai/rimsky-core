@@ -72,7 +72,7 @@ func TestApplyTerminalComplete_HeldTransitionDoesNotDoubleAuditTerminalSuccess(t
 
 	var runRow *persistence.NodeRunTreeRow
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.NodeRunTree().GetByID(ctx, tx, acq.NodeRunID)
+		r, err := tables.NodeRunTree().GetByID(ctx, acq.NodeRunID, tx)
 		runRow = r
 		return err
 	}))
@@ -88,7 +88,7 @@ func TestApplyTerminalComplete_HeldTransitionDoesNotDoubleAuditTerminalSuccess(t
 		return tables.ClaimHandles().Promote(ctx, claimID, supID, spec.ClaimHandleStateCommitted, tx)
 	}))
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := transitionThisHolderIfFullyResolved(ctx, args, tx, acq)
+		_, err := transitionThisHolderIfFullyResolved(ctx, args, acq, tx)
 		return err
 	}))
 

@@ -42,7 +42,7 @@ type LineageQuery struct {
 }
 
 type LineageTable interface {
-	Insert(ctx context.Context, tx Tx, row LineageRow) error
+	Insert(ctx context.Context, row LineageRow, tx Tx) error
 
 	GetByRunID(ctx context.Context, runID shared.UUID) ([]LineageRow, error)
 

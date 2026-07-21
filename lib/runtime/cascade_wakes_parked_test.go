@@ -46,7 +46,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 		mainScopeID shared.UUID
 	)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		for _, def := range spec.Nodes {
@@ -70,7 +70,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 	aRunID := shared.UUID(uuid.New())
 	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'running', 100, 'cascade', $3, $4)
     `, aRunID, aN.ID, frameID, mainScopeID)
 
@@ -78,7 +78,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 	resumeAt := time.Now().UTC().Add(6 * time.Hour)
 	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id, parked_at, resume_at)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id, parked_at, resume_at)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'parked', 100, 'cascade', $3, $4, NOW(), $5)
     `, parkedRunID, bN.ID, frameID, mainScopeID, resumeAt)
 
@@ -89,7 +89,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 	}
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.CascadeSubscribersStaleInTxForTest(
-			ctx, args, tx, aN.ID, "a", aRunID, inst.ID, frameID,
+			ctx, args, aN.ID, "a", aRunID, inst.ID, frameID, tx,
 		)
 	}))
 
@@ -160,7 +160,7 @@ func TestCascadeWalk_NoWakeForUnsubscribedParkedNode(t *testing.T) {
 		mainScopeID shared.UUID
 	)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tpl.ID, &ck, tx)
 		inst = i
 		mainScopeID = ms
 		for _, def := range spec.Nodes {
@@ -184,14 +184,14 @@ func TestCascadeWalk_NoWakeForUnsubscribedParkedNode(t *testing.T) {
 	aRunID := shared.UUID(uuid.New())
 	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'running', 100, 'cascade', $3, $4)
     `, aRunID, aN.ID, frameID, mainScopeID)
 
 	parkedRunID := shared.UUID(uuid.New())
 	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id, parked_at, resume_at)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id, parked_at, resume_at)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'parked', 100, 'cascade', $3, $4, NOW(), NOW() + interval '6 hours')
     `, parkedRunID, lonerN.ID, frameID, mainScopeID)
 
@@ -202,7 +202,7 @@ func TestCascadeWalk_NoWakeForUnsubscribedParkedNode(t *testing.T) {
 	}
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.CascadeSubscribersStaleInTxForTest(
-			ctx, args, tx, aN.ID, "a", aRunID, inst.ID, frameID,
+			ctx, args, aN.ID, "a", aRunID, inst.ID, frameID, tx,
 		)
 	}))
 

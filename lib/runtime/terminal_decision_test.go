@@ -71,11 +71,11 @@ func TestResolveClaimHandleTerminal_RejectsUnknownOutcomeBeforeAnyProducerVerb(t
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 
-	_, err := ResolveClaimHandleTerminal(ctx, RunArgs{}, nil, TerminalDecision{
+	_, err := ResolveClaimHandleTerminal(ctx, RunArgs{}, TerminalDecision{
 		ClaimHandleID: shared.UUID{},
 		Producer:      store,
 		Outcome:       TerminalOutcome(""),
-	})
+	}, nil)
 	if err == nil {
 		t.Fatalf("expected an error for a zero-value TerminalOutcome; a garbage/unset outcome must not " +
 			"be silently classified as an abandon")

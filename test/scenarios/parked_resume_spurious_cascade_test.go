@@ -84,7 +84,7 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 
 	var downstreamLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, downstream.ID)
+		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, downstream.ID, tx)
 		downstreamLatest = r
 		return err
 	}))

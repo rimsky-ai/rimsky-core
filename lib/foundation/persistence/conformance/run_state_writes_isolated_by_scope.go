@@ -37,14 +37,14 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 	runA := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	scopeB := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               scopeB,
 			ParentRunScopeID: &scopeA,
 			ParentNodeRunID:  &runA,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "scope-b",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Create scope B: %v", err)
 	}
@@ -53,7 +53,7 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 
 	var inFlightA, inFlightB shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		idA, foundA, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, scopeA)
+		idA, foundA, err := q.GetInFlightRunForNode(ctx, fix.NodeID, scopeA, tx)
 		if err != nil {
 			return err
 		}
@@ -61,7 +61,7 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 			t.Fatalf("seedTwoScopeRuns: scope A in-flight not found")
 		}
 		inFlightA = idA
-		idB, foundB, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, scopeB)
+		idB, foundB, err := q.GetInFlightRunForNode(ctx, fix.NodeID, scopeB, tx)
 		if err != nil {
 			return err
 		}
@@ -115,7 +115,7 @@ func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runI
 	q := d.Queue()
 	var out runRowSnapshot
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.NodeRunTree().GetByID(ctx, tx, runID)
+		r, err := store.NodeRunTree().GetByID(ctx, runID, tx)
 		if err != nil {
 			return err
 		}
@@ -183,14 +183,14 @@ func testRunStateWritesIsolated_BumpLastProgressAt(t *testing.T, d persistence.D
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		okA, err := q.ClaimDispatchRow(ctx, tx, f.runA, "sup-A")
+		okA, err := q.ClaimDispatchRow(ctx, f.runA, "sup-A", tx)
 		if err != nil {
 			return err
 		}
 		if !okA {
 			t.Fatalf("seed claims: ClaimDispatchRow(A) returned ok=false")
 		}
-		okB, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
+		okB, err := q.ClaimDispatchRow(ctx, f.runB, "sup-B", tx)
 		if err != nil {
 			return err
 		}
@@ -205,7 +205,7 @@ func testRunStateWritesIsolated_BumpLastProgressAt(t *testing.T, d persistence.D
 	bumpedTo := time.Now().Add(1 * time.Hour)
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		ok, berr := q.BumpLastProgressAt(ctx, tx, f.runA, bumpedTo)
+		ok, berr := q.BumpLastProgressAt(ctx, f.runA, bumpedTo, tx)
 		if berr != nil {
 			return berr
 		}
@@ -233,10 +233,10 @@ func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing
 
 	failedSig := "terminal/error/aggregate/strict_failed"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFailed, &failedSig, false); err != nil {
+		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, f.runA, cascade.NodeStateFailed, &failedSig, false, tx); err != nil {
 			return err
 		}
-		return store.NodeRunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFailed, &failedSig, false)
+		return store.NodeRunTree().UpdateStateAndOutcome(ctx, f.runB, cascade.NodeStateFailed, &failedSig, false, tx)
 	}); err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
@@ -263,21 +263,21 @@ func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing
 	}
 }
 
-func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Database) {
+func testRunStateWritesIsolated_RemoveForNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		okA, err := q.ClaimDispatchRow(ctx, tx, f.runA, "sup-A")
+		okA, err := q.ClaimDispatchRow(ctx, f.runA, "sup-A", tx)
 		if err != nil {
 			return err
 		}
 		if !okA {
 			t.Fatalf("seed supervisors: ClaimDispatchRow(A) returned ok=false")
 		}
-		okB, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
+		okB, err := q.ClaimDispatchRow(ctx, f.runB, "sup-B", tx)
 		if err != nil {
 			return err
 		}
@@ -290,9 +290,9 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.RemoveForNodeInTx(ctx, f.fix.NodeID, f.scopeA, "sup-A", tx)
+		return q.RemoveForNode(ctx, f.fix.NodeID, f.scopeA, "sup-A", tx)
 	}); err != nil {
-		t.Fatalf("RemoveForNodeInTx(A): %v", err)
+		t.Fatalf("RemoveForNode(A): %v", err)
 	}
 
 	ownerA, err := q.GetClaimedBy(ctx, f.runA)
@@ -300,14 +300,14 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 		t.Fatalf("GetClaimedBy(A): %v", err)
 	}
 	if ownerA.Kind != persistence.ClaimOwnershipKindUnclaimed {
-		t.Fatalf("RemoveForNodeInTx(A) did not clear scope A's claim (a no-op node_id/run_scope_id filter "+
+		t.Fatalf("RemoveForNode(A) did not clear scope A's claim (a no-op node_id/run_scope_id filter "+
 			"would silently match zero rows): ownership=%s/%s", ownerA.Kind, ownerA.SupervisorID)
 	}
 
 	var idB shared.UUID
 	var foundB bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		id, ok, err := q.GetInFlightRunForNode(ctx, tx, f.fix.NodeID, f.scopeB)
+		id, ok, err := q.GetInFlightRunForNode(ctx, f.fix.NodeID, f.scopeB, tx)
 		idB = id
 		foundB = ok
 		return err
@@ -315,7 +315,7 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 		t.Fatalf("GetInFlightRunForNode(B): %v", err)
 	}
 	if !foundB || idB != f.runB {
-		t.Fatalf("RemoveForNodeInTx leaked: scope B in-flight lookup returned %v (found=%v), want %v", idB, foundB, f.runB)
+		t.Fatalf("RemoveForNode leaked: scope B in-flight lookup returned %v (found=%v), want %v", idB, foundB, f.runB)
 	}
 }
 
@@ -326,21 +326,21 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
+		ok, err := q.ClaimDispatchRow(ctx, f.runB, "sup-B", tx)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			t.Fatalf("seed park B: ClaimDispatchRow returned !ok for runB")
 		}
-		if _, err := q.PromoteClaimedToRunning(ctx, tx, f.runB, "sup-B"); err != nil {
+		if _, err := q.PromoteClaimedToRunning(ctx, f.runB, "sup-B", tx); err != nil {
 			return err
 		}
-		if err := q.ParkActiveInTx(ctx, tx, persistence.ParkActiveInput{
+		if err := q.ParkActive(ctx, persistence.ParkActiveInput{
 			NodeRunID:         f.runB,
 			ExpectedClaimedBy: "sup-B",
 			ParkedAt:          time.Now(),
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		return d.Tables().Nodes().UpdateState(ctx, f.runB,
@@ -349,14 +349,14 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 		t.Fatalf("seed park B: %v", err)
 	}
 
-	parkedA, err := q.GetParkedByNode(ctx, nil, f.fix.NodeID, f.scopeA)
+	parkedA, err := q.GetParkedByNode(ctx, f.fix.NodeID, f.scopeA, nil)
 	if err != nil {
 		t.Fatalf("GetParkedByNode(A): %v", err)
 	}
 	if parkedA != nil {
 		t.Fatalf("GetParkedByNode(A) returned a row for un-parked scope A: %+v", parkedA)
 	}
-	parkedB, err := q.GetParkedByNode(ctx, nil, f.fix.NodeID, f.scopeB)
+	parkedB, err := q.GetParkedByNode(ctx, f.fix.NodeID, f.scopeB, nil)
 	if err != nil {
 		t.Fatalf("GetParkedByNode(B): %v", err)
 	}

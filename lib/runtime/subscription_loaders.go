@@ -82,7 +82,7 @@ func declaredMessageTypesForTemplate(
 var templateHardDepEdges sync.Map
 
 func loadTemplateSpec(
-	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, tx persistence.Tx,
 ) (*node.TemplateSpec, error) {
 	inst, err := args.Persist.Instances().Get(ctx, instanceID, tx)
 	if err != nil {

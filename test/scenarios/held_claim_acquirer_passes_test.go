@@ -90,7 +90,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 		require.Empty(t, h.Stub.Observed(),
 			"executor must not be invoked when the acquirer passes on Unavailable")
 		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			ri, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, inh.ID)
+			ri, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, inh.ID, tx)
 			if err != nil {
 				return err
 			}
@@ -105,7 +105,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 
 	var acqLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, acq.ID)
+		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, acq.ID, tx)
 		acqLatest = ra
 		return err
 	}))

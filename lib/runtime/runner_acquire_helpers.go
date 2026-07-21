@@ -21,9 +21,7 @@ import (
 // @concept: fan-out
 // @concept: claim-tree
 func acquireFanOutIfDeclared(
-	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID, out *acquisition,
-	cand persistence.Candidate, nodeDef *node.TemplateNodeDef,
-	acquiredLocks []AcquiredLock, livenessInterval time.Duration,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, out *acquisition, cand persistence.Candidate, nodeDef *node.TemplateNodeDef, acquiredLocks []AcquiredLock, livenessInterval time.Duration, tx persistence.Tx,
 ) error {
 	if nodeDef == nil || nodeDef.FanOut == nil {
 		return nil
@@ -31,7 +29,7 @@ func acquireFanOutIfDeclared(
 	// @concept: fan-out
 	// @concept: run-scope
 	if scopes := args.Persist.RunScopes(); scopes != nil {
-		rs, err := scopes.GetByID(ctx, tx, out.RunScopeID)
+		rs, err := scopes.GetByID(ctx, out.RunScopeID, tx)
 		if err != nil {
 			return fmt.Errorf("acquireFanOutIfDeclared: load run scope %s: %w", out.RunScopeID, err)
 		}
@@ -40,7 +38,7 @@ func acquireFanOutIfDeclared(
 		}
 	}
 	fanOutClaim := nodeDef.FanOut.Claim
-	parent, err := resolveFanOutParentClaim(ctx, args, tx, instanceID, cand, nodeDef, acquiredLocks, fanOutClaim)
+	parent, err := resolveFanOutParentClaim(ctx, args, instanceID, cand, nodeDef, acquiredLocks, fanOutClaim, tx)
 	if err != nil {
 		return fmt.Errorf("acquireFanOutIfDeclared: resolve fan_out.claim %q: %w", fanOutClaim, err)
 	}
@@ -48,7 +46,7 @@ func acquireFanOutIfDeclared(
 		return nil
 	}
 	frameID := cand.FrameID
-	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, tx, frameID, out, acquiredLocks, nodeDef.FanOut.PartitionRequest)
+	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, frameID, out, acquiredLocks, nodeDef.FanOut.PartitionRequest, tx)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out partition_request substitution failed",
 			"node_id", cand.NodeID.String(),
@@ -56,7 +54,7 @@ func acquireFanOutIfDeclared(
 		out.FanOutSubstitutionErr = fmt.Errorf("partition_request substitution: %w", err).Error()
 		return errAcquireFanOutSubstitutionFailed
 	}
-	subClaims, err := AcquireSubClaims(ctx, args, tx, AcquireSubClaimsInput{
+	subClaims, err := AcquireSubClaims(ctx, args, AcquireSubClaimsInput{
 		ParentClaimHandleID: parent.ClaimHandleID,
 		ProducerName:        parent.ProducerName,
 		NodeRunID:           cand.NodeRunID,
@@ -71,7 +69,7 @@ func acquireFanOutIfDeclared(
 		ParentIsHeld:      parent.IsHeld,
 		AggregationPolicy: nodeDef.FanOut.ErrorPolicy,
 		ParentIntent:      parent.Intent,
-	})
+	}, tx)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out sub-claim acquisition failed",
 			"node_id", cand.NodeID.String(),
@@ -97,9 +95,7 @@ type fanOutParentClaim struct {
 // @concept: fan-out
 // @concept: claim-co-holdership
 func resolveFanOutParentClaim(
-	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
-	cand persistence.Candidate, nodeDef *node.TemplateNodeDef,
-	acquiredLocks []AcquiredLock, alias string,
+	ctx context.Context, args RunArgs, instanceID shared.UUID, cand persistence.Candidate, nodeDef *node.TemplateNodeDef, acquiredLocks []AcquiredLock, alias string, tx persistence.Tx,
 ) (*fanOutParentClaim, error) {
 	for i := range acquiredLocks {
 		if acquiredLocks[i].Alias != alias {
@@ -125,21 +121,21 @@ func resolveFanOutParentClaim(
 	if !ok || binding.From == "" {
 		return nil, nil
 	}
-	upstreamNode, err := findInstanceNodeByType(ctx, args, tx, instanceID, binding.From)
+	upstreamNode, err := findInstanceNodeByType(ctx, args, instanceID, binding.From, tx)
 	if err != nil {
 		return nil, fmt.Errorf("resolveFanOutParentClaim: find upstream node: %w", err)
 	}
 	if upstreamNode == nil {
 		return nil, nil
 	}
-	tmplSpec, err := loadTemplateSpec(ctx, args, tx, instanceID)
+	tmplSpec, err := loadTemplateSpec(ctx, args, instanceID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("resolveFanOutParentClaim: load template: %w", err)
 	}
 	if tmplSpec == nil {
 		return nil, nil
 	}
-	lh, err := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmplSpec, binding.From, alias, cand.FrameID)
+	lh, err := lookupClaimHandleForAlias(ctx, args, upstreamNode.ID, tmplSpec, binding.From, alias, cand.FrameID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("resolveFanOutParentClaim: lookup claim handle: %w", err)
 	}
@@ -167,9 +163,7 @@ func resolveFanOutParentClaim(
 // @concept: fan-out
 // @decision: substitution-grammar-closed
 func substituteFanOutPartitionRequest(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	frameID shared.UUID, out *acquisition, acquiredLocks []AcquiredLock,
-	partitionRequest string,
+	ctx context.Context, args RunArgs, frameID shared.UUID, out *acquisition, acquiredLocks []AcquiredLock, partitionRequest string, tx persistence.Tx,
 ) ([]byte, error) {
 	claims := map[string]claimproducer.ClaimResult{}
 	for _, lk := range acquiredLocks {
@@ -189,11 +183,7 @@ func substituteFanOutPartitionRequest(
 		return nil, fmt.Errorf("substituteFanOutPartitionRequest: marshal instance params: %w", err)
 	}
 	resolveCtx, err := buildResolveContextForAcquisition(
-		ctx, args, tx,
-		frameID, out.NodeRunID,
-		out.TemplateHash,
-		instanceParams,
-		claims,
+		ctx, args, frameID, out.NodeRunID, out.TemplateHash, instanceParams, claims, tx,
 	)
 	if err != nil {
 		return nil, err
@@ -225,12 +215,11 @@ func instanceParamsRaw(out *acquisition) (json.RawMessage, error) {
 
 // @concept: executor
 func loadScratchIntoAcquisition(
-	ctx context.Context, args RunArgs, tx persistence.Tx, out *acquisition,
-	cand persistence.Candidate,
+	ctx context.Context, args RunArgs, out *acquisition, cand persistence.Candidate, tx persistence.Tx,
 ) {
-	inline, handle, handleBackend, err := args.Queue.LoadScratchInTx(ctx, tx, cand.NodeRunID)
+	inline, handle, handleBackend, err := args.Queue.LoadScratch(ctx, cand.NodeRunID, tx)
 	if err != nil {
-		args.Logger.Warn("tryAcquire: LoadScratchInTx failed; passing empty scratch to executor",
+		args.Logger.Warn("tryAcquire: LoadScratch failed; passing empty scratch to executor",
 			"dispatch_id", cand.NodeRunID.String(), "error", err.Error())
 		return
 	}

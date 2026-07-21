@@ -26,7 +26,7 @@ func testGetRunSummaryForNodes(t *testing.T, d persistence.Database) {
 	var idleNodeID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		idleNodeID, err = seedSecondNode(ctx, store, tx, fix.InstanceID)
+		idleNodeID, err = seedSecondNode(ctx, store, fix.InstanceID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("seed idle node: %v", err)
@@ -80,7 +80,7 @@ func testGetLatestRunForNodes(t *testing.T, d persistence.Database) {
 	var idleNodeID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		idleNodeID, err = seedSecondNode(ctx, store, tx, fix.InstanceID)
+		idleNodeID, err = seedSecondNode(ctx, store, fix.InstanceID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("seed idle node: %v", err)
@@ -88,7 +88,7 @@ func testGetLatestRunForNodes(t *testing.T, d persistence.Database) {
 
 	var got map[shared.UUID]persistence.NodeRunLatest
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		m, err := store.Nodes().GetLatestRunForNodes(ctx, tx, []shared.UUID{fix.NodeID, idleNodeID})
+		m, err := store.Nodes().GetLatestRunForNodes(ctx, []shared.UUID{fix.NodeID, idleNodeID}, tx)
 		got = m
 		return err
 	}); err != nil {
@@ -107,7 +107,7 @@ func testGetLatestRunForNodes(t *testing.T, d persistence.Database) {
 		var m map[shared.UUID]persistence.NodeRunLatest
 		err := inTx(ctx, store, func(tx persistence.Tx) error {
 			var err error
-			m, err = store.Nodes().GetLatestRunForNodes(ctx, tx, nil)
+			m, err = store.Nodes().GetLatestRunForNodes(ctx, nil, tx)
 			return err
 		})
 		return m, err
@@ -116,7 +116,7 @@ func testGetLatestRunForNodes(t *testing.T, d persistence.Database) {
 	}
 }
 
-func seedSecondNode(ctx context.Context, store persistence.Tables, tx persistence.Tx, instanceID shared.UUID) (shared.UUID, error) {
+func seedSecondNode(ctx context.Context, store persistence.Tables, instanceID shared.UUID, tx persistence.Tx) (shared.UUID, error) {
 	id := shared.UUID(uuid.New())
 	_, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
 		ID:         id,

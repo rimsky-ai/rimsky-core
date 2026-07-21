@@ -65,9 +65,9 @@ func TestReapers_NeverTouchAPIKeys(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: tmplspec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -81,18 +81,18 @@ func TestReapers_NeverTouchAPIKeys(t *testing.T) {
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := tables.Frames().InsertRunningFrame(ctx, uuid.UUID(instanceID), msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: expiredRunID, NodeID: nodeID, FrameID: frameID, RunScopeID: mainScopeID, ExecutorName: "stub",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		runIDCopy := expiredRunID
@@ -107,17 +107,16 @@ func TestReapers_NeverTouchAPIKeys(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: orphanedRunID, NodeID: nodeID, FrameID: frameID, RunScopeID: mainScopeID, ExecutorName: "stub",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		if _, err := d.Queue().ClaimDispatchRow(ctx, tx, orphanedRunID, liveSup); err != nil {
+		if _, err := d.Queue().ClaimDispatchRow(ctx, orphanedRunID, liveSup, tx); err != nil {
 			return err
 		}
 		maxQuiet := 1
-		if err := d.Queue().RegisterAsyncAck(ctx, tx, orphanedRunID, "reaper-fixture-ack",
-			time.Now().Add(-1*time.Hour), &maxQuiet, nil, ""); err != nil {
+		if err := d.Queue().RegisterAsyncAck(ctx, orphanedRunID, "reaper-fixture-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "", tx); err != nil {
 			return err
 		}
 		return tables.APIKeys().Insert(ctx, original, tx)

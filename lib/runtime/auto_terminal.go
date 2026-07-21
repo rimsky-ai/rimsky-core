@@ -16,8 +16,7 @@ import (
 
 // @concept: auto-terminal
 func CheckAndFireResolution(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	claimHandleID shared.UUID,
+	ctx context.Context, args RunArgs, claimHandleID shared.UUID, tx persistence.Tx,
 ) (postCommitFn, error) {
 	row, err := args.ClaimHandles.LockForUpdate(ctx, claimHandleID, tx)
 	if err != nil {
@@ -54,7 +53,7 @@ func CheckAndFireResolution(
 		return nil, nil
 	}
 	if !anyFailed {
-		expectedMissing, err := expectedInheritorsMissing(ctx, args, tx, row, holders)
+		expectedMissing, err := expectedInheritorsMissing(ctx, args, row, holders, tx)
 		if err != nil {
 			return nil, fmt.Errorf("CheckAndFireResolution: expected-inheritor check: %w", err)
 		}
@@ -93,7 +92,7 @@ func CheckAndFireResolution(
 	if row.NodeRunID != nil {
 		hint.NodeRunID = *row.NodeRunID
 	}
-	instID, err := acquirerInstanceID(ctx, args, tx, row.HolderNodeID)
+	instID, err := acquirerInstanceID(ctx, args, row.HolderNodeID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("CheckAndFireResolution: %w", err)
 	}
@@ -116,7 +115,7 @@ func CheckAndFireResolution(
 		LineageHint:         hint,
 		ParentClaimHandleID: row.ParentClaimHandleID,
 	}
-	pc, err := ResolveClaimHandleTerminal(ctx, args, tx, td)
+	pc, err := ResolveClaimHandleTerminal(ctx, args, td, tx)
 	if err != nil {
 		return nil, fmt.Errorf("CheckAndFireResolution: %w", err)
 	}
@@ -124,8 +123,7 @@ func CheckAndFireResolution(
 }
 
 func expectedInheritorsMissing(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	row *persistence.ClaimHandleRow, holders []persistence.ClaimHolderRow,
+	ctx context.Context, args RunArgs, row *persistence.ClaimHandleRow, holders []persistence.ClaimHolderRow, tx persistence.Tx,
 ) (bool, error) {
 	if row == nil {
 		return false, nil
@@ -177,7 +175,7 @@ func expectedInheritorsMissing(
 	members := sg.Members
 	holderTypes := make(map[string]struct{}, len(holders))
 	for _, h := range holders {
-		nodeID, _, err := args.Queue.GetDispatchNodeInTx(ctx, tx, h.HolderNodeRunID)
+		nodeID, _, err := args.Queue.GetDispatchNode(ctx, h.HolderNodeRunID, tx)
 		if err != nil || nodeID == (shared.UUID{}) {
 			continue
 		}

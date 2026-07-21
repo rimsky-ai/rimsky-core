@@ -29,16 +29,13 @@ func lockAlreadyReused(acquired []AcquiredLock, id shared.UUID) bool {
 }
 
 func renewReusedRunExpiry(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	nodeRunID shared.UUID, livenessInterval time.Duration,
+	ctx context.Context, args RunArgs, nodeRunID shared.UUID, livenessInterval time.Duration, tx persistence.Tx,
 ) error {
 	return args.ClaimHandles.RenewExpiryForHolderRun(ctx, nodeRunID, args.Clock.Now().Add(5*livenessInterval), tx)
 }
 
 func reuseHeldNamedLock(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	spec locks.NamedLockSpec, cand persistence.Candidate,
-	acquired []AcquiredLock, livenessInterval time.Duration,
+	ctx context.Context, args RunArgs, spec locks.NamedLockSpec, cand persistence.Candidate, acquired []AcquiredLock, livenessInterval time.Duration, tx persistence.Tx,
 ) (AcquiredLock, bool, error) {
 	rows, err := args.ClaimHandles.ListByNodeRun(ctx, cand.NodeRunID, tx)
 	if err != nil {
@@ -55,7 +52,7 @@ func reuseHeldNamedLock(
 		if lockAlreadyReused(acquired, row.ID) {
 			continue
 		}
-		if err := renewReusedRunExpiry(ctx, args, tx, cand.NodeRunID, livenessInterval); err != nil {
+		if err := renewReusedRunExpiry(ctx, args, cand.NodeRunID, livenessInterval, tx); err != nil {
 			return AcquiredLock{}, false, err
 		}
 		return AcquiredLock{Spec: spec, ClaimHandleID: row.ID}, true, nil
@@ -64,10 +61,7 @@ func reuseHeldNamedLock(
 }
 
 func reuseHeldRunClaim(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	spec claimproducer.ClaimSpec, cand persistence.Candidate,
-	scopeInitial []byte, s claimproducer.ClaimProducer,
-	acquired []AcquiredLock, livenessInterval time.Duration,
+	ctx context.Context, args RunArgs, spec claimproducer.ClaimSpec, cand persistence.Candidate, scopeInitial []byte, s claimproducer.ClaimProducer, acquired []AcquiredLock, livenessInterval time.Duration, tx persistence.Tx,
 ) (AcquiredLock, bool, error) {
 	rows, err := args.ClaimHandles.ListByNodeRun(ctx, cand.NodeRunID, tx)
 	if err != nil {
@@ -106,7 +100,7 @@ func reuseHeldRunClaim(
 	if chosen == nil {
 		return AcquiredLock{}, false, nil
 	}
-	if err := renewReusedRunExpiry(ctx, args, tx, cand.NodeRunID, livenessInterval); err != nil {
+	if err := renewReusedRunExpiry(ctx, args, cand.NodeRunID, livenessInterval, tx); err != nil {
 		return AcquiredLock{}, false, err
 	}
 	return AcquiredLock{

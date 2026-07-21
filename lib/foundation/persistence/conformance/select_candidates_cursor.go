@@ -37,7 +37,7 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 			}, tx); err != nil {
 				return err
 			}
-			return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+			return q.Enqueue(ctx, persistence.DispatchRequest{
 				NodeID:                 nodeID,
 				ExecutorName:           "test-executor",
 				RequiredClaimProducers: []string{},
@@ -55,13 +55,13 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		t.Helper()
 		var out []persistence.Candidate
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 				AcceptedExecutors:      []string{"test-executor"},
 				AcceptedClaimProducers: []string{},
 				Limit:                  limit,
 				CursorEnqueuedAfter:    curAt,
 				CursorAfterNodeRunID:   curID,
-			})
+			}, tx)
 			if err != nil {
 				return err
 			}

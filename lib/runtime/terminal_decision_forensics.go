@@ -23,8 +23,7 @@ func outcomeVerbName(o TerminalOutcome) string {
 }
 
 func emitTerminalForensics(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	td TerminalDecision, versionID string,
+	ctx context.Context, args RunArgs, td TerminalDecision, versionID string, tx persistence.Tx,
 ) {
 	if args.Persist == nil || args.Clock == nil {
 		return
@@ -74,9 +73,7 @@ func emitTerminalForensics(
 		rec.Cause = td.Outcome.CauseString()
 	}
 	if lt := args.Persist.Lineage(); lt != nil {
-		if err := WriteClaimTerminalLineage(ctx, tx, lt,
-			td.LineageHint.InstanceID, td.LineageHint.FrameID,
-			now, rec); err != nil && args.Logger != nil {
+		if err := WriteClaimTerminalLineage(ctx, lt, td.LineageHint.InstanceID, td.LineageHint.FrameID, now, rec, tx); err != nil && args.Logger != nil {
 			args.Logger.Warn("ResolveClaimHandleTerminal: lineage write failed",
 				"claim_handle_id", td.ClaimHandleID.String(),
 				"outcome", outcome,

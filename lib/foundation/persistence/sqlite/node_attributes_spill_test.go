@@ -186,7 +186,7 @@ func TestSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
 
 	newRunID := seedSecondRun(t, rawDB, nodeID, priorRunID, scopeID, 2)
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return attrs.SnapshotBagForNewRun(ctx, tx, newRunID, nodeID, scopeID)
+		return attrs.SnapshotBagForNewRun(ctx, newRunID, nodeID, scopeID, tx)
 	}); err != nil {
 		t.Fatalf("SnapshotBagForNewRun: %v", err)
 	}
@@ -298,7 +298,7 @@ func seedSecondRun(t *testing.T, rawDB *sql.DB, nodeID, priorRunID, scopeID uuid
 	newRunID := uuid.New()
 	if _, err := rawDB.ExecContext(context.Background(),
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'stale', 'cascade', ?, ?, ?)`,
 		newRunID.String(), nodeID.String(), sequence, frameID, scopeID.String(),
 	); err != nil {
@@ -311,7 +311,7 @@ func readDispatchBag(t *testing.T, store persistence.Tables, runID uuid.UUID) (m
 	t.Helper()
 	var out map[string]any
 	err := store.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		bag, err := store.NodeAttributes().GetDispatchInputBag(ctx, tx, runID)
+		bag, err := store.NodeAttributes().GetDispatchInputBag(ctx, runID, tx)
 		out = bag
 		return err
 	})
@@ -401,7 +401,7 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	}
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'stale', 'cascade', 1, ?, ?)`,
 		runID.String(), nodeID.String(), frameID, scopeID,
 	)

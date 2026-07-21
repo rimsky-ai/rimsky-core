@@ -47,7 +47,7 @@ func TestUpsertFinalAttributesTx_PropagatesPriorReadError(t *testing.T) {
 	args.Persist = &faultingNodeAttributesTables{Tables: tables}
 
 	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return upsertFinalAttributesTx(ctx, args, tx, acq, map[string]any{"new": "value"})
+		return upsertFinalAttributesTx(ctx, args, acq, map[string]any{"new": "value"}, tx)
 	})
 	require.Error(t, err,
 		"a transient GetByRun read failure must fail the transaction instead of silently dropping "+

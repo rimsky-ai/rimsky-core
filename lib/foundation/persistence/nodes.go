@@ -90,19 +90,19 @@ type NodeTable interface {
 
 	// @concept: cascade
 	// @concept: run-scope
-	HasAdvancedSiblingInScope(ctx context.Context, tx Tx, nodeID, runScopeID, excludingRunID shared.UUID) (bool, error)
+	HasAdvancedSiblingInScope(ctx context.Context, nodeID, runScopeID, excludingRunID shared.UUID, tx Tx) (bool, error)
 
 	// @concept: cascade
 	// @concept: run-scope
-	ListPendingSiblingRunsInScope(ctx context.Context, tx Tx, senderNodeRunID shared.UUID) ([]shared.UUID, error)
+	ListPendingSiblingRunsInScope(ctx context.Context, senderNodeRunID shared.UUID, tx Tx) ([]shared.UUID, error)
 
 	// @concept: cascade
 	// @concept: run-scope
-	ListPendingRunsInScopeForNodes(ctx context.Context, tx Tx, runScopeID shared.UUID, nodeIDs []shared.UUID) ([]shared.UUID, error)
+	ListPendingRunsInScopeForNodes(ctx context.Context, runScopeID shared.UUID, nodeIDs []shared.UUID, tx Tx) ([]shared.UUID, error)
 
 	// @concept: cascade
 	// @decision: mode-default-most-recent
-	HasLaterCascadePending(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, afterSeq int64) (bool, error)
+	HasLaterCascadePending(ctx context.Context, nodeID, runScopeID shared.UUID, afterSeq int64, tx Tx) (bool, error)
 
 	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchNodeRunID shared.UUID, tx Tx) (*NodeRunForCallback, error)
 
@@ -118,54 +118,54 @@ type NodeTable interface {
 
 	// @concept: cascade
 	// @decision: walker-rule-per-sender-node
-	FindLatestCascadePending(ctx context.Context, tx Tx, nodeID, runScopeID, frameID shared.UUID) (*NodeRunForGate, error)
+	FindLatestCascadePending(ctx context.Context, nodeID, runScopeID, frameID shared.UUID, tx Tx) (*NodeRunForGate, error)
 
 	// @concept: cascade
 	// @decision: walker-rule-per-sender-node
-	CreateCascadePending(ctx context.Context, tx Tx, nodeID, runScopeID, frameID shared.UUID) (shared.UUID, error)
+	CreateCascadePending(ctx context.Context, nodeID, runScopeID, frameID shared.UUID, tx Tx) (shared.UUID, error)
 
 	// @concept: cascade
 	// @decision: walker-rule-per-sender-node
-	LockReceiverCascade(ctx context.Context, tx Tx, nodeID, runScopeID, frameID shared.UUID) error
+	LockReceiverCascade(ctx context.Context, nodeID, runScopeID, frameID shared.UUID, tx Tx) error
 
 	// @concept: cascade
-	GetRunForGate(ctx context.Context, tx Tx, runID shared.UUID) (*NodeRunForGate, error)
+	GetRunForGate(ctx context.Context, runID shared.UUID, tx Tx) (*NodeRunForGate, error)
 
 	// @concept: node-run
-	GetLatestRunForNode(ctx context.Context, tx Tx, nodeID shared.UUID) (*NodeRunLatest, error)
+	GetLatestRunForNode(ctx context.Context, nodeID shared.UUID, tx Tx) (*NodeRunLatest, error)
 
 	// @concept: node-run
-	GetLatestRunForNodes(ctx context.Context, tx Tx, nodeIDs []shared.UUID) (map[shared.UUID]NodeRunLatest, error)
+	GetLatestRunForNodes(ctx context.Context, nodeIDs []shared.UUID, tx Tx) (map[shared.UUID]NodeRunLatest, error)
 
 	// @concept: node-run
-	ListRunsForInstanceByStates(ctx context.Context, tx Tx, instanceID shared.UUID, states []cascade.NodeState) ([]NodeRunLatest, error)
+	ListRunsForInstanceByStates(ctx context.Context, instanceID shared.UUID, states []cascade.NodeState, tx Tx) ([]NodeRunLatest, error)
 
 	// @concept: cascade
 	// @concept: run-scope
-	GetPriorRunBySequence(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (*NodeRunForGate, error)
+	GetPriorRunBySequence(ctx context.Context, nodeID, runScopeID shared.UUID, beforeSeq int64, tx Tx) (*NodeRunForGate, error)
 
 	// @concept: cascade
 	// @decision: mode-default-most-recent
-	DeletePriorCascadeStales(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (int, error)
+	DeletePriorCascadeStales(ctx context.Context, nodeID, runScopeID shared.UUID, beforeSeq int64, tx Tx) (int, error)
 
 	// @concept: cascade
-	GetPriorCascadeQueuedNotClaimed(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (*NodeRunForGate, error)
+	GetPriorCascadeQueuedNotClaimed(ctx context.Context, nodeID, runScopeID shared.UUID, beforeSeq int64, tx Tx) (*NodeRunForGate, error)
 
 	// @concept: cascade
-	GetMostRecentSettledRun(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID, beforeSeq int64) (*NodeRunForGate, error)
+	GetMostRecentSettledRun(ctx context.Context, nodeID, runScopeID shared.UUID, beforeSeq int64, tx Tx) (*NodeRunForGate, error)
 
 	// @concept: cascade
-	TransitionPendingToStale(ctx context.Context, tx Tx, runID shared.UUID, enqueuedAt time.Time) error
+	TransitionPendingToStale(ctx context.Context, runID shared.UUID, enqueuedAt time.Time, tx Tx) error
 
 	// @concept: cascade
-	SetRunRequiredStores(ctx context.Context, tx Tx, runID shared.UUID, requiredStores []string) (bool, error)
+	SetRunRequiredClaimProducers(ctx context.Context, runID shared.UUID, requiredClaimProducers []string, tx Tx) (bool, error)
 
 	// @concept: cascade
-	DropPendingRun(ctx context.Context, tx Tx, runID shared.UUID) error
+	DropPendingRun(ctx context.Context, runID shared.UUID, tx Tx) error
 
 	// @concept: cascade
 	// @decision: non-cascade-direct-to-stale
-	CreateNonCascadeStale(ctx context.Context, tx Tx, in NonCascadeStaleInput) (shared.UUID, error)
+	CreateNonCascadeStale(ctx context.Context, in NonCascadeStaleInput, tx Tx) (shared.UUID, error)
 }
 
 // @concept: node-run

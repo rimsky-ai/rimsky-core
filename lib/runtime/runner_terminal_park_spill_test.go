@@ -57,9 +57,9 @@ func seedRunningNodeForParkFixture(t *testing.T) (RunArgs, *acquisition, persist
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -73,9 +73,9 @@ func seedRunningNodeForParkFixture(t *testing.T) (RunArgs, *acquisition, persist
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -83,7 +83,7 @@ func seedRunningNodeForParkFixture(t *testing.T) (RunArgs, *acquisition, persist
 			return err
 		}
 		frameID = fid
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 nodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -93,11 +93,11 @@ func seedRunningNodeForParkFixture(t *testing.T) (RunArgs, *acquisition, persist
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -109,14 +109,14 @@ func seedRunningNodeForParkFixture(t *testing.T) (RunArgs, *acquisition, persist
 		if nodeRunID == (shared.UUID{}) {
 			t.Fatalf("seedRunningNodeForParkFixture: candidate not surfaced for %s", nodeID)
 		}
-		claimed, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, "sup-park-spill")
+		claimed, err := q.ClaimDispatchRow(ctx, nodeRunID, "sup-park-spill", tx)
 		if err != nil {
 			return err
 		}
 		if !claimed {
 			t.Fatalf("seedRunningNodeForParkFixture: run %s not claimable", nodeRunID)
 		}
-		promoted, err := q.PromoteClaimedToRunning(ctx, tx, nodeRunID, "sup-park-spill")
+		promoted, err := q.PromoteClaimedToRunning(ctx, nodeRunID, "sup-park-spill", tx)
 		if err != nil {
 			return err
 		}
@@ -176,10 +176,10 @@ func TestApplyTerminalPark_OverThresholdScratchSpillsThroughParkedPayload(t *tes
 	var handle, handleBackend string
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var lerr error
-		inline, handle, handleBackend, lerr = args.Queue.LoadScratchInTx(ctx, tx, acq.NodeRunID)
+		inline, handle, handleBackend, lerr = args.Queue.LoadScratch(ctx, acq.NodeRunID, tx)
 		return lerr
 	}); err != nil {
-		t.Fatalf("LoadScratchInTx: %v", err)
+		t.Fatalf("LoadScratch: %v", err)
 	}
 
 	if len(inline) != 0 {
@@ -227,10 +227,10 @@ func TestApplyTerminalPark_AtOrBelowThresholdScratchStaysInline(t *testing.T) {
 	var handle, handleBackend string
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var lerr error
-		inline, handle, handleBackend, lerr = args.Queue.LoadScratchInTx(ctx, tx, acq.NodeRunID)
+		inline, handle, handleBackend, lerr = args.Queue.LoadScratch(ctx, acq.NodeRunID, tx)
 		return lerr
 	}); err != nil {
-		t.Fatalf("LoadScratchInTx: %v", err)
+		t.Fatalf("LoadScratch: %v", err)
 	}
 
 	if string(inline) != string(scratch) {

@@ -72,11 +72,11 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	instanceID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := h.Persist.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		ck := "ck-orphan-" + instanceID.String()[:8]
@@ -105,7 +105,7 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	`, frameID, instanceID, messageID, now, mainScopeID)
 	nodeRunID := uuid.New()
 	h.ExecSQL(`
-		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, claimed_by, frame_id, run_scope_id, sequence, state)
+		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, claimed_by, frame_id, run_scope_id, sequence, state)
 		VALUES ($1, $2, NULL, '{}', $3, $4, $5, 1, 'running')
 	`, nodeRunID, nodeID, claimedBy, frameID, mainScopeID)
 	return nodeRunID

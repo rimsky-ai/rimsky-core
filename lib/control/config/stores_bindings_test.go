@@ -64,11 +64,11 @@ func TestLookupInstanceBindings_ReturnsServiceBindings(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainRunScopeID,
 			GraphName:  spec.MainGraphName,
 			InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{

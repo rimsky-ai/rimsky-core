@@ -86,7 +86,7 @@ func TestPerRunAttributes_FreshScopeDefaultsAtFrameStart(t *testing.T) {
 
 	var secondDispatchBag map[string]any
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		bag, err := h.Persist.NodeAttributes().GetDispatchInputBag(h.Ctx, tx, secondRun.NodeRunID)
+		bag, err := h.Persist.NodeAttributes().GetDispatchInputBag(h.Ctx, secondRun.NodeRunID, tx)
 		secondDispatchBag = bag
 		return err
 	}))

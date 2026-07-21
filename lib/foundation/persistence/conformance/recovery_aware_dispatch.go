@@ -28,14 +28,14 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	parentNodeRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	partitionScopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               partitionScopeID,
 			ParentRunScopeID: &fix.MainRunScopeID,
 			ParentNodeRunID:  &parentNodeRunID,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "part-recovery",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Create partition scope: %v", err)
 	}
@@ -54,7 +54,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 childNodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -63,16 +63,16 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 			RunScopeID:             partitionScopeID,
 		}, tx)
 	}); err != nil {
-		t.Fatalf("EnqueueInTx (original): %v", err)
+		t.Fatalf("Enqueue (original): %v", err)
 	}
 
 	var originalNodeRunID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -91,31 +91,31 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	scratchFixture := []byte("scratch-bytes-fixture")
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, originalNodeRunID, "sup-stale")
+		ok, err := q.ClaimDispatchRow(ctx, originalNodeRunID, "sup-stale", tx)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			t.Fatalf("ClaimDispatchRow(original) did not claim")
 		}
-		if err := q.WriteScratchInTx(ctx, tx, originalNodeRunID, scratchFixture, "", ""); err != nil {
+		if err := q.WriteScratch(ctx, originalNodeRunID, scratchFixture, "", "", tx); err != nil {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, originalNodeRunID,
 			cascade.NodeStateFailed, cascade.ReasonInstanceKilled, nil, tx); err != nil {
 			return err
 		}
-		return q.RemoveForNodeInTx(ctx, childNodeID, partitionScopeID, "sup-stale", tx)
+		return q.RemoveForNode(ctx, childNodeID, partitionScopeID, "sup-stale", tx)
 	}); err != nil {
 		t.Fatalf("Remove original: %v", err)
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		scratchInline, scratchHandle, scratchBackend, lerr := q.LoadScratchInTx(ctx, tx, originalNodeRunID)
+		scratchInline, scratchHandle, scratchBackend, lerr := q.LoadScratch(ctx, originalNodeRunID, tx)
 		if lerr != nil {
 			return lerr
 		}
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                      childNodeID,
 			ExecutorName:                "test-executor",
 			RequiredClaimProducers:      []string{},
@@ -129,17 +129,17 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 			InitialScratchHandleBackend: scratchBackend,
 		}, tx)
 	}); err != nil {
-		t.Fatalf("EnqueueInTx (recovery): %v", err)
+		t.Fatalf("Enqueue (recovery): %v", err)
 	}
 
 	var got persistence.Candidate
 	var found bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -171,10 +171,10 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	var gotHandle, gotBackend string
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var lerr error
-		gotInline, gotHandle, gotBackend, lerr = q.LoadScratchInTx(ctx, tx, got.NodeRunID)
+		gotInline, gotHandle, gotBackend, lerr = q.LoadScratch(ctx, got.NodeRunID, tx)
 		return lerr
 	}); err != nil {
-		t.Fatalf("LoadScratchInTx (recovery): %v", err)
+		t.Fatalf("LoadScratch (recovery): %v", err)
 	}
 	if string(gotInline) != string(scratchFixture) {
 		t.Fatalf("recovery scratch_inline = %q; want %q", string(gotInline), string(scratchFixture))
@@ -196,7 +196,7 @@ func testRecoveryDispositionStamps(t *testing.T, d persistence.Database) {
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, runID, "sup-owner")
+		ok, err := q.ClaimDispatchRow(ctx, runID, "sup-owner", tx)
 		if err != nil {
 			return err
 		}
@@ -225,17 +225,17 @@ func testRecoveryDispositionStamps(t *testing.T, d persistence.Database) {
 	assertCandidateDisposition(ctx, t, store, q, fix.NodeID, runID, runID, "stale_recovery")
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.StampPriorDispatchInTx(ctx, tx, runID, runID, "retry_after_error")
+		return q.StampPriorDispatch(ctx, runID, runID, "retry_after_error", tx)
 	}); err != nil {
-		t.Fatalf("StampPriorDispatchInTx(retry_after_error): %v", err)
+		t.Fatalf("StampPriorDispatch(retry_after_error): %v", err)
 	}
 	assertCandidateDisposition(ctx, t, store, q, fix.NodeID, runID, runID, "retry_after_error")
 
 	missingErr := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.StampPriorDispatchInTx(ctx, tx, shared.UUID(uuid.New()), runID, "retry_after_error")
+		return q.StampPriorDispatch(ctx, shared.UUID(uuid.New()), runID, "retry_after_error", tx)
 	})
-	if !errors.Is(missingErr, persistence.ErrRunRowMissing) {
-		t.Fatalf("StampPriorDispatchInTx(missing row): want ErrRunRowMissing, got %v", missingErr)
+	if !errors.Is(missingErr, persistence.ErrNotFound) {
+		t.Fatalf("StampPriorDispatch(missing row): want ErrNotFound, got %v", missingErr)
 	}
 }
 
@@ -246,11 +246,11 @@ func assertCandidateDisposition(
 	t.Helper()
 	var got *persistence.Candidate
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor", "stub"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  32,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -296,7 +296,7 @@ func testSelectCandidatesSkipsUndrainedWaitSet(t *testing.T, d persistence.Datab
 		t.Fatalf("Create receiver node: %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 receiverNodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -305,7 +305,7 @@ func testSelectCandidatesSkipsUndrainedWaitSet(t *testing.T, d persistence.Datab
 			RunScopeID:             fix.MainRunScopeID,
 		}, tx)
 	}); err != nil {
-		t.Fatalf("EnqueueInTx (receiver): %v", err)
+		t.Fatalf("Enqueue (receiver): %v", err)
 	}
 
 	receiverRunID := findCandidateRun(ctx, t, store, q, receiverNodeID)
@@ -343,11 +343,11 @@ func findCandidateRun(
 	t.Helper()
 	var out shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor", "stub"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  32,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -372,31 +372,31 @@ func testScratchMissingRowContract(t *testing.T, d persistence.Database) {
 	missingID := shared.UUID(uuid.New())
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		inline, handle, backend, lerr := q.LoadScratchInTx(ctx, tx, missingID)
+		inline, handle, backend, lerr := q.LoadScratch(ctx, missingID, tx)
 		if lerr != nil {
-			t.Fatalf("LoadScratchInTx (missing): unexpected error %v", lerr)
+			t.Fatalf("LoadScratch (missing): unexpected error %v", lerr)
 		}
 		if len(inline) != 0 {
-			t.Fatalf("LoadScratchInTx (missing): inline = %q; want empty", string(inline))
+			t.Fatalf("LoadScratch (missing): inline = %q; want empty", string(inline))
 		}
 		if handle != "" {
-			t.Fatalf("LoadScratchInTx (missing): handle = %q; want empty", handle)
+			t.Fatalf("LoadScratch (missing): handle = %q; want empty", handle)
 		}
 		if backend != "" {
-			t.Fatalf("LoadScratchInTx (missing): backend = %q; want empty", backend)
+			t.Fatalf("LoadScratch (missing): backend = %q; want empty", backend)
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("LoadScratchInTx (missing): tx failure %v", err)
+		t.Fatalf("LoadScratch (missing): tx failure %v", err)
 	}
 
 	werr := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.WriteScratchInTx(ctx, tx, missingID, []byte("bytes"), "", "")
+		return q.WriteScratch(ctx, missingID, []byte("bytes"), "", "", tx)
 	})
 	if werr == nil {
-		t.Fatalf("WriteScratchInTx (missing): want ErrRunRowMissing, got nil")
+		t.Fatalf("WriteScratch (missing): want ErrNotFound, got nil")
 	}
-	if !errors.Is(werr, persistence.ErrRunRowMissing) {
-		t.Fatalf("WriteScratchInTx (missing): want ErrRunRowMissing, got %v", werr)
+	if !errors.Is(werr, persistence.ErrNotFound) {
+		t.Fatalf("WriteScratch (missing): want ErrNotFound, got %v", werr)
 	}
 }

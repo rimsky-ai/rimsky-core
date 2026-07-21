@@ -30,7 +30,7 @@ func testDeletePriorCascadeStalesEnrollsScratchBlobOrphan(t *testing.T, d persis
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		return q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                      fix.NodeID,
 			ExecutorName:                "test-executor",
 			RequiredClaimProducers:      []string{},
@@ -46,7 +46,7 @@ func testDeletePriorCascadeStalesEnrollsScratchBlobOrphan(t *testing.T, d persis
 
 	var currentSeq int64
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -56,7 +56,7 @@ func testDeletePriorCascadeStalesEnrollsScratchBlobOrphan(t *testing.T, d persis
 		}, tx); err != nil {
 			return err
 		}
-		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, fix.NodeID, tx)
 		if err != nil {
 			return err
 		}
@@ -72,7 +72,7 @@ func testDeletePriorCascadeStalesEnrollsScratchBlobOrphan(t *testing.T, d persis
 	var deleted int
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		deleted, err = store.Nodes().DeletePriorCascadeStales(ctx, tx, fix.NodeID, fix.MainRunScopeID, currentSeq)
+		deleted, err = store.Nodes().DeletePriorCascadeStales(ctx, fix.NodeID, fix.MainRunScopeID, currentSeq, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("DeletePriorCascadeStales: %v", err)
@@ -113,7 +113,7 @@ func testDropPendingRunEnrollsScratchBlobOrphan(t *testing.T, d persistence.Data
 
 	var pendingID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		id, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		id, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		pendingID = id
 		return err
 	}); err != nil {
@@ -121,13 +121,13 @@ func testDropPendingRunEnrollsScratchBlobOrphan(t *testing.T, d persistence.Data
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return d.Queue().WriteScratchInTx(ctx, tx, pendingID, nil, string(scratchHandle), mem.Name())
+		return d.Queue().WriteScratch(ctx, pendingID, nil, string(scratchHandle), mem.Name(), tx)
 	}); err != nil {
-		t.Fatalf("WriteScratchInTx: %v", err)
+		t.Fatalf("WriteScratch: %v", err)
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().DropPendingRun(ctx, tx, pendingID)
+		return store.Nodes().DropPendingRun(ctx, pendingID, tx)
 	}); err != nil {
 		t.Fatalf("DropPendingRun: %v", err)
 	}

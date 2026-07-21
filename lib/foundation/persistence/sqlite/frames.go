@@ -227,7 +227,7 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 		}
 		now := time.Now().UTC()
 		for _, h := range append(scratchHandles, attrHandles...) {
-			if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), tx, h.handle, h.backend, now, ti.BlobRetention()); err != nil {
+			if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), h.handle, h.backend, now, ti.BlobRetention(), tx); err != nil {
 				return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
 			}
 		}
@@ -363,7 +363,7 @@ func (s *framesImpl) MarkSourceNodeStale(
 	// @concept: run-scope
 	res, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
         SELECT ?, n.id, n.executor,
                COALESCE((
                  SELECT json_group_array(json_extract(store.value, '$.name'))

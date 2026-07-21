@@ -17,12 +17,12 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in persistence.ParkActiveInput) error {
+func (q *queueImpl) ParkActive(ctx context.Context, in persistence.ParkActiveInput, tx persistence.Tx) error {
 	if tx == nil {
-		return errors.New("sqlite.ParkActiveInTx: tx required")
+		return errors.New("sqlite.ParkActive: tx required")
 	}
 	if in.ExpectedClaimedBy == "" {
-		return errors.New("sqlite.ParkActiveInTx: ExpectedClaimedBy required")
+		return errors.New("sqlite.ParkActive: ExpectedClaimedBy required")
 	}
 	var resumeAt any
 	if !in.ResumeAt.IsZero() {
@@ -41,14 +41,14 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		in.NodeRunID.String(), in.ExpectedClaimedBy,
 	)
 	if err != nil {
-		return fmt.Errorf("sqlite.ParkActiveInTx: %w", err)
+		return fmt.Errorf("sqlite.ParkActive: %w", err)
 	}
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("sqlite.ParkActiveInTx: rows affected: %w", err)
+		return fmt.Errorf("sqlite.ParkActive: rows affected: %w", err)
 	}
 	if rowsAffected != 1 {
-		return fmt.Errorf("sqlite.ParkActiveInTx: row %s not in expected (active, claimed_by=%s) state: %w", in.NodeRunID, in.ExpectedClaimedBy, persistence.ErrRunClaimantMismatch)
+		return fmt.Errorf("sqlite.ParkActive: row %s not in expected (active, claimed_by=%s) state: %w", in.NodeRunID, in.ExpectedClaimedBy, persistence.ErrRunClaimantMismatch)
 	}
 	return nil
 }
@@ -58,7 +58,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 		limit = 100
 	}
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
+		`SELECT d.id, d.node_id, d.executor_name, d.required_claim_producers, d.frame_id,
 		        d.parked_at, d.resume_at, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.state = 'parked'
@@ -138,9 +138,9 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx)
 }
 
 // @concept: run-scope
-func (q *queueImpl) GetParkedByNode(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
+func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) (*persistence.ParkedRow, error) {
 	row := q.q(tx).QueryRowContext(ctx,
-		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
+		`SELECT d.id, d.node_id, d.executor_name, d.required_claim_producers, d.frame_id,
 		        d.parked_at, d.resume_at, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.node_id = ?
@@ -158,9 +158,9 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, tx persistence.Tx, node
 	return r, nil
 }
 
-func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) (bool, error) {
+func (q *queueImpl) ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) (bool, error) {
 	if tx == nil {
-		return false, errors.New("sqlite.ResumeParkedInTx: tx required")
+		return false, errors.New("sqlite.ResumeParked: tx required")
 	}
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
@@ -173,16 +173,16 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, nod
 		nodeRunID.String(),
 	)
 	if err != nil {
-		return false, fmt.Errorf("sqlite.ResumeParkedInTx: %w", err)
+		return false, fmt.Errorf("sqlite.ResumeParked: %w", err)
 	}
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("sqlite.ResumeParkedInTx: rows affected: %w", err)
+		return false, fmt.Errorf("sqlite.ResumeParked: rows affected: %w", err)
 	}
 	return rowsAffected == 1, nil
 }
 
-func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, maxRetriesWithoutProgress *int) error {
+func (q *queueImpl) UpdateDispatchTuning(ctx context.Context, nodeRunID shared.UUID, maxRetriesWithoutProgress *int, tx persistence.Tx) error {
 	var retries any
 	if maxRetriesWithoutProgress != nil {
 		retries = *maxRetriesWithoutProgress
@@ -194,15 +194,15 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 		retries, nodeRunID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("sqlite.UpdateDispatchTuningInTx: %w", err)
+		return fmt.Errorf("sqlite.UpdateDispatchTuning: %w", err)
 	}
 	return nil
 }
 
 // @concept: executor
-func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID) ([]byte, string, string, error) {
+func (q *queueImpl) LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) ([]byte, string, string, error) {
 	if tx == nil {
-		return nil, "", "", errors.New("sqlite.LoadScratchInTx: tx required")
+		return nil, "", "", errors.New("sqlite.LoadScratch: tx required")
 	}
 	var (
 		inline  []byte
@@ -219,7 +219,7 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, node
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", "", nil
 		}
-		return nil, "", "", fmt.Errorf("sqlite.LoadScratchInTx: %w", err)
+		return nil, "", "", fmt.Errorf("sqlite.LoadScratch: %w", err)
 	}
 	var hStr, bStr string
 	if handle.Valid {
@@ -233,15 +233,15 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, node
 
 // @concept: executor
 // @concept: blob-backend
-func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error {
+func (q *queueImpl) WriteScratch(ctx context.Context, nodeRunID shared.UUID, inline []byte, handle, handleBackend string, tx persistence.Tx) error {
 	if tx == nil {
-		return errors.New("sqlite.WriteScratchInTx: tx required")
+		return errors.New("sqlite.WriteScratch: tx required")
 	}
 	if len(inline) > 0 && handle != "" {
-		return errors.New("sqlite.WriteScratchInTx: inline and handle are mutually exclusive")
+		return errors.New("sqlite.WriteScratch: inline and handle are mutually exclusive")
 	}
 	if q.tables == nil {
-		return errors.New("sqlite.WriteScratchInTx: queue not wired with tables")
+		return errors.New("sqlite.WriteScratch: queue not wired with tables")
 	}
 	var priorHandle, priorBackend sql.NullString
 	if err := q.q(tx).QueryRowContext(ctx,
@@ -249,9 +249,9 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nod
 		nodeRunID.String(),
 	).Scan(&priorHandle, &priorBackend); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("sqlite.WriteScratchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+			return fmt.Errorf("sqlite.WriteScratch: %s: %w", nodeRunID, persistence.ErrNotFound)
 		}
-		return fmt.Errorf("sqlite.WriteScratchInTx: read prior handle: %w", err)
+		return fmt.Errorf("sqlite.WriteScratch: read prior handle: %w", err)
 	}
 
 	var inlineArg any
@@ -267,19 +267,18 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, nod
 		inlineArg, nullableString(handle), nullableString(handleBackend), nodeRunID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("sqlite.WriteScratchInTx: %w", err)
+		return fmt.Errorf("sqlite.WriteScratch: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("sqlite.WriteScratchInTx: rows affected: %w", err)
+		return fmt.Errorf("sqlite.WriteScratch: rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("sqlite.WriteScratchInTx: %s: %w", nodeRunID, persistence.ErrRunRowMissing)
+		return fmt.Errorf("sqlite.WriteScratch: %s: %w", nodeRunID, persistence.ErrNotFound)
 	}
 	if priorHandle.Valid && priorHandle.String != "" && priorHandle.String != handle {
-		if err := persistence.QueueBlobOrphan(ctx, q.tables.BlobOrphans(), tx,
-			priorHandle.String, priorBackend.String, time.Now().UTC(), q.tables.blobRetention); err != nil {
-			return fmt.Errorf("sqlite.WriteScratchInTx: queue prior orphan: %w", err)
+		if err := persistence.QueueBlobOrphan(ctx, q.tables.BlobOrphans(), priorHandle.String, priorBackend.String, time.Now().UTC(), q.tables.blobRetention, tx); err != nil {
+			return fmt.Errorf("sqlite.WriteScratch: queue prior orphan: %w", err)
 		}
 	}
 	return nil
@@ -304,14 +303,14 @@ func scanOneSqliteParkedRow(row scannable) (*persistence.ParkedRow, error) {
 	var (
 		idStr, nodeIDStr   string
 		executor           sql.NullString
-		storesStr          string
+		claimProducersStr  string
 		frameIDStr         string
 		parkedAtStr        string
 		resumeAtStr        sql.NullString
 		consecutiveRetries int
 	)
 	if err := row.Scan(
-		&idStr, &nodeIDStr, &executor, &storesStr, &frameIDStr,
+		&idStr, &nodeIDStr, &executor, &claimProducersStr, &frameIDStr,
 		&parkedAtStr, &resumeAtStr, &consecutiveRetries,
 	); err != nil {
 		return nil, err
@@ -328,7 +327,7 @@ func scanOneSqliteParkedRow(row scannable) (*persistence.ParkedRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	stores, err := unmarshalStringArray(storesStr)
+	claimProducers, err := unmarshalStringArray(claimProducersStr)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +341,7 @@ func scanOneSqliteParkedRow(row scannable) (*persistence.ParkedRow, error) {
 		FrameID:                  frame,
 		ParkedAt:                 parkedAt,
 		ConsecutiveRetriesNoProg: consecutiveRetries,
-		RequiredClaimProducers:   stores,
+		RequiredClaimProducers:   claimProducers,
 	}
 	if executor.Valid {
 		out.ExecutorName = executor.String

@@ -32,7 +32,7 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 
 	var nodeRunID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 fix.NodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -42,11 +42,11 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  10,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -54,7 +54,7 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 			t.Fatalf("two-leg contract: candidate not surfaced")
 		}
 		nodeRunID = cands[0].NodeRunID
-		ok, err := q.ClaimDispatchRow(ctx, tx, nodeRunID, "two-leg-sup")
+		ok, err := q.ClaimDispatchRow(ctx, nodeRunID, "two-leg-sup", tx)
 		if err != nil {
 			return err
 		}
@@ -67,7 +67,7 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, fix.NodeID, tx)
 		if err != nil {
 			return err
 		}
@@ -86,14 +86,14 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := q.PromoteClaimedToRunning(ctx, tx, nodeRunID, "two-leg-sup")
+		_, err := q.PromoteClaimedToRunning(ctx, nodeRunID, "two-leg-sup", tx)
 		return err
 	}); err != nil {
 		t.Fatalf("two-leg contract: promote leg: %v", err)
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, fix.NodeID, tx)
 		if err != nil {
 			return err
 		}
@@ -120,7 +120,7 @@ func testCreateCascadePendingAndFindLatest(t *testing.T, d persistence.Database)
 
 	var pendingID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		id, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		pendingID = id
 		return err
 	}); err != nil {
@@ -132,7 +132,7 @@ func testCreateCascadePendingAndFindLatest(t *testing.T, d persistence.Database)
 
 	var found *persistence.NodeRunForGate
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		r, err := store.Nodes().FindLatestCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		found = r
 		return err
 	}); err != nil {
@@ -153,7 +153,7 @@ func testCreateCascadePendingAndFindLatest(t *testing.T, d persistence.Database)
 
 	var secondPendingID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		id, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		secondPendingID = id
 		return err
 	}); err != nil {
@@ -163,7 +163,7 @@ func testCreateCascadePendingAndFindLatest(t *testing.T, d persistence.Database)
 		t.Fatalf("second CreateCascadePending returned the same id as the first: %s", secondPendingID)
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		r, err := store.Nodes().FindLatestCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		found = r
 		return err
 	}); err != nil {
@@ -177,19 +177,19 @@ func testCreateCascadePendingAndFindLatest(t *testing.T, d persistence.Database)
 
 	scopeB := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		return store.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               scopeB,
 			ParentRunScopeID: &fix.MainRunScopeID,
 			ParentNodeRunID:  &secondPendingID,
 			GraphName:        spec.MainGraphName,
 			InstanceID:       fix.InstanceID,
 			PartitionKey:     "cascade-walker-scope-b",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("Create scope B: %v", err)
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, scopeB, fix.FrameID)
+		r, err := store.Nodes().FindLatestCascadePending(ctx, fix.NodeID, scopeB, fix.FrameID, tx)
 		found = r
 		return err
 	}); err != nil {
@@ -208,10 +208,10 @@ func testLockReceiverCascade_NoDeadlock(t *testing.T, d persistence.Database) {
 	store := d.Tables()
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.Nodes().LockReceiverCascade(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID); err != nil {
+		if err := store.Nodes().LockReceiverCascade(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx); err != nil {
 			return err
 		}
-		if err := store.Nodes().LockReceiverCascade(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID); err != nil {
+		if err := store.Nodes().LockReceiverCascade(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx); err != nil {
 			return err
 		}
 		return nil
@@ -232,10 +232,10 @@ func testLockReceiverCascade_NoDeadlock(t *testing.T, d persistence.Database) {
 			defer wg.Done()
 			<-start
 			err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				if err := store.Nodes().LockReceiverCascade(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID); err != nil {
+				if err := store.Nodes().LockReceiverCascade(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx); err != nil {
 					return err
 				}
-				existing, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+				existing, err := store.Nodes().FindLatestCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 				if err != nil {
 					return err
 				}
@@ -243,11 +243,11 @@ func testLockReceiverCascade_NoDeadlock(t *testing.T, d persistence.Database) {
 					return nil
 				}
 				for j := 0; j < widenReadsBetweenCheckAndCreate; j++ {
-					if _, err := store.Nodes().FindLatestCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID); err != nil {
+					if _, err := store.Nodes().FindLatestCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx); err != nil {
 						return err
 					}
 				}
-				if _, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID); err != nil {
+				if _, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx); err != nil {
 					return err
 				}
 				atomic.StoreInt32(&created[i], 1)
@@ -275,7 +275,7 @@ func testLockReceiverCascade_NoDeadlock(t *testing.T, d persistence.Database) {
 }
 
 // @concept: cascade
-func testSetRunRequiredStores_ReusesStaleRun(t *testing.T, d persistence.Database) {
+func testSetRunRequiredClaimProducers_ReusesStaleRun(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
@@ -283,12 +283,12 @@ func testSetRunRequiredStores_ReusesStaleRun(t *testing.T, d persistence.Databas
 
 	var runID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, err := store.Nodes().CreateCascadePending(ctx, tx, fix.NodeID, fix.MainRunScopeID, fix.FrameID)
+		id, err := store.Nodes().CreateCascadePending(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 		if err != nil {
 			return err
 		}
 		runID = id
-		return store.Nodes().TransitionPendingToStale(ctx, tx, id, time.Now().Add(-time.Second))
+		return store.Nodes().TransitionPendingToStale(ctx, id, time.Now().Add(-time.Second), tx)
 	}); err != nil {
 		t.Fatalf("seed stale run: %v", err)
 	}
@@ -296,11 +296,11 @@ func testSetRunRequiredStores_ReusesStaleRun(t *testing.T, d persistence.Databas
 	countRoutable := func(accepted []string) int {
 		n := 0
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 				AcceptedExecutors:      []string{"test-executor"},
 				AcceptedClaimProducers: accepted,
 				Limit:                  10,
-			})
+			}, tx)
 			if err != nil {
 				return err
 			}
@@ -320,25 +320,25 @@ func testSetRunRequiredStores_ReusesStaleRun(t *testing.T, d persistence.Databas
 		var ok bool
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var e error
-			ok, e = store.Nodes().SetRunRequiredStores(ctx, tx, runID, []string{"alpha", "beta"})
+			ok, e = store.Nodes().SetRunRequiredClaimProducers(ctx, runID, []string{"alpha", "beta"}, tx)
 			return e
 		}); err != nil {
-			t.Fatalf("SetRunRequiredStores tick %d: %v", i, err)
+			t.Fatalf("SetRunRequiredClaimProducers tick %d: %v", i, err)
 		}
 		if !ok {
-			t.Fatalf("SetRunRequiredStores tick %d: want true for a stale unclaimed run", i)
+			t.Fatalf("SetRunRequiredClaimProducers tick %d: want true for a stale unclaimed run", i)
 		}
 	}
 
 	if got := countRoutable([]string{"alpha", "beta"}); got != 1 {
-		t.Fatalf("SetRunRequiredStores must update in place: want exactly 1 routable run after 3 ticks, got %d", got)
+		t.Fatalf("SetRunRequiredClaimProducers must update in place: want exactly 1 routable run after 3 ticks, got %d", got)
 	}
 	if got := countRoutable(nil); got != 0 {
 		t.Fatalf("a prepared run must route only to a supervisor hosting its claim producers; got %d", got)
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := q.ClaimDispatchRow(ctx, tx, runID, "sup-a")
+		ok, err := q.ClaimDispatchRow(ctx, runID, "sup-a", tx)
 		if err != nil {
 			return err
 		}
@@ -353,13 +353,13 @@ func testSetRunRequiredStores_ReusesStaleRun(t *testing.T, d persistence.Databas
 	var ok bool
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var e error
-		ok, e = store.Nodes().SetRunRequiredStores(ctx, tx, runID, []string{"gamma"})
+		ok, e = store.Nodes().SetRunRequiredClaimProducers(ctx, runID, []string{"gamma"}, tx)
 		return e
 	}); err != nil {
-		t.Fatalf("SetRunRequiredStores after claim: %v", err)
+		t.Fatalf("SetRunRequiredClaimProducers after claim: %v", err)
 	}
 	if ok {
-		t.Fatalf("SetRunRequiredStores must not touch a claimed run")
+		t.Fatalf("SetRunRequiredClaimProducers must not touch a claimed run")
 	}
 }
 
@@ -372,17 +372,17 @@ func testCreateNonCascadeStaleCarriesForward(t *testing.T, d persistence.Databas
 	var priorRunID shared.UUID
 	priorData := map[string]any{"marker": "from-prior-run"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if _, err := store.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+		if _, err := store.Nodes().CreateNonCascadeStale(ctx, persistence.NonCascadeStaleInput{
 			NodeID:         fix.NodeID,
 			RunScopeID:     fix.MainRunScopeID,
 			FrameID:        fix.FrameID,
 			ExecutorName:   "test-executor",
 			EnqueuedAt:     time.Now().Add(-time.Minute),
 			CreationReason: cascade.CreationReasonRecalculate,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		latest, err := store.Nodes().GetLatestRunForNode(ctx, tx, fix.NodeID)
+		latest, err := store.Nodes().GetLatestRunForNode(ctx, fix.NodeID, tx)
 		if err != nil {
 			return err
 		}
@@ -404,14 +404,14 @@ func testCreateNonCascadeStaleCarriesForward(t *testing.T, d persistence.Databas
 
 	var newRunID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, err := store.Nodes().CreateNonCascadeStale(ctx, tx, persistence.NonCascadeStaleInput{
+		id, err := store.Nodes().CreateNonCascadeStale(ctx, persistence.NonCascadeStaleInput{
 			NodeID:         fix.NodeID,
 			RunScopeID:     fix.MainRunScopeID,
 			FrameID:        fix.FrameID,
 			ExecutorName:   "test-executor",
 			EnqueuedAt:     time.Now(),
 			CreationReason: cascade.CreationReasonOperatorInvalidate,
-		})
+		}, tx)
 		newRunID = id
 		return err
 	}); err != nil {
@@ -430,7 +430,7 @@ func testCreateNonCascadeStaleCarriesForward(t *testing.T, d persistence.Databas
 		if !ok || marker != "from-prior-run" {
 			t.Fatalf("CreateNonCascadeStale must carry forward prior data; got %+v", attrs.Data)
 		}
-		snapshot, err := store.NodeAttributes().GetDispatchInputBag(ctx, tx, newRunID)
+		snapshot, err := store.NodeAttributes().GetDispatchInputBag(ctx, newRunID, tx)
 		if err != nil {
 			return err
 		}

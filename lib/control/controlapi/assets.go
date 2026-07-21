@@ -186,8 +186,7 @@ func parseAssetAlias(s string) (nodeType, claimAlias string, err error) {
 }
 
 func resolveAsset(
-	ctx context.Context, deps AppDeps, tx persistence.Tx,
-	instance persistence.InstanceRow, nodeType, claimAlias string,
+	ctx context.Context, deps AppDeps, instance persistence.InstanceRow, nodeType, claimAlias string, tx persistence.Tx,
 ) (*persistence.ClaimHandleRow, *persistence.NodeRow, error) {
 	rows, err := deps.Persist.ClaimHandles().ListByInstanceAndState(
 		ctx, instance.ID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, tx,
@@ -275,7 +274,7 @@ func handleGetAsset(deps AppDeps) http.HandlerFunc {
 			if inst == nil {
 				return shared.ErrInstanceNotFound
 			}
-			r, n, err := resolveAsset(ctx, deps, tx, *inst, nodeType, claimAlias)
+			r, n, err := resolveAsset(ctx, deps, *inst, nodeType, claimAlias, tx)
 			row = r
 			node = n
 			return err
@@ -330,7 +329,7 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 			if inst == nil {
 				return shared.ErrInstanceNotFound
 			}
-			r, _, err := resolveAsset(ctx, deps, tx, *inst, nodeType, claimAlias)
+			r, _, err := resolveAsset(ctx, deps, *inst, nodeType, claimAlias, tx)
 			row = r
 			return err
 		})
@@ -400,7 +399,7 @@ func handleAssetMaterializationHistory(deps AppDeps) http.HandlerFunc {
 			if inst == nil {
 				return shared.ErrInstanceNotFound
 			}
-			r, _, err := resolveAsset(ctx, deps, tx, *inst, nodeType, claimAlias)
+			r, _, err := resolveAsset(ctx, deps, *inst, nodeType, claimAlias, tx)
 			row = r
 			return err
 		})
@@ -457,7 +456,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			if inst == nil {
 				return shared.ErrInstanceNotFound
 			}
-			r, _, err := resolveAsset(ctx, deps, tx, *inst, nodeType, claimAlias)
+			r, _, err := resolveAsset(ctx, deps, *inst, nodeType, claimAlias, tx)
 			if err != nil {
 				return err
 			}
@@ -534,7 +533,7 @@ func handleDeleteAssetDryRun(
 		if inst == nil {
 			return shared.ErrInstanceNotFound
 		}
-		r, _, err := resolveAsset(ctx, deps, tx, *inst, nodeType, claimAlias)
+		r, _, err := resolveAsset(ctx, deps, *inst, nodeType, claimAlias, tx)
 		if err != nil {
 			return err
 		}

@@ -44,9 +44,9 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	instID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: "main", InstanceID: instID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -114,7 +114,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	}
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
+		pc, err := runtime.CheckAndFireResolution(ctx, args, claimHandleID, tx)
 		post = pc
 		return err
 	}))
@@ -149,7 +149,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 
 	var report runtime.CommittedDurableReleaseReport
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := runtime.ReleaseCommittedDurableClaims(ctx, args, tx, inst.ID, shared.SilentLogger{})
+		r, err := runtime.ReleaseCommittedDurableClaims(ctx, args, inst.ID, shared.SilentLogger{}, tx)
 		report = r
 		return err
 	}))
@@ -203,13 +203,13 @@ func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, in
 	var frameID shared.UUID
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())
-		if err := sb.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := sb.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := sb.Frames().InsertRunningFrame(ctx, instanceID, msgID, rootScope, tx)
@@ -241,7 +241,7 @@ func seedRunForNodeAsset(
 		return nil
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 nodeID,
 			ExecutorName:           "stub",
 			RequiredClaimProducers: []string{},
@@ -251,11 +251,11 @@ func seedRunForNodeAsset(
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"stub"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

@@ -49,7 +49,7 @@ func testInstancesAttributeOverridesRoundTrip(t *testing.T, d persistence.Databa
 		}, tx); err != nil {
 			return err
 		}
-		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, store, id, tx)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:                 id,
 			TemplateHash:       tmpl,
@@ -95,7 +95,7 @@ func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Da
 		}, tx); err != nil {
 			return err
 		}
-		_ = seedMainRunScopeForInstance(ctx, t, tx, store, id)
+		_ = seedMainRunScopeForInstance(ctx, t, store, id, tx)
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:           id,
 			TemplateHash: tmpl,

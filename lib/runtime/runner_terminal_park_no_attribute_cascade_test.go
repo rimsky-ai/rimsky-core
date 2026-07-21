@@ -87,7 +87,7 @@ func seedReceiverRunInSameFrame(t *testing.T, args RunArgs, acq *acquisition) sh
 		}, tx); err != nil {
 			return err
 		}
-		if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 receiverNodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -97,11 +97,11 @@ func seedReceiverRunInSameFrame(t *testing.T, args RunArgs, acq *acquisition) sh
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := args.Queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := args.Queue.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}

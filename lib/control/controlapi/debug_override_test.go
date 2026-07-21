@@ -67,7 +67,7 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 		if rootNodeID == (shared.UUID{}) {
 			return fmt.Errorf("seedPauseModeHitForTest: no root node on instance %s", instanceID)
 		}
-		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNodeID, frameRow.RootRunScopeID, frameID); err != nil {
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, rootNodeID, frameRow.RootRunScopeID, frameID, tx); err != nil {
 			return err
 		}
 		fresh, err := h.persist.Nodes().Get(ctx, rootNodeID, tx)
@@ -75,7 +75,7 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 			return err
 		}
 		require.NotNil(t, fresh)
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNodeID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNodeID, tx)
 		if err != nil {
 			return err
 		}
@@ -270,10 +270,10 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 			return err
 		}
 		require.NotNil(t, frameRow)
-		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNode.ID, frameRow.RootRunScopeID, frameID); err != nil {
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, rootNode.ID, frameRow.RootRunScopeID, frameID, tx); err != nil {
 			return err
 		}
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -293,7 +293,7 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_ = inFlightRunID
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -325,10 +325,10 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 			return err
 		}
 		require.NotNil(t, frameRow)
-		if _, err := h.persist.Nodes().CreateCascadePending(ctx, tx, rootNode.ID, frameRow.RootRunScopeID, frameID); err != nil {
+		if _, err := h.persist.Nodes().CreateCascadePending(ctx, rootNode.ID, frameRow.RootRunScopeID, frameID, tx); err != nil {
 			return err
 		}
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -370,7 +370,7 @@ func TestDebugOverride_SetAttributeNoInFlightRunIsNoOp(t *testing.T) {
 
 	rootNode := findNodeIDByType(t, h, instUUID, "root")
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -428,12 +428,12 @@ func seedTerminalRunUnderEndedFrame(
 	runID := uuid.New()
 	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), 'fresh', $3, now(), $4, 0)
     `, runID, uuid.UUID(nodeID), uuid.UUID(frameID), uuid.UUID(runScopeID))
 	sig := "terminal/success"
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.NodeRunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFresh, &sig, false)
+		return h.persist.NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateFresh, &sig, false, tx)
 	}))
 	return runScopeID, frameID
 }
@@ -453,7 +453,7 @@ func TestDebugOverride_InvalidateNodeRefusesCrossFramePairing(t *testing.T) {
 
 	var priorRunID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -478,7 +478,7 @@ func TestDebugOverride_InvalidateNodeRefusesCrossFramePairing(t *testing.T) {
 		"a refused cross-frame invalidate must not be audited as an applied override")
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -506,7 +506,7 @@ func TestDebugOverride_SetAttributeRefusesCrossFramePairing(t *testing.T) {
 
 	var priorRunID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -551,7 +551,7 @@ func seedRunInActiveFrame(
 	runID := shared.UUID(uuid.New())
 	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, run_scope_id, sequence)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), $3, $4, $5, 0)
     `, uuid.UUID(runID), uuid.UUID(nodeID), string(state), uuid.UUID(frameID), uuid.UUID(runScopeID))
 	return runID
@@ -596,7 +596,7 @@ func TestDebugOverride_InvalidateNodePausedFrameRunIsLegalTarget(t *testing.T) {
 		"a held (paused) run in the active frame must remain a legal invalidate target")
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -683,7 +683,7 @@ func TestDebugOverride_SetAttributeNeverMutatesInFrameTerminalRun(t *testing.T) 
 		require.NotContains(t, terminalRow.Data, "override_key",
 			"a terminal run must never be mutated by set_attribute, even inside the active frame")
 
-		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, rootNode.ID)
+		latest, err := h.persist.Nodes().GetLatestRunForNode(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}

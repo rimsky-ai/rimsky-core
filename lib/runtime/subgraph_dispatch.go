@@ -121,24 +121,21 @@ func applyTerminalCompleteSubgraphCaller(
 		internalNodes = nodes
 	}
 
-	if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+	if err := upsertFinalAttributesTx(ctx, args, acq, merged, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: upsert attributes: %w", err)
 	}
 	// @concept: executor
-	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
+	if err := applyTerminalScratchInTx(ctx, args, acq, t.Scratch, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
 	}
 	stayState, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired)
 	if err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: audit running-stay transition: %w", err)
 	}
-	if err := args.Persist.NodeRunTree().UpdateStateAndOutcome(ctx, tx, acq.NodeRunID,
-		stayState, &settlingSig, t.Changed); err != nil {
+	if err := args.Persist.NodeRunTree().UpdateStateAndOutcome(ctx, acq.NodeRunID, stayState, &settlingSig, t.Changed, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
 	}
-	if err := emitAttributeChangesForRunInTx(ctx, args, tx,
-		acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID,
-		nil, nil); err != nil {
+	if err := emitAttributeChangesForRunInTx(ctx, args, acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, nil, nil, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: emit attribute changes: %w", err)
 	}
 	if len(internalNodes) > 0 {
@@ -163,7 +160,7 @@ func applyTerminalCompleteSubgraphCaller(
 				RequiredClaimProducers: node.RequiredClaimProducers(def),
 			})
 		}
-		dispatched, err := DispatchChildren(ctx, args, tx, ChildExecutionInput{
+		dispatched, err := DispatchChildren(ctx, args, ChildExecutionInput{
 			ParentNodeRunID:   acq.NodeRunID,
 			ParentRunScopeID:  acq.RunScopeID,
 			InstanceID:        acq.InstanceID,
@@ -173,7 +170,7 @@ func applyTerminalCompleteSubgraphCaller(
 			EntryAbsorbed:     true,
 			Partitions:        []PartitionDescriptor{{PartitionKey: ""}},
 			Children:          children,
-		})
+		}, tx)
 		if err != nil {
 			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
 		}
@@ -182,10 +179,10 @@ func applyTerminalCompleteSubgraphCaller(
 			typeByNodeID[nrow.ID] = nodeType
 		}
 		callerSig := signalpkg.BuildTerminalSuccessSignal(t.Changed, t.AttributesDel, t.ChangeSummary, t.Tags)
-		if err := bindEntryAliasEdgesToCaller(ctx, args, tx, acq, tmplSpec, dispatched, typeByNodeID, callerSig); err != nil {
+		if err := bindEntryAliasEdgesToCaller(ctx, args, acq, tmplSpec, dispatched, typeByNodeID, callerSig, tx); err != nil {
 			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
 		}
-		if err := seedEntryAliasSourcedAttributes(ctx, args, tx, internalNodes, dispatched, typeByNodeID, merged); err != nil {
+		if err := seedEntryAliasSourcedAttributes(ctx, args, internalNodes, dispatched, typeByNodeID, merged, tx); err != nil {
 			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
 		}
 	}
@@ -256,10 +253,7 @@ func applyTerminalCompleteSubgraphCaller(
 // @concept: sub-graph
 // @concept: delegation
 func bindEntryAliasEdgesToCaller(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	acq *acquisition, tmpl *node.TemplateSpec,
-	dispatched []DispatchedChild, typeByNodeID map[shared.UUID]string,
-	callerSig signalpkg.Signal,
+	ctx context.Context, args RunArgs, acq *acquisition, tmpl *node.TemplateSpec, dispatched []DispatchedChild, typeByNodeID map[shared.UUID]string, callerSig signalpkg.Signal, tx persistence.Tx,
 ) error {
 	if tmpl == nil || acq.NodeDef == nil {
 		return nil
@@ -325,9 +319,7 @@ func bindEntryAliasEdgesToCaller(
 // @concept: sub-graph
 // @concept: delegation
 func seedEntryAliasSourcedAttributes(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	internalNodes []node.TemplateNodeDef, dispatched []DispatchedChild,
-	typeByNodeID map[shared.UUID]string, callerBag map[string]any,
+	ctx context.Context, args RunArgs, internalNodes []node.TemplateNodeDef, dispatched []DispatchedChild, typeByNodeID map[shared.UUID]string, callerBag map[string]any, tx persistence.Tx,
 ) error {
 	defByType := make(map[string]*node.TemplateNodeDef, len(internalNodes))
 	for i := range internalNodes {
@@ -391,7 +383,7 @@ func seedEntryAliasSourcedAttributes(
 		if err := args.Persist.NodeAttributes().Upsert(ctx, c.NodeRunID, c.NodeID, bag, tx); err != nil {
 			return fmt.Errorf("seedEntryAliasSourcedAttributes: upsert child bag %s: %w", c.NodeRunID, err)
 		}
-		if err := args.Persist.NodeAttributes().SetDispatchInputBag(ctx, tx, c.NodeRunID, c.NodeID, bag); err != nil {
+		if err := args.Persist.NodeAttributes().SetDispatchInputBag(ctx, c.NodeRunID, c.NodeID, bag, tx); err != nil {
 			return fmt.Errorf("seedEntryAliasSourcedAttributes: persist child dispatch bag %s: %w", c.NodeRunID, err)
 		}
 	}
@@ -413,13 +405,13 @@ func applyTerminalCompleteSubgraphExit(
 		}
 		wb = encoded
 	}
-	return SettleFromDelegate(ctx, args, tx, DelegateSettlementInput{
+	return SettleFromDelegate(ctx, args, DelegateSettlementInput{
 		ExitNodeRunID: acq.NodeRunID,
 		ExitNodeID:    acq.NodeID,
 		ExitNodeAlias: acq.NodeType,
 		InstanceID:    acq.InstanceID,
 		Writeback:     wb,
-	})
+	}, tx)
 }
 
 func isSubgraphExitNode(acq *acquisition) bool {

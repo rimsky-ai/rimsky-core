@@ -106,9 +106,9 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID: mainScopeID, GraphName: spec.MainGraphName, InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -122,9 +122,9 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID: msgID, InstanceID: instanceID, Type: "test/seed", Sender: "test", SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		fid, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
@@ -132,7 +132,7 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 			return err
 		}
 		frameID = fid
-		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := q.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:                 parentNodeID,
 			ExecutorName:           "test-executor",
 			RequiredClaimProducers: []string{},
@@ -142,11 +142,11 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors:      []string{"test-executor"},
 			AcceptedClaimProducers: []string{},
 			Limit:                  16,
-		})
+		}, tx)
 		if err != nil {
 			return err
 		}
@@ -194,7 +194,7 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 	}
 
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := AcquireSubClaims(ctx, args, tx, AcquireSubClaimsInput{
+		_, err := AcquireSubClaims(ctx, args, AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
 			ProducerName:        storeName,
 			NodeRunID:           parentNodeRunID,
@@ -203,7 +203,7 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 			InstanceID:          instanceID,
 			LivenessInterval:    30 * time.Second,
 			ParentIntent:        string(claimproducer.IntentReadWrite),
-		})
+		}, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("AcquireSubClaims: %v", err)

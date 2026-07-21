@@ -142,12 +142,18 @@ func TestSQLiteMigration036RebuildPreservesEventsAndAutoincrement(t *testing.T) 
 		}
 	}
 
-	if _, err := db.ExecContext(ctx,
-		`DELETE FROM rimsky_migrations WHERE filename = '036-normalize-timestamp-column-dialect.sql'`); err != nil {
-		t.Fatalf("unmark 036: %v", err)
+	sqlBytes, err := migrations.FS.ReadFile("036-normalize-timestamp-column-dialect.sql")
+	if err != nil {
+		t.Fatalf("read 036 migration file: %v", err)
 	}
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		t.Fatalf("disable foreign_keys: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
 		t.Fatalf("re-apply 036 against populated db: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
+		t.Fatalf("re-enable foreign_keys: %v", err)
 	}
 
 	var count int

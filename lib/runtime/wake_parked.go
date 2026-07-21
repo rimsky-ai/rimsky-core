@@ -70,7 +70,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 	var targetRunScopeID shared.UUID
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if args.NodeRunID != (shared.UUID{}) && args.Persist.NodeRunTree() != nil {
-			row, err := args.Persist.NodeRunTree().GetByID(ctx, tx, args.NodeRunID)
+			row, err := args.Persist.NodeRunTree().GetByID(ctx, args.NodeRunID, tx)
 			if err != nil {
 				return err
 			}
@@ -79,7 +79,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 			}
 			return nil
 		}
-		latest, err := args.Persist.Nodes().GetLatestRunForNode(ctx, tx, target.ID)
+		latest, err := args.Persist.Nodes().GetLatestRunForNode(ctx, target.ID, tx)
 		if err != nil {
 			return err
 		}
@@ -93,7 +93,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 	if targetRunScopeID == (shared.UUID{}) {
 		return nil
 	}
-	parked, err := args.Queue.GetParkedByNode(ctx, nil, target.ID, targetRunScopeID)
+	parked, err := args.Queue.GetParkedByNode(ctx, target.ID, targetRunScopeID, nil)
 	if err != nil {
 		return fmt.Errorf("wakeParkedNode: GetParkedByNode: %w", err)
 	}
@@ -114,8 +114,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 		return nil
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := resumeParkedRunInTx(ctx, args.Persist, args.Queue, tx,
-			parked.NodeRunID, target.ID, target.InstanceID, args.SupervisorID, reason)
+		_, err := resumeParkedRunInTx(ctx, args.Persist, args.Queue, parked.NodeRunID, target.ID, target.InstanceID, args.SupervisorID, reason, tx)
 		return err
 	})
 }
@@ -123,10 +122,9 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 // @concept: parked-state
 // @concept: wait-set
 func resumeParkedRunInTx(
-	ctx context.Context, persist persistence.Tables, queue persistence.Queue, tx persistence.Tx,
-	parkedRunID, nodeID, instanceID shared.UUID, supervisorID string, reason WakeReason,
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue, parkedRunID, nodeID, instanceID shared.UUID, supervisorID string, reason WakeReason, tx persistence.Tx,
 ) (bool, error) {
-	resumed, err := queue.ResumeParkedInTx(ctx, tx, parkedRunID)
+	resumed, err := queue.ResumeParked(ctx, parkedRunID, tx)
 	if err != nil {
 		return false, err
 	}

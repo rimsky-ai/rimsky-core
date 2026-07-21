@@ -323,7 +323,7 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 		require.True(t, res.Ok(), "errors: %+v", res.Errors)
 		for _, w := range res.Warnings {
 			require.NotContains(t, w.Msg, "acquire/unavailable",
-				"unexpected acquire/unavailable warning on node without stores")
+				"unexpected acquire/unavailable warning on node without claim producers")
 		}
 	})
 }

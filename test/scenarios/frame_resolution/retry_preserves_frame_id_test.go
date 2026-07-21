@@ -60,7 +60,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	var seededRunID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		INSERT INTO rimsky_node_runs
-		    (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, frame_id, run_scope_id)
+		    (id, node_id, executor_name, required_claim_producers, enqueued_at, state, sequence, frame_id, run_scope_id)
 		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'running', 1, $2, $3)
 		RETURNING id
 	`, uuid.UUID(worker.ID), frameID, uuid.UUID(freshScopeID)).Scan(&seededRunID))
@@ -71,7 +71,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 			shared.UUID(seededRunID), cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx); err != nil {
 			return err
 		}
-		_, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, tx, persistence.NonCascadeStaleInput{
+		_, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, persistence.NonCascadeStaleInput{
 			NodeID:                 worker.ID,
 			RunScopeID:             freshScopeID,
 			FrameID:                shared.UUID(frameID),
@@ -79,7 +79,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 			RequiredClaimProducers: []string{},
 			EnqueuedAt:             time.Now(),
 			CreationReason:         cascade.CreationReasonOperatorInvalidate,
-		})
+		}, tx)
 		return err
 	}))
 

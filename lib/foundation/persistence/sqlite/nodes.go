@@ -172,7 +172,7 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 		  WHERE (n.executor IS NULL OR n.executor = '')
 		    AND nr.state = 'stale'
 		    AND nr.claimed_by IS NULL
-		    AND (nr.required_stores IS NULL OR nr.required_stores = '[]')
+		    AND (nr.required_claim_producers IS NULL OR nr.required_claim_producers = '[]')
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_wait_set w
 		       WHERE w.frame_id = nr.frame_id AND w.receiver_run_id = nr.id
@@ -370,7 +370,7 @@ func (s *nodesImpl) UpdateRunEvaluatorState(ctx context.Context, runID foundatio
 		return fmt.Errorf("nodes.updateRunEvaluatorState: rows-affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("nodes.updateRunEvaluatorState: %w", persistence.ErrRunRowMissing)
+		return fmt.Errorf("nodes.updateRunEvaluatorState: %w", persistence.ErrNotFound)
 	}
 	return nil
 }
@@ -561,8 +561,7 @@ func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundations
 // @concept: cascade
 // @concept: run-scope
 func (s *nodesImpl) HasAdvancedSiblingInScope(
-	ctx context.Context, tx persistence.Tx,
-	nodeID, runScopeID, excludingRunID foundationshared.UUID,
+	ctx context.Context, nodeID, runScopeID, excludingRunID foundationshared.UUID, tx persistence.Tx,
 ) (bool, error) {
 	var n int
 	err := s.q(tx).QueryRowContext(ctx,
@@ -580,7 +579,7 @@ func (s *nodesImpl) HasAdvancedSiblingInScope(
 // @concept: cascade
 // @concept: run-scope
 func (s *nodesImpl) ListPendingSiblingRunsInScope(
-	ctx context.Context, tx persistence.Tx, senderNodeRunID foundationshared.UUID,
+	ctx context.Context, senderNodeRunID foundationshared.UUID, tx persistence.Tx,
 ) ([]foundationshared.UUID, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT pending.id
@@ -615,7 +614,7 @@ func (s *nodesImpl) ListPendingSiblingRunsInScope(
 // @concept: cascade
 // @decision: mode-default-most-recent
 func (s *nodesImpl) HasLaterCascadePending(
-	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, afterSeq int64,
+	ctx context.Context, nodeID, runScopeID foundationshared.UUID, afterSeq int64, tx persistence.Tx,
 ) (bool, error) {
 	var exists bool
 	err := s.q(tx).QueryRowContext(ctx,
@@ -636,7 +635,7 @@ func (s *nodesImpl) HasLaterCascadePending(
 // @concept: cascade
 // @concept: run-scope
 func (s *nodesImpl) ListPendingRunsInScopeForNodes(
-	ctx context.Context, tx persistence.Tx, runScopeID foundationshared.UUID, nodeIDs []foundationshared.UUID,
+	ctx context.Context, runScopeID foundationshared.UUID, nodeIDs []foundationshared.UUID, tx persistence.Tx,
 ) ([]foundationshared.UUID, error) {
 	if len(nodeIDs) == 0 {
 		return nil, nil
@@ -838,7 +837,7 @@ func decodeNodeCursor(s string) (time.Time, foundationshared.UUID, error) {
 // @concept: cascade
 // @decision: walker-rule-per-sender-node
 func (s *nodesImpl) LockReceiverCascade(
-	_ context.Context, _ persistence.Tx, _, _, _ foundationshared.UUID,
+	_ context.Context, _, _, _ foundationshared.UUID, _ persistence.Tx,
 ) error {
 	return nil
 }
@@ -846,7 +845,7 @@ func (s *nodesImpl) LockReceiverCascade(
 // @concept: cascade
 // @decision: walker-rule-per-sender-node
 func (s *nodesImpl) FindLatestCascadePending(
-	ctx context.Context, tx persistence.Tx, nodeID, runScopeID, frameID foundationshared.UUID,
+	ctx context.Context, nodeID, runScopeID, frameID foundationshared.UUID, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
@@ -865,12 +864,12 @@ func (s *nodesImpl) FindLatestCascadePending(
 // @decision: walker-rule-per-sender-node
 // @decision: sequence-scope-monotonic
 func (s *nodesImpl) CreateCascadePending(
-	ctx context.Context, tx persistence.Tx, nodeID, runScopeID, frameID foundationshared.UUID,
+	ctx context.Context, nodeID, runScopeID, frameID foundationshared.UUID, tx persistence.Tx,
 ) (foundationshared.UUID, error) {
 	newID := uuid.New()
 	res, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
 		 SELECT ?, n.id, NULLIF(n.executor, ''), '[]', ?, 'pending', 'cascade',
 		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
 		        ?, rs.id
@@ -910,7 +909,7 @@ func (s *nodesImpl) CreateCascadePending(
 }
 
 // @concept: cascade
-func (s *nodesImpl) GetRunForGate(ctx context.Context, tx persistence.Tx, runID foundationshared.UUID) (*persistence.NodeRunForGate, error) {
+func (s *nodesImpl) GetRunForGate(ctx context.Context, runID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
 		   FROM rimsky_node_runs WHERE id = ?`, runID.String(),
@@ -921,7 +920,7 @@ func (s *nodesImpl) GetRunForGate(ctx context.Context, tx persistence.Tx, runID 
 // @concept: node-run
 // @decision: sequence-scope-monotonic
 func (s *nodesImpl) GetLatestRunForNode(
-	ctx context.Context, tx persistence.Tx, nodeID foundationshared.UUID,
+	ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx,
 ) (*persistence.NodeRunLatest, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT id, node_id, run_scope_id, frame_id, sequence, state,
@@ -939,7 +938,7 @@ func (s *nodesImpl) GetLatestRunForNode(
 // @concept: node-run
 // @decision: sequence-scope-monotonic
 func (s *nodesImpl) GetLatestRunForNodes(
-	ctx context.Context, tx persistence.Tx, nodeIDs []foundationshared.UUID,
+	ctx context.Context, nodeIDs []foundationshared.UUID, tx persistence.Tx,
 ) (map[foundationshared.UUID]persistence.NodeRunLatest, error) {
 	out := make(map[foundationshared.UUID]persistence.NodeRunLatest, len(nodeIDs))
 	if len(nodeIDs) == 0 {
@@ -1004,7 +1003,7 @@ func (s *nodesImpl) GetLatestRunForNodes(
 
 // @concept: node-run
 func (s *nodesImpl) ListRunsForInstanceByStates(
-	ctx context.Context, tx persistence.Tx, instanceID foundationshared.UUID, states []cascade.NodeState,
+	ctx context.Context, instanceID foundationshared.UUID, states []cascade.NodeState, tx persistence.Tx,
 ) ([]persistence.NodeRunLatest, error) {
 	if len(states) == 0 {
 		return nil, nil
@@ -1113,7 +1112,7 @@ func scanLatestRow(row *sql.Row) (*persistence.NodeRunLatest, error) {
 
 // @concept: cascade
 func (s *nodesImpl) GetPriorRunBySequence(
-	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
+	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
@@ -1130,7 +1129,7 @@ func (s *nodesImpl) GetPriorRunBySequence(
 // @decision: mode-default-most-recent
 // @concept: blob-backend
 func (s *nodesImpl) DeletePriorCascadeStales(
-	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
+	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (int, error) {
 	ti := (*tablesImpl)(s)
 	rows, err := ti.q(tx).QueryContext(ctx,
@@ -1147,7 +1146,7 @@ func (s *nodesImpl) DeletePriorCascadeStales(
 	if err != nil {
 		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
 	}
-	if err := enrollScratchOrphans(ctx, ti, tx, handles); err != nil {
+	if err := enrollScratchOrphans(ctx, ti, handles, tx); err != nil {
 		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
 	}
 	return n, nil
@@ -1174,13 +1173,13 @@ func drainDeletedScratchHandles(rows *sql.Rows) ([]prunedBlobHandle, int, error)
 	return handles, n, nil
 }
 
-func enrollScratchOrphans(ctx context.Context, ti *tablesImpl, tx persistence.Tx, handles []prunedBlobHandle) error {
+func enrollScratchOrphans(ctx context.Context, ti *tablesImpl, handles []prunedBlobHandle, tx persistence.Tx) error {
 	if len(handles) == 0 {
 		return nil
 	}
 	now := time.Now().UTC()
 	for _, h := range handles {
-		if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), tx, h.handle, h.backend, now, ti.blobRetention); err != nil {
+		if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), h.handle, h.backend, now, ti.blobRetention, tx); err != nil {
 			return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
 		}
 	}
@@ -1189,7 +1188,7 @@ func enrollScratchOrphans(ctx context.Context, ti *tablesImpl, tx persistence.Tx
 
 // @concept: cascade
 func (s *nodesImpl) GetPriorCascadeQueuedNotClaimed(
-	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
+	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
@@ -1205,7 +1204,7 @@ func (s *nodesImpl) GetPriorCascadeQueuedNotClaimed(
 
 // @concept: cascade
 func (s *nodesImpl) GetMostRecentSettledRun(
-	ctx context.Context, tx persistence.Tx, nodeID, runScopeID foundationshared.UUID, beforeSeq int64,
+	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
@@ -1222,7 +1221,7 @@ func (s *nodesImpl) GetMostRecentSettledRun(
 // @concept: cascade
 // @concept: blob-backend
 func (s *nodesImpl) DropPendingRun(
-	ctx context.Context, tx persistence.Tx, runID foundationshared.UUID,
+	ctx context.Context, runID foundationshared.UUID, tx persistence.Tx,
 ) error {
 	ti := (*tablesImpl)(s)
 	var handle, backend sql.NullString
@@ -1239,7 +1238,7 @@ func (s *nodesImpl) DropPendingRun(
 	if !handle.Valid || handle.String == "" {
 		return nil
 	}
-	if err := enrollScratchOrphans(ctx, ti, tx, []prunedBlobHandle{{handle: handle.String, backend: backend.String}}); err != nil {
+	if err := enrollScratchOrphans(ctx, ti, []prunedBlobHandle{{handle: handle.String, backend: backend.String}}, tx); err != nil {
 		return fmt.Errorf("DropPendingRun: %w", err)
 	}
 	return nil
@@ -1247,7 +1246,7 @@ func (s *nodesImpl) DropPendingRun(
 
 // @concept: cascade
 func (s *nodesImpl) TransitionPendingToStale(
-	ctx context.Context, tx persistence.Tx, runID foundationshared.UUID, enqueuedAt time.Time,
+	ctx context.Context, runID foundationshared.UUID, enqueuedAt time.Time, tx persistence.Tx,
 ) error {
 	target, err := cascade.NextState(cascade.NodeStatePending, cascade.ReasonGateCleared)
 	if err != nil {
@@ -1276,25 +1275,25 @@ func (s *nodesImpl) TransitionPendingToStale(
 }
 
 // @concept: cascade
-func (s *nodesImpl) SetRunRequiredStores(
-	ctx context.Context, tx persistence.Tx, runID foundationshared.UUID, requiredStores []string,
+func (s *nodesImpl) SetRunRequiredClaimProducers(
+	ctx context.Context, runID foundationshared.UUID, requiredClaimProducers []string, tx persistence.Tx,
 ) (bool, error) {
 	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET required_stores = ?
+		    SET required_claim_producers = ?
 		  WHERE id = ? AND state = 'stale' AND claimed_by IS NULL
 		    AND EXISTS (
 		      SELECT 1 FROM rimsky_run_scopes rs
 		       WHERE rs.id = rimsky_node_runs.run_scope_id AND rs.closed_at IS NULL
 		    )`,
-		marshalStringArray(requiredStores), runID.String(),
+		marshalStringArray(requiredClaimProducers), runID.String(),
 	)
 	if err != nil {
-		return false, fmt.Errorf("SetRunRequiredStores: %w", err)
+		return false, fmt.Errorf("SetRunRequiredClaimProducers: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("SetRunRequiredStores: rows affected: %w", err)
+		return false, fmt.Errorf("SetRunRequiredClaimProducers: rows affected: %w", err)
 	}
 	return n == 1, nil
 }
@@ -1302,7 +1301,7 @@ func (s *nodesImpl) SetRunRequiredStores(
 // @concept: cascade
 // @decision: non-cascade-direct-to-stale
 func (s *nodesImpl) CreateNonCascadeStale(
-	ctx context.Context, tx persistence.Tx, in persistence.NonCascadeStaleInput,
+	ctx context.Context, in persistence.NonCascadeStaleInput, tx persistence.Tx,
 ) (foundationshared.UUID, error) {
 	if in.FrameID == (foundationshared.UUID{}) {
 		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: frame_id required")
@@ -1325,7 +1324,7 @@ func (s *nodesImpl) CreateNonCascadeStale(
 	newID := uuid.New()
 	res, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, state, creation_reason, sequence,
+		   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence,
 		    frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition,
 		    scratch_inline, scratch_handle, scratch_handle_backend)
 		 SELECT ?, ?, ?, ?, ?, 'stale', ?,
@@ -1364,7 +1363,7 @@ func (s *nodesImpl) CreateNonCascadeStale(
 		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: insert affected zero rows")
 	}
 	// @decision: non-cascade-direct-to-stale
-	if err := (*nodeAttributesImpl)((*tablesImpl)(s)).SnapshotBagForNewRun(ctx, tx, newID, in.NodeID, in.RunScopeID); err != nil {
+	if err := (*nodeAttributesImpl)((*tablesImpl)(s)).SnapshotBagForNewRun(ctx, newID, in.NodeID, in.RunScopeID, tx); err != nil {
 		return foundationshared.UUID{}, fmt.Errorf("CreateNonCascadeStale: snapshot bag: %w", err)
 	}
 	return newID, nil

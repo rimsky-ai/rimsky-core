@@ -30,7 +30,7 @@ ON CONFLICT (instance_id, sender_kind, sender, sender_subject, idempotency_key) 
    SET message_id = rimsky_message_idempotencies.message_id
 RETURNING message_id, created_at, (xmax = 0) AS inserted`
 
-func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persistence.Tx, row persistence.MessageIdempotencyRow) (persistence.MessageIdempotencyRow, bool, error) {
+func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, row persistence.MessageIdempotencyRow, tx persistence.Tx) (persistence.MessageIdempotencyRow, bool, error) {
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = time.Now().UTC()
 	}

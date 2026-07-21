@@ -51,19 +51,19 @@ type CreateChildNodeRunInput struct {
 }
 
 type NodeRunTreeTable interface {
-	CreateRootNodeRun(ctx context.Context, tx Tx, in CreateRootNodeRunInput) error
+	CreateRootNodeRun(ctx context.Context, in CreateRootNodeRunInput, tx Tx) error
 
-	CreateChildNodeRun(ctx context.Context, tx Tx, in CreateChildNodeRunInput) error
+	CreateChildNodeRun(ctx context.Context, in CreateChildNodeRunInput, tx Tx) error
 
-	GetByID(ctx context.Context, tx Tx, runID shared.UUID) (*NodeRunTreeRow, error)
+	GetByID(ctx context.Context, runID shared.UUID, tx Tx) (*NodeRunTreeRow, error)
 
-	LockTreeForUpdate(ctx context.Context, tx Tx, runID shared.UUID) (*NodeRunTreeRow, error)
+	LockTreeForUpdate(ctx context.Context, runID shared.UUID, tx Tx) (*NodeRunTreeRow, error)
 
-	ListChildren(ctx context.Context, tx Tx, parentNodeRunID shared.UUID) ([]NodeRunTreeRow, error)
+	ListChildren(ctx context.Context, parentNodeRunID shared.UUID, tx Tx) ([]NodeRunTreeRow, error)
 
-	UpdateStateAndOutcome(ctx context.Context, tx Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool) error
+	UpdateStateAndOutcome(ctx context.Context, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool, tx Tx) error
 
-	UpdateAggregationPolicy(ctx context.Context, tx Tx, runID shared.UUID, policy spec.AggregationPolicy) error
+	UpdateAggregationPolicy(ctx context.Context, runID shared.UUID, policy spec.AggregationPolicy, tx Tx) error
 }
 
 func MarshalAggregationPolicy(p spec.AggregationPolicy) ([]byte, error) {

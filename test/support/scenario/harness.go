@@ -680,7 +680,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 			RequiredClaimProducers: required,
 			EnqueuedAt:             time.Now(),
 			FrameID:                *runningFrameID,
-		}); err != nil {
+		}, nil); err != nil {
 			h.T.Logf("driveFrameAndEnqueue: Enqueue node %s failed; retrying next tick: %v", n.ID.String(), err)
 		}
 	}
@@ -719,7 +719,7 @@ func (h *Harness) requiredClaimProducersForNodeType(instanceID shared.UUID, node
 func (h *Harness) nodeReachedState(nodeID shared.UUID, state cascade.NodeState) bool {
 	var latest *persistence.NodeRunLatest
 	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		l, err := h.Persist.Nodes().GetLatestRunForNode(ctx, tx, nodeID)
+		l, err := h.Persist.Nodes().GetLatestRunForNode(ctx, nodeID, tx)
 		latest = l
 		return err
 	}); err != nil && h.T != nil {

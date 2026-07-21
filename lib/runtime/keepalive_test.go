@@ -68,7 +68,7 @@ type keepaliveStubQueue struct {
 	stamps []time.Time
 }
 
-func (q *keepaliveStubQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, runID shared.UUID, now time.Time) (bool, error) {
+func (q *keepaliveStubQueue) BumpLastProgressAt(_ context.Context, runID shared.UUID, now time.Time, _ persistence.Tx) (bool, error) {
 	q.calls = append(q.calls, runID)
 	q.stamps = append(q.stamps, now)
 	return q.found, q.err

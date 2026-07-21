@@ -13,8 +13,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-var ErrRunRowMissing = errors.New("persistence: rimsky_node_runs row not found")
-
 var ErrRunClaimantMismatch = errors.New("persistence: rimsky_node_runs row not in expected (active, claimed_by) state")
 
 type DispatchRequest struct {
@@ -90,30 +88,26 @@ type DispatchListFilter struct {
 }
 
 type Queue interface {
-	Enqueue(ctx context.Context, req DispatchRequest) error
+	Enqueue(ctx context.Context, req DispatchRequest, tx Tx) error
 
-	EnqueueInTx(ctx context.Context, req DispatchRequest, tx Tx) error
-
-	SelectCandidates(ctx context.Context, tx Tx, req SelectCandidatesRequest) ([]Candidate, error)
+	SelectCandidates(ctx context.Context, req SelectCandidatesRequest, tx Tx) ([]Candidate, error)
 
 	// @concept: wait-set
 	// @concept: cascade
-	ListInFlightRunStates(ctx context.Context, tx Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error)
+	ListInFlightRunStates(ctx context.Context, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID, tx Tx) (map[shared.UUID][]string, error)
 
-	ClaimDispatchRow(ctx context.Context, tx Tx, nodeRunID shared.UUID, supervisorID string) (claimed bool, err error)
+	ClaimDispatchRow(ctx context.Context, nodeRunID shared.UUID, supervisorID string, tx Tx) (claimed bool, err error)
 
-	PromoteClaimedToRunning(ctx context.Context, tx Tx, nodeRunID shared.UUID, supervisorID string) (promoted bool, err error)
+	PromoteClaimedToRunning(ctx context.Context, nodeRunID shared.UUID, supervisorID string, tx Tx) (promoted bool, err error)
 
 	Complete(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error
 
 	ForceComplete(ctx context.Context, nodeRunID shared.UUID) error
 
-	RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx Tx) error
+	RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx Tx) error
 
 	// @concept: run-scope
-	ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) error
-
-	ForceRemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx Tx) error
+	ForceRemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx Tx) error
 
 	ListOrphanedClaims(ctx context.Context) ([]DispatchRow, error)
 
@@ -123,21 +117,19 @@ type Queue interface {
 	ReleaseClaimWithDisposition(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string, disposition string) error
 
 	// @concept: node-run
-	StampPriorDispatchInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string) error
+	StampPriorDispatch(ctx context.Context, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string, tx Tx) error
 
 	ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID) error
 
 	GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (ClaimOwnership, error)
 
-	GetDispatchNode(ctx context.Context, nodeRunID shared.UUID) (shared.UUID, ClaimOwnership, error)
+	GetDispatchNode(ctx context.Context, nodeRunID shared.UUID, tx Tx) (shared.UUID, ClaimOwnership, error)
 
-	GetDispatchNodeInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (shared.UUID, ClaimOwnership, error)
+	LookupRunByAsyncAckID(ctx context.Context, ackID string, tx Tx) (*DispatchRow, error)
 
-	LookupRunByAsyncAckID(ctx context.Context, tx Tx, ackID string) (*DispatchRow, error)
+	RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, tx Tx) error
 
-	RegisterAsyncAck(ctx context.Context, tx Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string) error
-
-	BumpLastProgressAt(ctx context.Context, tx Tx, runID shared.UUID, now time.Time) (bool, error)
+	BumpLastProgressAt(ctx context.Context, runID shared.UUID, now time.Time, tx Tx) (bool, error)
 
 	ListLive(ctx context.Context, filter DispatchListFilter, pag ListPagination) (PaginatedListResult[DispatchRow], error)
 
@@ -148,29 +140,29 @@ type Queue interface {
 	GetByID(ctx context.Context, id shared.UUID) (*DispatchRow, error)
 
 	// @concept: run-scope
-	GetInFlightRunForNode(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error)
+	GetInFlightRunForNode(ctx context.Context, nodeID, runScopeID shared.UUID, tx Tx) (shared.UUID, bool, error)
 
 	// @concept: run-scope
-	GetMostRecentRunForNodeInScope(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error)
+	GetMostRecentRunForNodeInScope(ctx context.Context, nodeID, runScopeID shared.UUID, tx Tx) (shared.UUID, bool, error)
 
-	ParkActiveInTx(ctx context.Context, tx Tx, in ParkActiveInput) error
+	ParkActive(ctx context.Context, in ParkActiveInput, tx Tx) error
 
 	ListParkedReadyForResume(ctx context.Context, cutoff time.Time, limit int) ([]ParkedRow, error)
 
 	ListParkedDiagnostic(ctx context.Context, tx Tx) ([]ParkedDiagnosticRow, error)
 
 	// @concept: run-scope
-	GetParkedByNode(ctx context.Context, tx Tx, nodeID shared.UUID, runScopeID shared.UUID) (*ParkedRow, error)
+	GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx Tx) (*ParkedRow, error)
 
-	ResumeParkedInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (resumed bool, err error)
+	ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx Tx) (resumed bool, err error)
 
-	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, maxRetriesWithoutProgress *int) error
-
-	// @concept: executor
-	LoadScratchInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID) (inline []byte, handle, handleBackend string, err error)
+	UpdateDispatchTuning(ctx context.Context, nodeRunID shared.UUID, maxRetriesWithoutProgress *int, tx Tx) error
 
 	// @concept: executor
-	WriteScratchInTx(ctx context.Context, tx Tx, nodeRunID shared.UUID, inline []byte, handle, handleBackend string) error
+	LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx Tx) (inline []byte, handle, handleBackend string, err error)
+
+	// @concept: executor
+	WriteScratch(ctx context.Context, nodeRunID shared.UUID, inline []byte, handle, handleBackend string, tx Tx) error
 }
 
 type ParkActiveInput struct {

@@ -528,7 +528,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	mainScopeID, _, frameID := seedRunScopeMessageFrame(ctx, t, h, uuid.UUID(inst.ID), false)
 	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
         VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', $2, now(), $3, 0)
     `, nodeRow.ID, frameID, mainScopeID)
 	status, _ = h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
@@ -544,7 +544,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 			return err
 		}
 		loaded = r
-		l, err := h.persist.Nodes().GetLatestRunForNode(ctx, tx, nodeRow.ID)
+		l, err := h.persist.Nodes().GetLatestRunForNode(ctx, nodeRow.ID, tx)
 		latest = l
 		return err
 	}))
@@ -593,7 +593,7 @@ func TestOperatorReset_AppendsOperatorOverrideAuditEvent(t *testing.T) {
     `, frameID, inst.ID, msgID, mainScopeID)
 	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
+            (id, node_id, executor_name, required_claim_producers, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
         VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', $2, now(), $3, 0)
     `, nodeRow.ID, frameID, mainScopeID)
 

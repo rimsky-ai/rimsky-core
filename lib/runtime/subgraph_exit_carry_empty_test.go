@@ -63,11 +63,11 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  tmplspec.MainGraphName,
 			InstanceID: instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
@@ -89,40 +89,40 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 			return err
 		}
 		msgID := shared.UUID(uuid.New())
-		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+		if err := tables.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
 			Type:       "test/seed",
 			Sender:     "test",
 			SenderKind: "operator",
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		frameID, err := tables.Frames().InsertRunningFrame(ctx, instanceID, msgID, mainScopeID, tx)
 		if err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, tx, persistence.CreateRootNodeRunInput{
+		if err := tables.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
 			NodeRunID: parentNodeRunID, NodeID: callerNodeID, FrameID: frameID,
 			RunScopeID: mainScopeID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
 		parentRunIDCopy := parentNodeRunID
 		mainScopeIDCopy := mainScopeID
-		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{
 			ID:               exitScopeID,
 			ParentRunScopeID: &mainScopeIDCopy,
 			ParentNodeRunID:  &parentRunIDCopy,
 			GraphName:        "inner",
 			InstanceID:       instanceID,
-		}); err != nil {
+		}, tx); err != nil {
 			return err
 		}
-		return tables.NodeRunTree().CreateChildNodeRun(ctx, tx, persistence.CreateChildNodeRunInput{
+		return tables.NodeRunTree().CreateChildNodeRun(ctx, persistence.CreateChildNodeRunInput{
 			NodeRunID: exitNodeRunID, NodeID: exitNodeID, FrameID: frameID,
 			RunScopeID: exitScopeID, ExecutorName: "test-executor",
-		})
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seed fixture: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 	var scope *persistence.RunScopeRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		scope, err = tables.RunScopes().GetByID(ctx, tx, exitScopeID)
+		scope, err = tables.RunScopes().GetByID(ctx, exitScopeID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("load exit scope: %v", err)

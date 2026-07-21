@@ -58,17 +58,17 @@ func newDriveSetupWithPartitionKey(
 	var inst persistence.InstanceRow
 	var nd persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, ms := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
+		i, ms := seedInstanceWithMainScope(ctx, t, backend, tmpl.ID, &ck, tx)
 		inst = i
 		runScopeID = ms
 		if partitionKey != "" {
 			childScopeID := shared.UUID(uuid.New())
-			if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			if err := backend.RunScopes().Create(ctx, persistence.RunScopeRow{
 				ID:           childScopeID,
 				GraphName:    "main",
 				InstanceID:   inst.ID,
 				PartitionKey: partitionKey,
-			}); err != nil {
+			}, tx); err != nil {
 				return err
 			}
 			runScopeID = childScopeID
@@ -88,17 +88,17 @@ func newDriveSetupWithPartitionKey(
 
 	ackID := "ack-cbk-val-" + nodeRunID.String()
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		claimed, err := d.Queue().ClaimDispatchRow(ctx, tx, nodeRunID, supID)
+		claimed, err := d.Queue().ClaimDispatchRow(ctx, nodeRunID, supID, tx)
 		if err != nil {
 			return err
 		}
 		require.True(t, claimed, "run must be claimable")
-		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, tx, nodeRunID, supID)
+		promoted, err := d.Queue().PromoteClaimedToRunning(ctx, nodeRunID, supID, tx)
 		if err != nil {
 			return err
 		}
 		require.True(t, promoted, "run must promote to running")
-		return d.Queue().RegisterAsyncAck(ctx, tx, nodeRunID, ackID, clk.Now(), nil, nil, "")
+		return d.Queue().RegisterAsyncAck(ctx, nodeRunID, ackID, clk.Now(), nil, nil, "", tx)
 	}))
 
 	cb := &runtime.CallbackServer{
