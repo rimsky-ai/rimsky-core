@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	markerCopyright       = "Copyright ©"
 	markerLicensedUnder   = "Licensed under"
 	markerApache          = "Apache License"
 	markerDualAGPL        = "Dual-licensed under AGPL"
@@ -36,8 +37,18 @@ const apacheHeaderTS = `// Copyright © 2026 Fall Guy Consulting.
 // See LICENSE.apache at the repo root.
 `
 
+const agplHeaderTS = `// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+`
+
 const apacheHeaderProto = `// Copyright © 2026 Fall Guy Consulting.
 // Licensed under the Apache License, Version 2.0.
+`
+
+const agplHeaderProto = `// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 `
 
 const apacheHeaderSQL = `-- Copyright © 2026 Fall Guy Consulting.
@@ -109,35 +120,39 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 	}
 	defer fh.Close()
 	sc := bufio.NewScanner(fh)
-	var sawDualAGPLPhrase, sawAGPLFilePointer, sawSPDXAGPL bool
+	var sawCopyright, sawLicensedUnder, sawDualAGPLPhrase, sawAGPLFilePointer, sawSPDXApache, sawSPDXAGPL bool
 	for i := 0; i < 10 && sc.Scan(); i++ {
 		line := sc.Text()
+		if strings.Contains(line, markerCopyright) {
+			sawCopyright = true
+		}
 		if strings.Contains(line, markerLicensedUnder) {
-			hasHeader = true
+			sawLicensedUnder = true
 		}
 		if strings.Contains(line, markerApache) {
 			isApache = true
 		}
 		if strings.Contains(line, markerDualAGPL) {
 			sawDualAGPLPhrase = true
-			hasHeader = true
 		}
 		if strings.Contains(line, markerAGPLFilePointer) {
 			sawAGPLFilePointer = true
 		}
 		if strings.Contains(line, markerSPDXApache) {
 			isApache = true
-			hasHeader = true
+			sawSPDXApache = true
 		}
 		if strings.Contains(line, markerSPDXDualAGPL) {
 			sawSPDXAGPL = true
-			hasHeader = true
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return false, false, false, err
 	}
 	isAGPL = sawSPDXAGPL || (sawDualAGPLPhrase && sawAGPLFilePointer)
+	hasProseHeader := sawCopyright && (sawLicensedUnder || sawDualAGPLPhrase)
+	hasSPDXHeader := sawSPDXApache || sawSPDXAGPL
+	hasHeader = hasProseHeader || hasSPDXHeader
 	return hasHeader, isApache, isAGPL, nil
 }
 
@@ -260,8 +275,14 @@ func headerFor(f fileEntry) string {
 		}
 		return apacheHeaderGo
 	case kindTS:
+		if f.classification == classAGPL {
+			return agplHeaderTS
+		}
 		return apacheHeaderTS
 	case kindProto:
+		if f.classification == classAGPL {
+			return agplHeaderProto
+		}
 		return apacheHeaderProto
 	case kindSQL:
 		if f.classification == classAGPL {

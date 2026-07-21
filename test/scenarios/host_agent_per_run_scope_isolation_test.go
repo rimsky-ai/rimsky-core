@@ -96,23 +96,39 @@ func TestHostAgentPerRunScopeIsolation(t *testing.T) {
 	require.NotNil(t, worker, "worker (fan-out) node should exist")
 
 	deadline := time.Now().Add(60 * time.Second)
+	var satisfied bool
 	for time.Now().Before(deadline) {
 		scopeToPartition := fanOutScopePartitions(fx, worker.ID)
 		byPartition := pidsByPartition(t, pidLog, scopeToPartition)
 		if partitionsServedByDistinctChildren(byPartition, partitionKeys) {
-			return
+			satisfied = true
+			break
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
+	if !satisfied {
+		scopeToPartition := fanOutScopePartitions(fx, worker.ID)
+		byPartition := pidsByPartition(t, pidLog, scopeToPartition)
+		raw := readPIDLog(t, pidLog)
+		t.Fatalf("each fan-out partition must dispatch into its own isolated late-bound child (a distinct pid per partition key); "+
+			"want keys %v served by disjoint, present pid sets, got pid-by-partition=%v "+
+			"(raw run_scope→pid log=%v — an empty run_scope_id key means the supervisor never threaded it onto ExecuteRequest; "+
+			"scope→partition map=%v)",
+			partitionKeys, byPartition, raw, scopeToPartition)
+	}
 
-	scopeToPartition := fanOutScopePartitions(fx, worker.ID)
-	byPartition := pidsByPartition(t, pidLog, scopeToPartition)
-	raw := readPIDLog(t, pidLog)
-	t.Fatalf("each fan-out partition must dispatch into its own isolated late-bound child (a distinct pid per partition key); "+
-		"want keys %v served by disjoint, present pid sets, got pid-by-partition=%v "+
-		"(raw run_scope→pid log=%v — an empty run_scope_id key means the supervisor never threaded it onto ExecuteRequest; "+
-		"scope→partition map=%v)",
-		partitionKeys, byPartition, raw, scopeToPartition)
+	settleDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(settleDeadline) {
+		scopeToPartition := fanOutScopePartitions(fx, worker.ID)
+		byPartition := pidsByPartition(t, pidLog, scopeToPartition)
+		if !partitionsServedByDistinctChildren(byPartition, partitionKeys) {
+			raw := readPIDLog(t, pidLog)
+			t.Fatalf("a later best-effort fan-out dispatch broke partition isolation after it had "+
+				"initially been satisfied; pid-by-partition=%v (raw run_scope→pid log=%v; scope→partition map=%v)",
+				byPartition, raw, scopeToPartition)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
 }
 
 func fanOutScopePartitions(fx *hostAgentFixture, nodeID shared.UUID) map[string]string {

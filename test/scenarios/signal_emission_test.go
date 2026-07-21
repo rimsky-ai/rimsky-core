@@ -118,6 +118,8 @@ func TestSignalEmission_Park(t *testing.T) {
 			require.NotEmpty(t, v, "resume_at string should be non-empty")
 		case time.Time:
 			require.False(t, v.IsZero(), "resume_at time should be non-zero")
+		default:
+			t.Fatalf("resume_at has unexpected type %T (value %v); want string or time.Time", v, v)
 		}
 		break
 	}

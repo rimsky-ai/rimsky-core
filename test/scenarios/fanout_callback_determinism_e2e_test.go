@@ -101,7 +101,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 		`, parentNode.ID, partitionScopeID).Scan(&nodeRunID)
 		return err == nil
 	}, 30*time.Second, 100*time.Millisecond,
-		"partition-child dispatch row should reach phase ∈ {active, held}")
+		"partition-child dispatch row should reach state ∈ {running, held}")
 
 	mainScopeID := h.GetMainRunScopeID(iid)
 	require.NotEqual(t, mainScopeID, partitionScopeID,

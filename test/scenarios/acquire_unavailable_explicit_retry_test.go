@@ -71,7 +71,7 @@ func TestAcquireUnavailable_ExplicitRetryAction(t *testing.T) {
 	require.NotNil(t, worker)
 
 	deadline := time.Now().Add(10 * time.Second)
-	var sawFirstOpen bool
+	var sawFirstOpen, sawRun bool
 	for time.Now().Before(deadline) {
 		for _, c := range sub.Calls() {
 			if c.Verb == "open" {
@@ -79,23 +79,25 @@ func TestAcquireUnavailable_ExplicitRetryAction(t *testing.T) {
 				break
 			}
 		}
-		if sawFirstOpen {
+		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
+			if err != nil {
+				return err
+			}
+			if r != nil {
+				sawRun = true
+				require.NotEqual(t, cascade.NodeStateFresh, r.State,
+					"silent-retry must NOT transition the node on Unavailable")
+			}
+			return nil
+		}))
+		if sawFirstOpen && sawRun {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	require.True(t, sawFirstOpen, "stub producer should have seen at least one Open against the empty queue")
-
-	var wLatest *persistence.NodeRunLatest
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, worker.ID)
-		wLatest = r
-		return err
-	}))
-	if wLatest != nil {
-		require.NotEqual(t, cascade.NodeStateFresh, wLatest.State,
-			"silent-retry must NOT transition the node on Unavailable")
-	}
+	require.True(t, sawRun, "expected a node run row while silent retries are in flight")
 
 	_, err := sub.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":1}`))
 	require.NoError(t, err, "seed item")

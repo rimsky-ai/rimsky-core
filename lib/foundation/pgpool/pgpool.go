@@ -49,6 +49,21 @@ type Pool struct {
 	cloneN    atomic.Uint64
 	adminMu   sync.Mutex
 	admin     *pgxpool.Pool
+	container *pgmodule.PostgresContainer
+}
+
+func (p *Pool) Close(ctx context.Context) error {
+	p.adminMu.Lock()
+	admin := p.admin
+	p.admin = nil
+	p.adminMu.Unlock()
+	if admin != nil {
+		admin.Close()
+	}
+	if p.container != nil {
+		return p.container.Terminate(ctx)
+	}
+	return nil
 }
 
 func New(cfg Config) *Pool {
@@ -158,6 +173,7 @@ func (p *Pool) boot(ctx context.Context) error {
 			p.bootErr = fmt.Errorf("start postgres: %w", err)
 			return
 		}
+		p.container = container
 		baseDSN, err := resolveConnectionString(bootCtx, container)
 		if err != nil {
 			p.bootErr = fmt.Errorf("connection string: %w", err)

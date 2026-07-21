@@ -4,6 +4,7 @@
 
 // @story: one-shot-to-terminal
 // @story: audit-artifact
+// @story: spawned-local-services
 // @decision: compose-driver-sends-empty-message-after-create
 package scenarios
 
@@ -11,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -80,6 +82,12 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	if !strings.Contains(stderrStr, "compose run: any-failure (2 instances)") {
 		t.Fatalf("missing 'compose run: any-failure (2 instances)' aggregate summary; stderr:\n%s", stderrStr)
 	}
+
+	stubPID := parseSpawnedServicePID(t, stderrStr, "stub")
+	if stubPID <= 0 {
+		t.Fatalf("could not locate `spawned service` log envelope for name=stub in stderr:\n%s", stderrStr)
+	}
+	waitProcessGone(stubPID)
 
 	rimskyDir := filepath.Join(work, ".rimsky")
 	if _, statErr := os.Stat(rimskyDir); statErr != nil {
@@ -293,6 +301,32 @@ func TestComposeRunOneShotTerminal_QueryableWithStockSqlite3CLI(t *testing.T) {
 	if n := strings.TrimSpace(string(out)); n == "0" || n == "" {
 		t.Fatalf("stock sqlite3 CLI reported %q rows in rimsky_events, want > 0 (event log must be queryable from the artifact); output:\n%s", n, out)
 	}
+}
+
+func parseSpawnedServicePID(t *testing.T, stderrStr, name string) int {
+	t.Helper()
+	for _, line := range strings.Split(stderrStr, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var env map[string]any
+		if jerr := json.Unmarshal([]byte(line), &env); jerr != nil {
+			continue
+		}
+		if env["msg"] != "spawned service" {
+			continue
+		}
+		if envName, _ := env["name"].(string); envName != name {
+			continue
+		}
+		pidVal, ok := env["pid"].(float64)
+		if !ok {
+			t.Fatalf("`spawned service` envelope missing numeric pid field: %s", line)
+		}
+		return int(pidVal)
+	}
+	return 0
 }
 
 func buildComposeStubExecutorBinary(t *testing.T, binPath string) {

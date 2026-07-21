@@ -6,6 +6,7 @@ package scenarios
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -88,7 +89,7 @@ func waitDialable(addr string) {
 	}
 }
 
-func startAgent(t *testing.T, proxyAddr, apiKeyPlaintext string) (context.CancelFunc, chan struct{}) {
+func startAgent(t *testing.T, proxyAddr, apiKeyPlaintext string) (context.CancelFunc, chan struct{}, string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -99,11 +100,28 @@ func startAgent(t *testing.T, proxyAddr, apiKeyPlaintext string) (context.Cancel
 	cfg.RimskyURL = proxyAddr
 	cfg.APIKey = apiKeyPlaintext
 	cfg.AgentLabel = "scenario-agent"
+	cfg.StatusFile = filepath.Join(t.TempDir(), "agent-status.json")
 	go func() {
 		defer close(done)
 		_ = hostagent.Run(ctx, cfg)
 	}()
-	return cancel, done
+	return cancel, done, cfg.StatusFile
+}
+
+func waitAgentConnected(t *testing.T, statusFile string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		body, err := os.ReadFile(statusFile)
+		if err == nil {
+			var snap hostagent.StatusSnapshot
+			if jerr := json.Unmarshal(body, &snap); jerr == nil && snap.Connected {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("agent did not report connected via status file %s within deadline", statusFile)
 }
 
 type fixtureOpts struct {
@@ -155,8 +173,15 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		adminKey:   adminKey,
 	}
 	if opts.withAgent {
-		fx.cancelAgent, fx.agentDone = startAgent(t, proxyAddr, agentAPIKey)
-		time.Sleep(300 * time.Millisecond)
+		var statusFile string
+		fx.cancelAgent, fx.agentDone, statusFile = startAgent(t, proxyAddr, agentAPIKey)
+		t.Cleanup(func() {
+			fx.cancelAgent()
+			<-fx.agentDone
+		})
+		if !opts.blindProxy {
+			waitAgentConnected(t, statusFile)
+		}
 	}
 	return fx
 }

@@ -149,17 +149,22 @@ func TestStoryCascadeSend_TerminatesViaCELGate(t *testing.T) {
 	require.GreaterOrEqual(t, aRuns, 1, "A must run at least once on the initial wake")
 	require.GreaterOrEqual(t, bRuns, 1, "B must run at least once driven by A's terminal/success")
 
-	time.Sleep(5 * time.Second)
 	var iterateMsgs, finalARuns int
-	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'loop/iterate'`,
-		[]any{iid}, &iterateMsgs)
-	h.QueryRowSQL(
-		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
-		[]any{aNode.ID}, &finalARuns)
-	require.Equal(t, 0, iterateMsgs,
-		"send-node's CEL on b.terminal/success evaluates false against should_loop=false; "+
-			"no loop/iterate can be sent and the queue drains to empty. got %d loop/iterate messages", iterateMsgs)
+	settleDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(settleDeadline) {
+		h.QueryRowSQL(
+			`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'loop/iterate'`,
+			[]any{iid}, &iterateMsgs)
+		h.QueryRowSQL(
+			`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
+			[]any{aNode.ID}, &finalARuns)
+		require.Equal(t, 0, iterateMsgs,
+			"send-node's CEL on b.terminal/success evaluates false against should_loop=false; "+
+				"no loop/iterate can be sent and the queue drains to empty. got %d loop/iterate messages", iterateMsgs)
+		require.LessOrEqual(t, finalARuns, 1,
+			"A must run at most once — the initial wake — because no back-edge iterate was sent. got %d", finalARuns)
+		time.Sleep(100 * time.Millisecond)
+	}
 	require.Equal(t, 1, finalARuns,
 		"A must run exactly once — the initial wake — because no back-edge iterate was sent. got %d", finalARuns)
 }

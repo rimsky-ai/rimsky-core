@@ -33,8 +33,8 @@ const (
 //
 // ExecutorObservability is the optional read-only protocol every
 // executor MAY implement to expose per-dispatch traces to dashboards.
-// The dispatch protocol (executor.proto) is unchanged. See
-// docs/specs/2026-05-02-dashboard-and-observability-design.md §2.
+// The dispatch protocol (executor.proto) is unchanged.
+// @concept: observability
 type ExecutorObservabilityClient interface {
 	Capabilities(ctx context.Context, in *ExecutorCapabilitiesRequest, opts ...grpc.CallOption) (*ObservabilityCapabilities, error)
 	GetTrace(ctx context.Context, in *GetTraceRequest, opts ...grpc.CallOption) (*Trace, error)
@@ -94,8 +94,8 @@ type ExecutorObservability_StreamTraceClient = grpc.ServerStreamingClient[TraceE
 //
 // ExecutorObservability is the optional read-only protocol every
 // executor MAY implement to expose per-dispatch traces to dashboards.
-// The dispatch protocol (executor.proto) is unchanged. See
-// docs/specs/2026-05-02-dashboard-and-observability-design.md §2.
+// The dispatch protocol (executor.proto) is unchanged.
+// @concept: observability
 type ExecutorObservabilityServer interface {
 	Capabilities(context.Context, *ExecutorCapabilitiesRequest) (*ObservabilityCapabilities, error)
 	GetTrace(context.Context, *GetTraceRequest) (*Trace, error)

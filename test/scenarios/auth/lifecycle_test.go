@@ -1068,7 +1068,7 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 				action: "message:send", method: "POST",
 				path: "/v1/instances/00000000-0000-0000-0000-000000000000/messages",
 				body: map[string]any{
-					"kind":   "ping",
+					"type":   "ping",
 					"sender": "gate6-test",
 				},
 				headerKey: "Idempotency-Key", headerVal: "gate6-publisher-send",
@@ -1127,9 +1127,12 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 
 			ac := s.allowed
 			code, body := f.requestWithHeader(t, ac.method, ac.path, roleKey, ac.body, ac.headerKey, ac.headerVal)
-			if code == http.StatusForbidden {
-				t.Fatalf("%s allowed action %q (%s %s): got 403; role grant should cover it. body=%+v",
-					s.role, ac.action, ac.method, ac.path, body)
+			if code >= http.StatusBadRequest && code != http.StatusNotFound {
+				t.Fatalf("%s allowed action %q (%s %s): got %d; want a non-error response (404 on the "+
+					"deliberately-nonexistent fixture instance id is fine — this only guards against "+
+					"the authz gate itself, or the handler behind it, rejecting the call), role grant "+
+					"should cover it. body=%+v",
+					s.role, ac.action, ac.method, ac.path, code, body)
 			}
 
 			if s.denied == nil {

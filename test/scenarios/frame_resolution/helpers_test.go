@@ -80,3 +80,19 @@ func waitForFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.U
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// @concept: run-scope
+func createFreshRunScope(t *testing.T, h *scenario.Harness, instanceID shared.UUID) shared.UUID {
+	t.Helper()
+	var graphName string
+	h.QueryRowSQL(
+		`SELECT graph_name FROM rimsky_run_scopes WHERE instance_id = $1 AND parent_run_scope_id IS NULL LIMIT 1`,
+		[]any{uuid.UUID(instanceID)}, &graphName,
+	)
+	scopeID := uuid.New()
+	h.ExecSQL(
+		`INSERT INTO rimsky_run_scopes (id, graph_name, instance_id) VALUES ($1, $2, $3)`,
+		scopeID, graphName, uuid.UUID(instanceID),
+	)
+	return shared.UUID(scopeID)
+}

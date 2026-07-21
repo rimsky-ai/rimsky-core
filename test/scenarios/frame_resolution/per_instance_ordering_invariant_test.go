@@ -35,7 +35,8 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	freshScope1 := createFreshRunScope(t, h, iid)
+	freshScope2 := createFreshRunScope(t, h, iid)
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	require.NoError(t, err)
 	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
@@ -57,13 +58,13 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_frames(instance_id, triggering_message_id, started_at, root_run_scope_id)
 		VALUES ($1, $2, now(), $3)
-	`, uuid.UUID(iid), messageIDFirst, uuid.UUID(mainScopeID))
+	`, uuid.UUID(iid), messageIDFirst, uuid.UUID(freshScope1))
 	require.NoError(t, err, "first running insert should succeed")
 
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_frames(instance_id, triggering_message_id, started_at, root_run_scope_id)
 		VALUES ($1, $2, now(), $3)
-	`, uuid.UUID(iid), messageIDSecond, uuid.UUID(mainScopeID))
+	`, uuid.UUID(iid), messageIDSecond, uuid.UUID(freshScope2))
 	require.Error(t, err, "second running insert must fail")
 	require.Contains(t, strings.ToLower(err.Error()), "uq_rimsky_frames_open",
 		"expected unique-violation on uq_rimsky_frames_open; got %v", err)

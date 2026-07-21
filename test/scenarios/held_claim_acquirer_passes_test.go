@@ -85,29 +85,33 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 
 	waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/")
 
-	time.Sleep(2 * time.Second)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		require.Empty(t, h.Stub.Observed(),
+			"executor must not be invoked when the acquirer passes on Unavailable")
+		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+			ri, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, inh.ID)
+			if err != nil {
+				return err
+			}
+			if ri != nil {
+				require.Equal(t, cascade.NodeStateFresh, ri.State,
+					"inheritor should remain fresh — pass should not cascade to it")
+			}
+			return nil
+		}))
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	var acqLatest, inhLatest *persistence.NodeRunLatest
+	var acqLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, acq.ID)
-		if err != nil {
-			return err
-		}
 		acqLatest = ra
-		ri, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, inh.ID)
-		inhLatest = ri
 		return err
 	}))
 	require.NotNil(t, acqLatest)
 	require.Equal(t, cascade.NodeStateFresh, acqLatest.State,
 		"acquirer should be fresh after pass")
-	if inhLatest != nil {
-		require.Equal(t, cascade.NodeStateFresh, inhLatest.State,
-			"inheritor should remain fresh — pass should not cascade to it")
-	}
-
-	require.Empty(t, h.Stub.Observed(),
-		"executor must not be invoked when the acquirer passes on Unavailable")
 
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

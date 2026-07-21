@@ -39,7 +39,10 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 		},
 	})
 
-	h.Stub.WhenType("fan-parent").Success(map[string]any{"ok": true}, true, "ok")
+	h.Stub.WhenType("fan-parent").
+		Success(map[string]any{"ok": true}, true, "ok").
+		Then().Error("stub/fail", map[string]any{"why": "one partition child must fail"}).
+		Then().Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("downstream").Success(map[string]any{"ok": true}, true, "ok")
 
 	openAttrs := scenario.WithAttributes(map[string]any{
@@ -82,19 +85,57 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 	require.NotNil(t, downstreamNode, "downstream node missing")
 
 	require.Eventually(t, func() bool {
-		var freshRuns int
+		var settledRuns int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
 			  FROM rimsky_node_runs r
 			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
-			 WHERE r.state = 'fresh'
+			 WHERE r.state IN ('fresh','failed')
 			   AND rs.instance_id = $1
 			   AND rs.partition_key <> ''
 			   AND r.node_id = $2
-		`, []any{iid, parentNode.ID}, &freshRuns)
-		return freshRuns >= 3
+		`, []any{iid, parentNode.ID}, &settledRuns)
+		return settledRuns >= 3
 	}, 60*time.Second, 100*time.Millisecond,
-		"all three partition children should reach state=fresh")
+		"all three partition children should settle (fresh or failed)")
+
+	var failedPartitionRuns int
+	h.QueryRowSQL(`
+		SELECT COUNT(*)
+		  FROM rimsky_node_runs r
+		  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
+		 WHERE r.state = 'failed'
+		   AND rs.instance_id = $1
+		   AND rs.partition_key <> ''
+		   AND r.node_id = $2
+	`, []any{iid, parentNode.ID}, &failedPartitionRuns)
+	require.GreaterOrEqual(t, failedPartitionRuns, 1,
+		"at least one partition child must fail (the scripted stub/fail leg, plus any siblings "+
+			"strict's cancel-on-failure action cancels) — this is the strict-specific defect surface "+
+			"a best-effort-only e2e proof can never exercise")
+
+	mainScopeID := h.GetMainRunScopeID(iid)
+	require.Eventually(t, func() bool {
+		var n int
+		h.QueryRowSQL(`
+			SELECT COUNT(*)
+			  FROM rimsky_node_runs
+			 WHERE node_id = $1 AND run_scope_id = $2 AND state = 'failed'
+		`, []any{parentNode.ID, mainScopeID}, &n)
+		return n == 1
+	}, 60*time.Second, 100*time.Millisecond,
+		"strict aggregation must fail the fan-parent's own (unpartitioned) run on any child failure")
+
+	var parentSettlingSignal string
+	h.QueryRowSQL(`
+		SELECT COALESCE(settling_signal_type, '')
+		  FROM rimsky_node_runs
+		 WHERE node_id = $1 AND run_scope_id = $2 AND state = 'failed'
+	`, []any{parentNode.ID, mainScopeID}, &parentSettlingSignal)
+	require.Equal(t, "terminal/error/aggregate/strict_failed", parentSettlingSignal,
+		"strict must settle the parent via the strict aggregate failure signal — under best_effort "+
+			"this same one-of-three-fails fixture would settle the parent fresh instead, so this is "+
+			"the assertion that actually discriminates strict from best-effort")
 
 	h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh)
 }

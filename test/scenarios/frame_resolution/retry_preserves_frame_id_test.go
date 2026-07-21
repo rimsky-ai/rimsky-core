@@ -37,7 +37,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	freshScopeID := createFreshRunScope(t, h, iid)
 	_, err := h.Pool.Exec(h.Ctx,
 		`DELETE FROM rimsky_node_runs WHERE node_id = $1`, uuid.UUID(worker.ID))
 	require.NoError(t, err)
@@ -56,14 +56,14 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		INSERT INTO rimsky_frames(instance_id, triggering_message_id, started_at, root_run_scope_id)
 		VALUES ($1, $2, now(), $3)
 		RETURNING frame_id
-	`, uuid.UUID(iid), messageID, uuid.UUID(mainScopeID)).Scan(&frameID))
+	`, uuid.UUID(iid), messageID, uuid.UUID(freshScopeID)).Scan(&frameID))
 	var seededRunID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		INSERT INTO rimsky_node_runs
 		    (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, frame_id, run_scope_id)
 		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'running', 1, $2, $3)
 		RETURNING id
-	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID)).Scan(&seededRunID))
+	`, uuid.UUID(worker.ID), frameID, uuid.UUID(freshScopeID)).Scan(&seededRunID))
 
 	// @decision: non-cascade-direct-to-stale
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -73,7 +73,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		}
 		_, err := h.Persist.Nodes().CreateNonCascadeStale(h.Ctx, tx, persistence.NonCascadeStaleInput{
 			NodeID:                 worker.ID,
-			RunScopeID:             mainScopeID,
+			RunScopeID:             freshScopeID,
 			FrameID:                shared.UUID(frameID),
 			ExecutorName:           "stub",
 			RequiredClaimProducers: []string{},
@@ -96,7 +96,6 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		SELECT count(*) FROM rimsky_node_runs r
 		JOIN rimsky_frames f ON f.frame_id = r.frame_id
 		WHERE f.ended_at IS NULL
-		  AND r.state IN ('pending','stale','running','held','parked')
 		  AND r.state IN ('stale','running')
 	`).Scan(&inflight))
 	require.Equal(t, 1, inflight,

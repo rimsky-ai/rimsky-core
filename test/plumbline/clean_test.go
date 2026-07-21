@@ -14,15 +14,14 @@ import (
 )
 
 func TestPlumblineClean(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	assertAllChecksActive(t, repoRoot)
+
 	binPath := resolveBinPath(t)
 	if binPath == "" {
 		t.Skip("Plumbline binary not found; set PLUMBLINE_BIN to the lint script path, " +
 			"or CLAUDE_PLUGIN_ROOT to a plugin install whose bin/plumbline resolves")
 	}
-
-	repoRoot := findRepoRoot(t)
-
-	assertAllChecksActive(t, repoRoot)
 
 	cmd := exec.Command("node", binPath, ".")
 	cmd.Dir = repoRoot
@@ -41,9 +40,10 @@ func TestPlumblineClean(t *testing.T) {
 func resolveBinPath(t *testing.T) string {
 	t.Helper()
 	if p := os.Getenv("PLUMBLINE_BIN"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return p
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("PLUMBLINE_BIN=%q does not exist: %v", p, err)
 		}
+		return p
 	}
 	if root := os.Getenv("CLAUDE_PLUGIN_ROOT"); root != "" {
 		p := filepath.Join(root, "bin", "plumbline")

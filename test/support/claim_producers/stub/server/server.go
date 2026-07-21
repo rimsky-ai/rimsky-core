@@ -40,8 +40,9 @@ func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis,
 	srv := &Server{Store: st, EnableDataProcessing: cfg.EnableDataProcessing}
 	grpcSrv := grpc.NewServer()
 	genv1.RegisterClaimProducerServer(grpcSrv, srv)
+	lc := lifecycle.NewServer()
 	if cfg.EnableLifecycle {
-		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lifecycle.NewServer())
+		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lc)
 	}
 	if cfg.EnableDataProcessing {
 		srv.DataProcessing = dataprocessing.New()
@@ -56,7 +57,7 @@ func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis,
 	mux := http.NewServeMux()
 	bridge.Mount(mux, srv)
 	if cfg.EnableLifecycle {
-		bridge.MountLifecycle(mux, lifecycle.NewServer())
+		bridge.MountLifecycle(mux, lc)
 	}
 	httpSrv := &http.Server{Handler: mux}
 	go func() {

@@ -56,9 +56,15 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	})
 	deadline := time.Now().Add(10 * time.Second)
 	var status int
+	var lastErr error
 	for time.Now().Before(deadline) {
 		resp, err := http.Post(cbURL, "application/json", bytes.NewReader(body))
-		require.NoError(t, err)
+		if err != nil {
+			lastErr = err
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		lastErr = nil
 		status = resp.StatusCode
 		_ = resp.Body.Close()
 		if status == http.StatusOK {
@@ -66,6 +72,7 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	require.NoError(t, lastErr, "callback dial never succeeded")
 	require.Equal(t, http.StatusOK, status, "callback did not become available")
 
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)

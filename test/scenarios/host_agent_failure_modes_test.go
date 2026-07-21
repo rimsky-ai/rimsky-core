@@ -83,14 +83,13 @@ func TestProxyReconnectAfterAgentRestart(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("agent did not stop after cancel")
 	}
-	time.Sleep(300 * time.Millisecond)
 
-	cancel, done := startAgent(t, fx.proxyAddr, fx.adminKey)
+	cancel, done, statusFile := startAgent(t, fx.proxyAddr, fx.adminKey)
 	t.Cleanup(func() {
 		cancel()
 		<-done
 	})
-	time.Sleep(400 * time.Millisecond)
+	waitAgentConnected(t, statusFile)
 
 	tid := fx.deployLateBindTemplate(t, "reconnect-ok")
 	iid := fx.createLateBindInstance(t, tid, "ck-reconnect", fx.stubBinary)

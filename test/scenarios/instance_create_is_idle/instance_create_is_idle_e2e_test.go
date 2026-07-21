@@ -87,13 +87,16 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 	require.Equal(t, false, detail["paused"], "fresh instance must report paused=false")
 	require.Nil(t, detail["terminated_at"], "fresh instance must carry no terminated_at")
 
-	time.Sleep(1500 * time.Millisecond)
+	idleDeadline := time.Now().Add(1500 * time.Millisecond)
+	var frames, messages []any
+	for time.Now().Before(idleDeadline) {
+		frames = getInstanceFrames(t, h, instanceID)
+		require.Empty(t, frames, "STORY-instance-create-is-idle falsifier (1): frames collection MUST be empty until an operator posts a message; got %d frame(s)", len(frames))
 
-	frames := getInstanceFrames(t, h, instanceID)
-	require.Empty(t, frames, "STORY-instance-create-is-idle falsifier (1): frames collection MUST be empty until an operator posts a message; got %d frame(s)", len(frames))
-
-	messages := getInstanceMessages(t, h, instanceID)
-	require.Empty(t, messages, "STORY-instance-create-is-idle falsifier (2): message ledger MUST be empty until an operator posts a message; got %d message(s)", len(messages))
+		messages = getInstanceMessages(t, h, instanceID)
+		require.Empty(t, messages, "STORY-instance-create-is-idle falsifier (2): message ledger MUST be empty until an operator posts a message; got %d message(s)", len(messages))
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	nodes := getInstanceNodes(t, h, instanceID)
 	require.NotEmpty(t, nodes, "node row materialization is a create-time side effect; node list must NOT be empty")
@@ -165,14 +168,16 @@ func getInstanceDetail(t *testing.T, h *scenario.Harness, instanceID string) map
 func getInstanceFrames(t *testing.T, h *scenario.Harness, instanceID string) []any {
 	t.Helper()
 	body := getJSONMap(t, h.ControlBase+"/v1/instances/"+instanceID+"/frames")
-	frames, _ := body["frames"].([]any)
+	frames, ok := body["frames"].([]any)
+	require.True(t, ok, "response body missing a `frames` array key: %+v", body)
 	return frames
 }
 
 func getInstanceMessages(t *testing.T, h *scenario.Harness, instanceID string) []any {
 	t.Helper()
 	body := getJSONMap(t, h.ControlBase+"/v1/instances/"+instanceID+"/messages")
-	messages, _ := body["messages"].([]any)
+	messages, ok := body["messages"].([]any)
+	require.True(t, ok, "response body missing a `messages` array key: %+v", body)
 	return messages
 }
 

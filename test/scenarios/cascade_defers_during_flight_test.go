@@ -137,6 +137,8 @@ func TestCascadeDefersDuringFlight_WalkerQueuesNewPendingWithoutMutatingInFlight
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
+	time.Sleep(1 * time.Second)
+	observedAfter = len(bObs())
 	require.Equal(t, 5, observedAfter,
 		"b must be invoked exactly five times in total: (1) b1 park, (2) b1 deadline-resume, "+
 			"(3) b2, (4) b3, (5) b4 — one queued cascade-driven b-run per a self-cascade "+

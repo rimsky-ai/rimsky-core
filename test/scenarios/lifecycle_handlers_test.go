@@ -133,31 +133,37 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 	require.NotNil(t, b)
 
 	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
-	time.Sleep(2 * time.Second)
 
-	var aLatest, bLatest *persistence.NodeRunLatest
+	bID := b.ID
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+			rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, b.ID)
+			if err != nil {
+				return err
+			}
+			if rb != nil {
+				require.Equal(t, cascade.NodeStateFresh, rb.State,
+					"b should remain fresh on a no-op commit")
+			}
+			return nil
+		}))
+		require.Empty(t,
+			eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
+			"b must leave no dispatch/terminal events on the ledger — a changed=false terminal must not fire a when:payload.changed subscriber")
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, a.ID)
-		if err != nil {
-			return err
-		}
 		aLatest = ra
-		rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, b.ID)
-		bLatest = rb
 		return err
 	}))
 	require.NotNil(t, aLatest)
 	require.NotNil(t, aLatest.SettlingSignalType)
 	require.Equal(t, "terminal/success", *aLatest.SettlingSignalType,
 		"changed=false terminal records settling_signal_type=terminal/success (changed-gate is receiver-side)")
-	if bLatest != nil {
-		require.Equal(t, cascade.NodeStateFresh, bLatest.State,
-			"b should remain fresh on a no-op commit")
-	}
-	bID := b.ID
-	require.Empty(t,
-		eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
-		"b must leave no dispatch/terminal events on the ledger — a changed=false terminal must not fire a when:payload.changed subscriber")
 }
 
 func TestFailedUpstreamFreezesDownstream(t *testing.T) {
@@ -190,31 +196,37 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 	require.NotNil(t, b)
 
 	h.WaitForNodeState(a.ID, cascade.NodeStateFailed)
-	time.Sleep(2 * time.Second)
 
-	var aLatest, bLatest *persistence.NodeRunLatest
+	bID := b.ID
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+			rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, b.ID)
+			if err != nil {
+				return err
+			}
+			if rb != nil {
+				require.NotEqual(t, cascade.NodeStateRunning, rb.State,
+					"b should not run while upstream is failed")
+			}
+			return nil
+		}))
+		require.Empty(t,
+			eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
+			"b must leave no dispatch/terminal events on the ledger — a terminal/success subscriber must not fire on the upstream's terminal/error/<class>")
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		ra, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, a.ID)
-		if err != nil {
-			return err
-		}
 		aLatest = ra
-		rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, tx, b.ID)
-		bLatest = rb
 		return err
 	}))
 	require.NotNil(t, aLatest)
 	require.NotNil(t, aLatest.SettlingSignalType)
 	require.Contains(t, *aLatest.SettlingSignalType, "terminal/error/",
 		"give_up should record settling_signal_type=terminal/error/<class>")
-	if bLatest != nil {
-		require.NotEqual(t, cascade.NodeStateRunning, bLatest.State,
-			"b should not run while upstream is failed")
-	}
-	bID := b.ID
-	require.Empty(t,
-		eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
-		"b must leave no dispatch/terminal events on the ledger — a terminal/success subscriber must not fire on the upstream's terminal/error/<class>")
 }
 
 func TestExecutorBlockedPassResolution_NewShape(t *testing.T) {

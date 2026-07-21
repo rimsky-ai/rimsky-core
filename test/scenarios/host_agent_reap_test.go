@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
@@ -30,9 +29,13 @@ func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
 
 	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	require.NoError(t, fx.h.InTx(func(tx persistence.Tx) error {
-		return fx.h.Persist.Instances().MarkTerminated(fx.h.Ctx, iid, tx)
-	}))
+	termReq, err := http.NewRequest(http.MethodPost, fx.h.ControlBase+"/v1/instances/"+iid.String()+"/terminate", nil)
+	require.NoError(t, err)
+	termReq.Header.Set("Authorization", "Bearer "+fx.adminKey)
+	termResp, err := http.DefaultClient.Do(termReq)
+	require.NoError(t, err)
+	_ = termResp.Body.Close()
+	require.Less(t, termResp.StatusCode, 300, "POST /terminate should succeed, got %d", termResp.StatusCode)
 
 	req, err := http.NewRequest(http.MethodDelete, fx.h.ControlBase+"/v1/instances/"+iid.String(), nil)
 	require.NoError(t, err)

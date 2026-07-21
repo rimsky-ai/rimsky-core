@@ -581,12 +581,18 @@ func (h *Harness) templateHasStructuralRoot(templateHash string) bool {
 		tmplSpec = row
 		return err
 	})
-	if err != nil || tmplSpec == nil {
-		return true
+	if err != nil {
+		h.T.Fatalf("templateHasStructuralRoot: GetByHash(%s): %v", templateHash, err)
+	}
+	if tmplSpec == nil {
+		h.T.Fatalf("templateHasStructuralRoot: template %s not found", templateHash)
 	}
 	msgRefs := node.ExtractMessageRefsFromTemplate(tmplSpec.Spec)
 	edges, err := node.BuildSubscriptionEdges(tmplSpec.Spec, msgRefs)
-	if err != nil || edges == nil {
+	if err != nil {
+		h.T.Fatalf("templateHasStructuralRoot: BuildSubscriptionEdges(%s): %v", templateHash, err)
+	}
+	if edges == nil {
 		return true
 	}
 	matched := edges.Match("", signal.TypePath("terminal/success"))
@@ -662,16 +668,51 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 		if n.InstanceID != instanceID {
 			continue
 		}
+		required, err := h.requiredClaimProducersForNodeType(instanceID, n.NodeType)
+		if err != nil {
+			h.T.Logf("driveFrameAndEnqueue: resolve required claim producers for node %s (type %s) failed; retrying next tick: %v",
+				n.ID.String(), n.NodeType, err)
+			continue
+		}
 		if err := h.Queue.Enqueue(h.Ctx, persistence.DispatchRequest{
 			NodeID:                 n.ID,
 			ExecutorName:           n.Executor,
-			RequiredClaimProducers: []string{},
+			RequiredClaimProducers: required,
 			EnqueuedAt:             time.Now(),
 			FrameID:                *runningFrameID,
 		}); err != nil {
 			h.T.Logf("driveFrameAndEnqueue: Enqueue node %s failed; retrying next tick: %v", n.ID.String(), err)
 		}
 	}
+}
+
+func (h *Harness) requiredClaimProducersForNodeType(instanceID shared.UUID, nodeType string) ([]string, error) {
+	var inst *persistence.InstanceRow
+	var tmpl *persistence.TemplateRow
+	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, err := h.Persist.Instances().Get(ctx, instanceID, tx)
+		if err != nil || i == nil {
+			return err
+		}
+		inst = i
+		tr, err := h.Persist.Templates().GetByHash(ctx, i.TemplateHash, tx)
+		tmpl = tr
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if inst == nil || tmpl == nil {
+		return nil, nil
+	}
+	def := runtime.LookupNodeDef(&tmpl.Spec, nodeType)
+	if def == nil {
+		return []string{}, nil
+	}
+	required := node.RequiredClaimProducers(*def)
+	if required == nil {
+		required = []string{}
+	}
+	return required, nil
 }
 
 // @concept: node-run
@@ -684,12 +725,13 @@ func (h *Harness) nodeReachedState(nodeID shared.UUID, state cascade.NodeState) 
 	}); err != nil && h.T != nil {
 		h.T.Logf("WaitForNodeState: latest-run probe for %s failed; retrying next poll: %v", nodeID.String(), err)
 	}
-	if latest != nil && latest.State == state {
-		if state != cascade.NodeStateFresh || h.hasRunEvent(nodeID) {
-			return true
-		}
+	if latest == nil || latest.State != state {
+		return false
 	}
-	return false
+	if state != cascade.NodeStateFresh {
+		return true
+	}
+	return latest.SettlingSignalType != nil && *latest.SettlingSignalType == "terminal/success"
 }
 
 func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState) {
@@ -697,15 +739,6 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState) 
 	for !h.nodeReachedState(nodeID, state) {
 		time.Sleep(50 * time.Millisecond)
 	}
-}
-
-func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {
-	var count int
-	err := h.Pool.QueryRow(h.Ctx, `
-        SELECT count(*) FROM rimsky_events
-        WHERE node_id = $1 AND kind = 'terminal/success'
-    `, nodeID).Scan(&count)
-	return err == nil && count > 0
 }
 
 func (h *Harness) EventCount(nodeID shared.UUID, kind string) int {
@@ -763,13 +796,19 @@ func (h *Harness) WaitForDispatch(nodeID shared.UUID) {
 func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID) {
 	h.T.Helper()
 	for {
-		var count int
+		var total int
 		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT count(*) FROM rimsky_node_runs
-			  WHERE node_id = $1
-			    AND state IN ('pending','stale','running','held','parked')`, nodeID,
-		).Scan(&count)
-		if err == nil && count == 0 {
+			`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`, nodeID,
+		).Scan(&total)
+		var inFlight int
+		if err == nil {
+			err = h.Pool.QueryRow(h.Ctx,
+				`SELECT count(*) FROM rimsky_node_runs
+				  WHERE node_id = $1
+				    AND state IN ('pending','stale','running','held','parked')`, nodeID,
+			).Scan(&inFlight)
+		}
+		if err == nil && total > 0 && inFlight == 0 {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)

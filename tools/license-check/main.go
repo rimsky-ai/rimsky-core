@@ -26,6 +26,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "license-check: %v\n", err)
 		os.Exit(2)
 	}
+	if len(files) == 0 {
+		fmt.Fprintf(os.Stderr, "license-check: walker matched 0 source files under %q — check --root and licensing.yml classification/exempt entries\n", *root)
+		os.Exit(2)
+	}
 
 	if *stamp {
 		stamped, err := stampHeaders(files)

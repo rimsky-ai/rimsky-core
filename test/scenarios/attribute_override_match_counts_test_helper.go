@@ -27,7 +27,7 @@ func attributeOverrideMatchCounts(t *testing.T, h *scenario.Harness, instanceID 
 	out := make([]int64, size)
 	for idx, cnt := range counts {
 		if idx < 0 || int(idx) >= size {
-			continue
+			t.Fatalf("attributeOverrideMatchCounts: match event override_index %d out of range [0,%d)", idx, size)
 		}
 		out[idx] = cnt
 	}

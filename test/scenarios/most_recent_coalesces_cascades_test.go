@@ -107,7 +107,13 @@ func TestMostRecentCoalescesCascades(t *testing.T) {
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	time.Sleep(3 * time.Second)
+
+	settleDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(settleDeadline) {
+		require.LessOrEqual(t, len(bObs()), 1,
+			"a duplicate b dispatch must not arrive during the post-coalesce settle window")
+		time.Sleep(150 * time.Millisecond)
+	}
 
 	require.Equal(t, 1, len(bObs()),
 		"under cascade_mode=most-recent, five cascade rounds from a (a1..a5 all emit "+

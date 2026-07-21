@@ -46,13 +46,16 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	})
 
 	iid := postCreateInstanceIdle(t, h.ControlBase, tid, "ck-instance-lifecycle-idle")
-	time.Sleep(500 * time.Millisecond)
-	idleFrames := getInstanceFramesInst(t, h.ControlBase, iid)
-	require.Emptyf(t, idleFrames,
-		"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d frames", len(idleFrames))
-	idleMessages := getInstanceMessagesInst(t, h.ControlBase, iid)
-	require.Emptyf(t, idleMessages,
-		"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d messages in ledger", len(idleMessages))
+	idleDeadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(idleDeadline) {
+		idleFrames := getInstanceFramesInst(t, h.ControlBase, iid)
+		require.Emptyf(t, idleFrames,
+			"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d frames", len(idleFrames))
+		idleMessages := getInstanceMessagesInst(t, h.ControlBase, iid)
+		require.Emptyf(t, idleMessages,
+			"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d messages in ledger", len(idleMessages))
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w, "worker node must materialize on create")
@@ -113,12 +116,15 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	time.Sleep(2 * time.Second)
-	midSuccessCount := countEvents(t, h.ControlBase, iid, w.ID, "terminal/success")
-	require.Equal(t, preSuccessCount, midSuccessCount,
-		"while paused, no new terminal/success event must appear on /v1/events — "+
-			"the supervisor must stop claiming new dispatches for the paused instance "+
-			"(spec falsifier: pause is recorded but the supervisor keeps dispatching)")
+	pauseObserveDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(pauseObserveDeadline) {
+		midSuccessCount := countEvents(t, h.ControlBase, iid, w.ID, "terminal/success")
+		require.Equal(t, preSuccessCount, midSuccessCount,
+			"while paused, no new terminal/success event must appear on /v1/events — "+
+				"the supervisor must stop claiming new dispatches for the paused instance "+
+				"(spec falsifier: pause is recorded but the supervisor keeps dispatching)")
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	var pendingMessages int
 	h.QueryRowSQL(
@@ -269,13 +275,15 @@ func postCreateInstanceIdle(t *testing.T, controlBase, templateHash, instanceKey
 func getInstanceFramesInst(t *testing.T, controlBase string, instanceID shared.UUID) []any {
 	t.Helper()
 	body := getJSONMapInst(t, controlBase+"/v1/instances/"+instanceID.String()+"/frames")
-	frames, _ := body["frames"].([]any)
+	frames, ok := body["frames"].([]any)
+	require.True(t, ok, "response body missing a `frames` array key: %+v", body)
 	return frames
 }
 
 func getInstanceMessagesInst(t *testing.T, controlBase string, instanceID shared.UUID) []any {
 	t.Helper()
 	body := getJSONMapInst(t, controlBase+"/v1/instances/"+instanceID.String()+"/messages")
-	messages, _ := body["messages"].([]any)
+	messages, ok := body["messages"].([]any)
+	require.True(t, ok, "response body missing a `messages` array key: %+v", body)
 	return messages
 }

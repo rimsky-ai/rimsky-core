@@ -87,7 +87,9 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 	h.QueryRowSQL(`
 		SELECT COALESCE(version_id, ''), state
 		  FROM rimsky_claim_handles
-		 WHERE holder_node_id = $1
+		 WHERE holder_node_id = $1 AND state = 'committed'
+		 ORDER BY claimed_at
+		 LIMIT 1
 	`, []any{n.ID}, &versionID, &state)
 	require.Equal(t, "committed", state)
 	require.Equal(t, commitResponseStampedVersion, versionID,

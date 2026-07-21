@@ -357,12 +357,11 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 	h.Stub.WhenType("drain").Success(map[string]any{"k": 2}, false, "no_change")
 	h.WaitForNodeState(d.ID, cascade.NodeStateFresh)
 
-	var prev int
-	require.Eventually(t, func() bool {
-		now := len(h.Stub.Observed())
-		stable := now == prev
-		prev = now
-		return stable
-	}, 5*time.Second, 200*time.Millisecond,
-		"dispatch count should stabilize after the changed=false flip")
+	settled := len(h.Stub.Observed())
+	settleDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(settleDeadline) {
+		require.Equal(t, settled, len(h.Stub.Observed()),
+			"dispatch count must not advance after the changed=false flip — the self-cycle must have quiesced")
+		time.Sleep(150 * time.Millisecond)
+	}
 }

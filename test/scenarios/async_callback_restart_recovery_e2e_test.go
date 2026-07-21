@@ -112,14 +112,19 @@ func TestAsyncCallback_SurvivesRegistryLoss_ViaProductionRegisteredAck(t *testin
 func waitForAsyncAckRegistered(t *testing.T, h *scenario.Harness, nodeID shared.UUID, out *string) {
 	t.Helper()
 	for {
-		var ackID *string
+		var count int
 		h.QueryRowSQL(`
-			SELECT async_ack_id FROM rimsky_node_runs
-			 WHERE node_id = $1 AND async_ack_id IS NOT NULL
-			 ORDER BY enqueued_at DESC LIMIT 1`,
-			[]any{nodeID}, &ackID)
-		if ackID != nil {
-			*out = *ackID
+			SELECT count(*) FROM rimsky_node_runs
+			 WHERE node_id = $1 AND async_ack_id IS NOT NULL`,
+			[]any{nodeID}, &count)
+		if count > 0 {
+			var ackID string
+			h.QueryRowSQL(`
+				SELECT async_ack_id FROM rimsky_node_runs
+				 WHERE node_id = $1 AND async_ack_id IS NOT NULL
+				 ORDER BY enqueued_at DESC LIMIT 1`,
+				[]any{nodeID}, &ackID)
+			*out = ackID
 			return
 		}
 		time.Sleep(50 * time.Millisecond)

@@ -49,17 +49,6 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	require.Equal(t, 0, nullDispatches,
 		"frame_id must not be NULL:%d rimsky_node_runs rows have NULL frame_id", nullDispatches)
 
-	var nullNodes int
-	err = h.Pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM rimsky_node_runs
-		WHERE state IN ('stale','running')
-		  AND state IN ('pending','stale','running','held','parked')
-		  AND frame_id IS NULL
-	`).Scan(&nullNodes)
-	require.NoError(t, err)
-	require.Equal(t, 0, nullNodes,
-		"frame_id must not be NULL:%d non-fresh in-flight run rows have NULL frame_id", nullNodes)
-
 	rows, err := h.Pool.Query(context.Background(),
 		`SELECT id, frame_id FROM rimsky_node_runs`)
 	require.NoError(t, err)

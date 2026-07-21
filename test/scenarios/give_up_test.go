@@ -44,4 +44,12 @@ func TestGiveUp(t *testing.T) {
 	require.NotNil(t, n)
 
 	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
+
+	var retryEventCount int
+	h.QueryRowSQL(
+		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind LIKE 'transient/retry/%'`,
+		[]any{n.ID}, &retryEventCount,
+	)
+	require.Equal(t, 2, retryEventCount,
+		"give_up must exhaust exactly MaxRetries=2 transient/retry/<n>/<class> audit rows before failing")
 }
