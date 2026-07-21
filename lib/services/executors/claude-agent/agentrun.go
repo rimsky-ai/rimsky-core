@@ -128,9 +128,6 @@ func malformedAttributesReason(attrs map[string]any) string {
 	if _, ok := attrs["_invalid"]; ok {
 		return "attributes._invalid present (reserved)"
 	}
-	if attrs["_missing_url"] == true {
-		return "attributes._missing_url is set (reserved)"
-	}
 	return ""
 }
 

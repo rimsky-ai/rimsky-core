@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -34,6 +35,12 @@ const AnonymousRoutingIdentity = "anonymous"
 const reconnectMinBackoff = 250 * time.Millisecond
 
 const reconnectMaxBackoff = 10 * time.Second
+
+var proxyKeepaliveParams = keepalive.ClientParameters{
+	Time:                10 * time.Second,
+	Timeout:             5 * time.Second,
+	PermitWithoutStream: true,
+}
 
 type liveChild struct {
 	spawnID     string
@@ -297,7 +304,10 @@ func connectOnce(ctx context.Context, cfg Config, trust *localTrust, enrollBaseU
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(cfg.RimskyURL, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(cfg.RimskyURL,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithKeepaliveParams(proxyKeepaliveParams),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("dial proxy: %w", err)
 	}
@@ -319,7 +329,7 @@ func connectOnce(ctx context.Context, cfg Config, trust *localTrust, enrollBaseU
 		return nil, errors.New("send Register failed")
 	}
 
-	first, err := stream.Recv()
+	first, err := recvWithTimeout(stream, cfg.RegisterAckTimeout)
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("await RegisterAck: %w", err)
@@ -335,6 +345,24 @@ func connectOnce(ctx context.Context, cfg Config, trust *localTrust, enrollBaseU
 	a.proxyConn = conn
 	slog.Info("hostagent connected", "proxy_version", ack.GetProxyVersion())
 	return a, nil
+}
+
+func recvWithTimeout(stream genv1.HostAgent_ConnectClient, timeout time.Duration) (*genv1.ServerFrame, error) {
+	type result struct {
+		frame *genv1.ServerFrame
+		err   error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		frame, err := stream.Recv()
+		resultCh <- result{frame, err}
+	}()
+	select {
+	case res := <-resultCh:
+		return res.frame, res.err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timed out after %s", timeout)
+	}
 }
 
 func (a *agent) serve(ctx context.Context) {

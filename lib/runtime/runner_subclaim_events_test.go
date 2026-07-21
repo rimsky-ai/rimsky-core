@@ -196,7 +196,6 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := AcquireSubClaims(ctx, args, tx, AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNodeID,

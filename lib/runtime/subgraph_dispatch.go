@@ -24,10 +24,6 @@ import (
 )
 
 type SubgraphInternalCascadeArgs struct {
-	CallingNodeRunID  shared.UUID
-	CallingNodeID     shared.UUID
-	InstanceID        shared.UUID
-	FrameID           shared.UUID
 	Template          *node.TemplateSpec
 	DelegateGraphName string
 }
@@ -116,10 +112,6 @@ func applyTerminalCompleteSubgraphCaller(
 	}
 	{
 		nodes, err := SubgraphInternalCascade(SubgraphInternalCascadeArgs{
-			CallingNodeRunID:  acq.NodeRunID,
-			CallingNodeID:     acq.NodeID,
-			InstanceID:        acq.InstanceID,
-			FrameID:           acq.FrameID,
 			Template:          tmplSpec,
 			DelegateGraphName: acq.NodeDef.Delegate,
 		})

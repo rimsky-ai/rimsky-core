@@ -7,7 +7,6 @@ package runtime
 import (
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
@@ -39,7 +38,6 @@ func makeSubgraphTemplate(graphName string) *node.TemplateSpec {
 func TestSubgraphInternalCascade_ExcludesEntry(t *testing.T) {
 	tmpl := makeSubgraphTemplate("staging-pipeline")
 	internals, err := SubgraphInternalCascade(SubgraphInternalCascadeArgs{
-		CallingNodeRunID:  shared.UUID{},
 		Template:          tmpl,
 		DelegateGraphName: "staging-pipeline",
 	})

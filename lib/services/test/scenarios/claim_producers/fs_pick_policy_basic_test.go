@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -126,5 +125,3 @@ func startFilesystemStore(t *testing.T, cfg server.Config) (grpcAddr string, tea
 		}
 	}
 }
-
-var _ = http.StatusOK

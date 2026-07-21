@@ -14,16 +14,19 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/send_message"
 )
 
-func TestRegisterAll_RegistersAllBuiltins(t *testing.T) {
+func TestRegisterAllInProcessHandlersAndKindAliases_RegistersAllBuiltins(t *testing.T) {
 	t.Parallel()
 	reg := executor.NewInProcessRegistry()
 	aliases := node.NewKindAliasMap()
-	if err := RegisterAll(reg, aliases); err != nil {
-		t.Fatalf("RegisterAll: %v", err)
+	if err := RegisterAllInProcessHandlers(reg); err != nil {
+		t.Fatalf("RegisterAllInProcessHandlers: %v", err)
+	}
+	if err := RegisterAllKindAliases(aliases); err != nil {
+		t.Fatalf("RegisterAllKindAliases: %v", err)
 	}
 	for _, url := range []string{loop_counter.InProcURL, attribute_passthrough.InProcURL, send_message.InProcURL} {
 		if _, ok := reg.Lookup(url); !ok {
-			t.Errorf("registry does not contain %s after RegisterAll", url)
+			t.Errorf("registry does not contain %s after RegisterAllInProcessHandlers", url)
 		}
 	}
 }

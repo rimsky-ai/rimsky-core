@@ -88,8 +88,7 @@ func forceFailRunInstanceKilled(
 	post := abandonRunClaimsThroughProducers(ctx, args, tx, instanceID, run)
 	runID := run.NodeRunID
 	propagate := func(pctx context.Context) {
-		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID,
-			cascade.NodeStateFailed, &sig); err != nil && args.Logger != nil {
+		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID); err != nil && args.Logger != nil {
 			args.Logger.Warn("forceFailRunInstanceKilled: run-tree propagation failed",
 				"run_id", runID.String(), "error", err.Error())
 		}

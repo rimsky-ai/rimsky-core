@@ -64,9 +64,6 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 		blockingFailures++
 		if firstBlockingKind == "" {
 			firstBlockingKind = spec.Kind
-			if firstBlockingKind == "" {
-				firstBlockingKind = r.Kind
-			}
 		}
 	}
 	if len(configErrors) > 0 {

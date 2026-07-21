@@ -110,7 +110,7 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *
 
 		executor.recordDispatchStart(traceID, inputs)
 
-		go executor.runAndCallback(inputs, ackID, traceID, runID, logger,
+		go executor.runAndCallback(inputs, traceID, runID, logger,
 			func(base string) string { return base },
 			func(callbackBody map[string]any) { callbackBody["async_ack_id"] = ackID },
 		)

@@ -179,6 +179,14 @@ func registerClaimProducers(ctx context.Context, cpReg ClaimProducerRegistry, di
 	if !fsOpts.Configured {
 		logger.Info("bundled claim producer skipped: not configured", "producer", ProducerNameFilesystem, "config_env", fsserver.ConfigEnv)
 	} else {
+		for selector, pp := range fsOpts.PickPolicies {
+			if pp.SyncStrategy == "explicit" {
+				return fmt.Errorf("bundled.RegisterAll: claim producer %q: pick_policies[%q].sync_strategy is %q, "+
+					"which requires the admin HTTP sync route; the bundled in-process deployment never binds an admin listener "+
+					"— run %s as its own service (with admin_port bound) instead of bundling it, or switch sync_strategy to on_open|on_drain|never",
+					ProducerNameFilesystem, selector, "explicit", ProducerNameFilesystem)
+			}
+		}
 		srv, err := fsserver.New(fsOpts.ServerConfig())
 		if err != nil {
 			return fmt.Errorf("bundled.RegisterAll: construct claim producer %q: %w", ProducerNameFilesystem, err)

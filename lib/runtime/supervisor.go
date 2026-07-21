@@ -24,22 +24,26 @@ import (
 )
 
 type Config struct {
-	SupervisorID          string
-	Persist               persistence.Tables
-	Queue                 persistence.Queue
-	AdvisoryLocker        persistence.AdvisoryLocker
-	Clock                 shared.Clock
-	Logger                shared.Logger
-	Concurrency           int
-	LivenessInterval      time.Duration
-	ClaimPollInterval     time.Duration
-	Resolver              executor.Resolver
-	StoreRegistry         *locks.Registry
-	NamedLocks            locks.NamedLocksConfig
-	CallbackHost          string
-	CallbackPort          int
-	CallbackAdvertiseHost string
-	CallbackAdvertisePort int
+	SupervisorID      string
+	Persist           persistence.Tables
+	Queue             persistence.Queue
+	AdvisoryLocker    persistence.AdvisoryLocker
+	Clock             shared.Clock
+	Logger            shared.Logger
+	Concurrency       int
+	LivenessInterval  time.Duration
+	ClaimPollInterval time.Duration
+	// @decision: three-dispatch-deadlines
+	SyncRPCDeadlineDefault time.Duration
+	MaxQuietPeriodDefault  time.Duration
+	MaxRuntimeDefault      time.Duration
+	Resolver               executor.Resolver
+	StoreRegistry          *locks.Registry
+	NamedLocks             locks.NamedLocksConfig
+	CallbackHost           string
+	CallbackPort           int
+	CallbackAdvertiseHost  string
+	CallbackAdvertisePort  int
 
 	Blob               persistence.BlobBackend
 	BlobSpillThreshold int
@@ -380,6 +384,9 @@ func runLoop(
 				NamedLocks:                  cfg.NamedLocks,
 				CallbackURL:                 h.advertisedURL,
 				LivenessInterval:            cfg.LivenessInterval,
+				SyncRPCDeadlineDefault:      cfg.SyncRPCDeadlineDefault,
+				MaxQuietPeriodDefault:       cfg.MaxQuietPeriodDefault,
+				MaxRuntimeDefault:           cfg.MaxRuntimeDefault,
 				Blob:                        cfg.Blob,
 				BlobSpillThreshold:          cfg.BlobSpillThreshold,
 				ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,

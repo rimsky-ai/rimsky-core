@@ -238,7 +238,6 @@ func TestDryRun_ReadIsNoOpExecutedTrue(t *testing.T) {
 		t.Fatalf("dry-run read must return the normal read body (keys): %+v", resp)
 	}
 
-	f.flushAudit()
 	ctx := context.Background()
 	var foundReadDryRun bool
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

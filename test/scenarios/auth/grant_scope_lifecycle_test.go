@@ -21,10 +21,9 @@ func scopeLifecycleSpec(name string) map[string]any {
 }
 
 type scopeLifecycleHarness struct {
-	f          *authFixture
-	adminKey   string
-	analytics  string
-	allActions string
+	f         *authFixture
+	adminKey  string
+	analytics string
 }
 
 func newScopeLifecycleHarness(t *testing.T) *scopeLifecycleHarness {
@@ -60,7 +59,7 @@ func newScopeLifecycleHarness(t *testing.T) *scopeLifecycleHarness {
 		t.Fatalf("scoped key plaintext missing: %+v", scopedBody)
 	}
 
-	return &scopeLifecycleHarness{f: f, adminKey: adminKey, analytics: scopedKey, allActions: scopedKey}
+	return &scopeLifecycleHarness{f: f, adminKey: adminKey, analytics: scopedKey}
 }
 
 func (h *scopeLifecycleHarness) seedAnalyticsTemplate(t *testing.T, name string) (string, string) {

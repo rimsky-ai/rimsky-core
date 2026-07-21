@@ -7,6 +7,7 @@
 package runtime
 
 import (
+	"math"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -74,16 +75,21 @@ func computeEffectiveDeadlineSecs(node *spec.TemplateNodeDef, quietDefault, runt
 	runtime := resolveMaxRuntime(node, runtimeDefault)
 	var quietPtr, runtimePtr *int
 	if quiet > 0 {
-		s := int(quiet.Seconds())
-		if s > 0 {
-			quietPtr = &s
-		}
+		s := roundToPositiveSeconds(quiet)
+		quietPtr = &s
 	}
 	if runtime > 0 {
-		s := int(runtime.Seconds())
-		if s > 0 {
-			runtimePtr = &s
-		}
+		s := roundToPositiveSeconds(runtime)
+		runtimePtr = &s
 	}
 	return quietPtr, runtimePtr
+}
+
+// @decision: three-dispatch-deadlines
+func roundToPositiveSeconds(d time.Duration) int {
+	s := int(math.Round(d.Seconds()))
+	if s < 1 {
+		s = 1
+	}
+	return s
 }

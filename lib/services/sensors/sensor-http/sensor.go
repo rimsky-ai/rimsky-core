@@ -80,12 +80,14 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			MessageType:    r.MessageType,
 			StartedAt:      r.StartedAt,
 			LastHash:       r.LastHash,
+			LastPollAt:     r.LastPollAt,
 		}
 		s.logger.Info("sensor-http.state_recovered",
 			"publisher_subscription_id", r.SubscriptionID,
 			"url", r.URL,
 			"poll_interval", r.PollInterval.String(),
-			"restored_last_hash", r.LastHash != "")
+			"restored_last_hash", r.LastHash != "",
+			"restored_last_poll_at", r.LastPollAt)
 	}
 }
 

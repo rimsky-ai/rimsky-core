@@ -84,7 +84,7 @@ func (c *licensingConfig) classify(relPath string) classification {
 		winner, winLen = classApache, apacheLen
 	}
 	if agpl && agplLen > winLen {
-		winner, winLen = classAGPL, agplLen //nolint:ineffassign,wastedassign,staticcheck
+		winner = classAGPL
 	}
 	return winner
 }

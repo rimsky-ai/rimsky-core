@@ -338,8 +338,7 @@ func applyTerminalComplete(
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
-			cascade.NodeStateFresh, settlingSignalType); err != nil {
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil {
 			args.Logger.Warn("applyTerminalComplete: run-tree propagation failed",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}
@@ -412,8 +411,7 @@ func applyTerminalCompletePoisoned(
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
-			cascade.NodeStateFailed, settlingSignalType); err != nil {
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil {
 			args.Logger.Warn("applyTerminalCompletePoisoned: run-tree propagation failed",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}

@@ -133,8 +133,6 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	oldEventID := insertEvent(oldTime)
 	recentEventID := insertEvent(now.Add(-time.Minute))
 
-	_ = uuid.New
-
 	if _, err := runtime.SweepRunTreeRetention(
 		ctx, runtime.RetentionConfig{TraceTrailing: time.Hour},
 		tables, now, shared.SilentLogger{},

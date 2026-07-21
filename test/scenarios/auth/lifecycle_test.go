@@ -126,9 +126,6 @@ func (*nopObsProber) ProbeClaimProducerDeclaredErrorClasses(context.Context, str
 
 var errObsProbeUnreachable = errors.New("unreachable")
 
-func (f *authFixture) flushAudit() {
-}
-
 func (f *authFixture) request(t *testing.T, method, path, key string, body any) (int, map[string]any) {
 	t.Helper()
 	return f.requestWithHeader(t, method, path, key, body, "", "")

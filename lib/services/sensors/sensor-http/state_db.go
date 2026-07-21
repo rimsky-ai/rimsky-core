@@ -130,6 +130,7 @@ type SubscriptionState struct {
 	MessageType    string
 	StartedAt      time.Time
 	LastHash       string
+	LastPollAt     time.Time
 }
 
 func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
@@ -141,7 +142,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 		        COALESCE(match_status, ''),
 		        COALESCE(match_json_key, ''),
 		        COALESCE(match_json_val, ''),
-		        message_type, started_at, COALESCE(last_hash, '')
+		        message_type, started_at, COALESCE(last_hash, ''), last_poll_at
 		   FROM sensor_http_state`)
 	if err != nil {
 		return nil, err
@@ -167,7 +168,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 		        COALESCE(match_status, ''),
 		        COALESCE(match_json_key, ''),
 		        COALESCE(match_json_val, ''),
-		        message_type, started_at, COALESCE(last_hash, '')
+		        message_type, started_at, COALESCE(last_hash, ''), last_poll_at
 		   FROM sensor_http_state
 		  WHERE publisher_subscription_id = $1`,
 		subscriptionID)
@@ -186,11 +187,15 @@ func scanSubscriptionState(scan func(...any) error) (SubscriptionState, error) {
 		w            SubscriptionState
 		pollInterval string
 		matchStatus  string
+		lastPollAt   sql.NullTime
 	)
 	if err := scan(&w.SubscriptionID, &w.InstanceID, &w.URL, &pollInterval,
 		&matchStatus, &w.MatchJSONKey, &w.MatchJSONVal,
-		&w.MessageType, &w.StartedAt, &w.LastHash); err != nil {
+		&w.MessageType, &w.StartedAt, &w.LastHash, &lastPollAt); err != nil {
 		return SubscriptionState{}, err
+	}
+	if lastPollAt.Valid {
+		w.LastPollAt = lastPollAt.Time
 	}
 	if pollInterval != "" {
 		d, err := time.ParseDuration(pollInterval)

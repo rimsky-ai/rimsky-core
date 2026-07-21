@@ -380,7 +380,7 @@ func assertObservableStateMutationParity(t *testing.T, ep harness.RimskyEndpoint
 	t.Helper()
 
 	envelope := mcpToolsCall(t, mcpURL, bearer, sessionID, cat.mutationTool, cat.mutationArgs)
-	if status, isErr := unwrapMcpErrorEnvelopeOptional(envelope, cat.mutationTool); isErr {
+	if status, isErr := unwrapMcpErrorEnvelopeOptional(envelope); isErr {
 		t.Fatalf("%s mutation parity: MCP %q returned an error envelope (status=%d); the mutation never landed so observable-state parity is moot\nenvelope: %v",
 			cat.name, cat.mutationTool, status, envelope)
 	}
@@ -402,7 +402,7 @@ func assertObservableStateMutationParity(t *testing.T, ep harness.RimskyEndpoint
 		}
 
 	case "tag":
-		if !tagListedAuth(t, ep, adminBearer(t, bearer), "mcp-parity-tag") {
+		if !tagListedAuth(t, ep, bearer, "mcp-parity-tag") {
 			t.Fatalf("tag mutation parity: tag %q is not on /v1/tags after MCP tag_create — MCP write returned canned success without invoking the handler", "mcp-parity-tag")
 		}
 
@@ -623,7 +623,7 @@ func unwrapMcpErrorEnvelope(t *testing.T, env mcpToolsCallEnvelope, toolName str
 	return int(statusF), isErr
 }
 
-func unwrapMcpErrorEnvelopeOptional(env mcpToolsCallEnvelope, toolName string) (int, bool) {
+func unwrapMcpErrorEnvelopeOptional(env mcpToolsCallEnvelope) (int, bool) {
 	if len(env.Content) == 0 {
 		return 0, false
 	}
@@ -641,7 +641,6 @@ func unwrapMcpErrorEnvelopeOptional(env mcpToolsCallEnvelope, toolName string) (
 	}
 	isErr, _ := m["isError"].(bool)
 	statusF, _ := m["status"].(float64)
-	_ = toolName
 	return int(statusF), isErr
 }
 
@@ -737,11 +736,6 @@ func assertBreakpointAppears(t *testing.T, ep harness.RimskyEndpoint, bearer, id
 	status, raw := getJSONAuth(t, ep, "/v1/instances/"+idOrKey+"/breakpoints", bearer)
 	t.Fatalf("breakpoint mutation parity: list missing %s breakpoint after MCP breakpoint_create within %v\nfinal status: %d\nbody: %s",
 		checkpoint, deadline, status, string(raw))
-}
-
-func adminBearer(t *testing.T, bearer string) string {
-	t.Helper()
-	return bearer
 }
 
 func toolNames(tools []toolEntry) []string {

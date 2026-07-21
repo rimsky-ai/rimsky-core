@@ -190,9 +190,6 @@ func truncate(s string, max int) string {
 }
 
 func classifyTransportErr(err error) string {
-	if err == nil {
-		return "verifier/network_error"
-	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "verifier/timeout"
 	}

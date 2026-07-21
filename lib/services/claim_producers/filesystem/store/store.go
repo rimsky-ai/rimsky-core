@@ -513,7 +513,6 @@ func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.Valid
 		addWarn(fmt.Sprintf("filesystem store: pick_policies[%q]: recycle + sync_strategy: on_drain is inert (queue never empties; on_drain never fires)", selector))
 	}
 
-	_ = selector
 	return res
 }
 

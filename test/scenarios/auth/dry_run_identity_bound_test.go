@@ -117,7 +117,6 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 		t.Fatalf("mode:dry_run create (dry_run=false) persisted an instance; GET /instances shows %d (want 0)", n)
 	}
 
-	f.flushAudit()
 	ctx := context.Background()
 	var sawFlooredAttempt bool
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

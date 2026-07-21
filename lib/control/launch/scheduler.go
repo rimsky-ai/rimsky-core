@@ -111,6 +111,8 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		Clock:                   shared.SystemClock{},
 		Logger:                  log,
 		TickInterval:            time.Duration(tickMs) * time.Millisecond,
+		MaxQuietPeriodDefault:   rimskyCfg.Dispatch.MaxQuietPeriodDefault,
+		MaxRuntimeDefault:       rimskyCfg.Dispatch.MaxRuntimeDefault,
 		ClaimProducers:          rimskyCfg.ClaimProducers,
 		Executors:               rimskyCfg.Executors,
 		Publishers:              rimskyCfg.Publishers,

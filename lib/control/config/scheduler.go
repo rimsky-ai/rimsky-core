@@ -23,6 +23,7 @@ type SchedulerConfig struct {
 	Logger                  shared.Logger
 	TickInterval            time.Duration
 	MaxQuietPeriodDefault   time.Duration
+	MaxRuntimeDefault       time.Duration
 	ClaimProducers          RemoteClaimProducersConfig
 	Executors               ExecutorsConfig
 	Publishers              RemotePublishersConfig
@@ -79,6 +80,7 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		Logger:                  cfg.Logger,
 		TickInterval:            cfg.TickInterval,
 		MaxQuietPeriodDefault:   cfg.MaxQuietPeriodDefault,
+		MaxRuntimeDefault:       cfg.MaxRuntimeDefault,
 		ClaimHandles:            persistStore.ClaimHandles(),
 		SupervisorID:            cfg.SupervisorID,
 		StoreRegistry:           registry,

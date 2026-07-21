@@ -6,7 +6,6 @@ package smoke
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -199,5 +198,3 @@ func TestDataPlatformSmoke_OpenLineageEventWireContract(t *testing.T) {
 		}
 	}
 }
-
-var _ = context.Background

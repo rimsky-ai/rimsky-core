@@ -58,7 +58,6 @@ func acquireFanOutIfDeclared(
 	}
 	subClaims, err := AcquireSubClaims(ctx, args, tx, AcquireSubClaimsInput{
 		ParentClaimHandleID: parent.ClaimHandleID,
-		ParentClaimScope:    parent.ClaimScope,
 		ProducerName:        parent.ProducerName,
 		NodeRunID:           cand.NodeRunID,
 		HolderNodeID:        cand.NodeID,

@@ -43,6 +43,19 @@ type yamlRetention struct {
 	MessageIdempotenciesTrailing *time.Duration `yaml:"message_idempotencies_trailing"`
 }
 
+type yamlDispatchDefaults struct {
+	SyncRPCDeadline *time.Duration `yaml:"sync_rpc_deadline"`
+	MaxQuietPeriod  *time.Duration `yaml:"max_quiet_period"`
+	MaxRuntime      *time.Duration `yaml:"max_runtime"`
+}
+
+// @decision: three-dispatch-deadlines
+type DispatchDefaultsConfig struct {
+	SyncRPCDeadlineDefault time.Duration
+	MaxQuietPeriodDefault  time.Duration
+	MaxRuntimeDefault      time.Duration
+}
+
 const capabilitiesHandshakeTimeout = 30 * time.Second
 
 // @concept: service
@@ -185,6 +198,7 @@ type RimskyConfig struct {
 	Validators             RemoteValidatorsConfig
 	DataProcessors         RemoteDataProcessorsConfig
 	Retention              runtime.RetentionConfig
+	Dispatch               DispatchDefaultsConfig
 	LateBindServiceProxies map[string]string
 	PeerAuth               string
 	Topology               persistence.Topology
@@ -326,6 +340,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Validators                 map[string]yamlValidatorEntry     `yaml:"validators"`
 		DataProcessors             map[string]yamlDataProcessorEntry `yaml:"data_processors"`
 		Retention                  *yamlRetention                    `yaml:"retention"`
+		DispatchDefaults           *yamlDispatchDefaults             `yaml:"dispatch_defaults"`
 		LateBindServiceProxies     map[string]string                 `yaml:"late_bind_service_proxies"`
 		PeerAuth                   string                            `yaml:"peer_auth"`
 		UnreachableValidatorPolicy string                            `yaml:"unreachable_validator_policy"`
@@ -555,6 +570,11 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
 
+	dispatchCfg, err := parseDispatchDefaults(wrapper.DispatchDefaults)
+	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+
 	peerAuth, err := ParsePeerAuth(wrapper.PeerAuth)
 	if err != nil {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
@@ -585,6 +605,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Validators:                   validatorsCfg,
 		DataProcessors:               dataProcessorsCfg,
 		Retention:                    retentionCfg,
+		Dispatch:                     dispatchCfg,
 		LateBindServiceProxies:       wrapper.LateBindServiceProxies,
 		PeerAuth:                     peerAuth,
 		Topology:                     topology,
@@ -634,6 +655,39 @@ func parseRetention(in *yamlRetention) (runtime.RetentionConfig, error) {
 			return runtime.RetentionConfig{}, fmt.Errorf("retention.message_idempotencies_trailing must be non-negative")
 		}
 		out.MessageIdempotenciesTrailing = *in.MessageIdempotenciesTrailing
+	}
+	return out, nil
+}
+
+// @decision: three-dispatch-deadlines
+func parseDispatchDefaults(in *yamlDispatchDefaults) (DispatchDefaultsConfig, error) {
+	var out DispatchDefaultsConfig
+	if in == nil {
+		return out, nil
+	}
+	if in.SyncRPCDeadline != nil {
+		if *in.SyncRPCDeadline < 0 {
+			return DispatchDefaultsConfig{}, fmt.Errorf("dispatch_defaults.sync_rpc_deadline must be non-negative")
+		}
+		out.SyncRPCDeadlineDefault = *in.SyncRPCDeadline
+	}
+	if in.MaxQuietPeriod != nil {
+		if *in.MaxQuietPeriod < 0 {
+			return DispatchDefaultsConfig{}, fmt.Errorf("dispatch_defaults.max_quiet_period must be non-negative")
+		}
+		if *in.MaxQuietPeriod > 0 && *in.MaxQuietPeriod < time.Second {
+			return DispatchDefaultsConfig{}, fmt.Errorf("dispatch_defaults.max_quiet_period %s is below the one-second dispatch-deadline resolution: use 0 to disable or >= 1s", *in.MaxQuietPeriod)
+		}
+		out.MaxQuietPeriodDefault = *in.MaxQuietPeriod
+	}
+	if in.MaxRuntime != nil {
+		if *in.MaxRuntime < 0 {
+			return DispatchDefaultsConfig{}, fmt.Errorf("dispatch_defaults.max_runtime must be non-negative")
+		}
+		if *in.MaxRuntime > 0 && *in.MaxRuntime < time.Second {
+			return DispatchDefaultsConfig{}, fmt.Errorf("dispatch_defaults.max_runtime %s is below the one-second dispatch-deadline resolution: use 0 to disable or >= 1s", *in.MaxRuntime)
+		}
+		out.MaxRuntimeDefault = *in.MaxRuntime
 	}
 	return out, nil
 }

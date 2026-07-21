@@ -90,7 +90,6 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 		t.Fatalf("out-of-scope billing register: code=%d resp=%+v (want 403 — scope must deny the out-of-scope tag)", code, denyResp)
 	}
 
-	f.flushAudit()
 	ctx := context.Background()
 	var sawScopeDenial bool
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

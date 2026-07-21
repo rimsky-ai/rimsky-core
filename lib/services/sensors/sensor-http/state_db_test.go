@@ -139,4 +139,90 @@ func TestStateDB_PersistsAcrossRestart(t *testing.T) {
 	if subs[0].SubscriptionID != "sub-1" || subs[0].LastHash != "sha256-abc" {
 		t.Errorf("subscription state did not roundtrip: %+v", subs[0])
 	}
+	if subs[0].LastPollAt.IsZero() {
+		t.Errorf("subscription state did not restore last_poll_at: %+v", subs[0])
+	}
+}
+
+func TestStateDB_LastPollAtZeroWhenNeverPolled(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+
+	t.Setenv("RIMSKY_SENSOR_HTTP_STATE_DSN", dsn)
+
+	s1, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	defer s1.Close()
+
+	w := &Watch{
+		SubscriptionID: "sub-never-polled",
+		InstanceID:     "inst-1",
+		URL:            "http://example.test/feed",
+		PollInterval:   30 * time.Second,
+		MessageType:    "invalidate",
+	}
+	if err := s1.UpsertSubscription(ctx, w); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+
+	got, err := s1.GetSubscription(ctx, "sub-never-polled")
+	if err != nil {
+		t.Fatalf("GetSubscription: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetSubscription returned nil for known subscription_id")
+	}
+	if !got.LastPollAt.IsZero() {
+		t.Fatalf("expected zero LastPollAt for a subscription never polled, got %v", got.LastPollAt)
+	}
+}
+
+func TestAttachStateDB_RestoresLastPollAtSoRestartDoesNotForceImmediateRepoll(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+
+	t.Setenv("RIMSKY_SENSOR_HTTP_STATE_DSN", dsn)
+
+	s1, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
+	}
+	w := &Watch{
+		SubscriptionID: "sub-attach",
+		InstanceID:     "inst-1",
+		URL:            "http://example.test/feed",
+		PollInterval:   time.Hour,
+		MessageType:    "invalidate",
+	}
+	if err := s1.UpsertSubscription(ctx, w); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+	if err := s1.UpdateLastHash(ctx, "sub-attach", "sha256-attach"); err != nil {
+		t.Fatalf("UpdateLastHash: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB after restart: %v", err)
+	}
+	defer s2.Close()
+
+	svc := NewSensorService("", loopbackGuard(t), noopLogger{})
+	svc.AttachStateDB(s2)
+
+	restored, ok := svc.watches["sub-attach"]
+	if !ok {
+		t.Fatal("AttachStateDB did not restore the subscription")
+	}
+	if restored.LastPollAt.IsZero() {
+		t.Fatal("AttachStateDB left LastPollAt zero after restart — every restored watch would immediately re-poll")
+	}
+	if time.Since(restored.LastPollAt) > time.Minute {
+		t.Fatalf("restored LastPollAt = %v, want close to now (poll happened moments ago)", restored.LastPollAt)
+	}
 }

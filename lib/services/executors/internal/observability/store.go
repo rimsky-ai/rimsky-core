@@ -32,7 +32,6 @@ type traceRecord struct {
 	events     []*genv1.TraceEvent
 	terminal   bool
 	terminalAt time.Time
-	registered bool
 }
 
 type subscriber struct {
@@ -64,12 +63,9 @@ func (s *Store) SetIdleTimeout(d time.Duration) {
 func (s *Store) RegisterDispatch(nodeRunID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec, ok := s.traces[nodeRunID]
-	if !ok {
-		rec = &traceRecord{}
-		s.traces[nodeRunID] = rec
+	if _, ok := s.traces[nodeRunID]; !ok {
+		s.traces[nodeRunID] = &traceRecord{}
 	}
-	rec.registered = true
 }
 
 func (s *Store) GetTrace(_ context.Context, req *genv1.GetTraceRequest) (*genv1.Trace, error) {
@@ -196,7 +192,7 @@ func (s *Store) AppendEvent(nodeRunID string, ev *genv1.TraceEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.traces[nodeRunID]
-	if !ok || !rec.registered {
+	if !ok {
 		return
 	}
 	rec.events = append(rec.events, ev)
@@ -211,7 +207,7 @@ func (s *Store) AppendEvent(nodeRunID string, ev *genv1.TraceEvent) {
 func (s *Store) MarkTerminal(nodeRunID string) {
 	s.mu.Lock()
 	rec, ok := s.traces[nodeRunID]
-	if !ok || !rec.registered {
+	if !ok {
 		s.mu.Unlock()
 		return
 	}

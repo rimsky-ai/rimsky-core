@@ -79,9 +79,7 @@ func applyTerminalPark(
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
-		propagateSig := parkSigType
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
-			cascade.NodeStateParked, &propagateSig); err != nil {
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil {
 			args.Logger.Warn("applyTerminalPark: run-tree propagation failed",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}

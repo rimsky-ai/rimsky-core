@@ -122,7 +122,7 @@ func (s *ExecutorServer) Execute(ctx context.Context, req *genv1.ExecuteRequest)
 
 	s.recordDispatchStart(traceID, inputs)
 
-	go s.runAndCallback(inputs, ackID, traceID, runID, logger, func(base string) string {
+	go s.runAndCallback(inputs, traceID, runID, logger, func(base string) string {
 		return buildCallbackURL(base, ackID)
 	}, nil)
 
@@ -150,7 +150,6 @@ func makeTraceEvent(category string, sev genv1.Severity, message string, attrs m
 
 func (s *ExecutorServer) runAndCallback(
 	inputs dispatchInputs,
-	ackID string,
 	traceID string,
 	runID string,
 	logger *slog.Logger,
@@ -164,7 +163,7 @@ func (s *ExecutorServer) runAndCallback(
 	}()
 	cliConfig, err := ParseCliConfig(inputs.Attributes["cli"])
 	if err != nil {
-		s.postFailure(inputs, ackID, traceID, err, logger, callbackURLFor, decorateBody)
+		s.postFailure(inputs, traceID, err, logger, callbackURLFor, decorateBody)
 		return
 	}
 
@@ -229,7 +228,6 @@ func (s *ExecutorServer) runAndCallback(
 
 func (s *ExecutorServer) postFailure(
 	inputs dispatchInputs,
-	ackID string,
 	traceID string,
 	err error,
 	logger *slog.Logger,
@@ -262,7 +260,6 @@ func (s *ExecutorServer) postFailure(
 		decorateBody(body)
 	}
 	s.cfg.PostCallback(callbackURLFor(inputs.CallbackURL), body, logger)
-	_ = ackID
 }
 
 func (s *ExecutorServer) handleDispatchPanic(

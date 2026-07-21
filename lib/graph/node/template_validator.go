@@ -1045,6 +1045,13 @@ func validateDispatchDeadlines(n TemplateNodeDef, base string, res *ValidationRe
 				Path: base + "." + kv.field,
 				Msg:  fmt.Sprintf("negative duration %q: deadlines must be >= 0", kv.value),
 			})
+			continue
+		}
+		if d > 0 && d < time.Second {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + "." + kv.field,
+				Msg:  fmt.Sprintf("duration %q is below the one-second dispatch-deadline resolution: use 0 to disable or >= 1s", kv.value),
+			})
 		}
 	}
 }

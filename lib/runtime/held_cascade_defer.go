@@ -349,9 +349,8 @@ func transitionHolderIfFullyResolved(
 		return nil, err
 	}
 	runID := holderRun.NodeRunID
-	logSigType := sigType
 	post := func(ctx context.Context) {
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, runID, newState, &logSigType); err != nil {
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, runID); err != nil {
 			if args.Logger != nil {
 				args.Logger.Warn("transitionHolderIfFullyResolved: run-tree propagation failed",
 					"run_id", runID.String(), "error", err.Error())

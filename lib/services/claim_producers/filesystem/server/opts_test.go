@@ -91,6 +91,48 @@ func TestLoadOptsFromEnv_PortsDefaultToDocumentedValuesWhenOmitted(t *testing.T)
 	}
 }
 
+func TestLoadOptsFromEnv_PickPolicyNonExplicitSyncStrategyDoesNotRequireAdminPort(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	root := filepath.Join(dir, "store")
+	writeFile(t, cfgPath, "root: "+root+"\n"+
+		"pick_policies:\n"+
+		"  \"queue-a\":\n"+
+		"    root: "+root+"\n"+
+		"    on_commit: recycle\n"+
+		"    on_give_up: recycle\n"+
+		"    sync_strategy: on_open\n")
+
+	t.Setenv(ConfigEnv, cfgPath)
+
+	if _, err := LoadOptsFromEnv(); err != nil {
+		t.Fatalf("LoadOptsFromEnv: %v, want no error — sync_strategy: on_open never needs the admin route", err)
+	}
+}
+
+func TestLoadOptsFromEnv_PickPolicyExplicitSyncStrategyRequiresAdminPort(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	root := filepath.Join(dir, "store")
+	writeFile(t, cfgPath, "root: "+root+"\n"+
+		"pick_policies:\n"+
+		"  \"queue-a\":\n"+
+		"    root: "+root+"\n"+
+		"    on_commit: recycle\n"+
+		"    on_give_up: recycle\n"+
+		"    sync_strategy: explicit\n")
+
+	t.Setenv(ConfigEnv, cfgPath)
+
+	_, err := LoadOptsFromEnv()
+	if err == nil {
+		t.Fatal("LoadOptsFromEnv: expected an error for sync_strategy: explicit without admin_port, got nil")
+	}
+	if !strings.Contains(err.Error(), "queue-a") || !strings.Contains(err.Error(), "admin_port") {
+		t.Fatalf("LoadOptsFromEnv error = %q, want it to name both the selector and admin_port", err.Error())
+	}
+}
+
 func TestLoadOptsFromEnv_UndefinedEnvVarInConfigFailsStartup(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

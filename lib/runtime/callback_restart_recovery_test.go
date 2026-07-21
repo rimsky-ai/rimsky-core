@@ -115,7 +115,6 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, seedArgs, tx, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           leafNodeRunID,
 			HolderNodeID:        leafNode.ID,

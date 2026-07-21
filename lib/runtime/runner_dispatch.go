@@ -59,8 +59,6 @@ type dispatchContext struct {
 	Acquired         *acquisition
 	Attributes       map[string]any
 	AttributesSchema map[string]any
-	LivenessInterval time.Duration
-	Log              shared.Logger
 	RegisterAsync    func(ackID string, actx AsyncContext) bool
 }
 
@@ -113,7 +111,6 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	ep, ok, resolveErr := executor.ResolveExecutor(args.Resolver, acq.Executor, executor.DispatchContext{
 		Ctx:        ctx,
 		InstanceID: acq.InstanceID.String(),
-		RunScopeID: acq.RunScopeID.String(),
 	})
 	if resolveErr != nil {
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_resolve_failed",

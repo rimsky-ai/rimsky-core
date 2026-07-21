@@ -20,21 +20,25 @@ import (
 )
 
 type SupervisorConfig struct {
-	SupervisorID          string
-	Driver                persistence.Database
-	Clock                 shared.Clock
-	Logger                shared.Logger
-	Concurrency           int
-	LivenessInterval      time.Duration
-	ClaimPollInterval     time.Duration
-	Resolver              executor.Resolver
-	ClaimProducers        RemoteClaimProducersConfig
-	Publishers            RemotePublishersConfig
-	NamedLocks            locks.NamedLocksConfig
-	CallbackHost          string
-	CallbackPort          int
-	CallbackAdvertiseHost string
-	CallbackAdvertisePort int
+	SupervisorID      string
+	Driver            persistence.Database
+	Clock             shared.Clock
+	Logger            shared.Logger
+	Concurrency       int
+	LivenessInterval  time.Duration
+	ClaimPollInterval time.Duration
+	// @decision: three-dispatch-deadlines
+	SyncRPCDeadlineDefault time.Duration
+	MaxQuietPeriodDefault  time.Duration
+	MaxRuntimeDefault      time.Duration
+	Resolver               executor.Resolver
+	ClaimProducers         RemoteClaimProducersConfig
+	Publishers             RemotePublishersConfig
+	NamedLocks             locks.NamedLocksConfig
+	CallbackHost           string
+	CallbackPort           int
+	CallbackAdvertiseHost  string
+	CallbackAdvertisePort  int
 
 	Blob               persistence.BlobBackend
 	BlobSpillThreshold int
@@ -191,6 +195,9 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		Concurrency:                 cfg.Concurrency,
 		LivenessInterval:            cfg.LivenessInterval,
 		ClaimPollInterval:           cfg.ClaimPollInterval,
+		SyncRPCDeadlineDefault:      cfg.SyncRPCDeadlineDefault,
+		MaxQuietPeriodDefault:       cfg.MaxQuietPeriodDefault,
+		MaxRuntimeDefault:           cfg.MaxRuntimeDefault,
 		Resolver:                    cfg.Resolver,
 		StoreRegistry:               registry,
 		NamedLocks:                  cfg.NamedLocks,

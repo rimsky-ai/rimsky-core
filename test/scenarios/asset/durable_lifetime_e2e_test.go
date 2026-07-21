@@ -75,7 +75,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	})
 	reg.Add(storeName, stubStore)
 
-	frameID := seedFrameAsset(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrameAsset(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNodeAsset(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
 	intent := "rw"
@@ -198,9 +198,8 @@ func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persisten
 	return *row
 }
 
-func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, sourceNodeID, rootScope shared.UUID) shared.UUID {
+func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, rootScope shared.UUID) shared.UUID {
 	t.Helper()
-	_ = sourceNodeID
 	var frameID shared.UUID
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())

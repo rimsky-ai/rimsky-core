@@ -58,19 +58,6 @@ func builtinEntries() []builtinEntry {
 	}
 }
 
-func RegisterAll(reg *executor.InProcessRegistry, aliases *node.KindAliasMap) error {
-	if reg == nil {
-		return fmt.Errorf("builtin.RegisterAll: registry required")
-	}
-	if aliases == nil {
-		return fmt.Errorf("builtin.RegisterAll: aliases required")
-	}
-	if err := registerHandlers(reg); err != nil {
-		return err
-	}
-	return registerAliases(aliases)
-}
-
 func RegisterAllInProcessHandlers(reg *executor.InProcessRegistry) error {
 	if reg == nil {
 		return fmt.Errorf("builtin.RegisterAllInProcessHandlers: registry required")

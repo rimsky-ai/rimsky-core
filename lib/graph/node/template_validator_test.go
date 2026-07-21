@@ -3073,3 +3073,27 @@ func TestValidateMessageQueueMode_NoWarning_BacklogWithMultipleTypes(t *testing.
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	assert.Empty(t, coalesceCrossTypeWarnings(res))
 }
+
+func TestValidateDispatchDeadlines_SubSecondPositiveRejected(t *testing.T) {
+	var res ValidationResult
+	validateDispatchDeadlines(TemplateNodeDef{MaxQuietPeriod: "500ms"}, "nodes.a", &res)
+	hasErrorAt(t, res, "nodes.a.max_quiet_period")
+}
+
+func TestValidateDispatchDeadlines_ZeroAccepted(t *testing.T) {
+	var res ValidationResult
+	validateDispatchDeadlines(TemplateNodeDef{MaxRuntime: "0s"}, "nodes.a", &res)
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateDispatchDeadlines_WholeSecondAccepted(t *testing.T) {
+	var res ValidationResult
+	validateDispatchDeadlines(TemplateNodeDef{SyncRPCDeadline: "1s"}, "nodes.a", &res)
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateDispatchDeadlines_NegativeStillRejected(t *testing.T) {
+	var res ValidationResult
+	validateDispatchDeadlines(TemplateNodeDef{MaxRuntime: "-1s"}, "nodes.a", &res)
+	hasErrorAt(t, res, "nodes.a.max_runtime")
+}

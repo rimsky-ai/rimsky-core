@@ -5,12 +5,8 @@
 package runtime
 
 import (
-	"context"
-	"encoding/json"
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
@@ -56,29 +52,5 @@ func TestMemberOf(t *testing.T) {
 	}
 	if memberOf(sg, "z") {
 		t.Fatalf("expected %q to not be a member", "z")
-	}
-}
-
-func TestMatchesClaimScope(t *testing.T) {
-	encoded, err := json.Marshal("items/x")
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if !matchesClaimScope(encoded, "items/x") {
-		t.Fatalf("expected claim-scope bytes to match the same selector")
-	}
-	if matchesClaimScope(encoded, "items/y") {
-		t.Fatalf("expected claim-scope bytes to not match a different selector")
-	}
-	if matchesClaimScope(nil, "items/x") {
-		t.Fatalf("expected empty claim-scope data to never match")
-	}
-}
-
-func TestPickAliasForClaimHandle_SinglePickShortCircuits(t *testing.T) {
-	picks := []aliasCandidate{{acquirerType: "a", alias: "only-alias"}}
-	got := pickAliasForClaimHandle(context.Background(), RunArgs{}, nil, shared.UUID{}, "a", picks, &persistence.ClaimHandleRow{})
-	if got != "only-alias" {
-		t.Fatalf("got %q, want %q", got, "only-alias")
 	}
 }

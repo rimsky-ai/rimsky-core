@@ -235,7 +235,7 @@ func releaseClaim(
 func releaseInheritedClaimsInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
 ) (postCommitFn, error) {
-	inherited, err := findInheritedAliasesForRun(ctx, args, tx, acq.HeldSubgraphs, acq.NodeType, acq.NodeRunID, acq.InstanceID)
+	inherited, err := findInheritedAliasesForRun(ctx, args, tx, acq.HeldSubgraphs, acq.NodeType, acq.NodeRunID)
 	if err != nil {
 		return nil, err
 	}

@@ -24,7 +24,6 @@ import (
 
 type AcquireSubClaimsInput struct {
 	ParentClaimHandleID shared.UUID
-	ParentClaimScope    json.RawMessage
 	ProducerName        string
 	NodeRunID           shared.UUID
 	HolderNodeID        shared.UUID

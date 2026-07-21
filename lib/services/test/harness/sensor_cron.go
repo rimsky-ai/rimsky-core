@@ -20,7 +20,6 @@ const sensorCronImage = "rimsky-sensor-cron"
 type SensorCronHandle struct {
 	Endpoint string
 
-	ctx            context.Context
 	t              testing.TB
 	networkName    string
 	alias          string
@@ -34,7 +33,6 @@ func StartSensorCron(ctx context.Context, t testing.TB, networkName, alias, rims
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	h := &SensorCronHandle{
-		ctx:            ctx,
 		t:              t,
 		networkName:    networkName,
 		alias:          uniqueAlias,

@@ -15,7 +15,6 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -242,5 +241,3 @@ func lastEventPayload(t *testing.T, h *scenario.Harness, nodeID shared.UUID, kin
 	require.NoError(t, json.Unmarshal(rawJSON, &out))
 	return out
 }
-
-var _ = persistence.NodeRow{}

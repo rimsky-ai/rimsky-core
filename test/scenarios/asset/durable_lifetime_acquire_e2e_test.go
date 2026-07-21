@@ -91,7 +91,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrameAsset(ctx, t, backend, instID, acqNode.ID, mainScopeID)
+	frameID := seedFrameAsset(ctx, t, backend, instID, mainScopeID)
 	_ = seedRunForNodeAsset(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
 	reg := locks.NewRegistry()

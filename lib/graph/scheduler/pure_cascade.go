@@ -98,8 +98,7 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		TerminalKind:       "pure_cascade",
 		NodeAlias:          n.NodeType,
 	})
-	if _, err := runtime.PropagateIfChildAfterTerminal(ctx, runArgs, n.NodeRunID,
-		cascade.NodeStateFresh, &pureCascadeSig); err != nil {
+	if _, err := runtime.PropagateIfChildAfterTerminal(ctx, runArgs, n.NodeRunID); err != nil {
 		log.Warn("ProcessPureCascade: run-tree propagation failed",
 			"node_id", n.NodeID.String(), "error", err.Error())
 	}

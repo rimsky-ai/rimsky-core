@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
@@ -241,5 +240,3 @@ func appendFindings(
 		out.Warnings = append(out.Warnings, w)
 	}
 }
-
-var _ = shared.UUID{}

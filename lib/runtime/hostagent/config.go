@@ -13,16 +13,17 @@ import (
 )
 
 type Config struct {
-	RimskyURL         string
-	APIKey            string
-	ListenAddr        string
-	AllowPaths        []string
-	AgentLabel        string
-	LogLevel          string
-	HeartbeatInterval time.Duration
-	ReapGracePeriod   time.Duration
-	TLSEnabled        bool
-	TLSCAPath         string
+	RimskyURL          string
+	APIKey             string
+	ListenAddr         string
+	AllowPaths         []string
+	AgentLabel         string
+	LogLevel           string
+	HeartbeatInterval  time.Duration
+	ReapGracePeriod    time.Duration
+	RegisterAckTimeout time.Duration
+	TLSEnabled         bool
+	TLSCAPath          string
 	// @story: host-agent-control-plane
 	StatusFile string
 }
@@ -36,17 +37,22 @@ func LoadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	registerAckTimeout, err := envDurationSec("RIMSKY_AGENT_REGISTER_ACK_TIMEOUT_SEC", 15*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
-		RimskyURL:         os.Getenv("RIMSKY_URL"),
-		APIKey:            os.Getenv("RIMSKY_API_KEY"),
-		ListenAddr:        os.Getenv("RIMSKY_AGENT_LISTEN"),
-		AgentLabel:        envOr("RIMSKY_AGENT_LABEL", defaultAgentLabel()),
-		LogLevel:          envOr("RIMSKY_LOG_LEVEL", "info"),
-		HeartbeatInterval: heartbeat,
-		ReapGracePeriod:   reapGrace,
-		TLSEnabled:        envBool("RIMSKY_AGENT_TLS"),
-		TLSCAPath:         os.Getenv("RIMSKY_AGENT_TLS_CA"),
-		StatusFile:        os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
+		RimskyURL:          os.Getenv("RIMSKY_URL"),
+		APIKey:             os.Getenv("RIMSKY_API_KEY"),
+		ListenAddr:         os.Getenv("RIMSKY_AGENT_LISTEN"),
+		AgentLabel:         envOr("RIMSKY_AGENT_LABEL", defaultAgentLabel()),
+		LogLevel:           envOr("RIMSKY_LOG_LEVEL", "info"),
+		HeartbeatInterval:  heartbeat,
+		ReapGracePeriod:    reapGrace,
+		RegisterAckTimeout: registerAckTimeout,
+		TLSEnabled:         envBool("RIMSKY_AGENT_TLS"),
+		TLSCAPath:          os.Getenv("RIMSKY_AGENT_TLS_CA"),
+		StatusFile:         os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
 	}, nil
 }
 
@@ -62,6 +68,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ReapGracePeriod <= 0 {
 		c.ReapGracePeriod = 30 * time.Second
+	}
+	if c.RegisterAckTimeout <= 0 {
+		c.RegisterAckTimeout = 15 * time.Second
 	}
 	return c
 }

@@ -20,7 +20,6 @@ type Endpoint struct {
 type DispatchContext struct {
 	Ctx        context.Context
 	InstanceID string
-	RunScopeID string
 }
 
 type Resolver interface {

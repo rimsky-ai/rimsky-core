@@ -73,7 +73,7 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 	const perCycle = 30 * time.Second
 
 	for n := 1; n <= cycles; n++ {
-		ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", 30*time.Second)
+		ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", perCycle)
 		requireCommittedDocsClaimFolder(ctx, t, pool, instanceID, n)
 		status, raw := ep.PostJSON(t,
 			fmt.Sprintf("/v1/instances/%s/pause", instanceID), nil)
@@ -94,7 +94,6 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 		if status != http.StatusOK {
 			t.Fatalf("resume %d: %d %s", n, status, string(raw))
 		}
-		_ = perCycle
 	}
 
 	ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", perCycle)

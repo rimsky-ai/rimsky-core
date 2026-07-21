@@ -242,7 +242,7 @@ func requireVerifierCheckFailedErrorClass(t *testing.T, events []harness.NodeEve
 				return
 			}
 		}
-		if strings.Contains(e.Kind, "/terminal/error/") && strings.Contains(e.Kind, want) {
+		if strings.Contains(e.Kind, "terminal/error/") && strings.Contains(e.Kind, want) {
 			return
 		}
 	}

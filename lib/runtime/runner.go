@@ -200,8 +200,6 @@ func RunNode(
 		Acquired:         &acq,
 		Attributes:       dispatchAttrs,
 		AttributesSchema: attrSchema,
-		LivenessInterval: livenessInterval,
-		Log:              log,
 		RegisterAsync:    registerAsync,
 	}
 	// @concept: error-policy

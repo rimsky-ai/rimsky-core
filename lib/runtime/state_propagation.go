@@ -40,12 +40,11 @@ type PropagationArgs struct {
 
 func PropagateFromChildState(
 	ctx context.Context, args PropagationArgs, tx persistence.Tx,
-	childRunID shared.UUID, newState cascade.NodeState, settlingSignalType *string,
+	childRunID shared.UUID,
 ) ([]CancelAction, []ParentSettlement, error) {
 	if args.NodeRunTree == nil {
 		return nil, nil, fmt.Errorf("PropagateFromChildState: NodeRunTree is required")
 	}
-	_, _ = newState, settlingSignalType
 
 	childRow, err := args.NodeRunTree.GetByID(ctx, tx, childRunID)
 	if err != nil {
@@ -176,7 +175,7 @@ func isSettled(state cascade.NodeState) bool {
 
 func PropagateIfChildAfterTerminal(
 	ctx context.Context, args RunArgs,
-	runID shared.UUID, newState cascade.NodeState, settlingSignalType *string,
+	runID shared.UUID,
 ) ([]CancelAction, error) {
 	if args.Persist == nil {
 		return nil, nil
@@ -215,7 +214,7 @@ func PropagateIfChildAfterTerminal(
 		outActions, outSettlements, err := PropagateFromChildState(ctx, PropagationArgs{
 			NodeRunTree: rt,
 			RunScopes:   scopes,
-		}, tx, runID, newState, settlingSignalType)
+		}, tx, runID)
 		actions = outActions
 		settlements = outSettlements
 		if err != nil {
@@ -394,8 +393,7 @@ func cancelInFlightRunTreeChild(
 	post := abandonRunClaimsThroughProducers(ctx, args, tx, instanceID, run)
 	runID := current.NodeRunID
 	propagate := func(pctx context.Context) {
-		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID,
-			cascade.NodeStateFailed, &sig); err != nil && args.Logger != nil {
+		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID); err != nil && args.Logger != nil {
 			args.Logger.Warn("cancelInFlightRunTreeChild: run-tree propagation failed",
 				"run_id", runID.String(), "error", err.Error())
 		}

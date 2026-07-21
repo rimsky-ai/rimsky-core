@@ -113,8 +113,12 @@ func LoadOptsFromEnv() (Opts, error) {
 		sweepInterval = 60 * time.Second
 	}
 
-	if len(policies) > 0 && cfg.AdminPort == 0 {
-		return Opts{}, fmt.Errorf("admin_port is required when pick_policies is configured")
+	if cfg.AdminPort == 0 {
+		for selector, pp := range policies {
+			if pp.SyncStrategy == "explicit" {
+				return Opts{}, fmt.Errorf("admin_port is required when pick_policies[%q].sync_strategy is %q", selector, "explicit")
+			}
+		}
 	}
 
 	grpcPortCfg := cfg.GRPCPort

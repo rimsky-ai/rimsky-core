@@ -447,9 +447,6 @@ func (s *Server) splitExpandFolder(_ context.Context, parent parentClaimInfo, ex
 			return nil
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
 			return nil
 		}
 		relPath, relErr := filepath.Rel(parent.AbsPath, p)

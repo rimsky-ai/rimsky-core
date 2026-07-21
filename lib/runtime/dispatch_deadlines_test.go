@@ -98,3 +98,36 @@ func TestResolveMaxRuntime_BuiltinDefaultIsZeroDisabled(t *testing.T) {
 		t.Fatalf("built-in max_runtime default = %v, want 0 (disabled)", got)
 	}
 }
+
+func TestComputeEffectiveDeadlineSecs_SubSecondNeverSilentlyDisabled(t *testing.T) {
+	t.Parallel()
+	node := &spec.TemplateNodeDef{MaxQuietPeriod: "500ms", MaxRuntime: "999ms"}
+	quietSecs, runtimeSecs := computeEffectiveDeadlineSecs(node, 0, 0)
+	if quietSecs == nil || *quietSecs != 1 {
+		t.Fatalf("quietSecs = %v, want pointer to 1 (sub-second positive duration must round up, never disable)", quietSecs)
+	}
+	if runtimeSecs == nil || *runtimeSecs != 1 {
+		t.Fatalf("runtimeSecs = %v, want pointer to 1", runtimeSecs)
+	}
+}
+
+func TestComputeEffectiveDeadlineSecs_ZeroStaysDisabled(t *testing.T) {
+	t.Parallel()
+	node := &spec.TemplateNodeDef{}
+	quietSecs, runtimeSecs := computeEffectiveDeadlineSecs(node, 0, 0)
+	if quietSecs != nil {
+		t.Fatalf("quietSecs = %v, want nil (disabled)", quietSecs)
+	}
+	if runtimeSecs != nil {
+		t.Fatalf("runtimeSecs = %v, want nil (disabled)", runtimeSecs)
+	}
+}
+
+func TestComputeEffectiveDeadlineSecs_RoundsToNearestSecond(t *testing.T) {
+	t.Parallel()
+	node := &spec.TemplateNodeDef{MaxQuietPeriod: "1500ms"}
+	quietSecs, _ := computeEffectiveDeadlineSecs(node, 0, 0)
+	if quietSecs == nil || *quietSecs != 2 {
+		t.Fatalf("quietSecs = %v, want pointer to 2 (round-half-up from 1.5s)", quietSecs)
+	}
+}

@@ -190,6 +190,25 @@ func TestRegisterAllConfiguredFilesystemProducer(t *testing.T) {
 	}
 }
 
+func TestRegisterAllFilesystemExplicitSyncStrategyRejectedInBundledMode(t *testing.T) {
+	clearBundledEnv(t)
+	root := t.TempDir()
+	cfgPath := filepath.Join(t.TempDir(), "fs.yml")
+	cfg := fmt.Sprintf("root: %s\nadmin_port: 9199\npick_policies:\n  \"queue-a\":\n    root: %s\n    on_commit: recycle\n    on_give_up: recycle\n    sync_strategy: explicit\n", root, root)
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("STORE_FILESYSTEM_CONFIG", cfgPath)
+
+	err := RegisterAll(context.Background(), &fakeExecReg{}, &fakeCPReg{}, &fakeAliasSink{}, &fakeDiscovery{}, Opts{})
+	if err == nil {
+		t.Fatal("expected an error: bundled in-process mode never binds an admin listener, so sync_strategy: explicit can never be triggered")
+	}
+	if !strings.Contains(err.Error(), "queue-a") || !strings.Contains(err.Error(), "explicit") {
+		t.Fatalf("got %v, want error naming the selector and sync_strategy: explicit", err)
+	}
+}
+
 func TestRegisterAllInvalidFilesystemConfigAbortsNamingProducer(t *testing.T) {
 	clearBundledEnv(t)
 	cfgPath := filepath.Join(t.TempDir(), "fs.yml")

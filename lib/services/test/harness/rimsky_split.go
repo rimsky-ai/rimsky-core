@@ -179,9 +179,6 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 		testcontainers.WithWaitStrategy(spec.waitFor),
 	)
 	if err != nil {
-		if c != nil {
-			dumpLogsForFailure(t, "split "+spec.role, c)
-		}
 		t.Fatalf("harness: start split %s: %v", spec.role, err)
 	}
 	t.Cleanup(func() {

@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -553,5 +552,3 @@ func parseJSONTag(tag string) (name string, omitempty bool) {
 	}
 	return name, omitempty
 }
-
-var _ = fmt.Sprintf

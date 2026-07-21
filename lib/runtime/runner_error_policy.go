@@ -229,8 +229,7 @@ func applyErrorPolicyWithScratchAndSettleHook(
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
-			finalState, &settlingSig); err != nil && args.Logger != nil {
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil && args.Logger != nil {
 			args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}
@@ -443,8 +442,7 @@ func applyInfraGiveUp(
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID,
-			cascade.NodeStateFailed, &settlingSig); err != nil && args.Logger != nil {
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil && args.Logger != nil {
 			args.Logger.Warn("applyInfraGiveUp: run-tree propagation failed",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}

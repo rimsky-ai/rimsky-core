@@ -291,7 +291,6 @@ func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedSt
 		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			_, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
 				ParentClaimHandleID: parentClaimID,
-				ParentClaimScope:    parentScope,
 				ProducerName:        storeName,
 				NodeRunID:           parentNodeRunID,
 				HolderNodeID:        parentNode.ID,
@@ -402,7 +401,6 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
@@ -607,7 +605,6 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, argsOne, tx, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
@@ -767,7 +764,6 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
@@ -875,7 +871,6 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
@@ -987,7 +982,6 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
@@ -1189,7 +1183,6 @@ func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,

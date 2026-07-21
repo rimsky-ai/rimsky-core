@@ -267,7 +267,7 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	successSig := strPtr("terminal/success")
 
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, successSig, false)
-	if _, _, err := PropagateFromChildState(ctx, args, nil, c1, cascade.NodeStateFresh, successSig); err != nil {
+	if _, _, err := PropagateFromChildState(ctx, args, nil, c1); err != nil {
 		t.Fatalf("PropagateFromChildState c1: %v", err)
 	}
 	rootRow, _ := rt.GetByID(ctx, nil, root)
@@ -276,7 +276,7 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	}
 
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFresh, successSig, false)
-	actions, _, err := PropagateFromChildState(ctx, args, nil, c2, cascade.NodeStateFresh, successSig)
+	actions, _, err := PropagateFromChildState(ctx, args, nil, c2)
 	if err != nil {
 		t.Fatalf("PropagateFromChildState c2: %v", err)
 	}
@@ -328,14 +328,14 @@ func TestPropagateFromChildState_ParentChangedReflectsChildrenNotHardcodedTrue(t
 	if err := rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, successSig, false); err != nil {
 		t.Fatalf("UpdateStateAndOutcome c1: %v", err)
 	}
-	if _, _, err := PropagateFromChildState(ctx, args, nil, c1, cascade.NodeStateFresh, successSig); err != nil {
+	if _, _, err := PropagateFromChildState(ctx, args, nil, c1); err != nil {
 		t.Fatalf("PropagateFromChildState c1: %v", err)
 	}
 
 	if err := rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFresh, successSig, false); err != nil {
 		t.Fatalf("UpdateStateAndOutcome c2: %v", err)
 	}
-	_, settlements, err := PropagateFromChildState(ctx, args, nil, c2, cascade.NodeStateFresh, successSig)
+	_, settlements, err := PropagateFromChildState(ctx, args, nil, c2)
 	if err != nil {
 		t.Fatalf("PropagateFromChildState c2: %v", err)
 	}
@@ -388,14 +388,14 @@ func TestPropagateFromChildState_ParentChangedTrueWhenAnyChildChanged(t *testing
 	if err := rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, successSig, false); err != nil {
 		t.Fatalf("UpdateStateAndOutcome c1: %v", err)
 	}
-	if _, _, err := PropagateFromChildState(ctx, args, nil, c1, cascade.NodeStateFresh, successSig); err != nil {
+	if _, _, err := PropagateFromChildState(ctx, args, nil, c1); err != nil {
 		t.Fatalf("PropagateFromChildState c1: %v", err)
 	}
 
 	if err := rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFresh, successSig, true); err != nil {
 		t.Fatalf("UpdateStateAndOutcome c2: %v", err)
 	}
-	_, settlements, err := PropagateFromChildState(ctx, args, nil, c2, cascade.NodeStateFresh, successSig)
+	_, settlements, err := PropagateFromChildState(ctx, args, nil, c2)
 	if err != nil {
 		t.Fatalf("PropagateFromChildState c2: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 	failedSig := strPtr("terminal/error/test_failure")
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFailed, failedSig, false)
 	actions, _, err := PropagateFromChildState(context.Background(), PropagationArgs{NodeRunTree: rt, RunScopes: scopes}, nil,
-		c2, cascade.NodeStateFailed, failedSig)
+		c2)
 	if err != nil {
 		t.Fatalf("PropagateFromChildState c2: %v", err)
 	}
@@ -490,8 +490,7 @@ func TestPropagateFromChildState_NestedTree(t *testing.T) {
 	successSig := strPtr("terminal/success")
 
 	_ = rt.UpdateStateAndOutcome(ctx, nil, leaf1, cascade.NodeStateFresh, successSig, false)
-	if _, _, err := PropagateFromChildState(ctx, args, nil, leaf1,
-		cascade.NodeStateFresh, successSig); err != nil {
+	if _, _, err := PropagateFromChildState(ctx, args, nil, leaf1); err != nil {
 		t.Fatalf("propagate leaf1: %v", err)
 	}
 	midRow, _ := rt.GetByID(ctx, nil, mid)
@@ -500,8 +499,7 @@ func TestPropagateFromChildState_NestedTree(t *testing.T) {
 	}
 
 	_ = rt.UpdateStateAndOutcome(ctx, nil, leaf2, cascade.NodeStateFresh, successSig, false)
-	if _, _, err := PropagateFromChildState(ctx, args, nil, leaf2,
-		cascade.NodeStateFresh, successSig); err != nil {
+	if _, _, err := PropagateFromChildState(ctx, args, nil, leaf2); err != nil {
 		t.Fatalf("propagate leaf2: %v", err)
 	}
 	midRow, _ = rt.GetByID(ctx, nil, mid)
@@ -602,7 +600,7 @@ func TestPropagateFromChildState_SettledParentReprojectedByLateChildTransition(t
 	failedSig := strPtr("terminal/error/late_failure")
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFailed, failedSig, false)
 	_, settlements, err := PropagateFromChildState(ctx, PropagationArgs{NodeRunTree: rt, RunScopes: scopes}, nil,
-		c2, cascade.NodeStateFailed, failedSig)
+		c2)
 	if err != nil {
 		t.Fatalf("PropagateFromChildState after late child failure: %v", err)
 	}
