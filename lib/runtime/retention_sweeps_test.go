@@ -33,7 +33,10 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	tables := d.Tables()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()

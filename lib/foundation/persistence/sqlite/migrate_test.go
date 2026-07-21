@@ -51,7 +51,10 @@ func TestSQLiteMigration024RebuildPreservesChildRows(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	seed := []string{
 		`INSERT INTO rimsky_templates (id, spec, state) VALUES ('tpl-024', '{}', 'deployed')`,
 		`INSERT INTO rimsky_instances (id, template_hash, instance_key) VALUES ('inst-024', 'tpl-024', 'ck-024')`,
@@ -123,7 +126,10 @@ func TestSQLiteMigration036RebuildPreservesEventsAndAutoincrement(t *testing.T) 
 		t.Fatalf("migrate: %v", err)
 	}
 
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	seed := []string{
 		`INSERT INTO rimsky_templates (id, spec, state) VALUES ('tpl-036', '{}', 'deployed')`,
 		`INSERT INTO rimsky_instances (id, template_hash, instance_key) VALUES ('inst-036', 'tpl-036', 'ck-036')`,
@@ -190,7 +196,10 @@ func TestSQLiteMigrationTagsColumn(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(rimsky_nodes)`)
 	if err != nil {

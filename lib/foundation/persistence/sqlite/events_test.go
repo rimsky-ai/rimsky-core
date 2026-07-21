@@ -7,7 +7,6 @@ package sqlite_test
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,26 +19,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-func openSQLiteForEvents(t *testing.T) persistence.Database {
-	t.Helper()
-	dir := t.TempDir()
-	d, err := persistence.Open(context.Background(), persistence.Config{
-		Driver: "sqlite",
-		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "events.db")},
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if err := d.Migrate(context.Background(), shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-	return d
-}
-
 func TestSQLiteEvents_TypedKindRoundTrip(t *testing.T) {
 	t.Parallel()
-	d := openSQLiteForEvents(t)
+	d := openSQLite(t)
 	ctx := context.Background()
 	store := d.Tables()
 	cases := []events.Kind{
@@ -87,7 +69,7 @@ func TestSQLiteEvents_TypedKindRoundTrip(t *testing.T) {
 
 func TestSQLiteEvents_AppendRefusesZeroKind(t *testing.T) {
 	t.Parallel()
-	d := openSQLiteForEvents(t)
+	d := openSQLite(t)
 	ctx := context.Background()
 	store := d.Tables()
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -100,7 +82,7 @@ func TestSQLiteEvents_AppendRefusesZeroKind(t *testing.T) {
 
 func TestSQLiteEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
 	t.Parallel()
-	d := openSQLiteForEvents(t)
+	d := openSQLite(t)
 	ctx := context.Background()
 	store := d.Tables()
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -109,7 +91,10 @@ func TestSQLiteEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Append legitimate: %v", err)
 	}
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	if _, err := db.ExecContext(ctx,
 		`UPDATE rimsky_events SET kind = 'totally_made_up_kind'`); err != nil {
 		t.Fatalf("raw SQL update: %v", err)
@@ -129,7 +114,7 @@ func TestSQLiteEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
 
 func TestSQLiteEvents_LastTerminalByNodesRejectsCorruptPayload(t *testing.T) {
 	t.Parallel()
-	d := openSQLiteForEvents(t)
+	d := openSQLite(t)
 	ctx := context.Background()
 	store := d.Tables()
 
@@ -161,7 +146,10 @@ func TestSQLiteEvents_LastTerminalByNodesRejectsCorruptPayload(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	if _, err := db.ExecContext(ctx,
 		`UPDATE rimsky_events SET payload = '"not an object"' WHERE node_id = ?`, nodeID.String()); err != nil {
 		t.Fatalf("raw SQL update: %v", err)

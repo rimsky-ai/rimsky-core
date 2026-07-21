@@ -33,7 +33,10 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 
 	tables := d.Tables()
 	q := d.Queue()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	args := RunArgs{
 		Persist: tables,
 		Queue:   q,

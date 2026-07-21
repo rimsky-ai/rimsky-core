@@ -58,7 +58,10 @@ func postgresRawQuery(t *testing.T, d persistence.Database, sql string, args ...
 
 func sqliteRawExec(t *testing.T, d persistence.Database, sql string, args ...any) {
 	t.Helper()
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	if _, err := db.ExecContext(context.Background(), sql, args...); err != nil {
 		t.Fatalf("sqliteRawExec: %v\nsql: %s", err, sql)
 	}
@@ -66,7 +69,10 @@ func sqliteRawExec(t *testing.T, d persistence.Database, sql string, args ...any
 
 func sqliteRawQuery(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow {
 	t.Helper()
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	rows, err := db.QueryContext(context.Background(), sql, args...)
 	if err != nil {
 		t.Fatalf("sqliteRawQuery: %v\nsql: %s", err, sql)

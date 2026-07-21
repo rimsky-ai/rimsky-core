@@ -137,7 +137,10 @@ func TestTakeNamedLockInTx_MutualExclusionComesFromImmediateTxLock(t *testing.T)
 		t.Fatalf("migrate: %v", err)
 	}
 
-	db := DBFromDatabase(d)
+	db, ok := DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE lock_race_probe (n INTEGER NOT NULL)`); err != nil {
 		t.Fatalf("create scratch table: %v", err)
 	}

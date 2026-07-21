@@ -31,7 +31,10 @@ func TestSQLiteForeignKeysEnabled(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := sqlitedrv.DBFromDatabase(d)
+	db, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	var fk int
 	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
 		t.Fatalf("pragma: %v", err)
@@ -54,7 +57,10 @@ func TestSQLiteWALMode(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := sqlitedrv.DBFromDatabase(d)
+	db, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	var mode string
 	if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
 		t.Fatalf("pragma: %v", err)

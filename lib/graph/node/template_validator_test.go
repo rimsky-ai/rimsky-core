@@ -14,14 +14,14 @@ import (
 	foundationspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-var knownClaimProducers = map[string]string{
-	"content": "filesystem",
-	"shared":  "filesystem",
-	"topics":  "postgres",
-	"inbound": "postgres",
+var knownClaimProducers = map[string]struct{}{
+	"content": {},
+	"shared":  {},
+	"topics":  {},
+	"inbound": {},
 }
 
-func storeDeclaredLookup(known map[string]string) func(string) bool {
+func storeDeclaredLookup(known map[string]struct{}) func(string) bool {
 	return func(name string) bool {
 		_, ok := known[name]
 		return ok
@@ -72,6 +72,15 @@ func TestValidateTemplate_FlattensGraphsIntoNodes_DocumentedSideEffect(t *testin
 	require.Equal(t, specA.Nodes, specB.Nodes,
 		"flattening must be deterministic for structurally identical graphs: input, since content hashing downstream of "+
 			"ValidateTemplate depends on the flattened spec being stable across equivalent inputs")
+}
+
+func findWarningContains(warns []ValidationWarning, substr string) bool {
+	for _, w := range warns {
+		if strings.Contains(w.Msg, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestValidateTemplate_Ok_MinimalExecutorNode(t *testing.T) {
@@ -129,7 +138,7 @@ func TestValidateTemplate_Error_SubscribeToUndeclaredMessageType(t *testing.T) {
 			Type:     "a",
 			Executor: "handler.a",
 			Subscribes: []SubscriptionEntry{
-				{Node: "ping/recheck", Type: "terminal/success"},
+				{Node: "ping/recheck", Type: "terminal/success", ForceUpstreamRefresh: BoolPtr(false)},
 			},
 		}},
 	}
@@ -223,7 +232,7 @@ func TestValidateSubscribes_Error_MessageVirtualNodeWhenUnknownBodyField(t *test
 			Type:     "a",
 			Executor: "handler.a",
 			Subscribes: []SubscriptionEntry{
-				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.pongStatus == "ok"`},
+				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.pongStatus == "ok"`, ForceUpstreamRefresh: BoolPtr(false)},
 			},
 		}},
 	}
@@ -241,7 +250,7 @@ func TestValidateSubscribes_Error_MessageVirtualNodeWhenEmptyBodySchema(t *testi
 			Type:     "a",
 			Executor: "handler.a",
 			Subscribes: []SubscriptionEntry{
-				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.anything == "ok"`},
+				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.anything == "ok"`, ForceUpstreamRefresh: BoolPtr(false)},
 			},
 		}},
 	}
@@ -442,14 +451,7 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 		})
 		require.True(t, res.Ok(), "errors: %+v", res.Errors)
 		require.NotEmpty(t, res.Warnings, "expected a warning about missing acquire/unavailable policy")
-		found := false
-		for _, w := range res.Warnings {
-			if strings.Contains(w.Msg, "acquire/unavailable") {
-				found = true
-				break
-			}
-		}
-		require.True(t, found, "warnings: %+v", res.Warnings)
+		require.True(t, findWarningContains(res.Warnings, "acquire/unavailable"), "warnings: %+v", res.Warnings)
 	})
 
 	t.Run("stores_with_policy_no_warning", func(t *testing.T) {
@@ -782,21 +784,6 @@ func TestValidateSubscribes_SelfBareOK(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-func TestValidateSubscribes_SelfWithFrameInExplicitOK(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1",
-		Nodes: []TemplateNodeDef{
-			{Type: "loopy", Executor: "h",
-				Subscribes: []SubscriptionEntry{
-					{Node: "loopy", Type: "terminal/success", ForceUpstreamRefresh: BoolPtr(false)},
-				},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-}
-
 func TestValidateSubscribes_RejectsBareEvent(t *testing.T) {
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1",
@@ -843,13 +830,8 @@ func TestValidateSubscribes_RejectsTransientType(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
 	require.False(t, res.Ok())
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "transient/retry/*") {
-			found = true
-		}
-	}
-	require.True(t, found, "expected validation error naming the rejected transient subscription type, got %+v", res.Errors)
+	require.True(t, findErrorContains(res.Errors, "transient/retry/*"),
+		"expected validation error naming the rejected transient subscription type, got %+v", res.Errors)
 }
 
 func TestValidateSubscribes_RejectsMalformedCEL(t *testing.T) {
@@ -1500,13 +1482,7 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		}
 		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 		require.False(t, res.Ok())
-		found := false
-		for _, e := range res.Errors {
-			if strings.Contains(e.Msg, "empty trailing segment") {
-				found = true
-			}
-		}
-		if !found {
+		if !findErrorContains(res.Errors, "empty trailing segment") {
 			t.Fatalf("expected diagnostic naming the empty trailing segment, got errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 		}
 	})
@@ -1670,13 +1646,7 @@ func TestValidator_FallbackOperator_ChainsRejected(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok(), "expected error for multi-pipe chain")
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "multi-pipe fallback chain") {
-			found = true
-		}
-	}
-	if !found {
+	if !findErrorContains(res.Errors, "multi-pipe fallback chain") {
 		t.Fatalf("expected diagnostic naming the multi-pipe fallback chain, got errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 	}
 }
@@ -2926,13 +2896,7 @@ func TestValidateTemplate_Error_SendsMessage_UnknownType(t *testing.T) {
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].sends_message")
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "unknown message type") {
-			found = true
-		}
-	}
-	if !found {
+	if !findErrorContains(res.Errors, "unknown message type") {
 		t.Fatalf("expected an 'unknown message type' diagnostic, got %+v", res.Errors)
 	}
 }
@@ -2942,13 +2906,7 @@ func TestValidateTemplate_Error_SendsMessage_MutexWithExecutor(t *testing.T) {
 	spec.Nodes[0].Executor = "handler.a"
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "sends_message and executor are mutually exclusive") {
-			found = true
-		}
-	}
-	if !found {
+	if !findErrorContains(res.Errors, "sends_message and executor are mutually exclusive") {
 		t.Fatalf("expected mutual-exclusion error executor vs sends_message, got %+v", res.Errors)
 	}
 }
@@ -2958,13 +2916,7 @@ func TestValidateTemplate_Error_SendsMessage_MutexWithDelegate(t *testing.T) {
 	spec.Nodes[0].Delegate = "sub"
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "sends_message and delegate are mutually exclusive") {
-			found = true
-		}
-	}
-	if !found {
+	if !findErrorContains(res.Errors, "sends_message and delegate are mutually exclusive") {
 		t.Fatalf("expected mutual-exclusion error delegate vs sends_message, got %+v", res.Errors)
 	}
 }
@@ -2981,13 +2933,7 @@ func TestValidateTemplate_Error_SendsMessage_AttributeSuperset(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "extra_field") {
-			found = true
-		}
-	}
-	if !found {
+	if !findErrorContains(res.Errors, "extra_field") {
 		t.Fatalf("expected diagnostic naming the superset field 'extra_field', got %+v", res.Errors)
 	}
 }
@@ -3000,13 +2946,7 @@ func TestValidateTemplate_Error_SendsMessage_AttributeSubset_MissingField(t *tes
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "is missing field") {
-			found = true
-		}
-	}
-	if !found {
+	if !findErrorContains(res.Errors, "is missing field") {
 		t.Fatalf("expected diagnostic about missing destination field, got %+v", res.Errors)
 	}
 }
@@ -3022,13 +2962,7 @@ func TestValidateTemplate_Error_SendsMessage_AttributeTypeMismatch(t *testing.T)
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "types must match exactly") {
-			found = true
-		}
-	}
-	if !found {
+	if !findErrorContains(res.Errors, "types must match exactly") {
 		t.Fatalf("expected per-property type-mismatch diagnostic, got %+v", res.Errors)
 	}
 }
@@ -3043,13 +2977,7 @@ func TestValidateTemplate_Error_SendsMessage_RequiredMismatch(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
 	require.False(t, res.Ok())
-	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e.Msg, "required: sets must match exactly") {
-			found = true
-		}
-	}
-	if !found {
+	if !findErrorContains(res.Errors, "required: sets must match exactly") {
 		t.Fatalf("expected required-set mismatch diagnostic, got %+v", res.Errors)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	claimproducerproto "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/dataprocessing"
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
@@ -167,9 +168,10 @@ func splitConformanceCSV(s string) []string {
 
 func runConformanceClaimProducer(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance claim-producer", flag.ContinueOnError)
-	endpoint := fs.String("endpoint", "", "claim-producer-service gRPC endpoint (e.g. grpc://localhost:9101)")
+	endpoint := fs.String("endpoint", "", "claim-producer-service endpoint (e.g. grpc://localhost:9101, or a bare http(s) base URL for --transport http)")
+	transport := fs.String("transport", "grpc", "grpc|http")
 	timeout := fs.Duration("timeout", 10*time.Second, "per-check timeout")
-	checkObs := fs.Bool("check-observability", false, "additionally probe ClaimProducerObservability")
+	checkObs := fs.Bool("check-observability", false, "additionally probe ClaimProducerObservability (gRPC only)")
 	retentionSec := fs.Int("retention-test-seconds", 0, "if >0, drive a canned claim then sleep this long and verify GetClaim returns evicted")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -179,18 +181,28 @@ func runConformanceClaimProducer(args []string) int {
 		fmt.Fprintln(os.Stderr, "rimsky conformance claim-producer: --endpoint required")
 		return 2
 	}
+	if *transport != "grpc" && *transport != "http" {
+		fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: --transport must be grpc or http, got %q\n", *transport)
+		return 2
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	client, err := peer.Dial(ctx, "conformance-target", *endpoint, peer.TLSModeOff)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: dial: %v\n", err)
-		return 1
+	var target claimproducerproto.ClaimProducer
+	if *transport == "http" {
+		target = claimproducer.NewHTTPBridgeClaimProducer(*endpoint)
+	} else {
+		client, err := peer.Dial(ctx, "conformance-target", *endpoint, peer.TLSModeOff)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: dial: %v\n", err)
+			return 1
+		}
+		defer client.Close()
+		target = client
 	}
-	defer client.Close()
 
-	results := claimproducer.Run(ctx, client)
+	results := claimproducer.Run(ctx, target)
 	if code := reportConformanceResults("rimsky conformance claim-producer", results,
 		func(r claimproducer.CheckResult) string { return r.Name },
 		func(r claimproducer.CheckResult) error { return r.Err }); code != 0 {
@@ -198,6 +210,10 @@ func runConformanceClaimProducer(args []string) int {
 	}
 
 	if *checkObs {
+		if *transport != "grpc" {
+			fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: --check-observability requires --transport grpc (ClaimProducerObservability has no HTTP+JSON bridge), got %q\n", *transport)
+			return 2
+		}
 		if err := claimproducer.RunObservabilityCheck(ctx, claimproducer.ObservabilityCheckOpts{
 			Endpoint:             *endpoint,
 			RetentionTestSeconds: *retentionSec,

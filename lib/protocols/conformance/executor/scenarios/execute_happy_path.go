@@ -24,12 +24,23 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("build attributes: %w", err)
 			}
+			schema, err := structpb.NewStruct(map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"stub_probe": map[string]any{"type": "boolean"}},
+			})
+			if err != nil {
+				return fmt.Errorf("build attributes_schema: %w", err)
+			}
 			req := &genv1.ExecuteRequest{
-				NodeId:      "execute-happy-path",
-				InstanceId:  "execute-happy-path",
-				NodeType:    "conformance",
-				Attributes:  attrs,
-				CallbackUrl: env.Callbacks.URL(),
+				NodeId:           "execute-happy-path",
+				InstanceId:       "execute-happy-path",
+				NodeType:         "conformance",
+				Attributes:       attrs,
+				AttributesSchema: schema,
+				CallbackUrl:      env.Callbacks.URL(),
+				CancelToken:      "conformance-execute-happy-path-cancel-token",
+				DispatchId:       "conformance-execute-happy-path-dispatch",
+				RunScopeId:       "conformance-execute-happy-path-run-scope",
 			}
 			outcome, err := env.Client.Execute(ctx, req)
 			if err != nil {

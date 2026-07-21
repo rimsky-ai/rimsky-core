@@ -5,6 +5,7 @@
 package node
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
@@ -369,6 +370,75 @@ func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
 	}
 	if got := out.Match("sender", signal.TypePath("terminal/success")); len(got) != 0 {
 		t.Errorf("Match(terminal/success): want 0, got %d", len(got))
+	}
+}
+
+func TestBuildSubscriptionEdges_Error_MissingForceUpstreamRefresh(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "sender", Executor: "stub"},
+		{Type: "receiver", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Node: "sender", Type: "terminal/success"},
+			},
+		},
+	}}
+	_, err := BuildSubscriptionEdges(tmpl, nil)
+	if err == nil {
+		t.Fatal("expected an error for a subscribes entry with no force_upstream_refresh")
+	}
+	if !strings.Contains(err.Error(), "missing force_upstream_refresh") {
+		t.Fatalf("expected error naming the missing force_upstream_refresh, got: %v", err)
+	}
+}
+
+// @decision: structural-root-edge-injection-at-registration
+// @story: empty-message-wakes-roots
+func TestBuildSubscriptionEdges_MessageRefSuppressesStructuralRoot(t *testing.T) {
+	tmpl := spec.TemplateSpec{
+		Messages: []spec.MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`)},
+		},
+		Nodes: []spec.TemplateNodeDef{
+			{Type: "receiver", Executor: "stub",
+				Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"reason": map[string]any{
+							"type":   "string",
+							"source": "{{messages.ping/recheck.reason}}",
+						},
+					},
+				}}},
+		},
+	}
+
+	withoutRefs, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges (nil messageRefs): %v", err)
+	}
+	rootless := false
+	for _, e := range withoutRefs.Match("", signal.TypePath("terminal/success")) {
+		if e.ReceiverNodeType == "receiver" {
+			rootless = true
+		}
+	}
+	if !rootless {
+		t.Fatalf("with nil messageRefs, receiver has no other upstream and must be a structural root")
+	}
+
+	msgRefs := ExtractMessageRefsFromTemplate(tmpl)
+	if len(msgRefs["receiver"]) == 0 {
+		t.Fatalf("ExtractMessageRefsFromTemplate must surface the messages.* ref keyed by receiver type; got %v", msgRefs)
+	}
+	withRefs, err := BuildSubscriptionEdges(tmpl, msgRefs)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges (with messageRefs): %v", err)
+	}
+	for _, e := range withRefs.Match("", signal.TypePath("terminal/success")) {
+		if e.ReceiverNodeType == "receiver" {
+			t.Fatalf("a receiver with an (even uncovered) messages.* ref must not be injected as a structural root " +
+				"once its messageRefs entry is supplied — the ref counts as upstream coupling")
+		}
 	}
 }
 

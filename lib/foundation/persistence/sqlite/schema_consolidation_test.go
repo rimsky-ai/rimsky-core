@@ -77,7 +77,10 @@ func TestSqliteSchemaConsolidation_FreshDB(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	assertSqliteTablesPresent(t, ctx, db, expectedSqliteTables)
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_instance_breakpoints", expectedSqliteBreakpointColumns)
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_breakpoint_hits", expectedSqliteHitColumns)
@@ -98,7 +101,10 @@ func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS rimsky_migrations (
 		filename    TEXT PRIMARY KEY,
@@ -266,7 +272,10 @@ func TestSqliteSchemaConsolidation_TimestampColumnsNormalizedToText(t *testing.T
 		t.Fatalf("migrate: %v", err)
 	}
 
-	db := sqlitepersist.DBFromDatabase(d)
+	db, ok := sqlitepersist.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	cases := []struct{ table, column string }{
 		{"rimsky_messages", "received_at"},
 		{"rimsky_messages", "delivered_at"},

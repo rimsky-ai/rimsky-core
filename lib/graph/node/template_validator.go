@@ -754,9 +754,6 @@ func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (sugg
 		if _, ok := idx[coverageEntryKey{sender: ref.TypeName, typ: "terminal/*"}]; ok {
 			return suggestedType, true
 		}
-		if _, ok := idx[coverageEntryKey{sender: ref.TypeName, typ: "*"}]; ok {
-			return suggestedType, true
-		}
 		return suggestedType, false
 	}
 	return "", true

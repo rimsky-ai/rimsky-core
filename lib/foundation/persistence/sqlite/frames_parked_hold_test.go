@@ -19,7 +19,10 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
 
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
@@ -72,7 +75,7 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
-		nodeID.String(), instanceID, frameID.String(),
+		nodeID.String(), instanceID,
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
 	}

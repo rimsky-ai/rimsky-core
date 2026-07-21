@@ -133,3 +133,40 @@ func TestSubstitutionCoverage_ClaimProducerSelectorRefUncovered(t *testing.T) {
 	entry := findCoverageEntry(t, res, "rcv", "nodes.foo.attribute.bar")
 	assertSuggestedEntryShape(t, entry, "foo", "attribute/bar/changed")
 }
+
+func TestSubstitutionCoverage_ClaimProducerSelectorRefCoveredBySubscription(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{
+			{
+				Type:     "foo",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"bar": map[string]any{"type": "string"},
+					},
+				}},
+			},
+			{
+				Type:     "rcv",
+				Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{
+						Node:                 "foo",
+						Type:                 "attribute/bar/changed",
+						ForceUpstreamRefresh: BoolPtr(false),
+					},
+				},
+				ClaimProducers: []NodeClaimProducerRef{
+					{Name: "content", Selector: "{{nodes.foo.attribute.bar}}", Intent: "rw"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
+	})
+	require.True(t, res.Ok(), "errors: %+v", res.Errors)
+}

@@ -10,10 +10,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-func DBFromDatabase(d persistence.Database) *sql.DB {
+func DBFromDatabaseForTest(d persistence.Database) (*sql.DB, bool) {
 	sd, ok := d.(*database)
 	if !ok {
-		panic("DBFromDatabase: not a sqlite database")
+		return nil, false
 	}
-	return sd.db
+	return sd.db, true
 }

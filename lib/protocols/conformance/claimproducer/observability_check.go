@@ -7,6 +7,7 @@ package claimproducer
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -72,9 +73,15 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 		}
 		count := 0
 		for {
-			_, rerr := stream.Recv()
-			if rerr != nil {
+			ev, rerr := stream.Recv()
+			if rerr == io.EOF {
 				break
+			}
+			if rerr != nil {
+				return fmt.Errorf("StreamClaim missing-claim: Recv: %w", rerr)
+			}
+			if ev.GetEventId() == "" {
+				return fmt.Errorf("StreamClaim missing-claim: event %d has an empty event_id", count)
 			}
 			count++
 		}
@@ -82,9 +89,13 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 	}
 
 	if caps.GetSupportsListClaims() {
-		list, err := client.ListClaims(ctx, &genv1.ListClaimsRequest{Limit: 1})
+		const limit = 1
+		list, err := client.ListClaims(ctx, &genv1.ListClaimsRequest{Limit: limit})
 		if err != nil {
 			return fmt.Errorf("ListClaims probe: %w", err)
+		}
+		if len(list.GetClaims()) > limit {
+			return fmt.Errorf("ListClaims probe: returned %d claims, want at most limit=%d", len(list.GetClaims()), limit)
 		}
 		logf("observability: ListClaims returned %d claim summaries (next_cursor=%q)\n",
 			len(list.GetClaims()), list.GetNextCursor())

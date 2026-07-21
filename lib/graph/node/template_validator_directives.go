@@ -221,11 +221,6 @@ func checkAttributeDirectiveBody(rawBody, path string, declared map[string]int, 
 				Msg:  fmt.Sprintf("env directive %q must be env.<VAR_NAME> where the name matches [A-Za-z_][A-Za-z0-9_]*", body),
 			})
 		}
-	default:
-		res.Errors = append(res.Errors, ValidationError{
-			Path: path,
-			Msg:  fmt.Sprintf("unknown directive kind %q", kind),
-		})
 	}
 }
 

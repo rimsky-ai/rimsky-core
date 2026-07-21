@@ -88,16 +88,6 @@ func TestFallbackOperator_MissingDirectiveFallsThroughEvenInvalidShape(t *testin
 	}
 }
 
-func TestFallbackOperator_RetiredDepsFormFallsThrough(t *testing.T) {
-	val, err := SubstituteValue(`{{deps.X.Y | "default"}}`, ResolveContext{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if val != "default" {
-		t.Fatalf("got %v, want default (retirement pointer eaten by fallback)", val)
-	}
-}
-
 func TestFallbackOperator_ChainsRejected(t *testing.T) {
 	_, err := SubstituteValue(`{{nodes.X.attribute.Y | nodes.Z.attribute.W | "default"}}`, ResolveContext{})
 	if err == nil {

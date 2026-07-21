@@ -108,7 +108,10 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 		return nil
 	}))
 
-	rawDB := sqlitedriver.DBFromDatabase(d)
+	rawDB, ok := sqlitedriver.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	_, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, frame_id,

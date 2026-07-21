@@ -7,6 +7,8 @@ package node
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func validateMultiGraph(t *testing.T, spec *TemplateSpec) []string {
@@ -37,9 +39,8 @@ func TestValidate_RejectsAuthorSetIsSubgraphEntryAbsorbed_FlatForm(t *testing.T)
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "is_subgraph_entry_absorbed is set by subgraph canonicalization") {
-		t.Fatalf("expected rejection of author-set is_subgraph_entry_absorbed (executor/delegate bypass closed); got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "is_subgraph_entry_absorbed is set by subgraph canonicalization"),
+		"expected rejection of author-set is_subgraph_entry_absorbed (executor/delegate bypass closed); got: %v", msgs)
 }
 
 func TestValidate_RejectsAuthorSetIsSubgraphExit_FlatForm(t *testing.T) {
@@ -51,9 +52,8 @@ func TestValidate_RejectsAuthorSetIsSubgraphExit_FlatForm(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "is_subgraph_exit is set by subgraph canonicalization") {
-		t.Fatalf("expected rejection of author-set is_subgraph_exit; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "is_subgraph_exit is set by subgraph canonicalization"),
+		"expected rejection of author-set is_subgraph_exit; got: %v", msgs)
 }
 
 func TestValidate_RejectsAuthorSetResolvesViaCallingNode_FlatForm(t *testing.T) {
@@ -68,9 +68,8 @@ func TestValidate_RejectsAuthorSetResolvesViaCallingNode_FlatForm(t *testing.T) 
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "resolves_via_calling_node is set by subgraph canonicalization") {
-		t.Fatalf("expected rejection of author-set resolves_via_calling_node; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "resolves_via_calling_node is set by subgraph canonicalization"),
+		"expected rejection of author-set resolves_via_calling_node; got: %v", msgs)
 }
 
 func TestValidate_RejectsAuthorSetInternalFlag_GraphsForm(t *testing.T) {
@@ -87,9 +86,8 @@ func TestValidate_RejectsAuthorSetInternalFlag_GraphsForm(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "is_subgraph_entry_absorbed is set by subgraph canonicalization") {
-		t.Fatalf("expected rejection of author-set flag in graphs-form node; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "is_subgraph_entry_absorbed is set by subgraph canonicalization"),
+		"expected rejection of author-set flag in graphs-form node; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_HappyPathSingleMain(t *testing.T) {
@@ -106,12 +104,9 @@ func TestCanonicalizeGraphs_HappyPathSingleMain(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if len(msgs) != 0 {
-		t.Fatalf("expected no errors; got: %v", msgs)
-	}
-	if len(spec.Nodes) != 1 || spec.Nodes[0].Type != "alpha" {
-		t.Fatalf("expected canonicalizer to flatten Nodes to [alpha], got: %+v", spec.Nodes)
-	}
+	require.Empty(t, msgs, "expected no errors; got: %v", msgs)
+	require.Len(t, spec.Nodes, 1)
+	require.Equal(t, "alpha", spec.Nodes[0].Type, "expected canonicalizer to flatten Nodes to [alpha], got: %+v", spec.Nodes)
 }
 
 func TestCanonicalizeGraphs_WhitespacePaddedMainNameTreatedAsMain(t *testing.T) {
@@ -158,9 +153,8 @@ func TestCanonicalizeGraphs_RejectGraphsAndNodesBothSet(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "graphs_and_nodes_both_set") {
-		t.Fatalf("expected graphs_and_nodes_both_set rejection; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "graphs_and_nodes_both_set"),
+		"expected graphs_and_nodes_both_set rejection; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectMissingMain(t *testing.T) {
@@ -177,9 +171,8 @@ func TestCanonicalizeGraphs_RejectMissingMain(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_missing_main") {
-		t.Fatalf("expected subgraph_missing_main rejection; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "subgraph_missing_main"),
+		"expected subgraph_missing_main rejection; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectMainHasEntryExit(t *testing.T) {
@@ -195,9 +188,8 @@ func TestCanonicalizeGraphs_RejectMainHasEntryExit(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_main_has_entry_or_exit") {
-		t.Fatalf("expected subgraph_main_has_entry_or_exit rejection; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "subgraph_main_has_entry_or_exit"),
+		"expected subgraph_main_has_entry_or_exit rejection; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectSubGraphMissingEntry(t *testing.T) {
@@ -214,9 +206,8 @@ func TestCanonicalizeGraphs_RejectSubGraphMissingEntry(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_missing_entry") {
-		t.Fatalf("expected subgraph_missing_entry rejection; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "subgraph_missing_entry"),
+		"expected subgraph_missing_entry rejection; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectSubGraphMissingExit(t *testing.T) {
@@ -233,9 +224,8 @@ func TestCanonicalizeGraphs_RejectSubGraphMissingExit(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_missing_exit") {
-		t.Fatalf("expected subgraph_missing_exit rejection; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "subgraph_missing_exit"),
+		"expected subgraph_missing_exit rejection; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectEntryEqualsExit(t *testing.T) {
@@ -253,9 +243,52 @@ func TestCanonicalizeGraphs_RejectEntryEqualsExit(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_entry_equals_exit") {
-		t.Fatalf("expected subgraph_entry_equals_exit rejection; got: %v", msgs)
+	require.True(t, hasErrorContaining(msgs, "subgraph_entry_equals_exit"),
+		"expected subgraph_entry_equals_exit rejection; got: %v", msgs)
+}
+
+func TestCanonicalizeGraphs_RejectUnknownExit(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m"}}},
+			{
+				Name:  "sub",
+				Entry: "a",
+				Exit:  "ghost",
+				Nodes: []TemplateNodeDef{{Type: "a"}, {Type: "b"}},
+			},
+		},
 	}
+	msgs := validateMultiGraph(t, spec)
+	require.True(t, hasErrorContaining(msgs, "subgraph_unknown_exit"),
+		"expected subgraph_unknown_exit rejection; got: %v", msgs)
+}
+
+func TestCanonicalizeGraphs_RejectDuplicateGraphName(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m"}}},
+			{
+				Name:  "sub",
+				Entry: "a",
+				Exit:  "b",
+				Nodes: []TemplateNodeDef{{Type: "a"}, {Type: "b"}},
+			},
+			{
+				Name:  "sub",
+				Entry: "c",
+				Exit:  "d",
+				Nodes: []TemplateNodeDef{{Type: "c"}, {Type: "d"}},
+			},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	require.True(t, hasErrorContaining(msgs, "duplicate graph name"),
+		"expected duplicate graph name rejection; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectUnknownEntry(t *testing.T) {
@@ -273,9 +306,8 @@ func TestCanonicalizeGraphs_RejectUnknownEntry(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_unknown_entry") {
-		t.Fatalf("expected subgraph_unknown_entry rejection; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "subgraph_unknown_entry"),
+		"expected subgraph_unknown_entry rejection; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
@@ -297,9 +329,8 @@ func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_disconnected_internal_node") {
-		t.Fatalf("expected subgraph_disconnected_internal_node; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "subgraph_disconnected_internal_node"),
+		"expected subgraph_disconnected_internal_node; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_ReachabilityHappyPath(t *testing.T) {
@@ -321,11 +352,8 @@ func TestCanonicalizeGraphs_ReachabilityHappyPath(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	for _, m := range msgs {
-		if strings.Contains(m, "subgraph_disconnected_internal_node") {
-			t.Fatalf("expected no disconnect; got: %v", msgs)
-		}
-	}
+	require.False(t, hasErrorContaining(msgs, "subgraph_disconnected_internal_node"),
+		"expected no disconnect; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
@@ -360,9 +388,8 @@ func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_recursion_unsupported") {
-		t.Fatalf("expected subgraph_recursion_unsupported; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "subgraph_recursion_unsupported"),
+		"expected subgraph_recursion_unsupported; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
@@ -388,9 +415,8 @@ func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "subgraph_internal_references_outer") {
-		t.Fatalf("expected subgraph_internal_references_outer; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "subgraph_internal_references_outer"),
+		"expected subgraph_internal_references_outer; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_RejectOuterSubscribesToInternal(t *testing.T) {
@@ -464,9 +490,8 @@ func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "duplicate node type") {
-		t.Fatalf("expected duplicate-node-type rejection; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "duplicate node type"),
+		"expected duplicate-node-type rejection; got: %v", msgs)
 }
 
 func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
@@ -493,9 +518,7 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
-	if len(res.Errors) != 0 {
-		t.Fatalf("unexpected validation errors: %v", res.Errors)
-	}
+	require.Empty(t, res.Errors, "unexpected validation errors: %v", res.Errors)
 	var caller, plain *TemplateNodeDef
 	for i := range spec.Nodes {
 		switch spec.Nodes[i].Type {
@@ -505,15 +528,12 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 			plain = &spec.Nodes[i]
 		}
 	}
-	if caller == nil || !caller.IsSubgraphEntryAbsorbed {
-		t.Fatalf("caller node missing IsSubgraphEntryAbsorbed marker: %+v", caller)
-	}
-	if plain == nil || plain.IsSubgraphEntryAbsorbed {
-		t.Fatalf("plain node should not carry IsSubgraphEntryAbsorbed: %+v", plain)
-	}
-	if caller.Executor != "stub" {
-		t.Fatalf("absorbed caller must inherit the entry's executor (delegation.md: 'the calling node's executor is taken from the entry'); got %q", caller.Executor)
-	}
+	require.NotNil(t, caller)
+	require.True(t, caller.IsSubgraphEntryAbsorbed, "caller node missing IsSubgraphEntryAbsorbed marker: %+v", caller)
+	require.NotNil(t, plain)
+	require.False(t, plain.IsSubgraphEntryAbsorbed, "plain node should not carry IsSubgraphEntryAbsorbed: %+v", plain)
+	require.Equal(t, "stub", caller.Executor,
+		"absorbed caller must inherit the entry's executor (delegation.md: 'the calling node's executor is taken from the entry')")
 }
 
 func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
@@ -540,25 +560,23 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
-	if len(res.Errors) != 0 {
-		t.Fatalf("unexpected validation errors: %v", res.Errors)
-	}
+	require.Empty(t, res.Errors, "unexpected validation errors: %v", res.Errors)
 	byType := make(map[string]*TemplateNodeDef, len(spec.Nodes))
 	for i := range spec.Nodes {
 		byType[spec.Nodes[i].Type] = &spec.Nodes[i]
 	}
-	if exit := byType["promote"]; exit == nil || !exit.IsSubgraphExit {
-		t.Fatalf("promote (sub-graph exit) must carry IsSubgraphExit: %+v", exit)
-	}
-	if entry := byType["validate"]; entry == nil || entry.IsSubgraphExit {
-		t.Fatalf("validate (entry) must not carry IsSubgraphExit: %+v", entry)
-	}
-	if caller := byType["caller"]; caller == nil || caller.IsSubgraphExit {
-		t.Fatalf("caller (in main) must not carry IsSubgraphExit: %+v", caller)
-	}
-	if plain := byType["plain"]; plain == nil || plain.IsSubgraphExit {
-		t.Fatalf("plain (in main) must not carry IsSubgraphExit: %+v", plain)
-	}
+	exit := byType["promote"]
+	require.NotNil(t, exit)
+	require.True(t, exit.IsSubgraphExit, "promote (sub-graph exit) must carry IsSubgraphExit: %+v", exit)
+	entry := byType["validate"]
+	require.NotNil(t, entry)
+	require.False(t, entry.IsSubgraphExit, "validate (entry) must not carry IsSubgraphExit: %+v", entry)
+	caller := byType["caller"]
+	require.NotNil(t, caller)
+	require.False(t, caller.IsSubgraphExit, "caller (in main) must not carry IsSubgraphExit: %+v", caller)
+	plain := byType["plain"]
+	require.NotNil(t, plain)
+	require.False(t, plain.IsSubgraphExit, "plain (in main) must not carry IsSubgraphExit: %+v", plain)
 }
 
 func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
@@ -572,14 +590,10 @@ func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
-	if len(res.Errors) != 0 {
-		t.Fatalf("unexpected validation errors: %v", res.Errors)
-	}
+	require.Empty(t, res.Errors, "unexpected validation errors: %v", res.Errors)
 	for i := range spec.Nodes {
-		if spec.Nodes[i].IsSubgraphExit {
-			t.Fatalf("flat-shape node %q must not carry IsSubgraphExit: %+v",
-				spec.Nodes[i].Type, spec.Nodes[i])
-		}
+		require.False(t, spec.Nodes[i].IsSubgraphExit,
+			"flat-shape node %q must not carry IsSubgraphExit: %+v", spec.Nodes[i].Type, spec.Nodes[i])
 	}
 }
 
@@ -607,9 +621,7 @@ func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
-	if len(res.Errors) != 0 {
-		t.Fatalf("unexpected validation errors: %v", res.Errors)
-	}
+	require.Empty(t, res.Errors, "unexpected validation errors: %v", res.Errors)
 	var transform, promote *TemplateNodeDef
 	for i := range spec.Nodes {
 		switch spec.Nodes[i].Type {
@@ -619,12 +631,14 @@ func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 			promote = &spec.Nodes[i]
 		}
 	}
-	if transform == nil || len(transform.Subscribes) != 1 || !transform.Subscribes[0].ResolvesViaCallingNode {
-		t.Fatalf("transform's subscribe to entry alias missing ResolvesViaCallingNode: %+v", transform)
-	}
-	if promote == nil || len(promote.Subscribes) != 1 || promote.Subscribes[0].ResolvesViaCallingNode {
-		t.Fatalf("promote subscribes to transform; should not carry ResolvesViaCallingNode: %+v", promote)
-	}
+	require.NotNil(t, transform)
+	require.Len(t, transform.Subscribes, 1)
+	require.True(t, transform.Subscribes[0].ResolvesViaCallingNode,
+		"transform's subscribe to entry alias missing ResolvesViaCallingNode: %+v", transform)
+	require.NotNil(t, promote)
+	require.Len(t, promote.Subscribes, 1)
+	require.False(t, promote.Subscribes[0].ResolvesViaCallingNode,
+		"promote subscribes to transform; should not carry ResolvesViaCallingNode: %+v", promote)
 }
 
 func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t *testing.T) {
@@ -650,21 +664,17 @@ func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t
 		},
 	}
 	msgs := validateMultiGraph(t, spec)
-	if !hasErrorContaining(msgs, "delegate and executor are mutually exclusive") {
-		t.Fatalf("expected mutual-exclusion rejection; got: %v", msgs)
-	}
+	require.True(t, hasErrorContaining(msgs, "delegate and executor are mutually exclusive"),
+		"expected mutual-exclusion rejection; got: %v", msgs)
 }
 
 func TestAbsorbEntryIntoCaller_ExecutorInheritedFromEntry(t *testing.T) {
 	caller := TemplateNodeDef{Type: "caller", Delegate: "sub"}
 	entry := TemplateNodeDef{Type: "entry_node", Executor: "handler.entry"}
 	out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
-	if len(errs) != 0 {
-		t.Fatalf("unexpected errors: %+v", errs)
-	}
-	if out.Executor != "handler.entry" {
-		t.Fatalf("expected caller to inherit entry's executor when caller declares none, got %q", out.Executor)
-	}
+	require.Empty(t, errs, "unexpected errors: %+v", errs)
+	require.Equal(t, "handler.entry", out.Executor,
+		"expected caller to inherit entry's executor when caller declares none")
 }
 
 func TestAbsorbEntryIntoCaller_CallerOwnExecutorAlwaysRejected(t *testing.T) {
@@ -681,12 +691,9 @@ func TestAbsorbEntryIntoCaller_CallerOwnExecutorAlwaysRejected(t *testing.T) {
 			caller := TemplateNodeDef{Type: "caller", Executor: tc.callerExecutor, Delegate: "sub"}
 			entry := TemplateNodeDef{Type: "entry_node", Executor: tc.entryExecutor}
 			out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
-			if len(errs) == 0 {
-				t.Fatalf("expected rejection: a delegating caller must never declare its own executor (delegation.md: 'declaring both is rejected'); out=%+v", out)
-			}
-			if !strings.Contains(errs[0].Msg, "delegate and executor are mutually exclusive") {
-				t.Fatalf("expected mutual-exclusion message, got: %+v", errs)
-			}
+			require.NotEmpty(t, errs,
+				"expected rejection: a delegating caller must never declare its own executor (delegation.md: 'declaring both is rejected'); out=%+v", out)
+			require.Contains(t, errs[0].Msg, "delegate and executor are mutually exclusive")
 		})
 	}
 }
@@ -699,12 +706,8 @@ func TestMergeClaimProducersOnAbsorb_IdenticalAliasMerges(t *testing.T) {
 		{Name: "content", Alias: "shared", Intent: "rw", Selector: "{{params.a}}"},
 	}
 	merged, errs := mergeClaimProducersOnAbsorb(callerProducers, entryProducers, "graphs[0].nodes[0]")
-	if len(errs) != 0 {
-		t.Fatalf("unexpected errors merging identical claim producer aliases: %+v", errs)
-	}
-	if len(merged) != 1 {
-		t.Fatalf("expected identical alias to dedup to one entry, got %+v", merged)
-	}
+	require.Empty(t, errs, "unexpected errors merging identical claim producer aliases: %+v", errs)
+	require.Len(t, merged, 1, "expected identical alias to dedup to one entry, got %+v", merged)
 }
 
 func TestMergeClaimProducersOnAbsorb_DivergingAliasRejected(t *testing.T) {
@@ -715,36 +718,26 @@ func TestMergeClaimProducersOnAbsorb_DivergingAliasRejected(t *testing.T) {
 		{Name: "other", Alias: "shared", Intent: "rw", Selector: "{{params.b}}"},
 	}
 	merged, errs := mergeClaimProducersOnAbsorb(callerProducers, entryProducers, "graphs[0].nodes[0]")
-	if len(errs) == 0 {
-		t.Fatalf("expected subgraph_absorption_alias_conflict for diverging claim producer bindings, merged=%+v", merged)
-	}
-	if !strings.Contains(errs[0].Msg, "subgraph_absorption_alias_conflict") {
-		t.Fatalf("expected subgraph_absorption_alias_conflict slug, got: %+v", errs)
-	}
+	require.NotEmpty(t, errs, "expected subgraph_absorption_alias_conflict for diverging claim producer bindings, merged=%+v", merged)
+	require.Contains(t, errs[0].Msg, "subgraph_absorption_alias_conflict")
 }
 
 func TestMergeHoldsOnAbsorb_IdenticalAliasMerges(t *testing.T) {
 	callerHolds := map[string]HoldsBinding{"x": {From: "producer"}}
 	entryHolds := map[string]HoldsBinding{"x": {From: "producer"}}
 	merged, errs := mergeHoldsOnAbsorb(callerHolds, entryHolds, "graphs[0].nodes[0]")
-	if len(errs) != 0 {
-		t.Fatalf("unexpected errors merging identical holds aliases: %+v", errs)
-	}
-	if len(merged) != 1 || merged["x"].From != "producer" {
-		t.Fatalf("expected merged holds to contain one entry x->producer, got %+v", merged)
-	}
+	require.Empty(t, errs, "unexpected errors merging identical holds aliases: %+v", errs)
+	require.Len(t, merged, 1)
+	require.Equal(t, "producer", merged["x"].From,
+		"expected merged holds to contain one entry x->producer, got %+v", merged)
 }
 
 func TestMergeHoldsOnAbsorb_DivergingAliasRejected(t *testing.T) {
 	callerHolds := map[string]HoldsBinding{"x": {From: "producer_a"}}
 	entryHolds := map[string]HoldsBinding{"x": {From: "producer_b"}}
 	merged, errs := mergeHoldsOnAbsorb(callerHolds, entryHolds, "graphs[0].nodes[0]")
-	if len(errs) == 0 {
-		t.Fatalf("expected subgraph_absorption_alias_conflict for diverging holds bindings, merged=%+v", merged)
-	}
-	if !strings.Contains(errs[0].Msg, "subgraph_absorption_alias_conflict") {
-		t.Fatalf("expected subgraph_absorption_alias_conflict slug, got: %+v", errs)
-	}
+	require.NotEmpty(t, errs, "expected subgraph_absorption_alias_conflict for diverging holds bindings, merged=%+v", merged)
+	require.Contains(t, errs[0].Msg, "subgraph_absorption_alias_conflict")
 }
 
 func TestAbsorbEntryIntoCaller_AttributeSchemaDeepMerges(t *testing.T) {
@@ -768,17 +761,9 @@ func TestAbsorbEntryIntoCaller_AttributeSchemaDeepMerges(t *testing.T) {
 		}},
 	}
 	out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
-	if len(errs) != 0 {
-		t.Fatalf("unexpected errors: %+v", errs)
-	}
-	if out.Attributes == nil {
-		t.Fatalf("expected merged attributes schema, got nil")
-	}
+	require.Empty(t, errs, "unexpected errors: %+v", errs)
+	require.NotNil(t, out.Attributes, "expected merged attributes schema, got nil")
 	props, _ := out.Attributes.Schema["properties"].(map[string]any)
-	if _, ok := props["caller_field"]; !ok {
-		t.Fatalf("merged schema missing caller_field: %+v", props)
-	}
-	if _, ok := props["entry_field"]; !ok {
-		t.Fatalf("merged schema missing entry_field: %+v", props)
-	}
+	require.Contains(t, props, "caller_field", "merged schema missing caller_field: %+v", props)
+	require.Contains(t, props, "entry_field", "merged schema missing entry_field: %+v", props)
 }

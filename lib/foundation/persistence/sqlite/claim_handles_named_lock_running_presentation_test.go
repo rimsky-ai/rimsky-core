@@ -22,7 +22,10 @@ func TestCountByNamedLock_DrivenSolelyByClaimHandleStateNotNodeRunState(t *testi
 	t.Parallel()
 	d := openSQLite(t)
 	ctx := context.Background()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	const lockName = "running-presentation-lock"
 	templateID := "sha256-" + uuid.NewString()

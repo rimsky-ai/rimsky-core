@@ -115,7 +115,10 @@ func TestObservabilityHandlers_NeverMutateState(t *testing.T) {
 		Executors:      []observability.PeerSpec{{Name: "worker", Endpoint: "exec:9000"}},
 	}
 	r := newRouter(t, deps)
-	rawDB := sqlitedriver.DBFromDatabase(d)
+	rawDB, ok := sqlitedriver.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	missingID := "00000000-0000-0000-0000-000000000000"
 	paths := []string{

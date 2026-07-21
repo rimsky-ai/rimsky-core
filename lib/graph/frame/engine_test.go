@@ -100,17 +100,21 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 }
 
 func seedNodeRun(t *testing.T, ctx context.Context, d persistence.Database,
-	instanceID uuid.UUID, nodeID uuid.UUID, state string, frameID uuid.UUID) {
+	instanceID uuid.UUID, nodeID uuid.UUID, state string, frameID uuid.UUID, claimedBy ...string) {
 	t.Helper()
+	var claimedByPtr interface{}
+	if len(claimedBy) > 0 && claimedBy[0] != "" {
+		claimedByPtr = claimedBy[0]
+	}
 	var mainScopeID uuid.UUID
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
 		[]any{instanceID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
-        VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, 1, 'cascade', $3, $4)
-    `, nodeID, state, frameID, mainScopeID)
+            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, claimed_by, frame_id, run_scope_id)
+        VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, 1, 'cascade', $3, $4, $5)
+    `, nodeID, state, claimedByPtr, frameID, mainScopeID)
 }
 
 func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
@@ -145,26 +149,6 @@ func markMessageDelivered(t *testing.T, ctx context.Context, d persistence.Datab
 		`UPDATE rimsky_messages SET delivered_at = now() WHERE id = $1`, messageID)
 }
 
-func seedDispatch(t *testing.T, ctx context.Context, d persistence.Database,
-	nodeID uuid.UUID, frameID uuid.UUID, claimedBy string) {
-	t.Helper()
-	var claimedByPtr interface{} = claimedBy
-	if claimedBy == "" {
-		claimedByPtr = nil
-	}
-	var mainScopeID uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, d, `
-        SELECT s.id FROM rimsky_run_scopes s
-        JOIN rimsky_nodes n ON n.instance_id = s.instance_id
-        WHERE n.id = $1 AND s.graph_name = 'main'
-    `, []any{nodeID}, &mainScopeID)
-	pgtest.ExecForTest(ctx, t, d, `
-        INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, claimed_by, frame_id, run_scope_id)
-        VALUES ($1, $2, NULL, '{}', NOW(), 'running', 1, 'cascade', $3, $4, $5)
-    `, uuid.New(), nodeID, claimedByPtr, frameID, mainScopeID)
-}
-
 func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -175,10 +159,17 @@ func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 	src := uuid.New()
 	now := time.Now()
 	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now)
-	seedNode(t, ctx, d, instanceID, src, "fresh", &frameID)
+	seedNode(t, ctx, d, instanceID, src, "", nil)
+	seedNodeRun(t, ctx, d, instanceID, src, "fresh", frameID)
 	markMessageDelivered(t, ctx, d, msgID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
+
+	var runCount int
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT COUNT(*) FROM rimsky_node_runs WHERE frame_id = $1`, []any{frameID}, &runCount)
+	require.Equal(t, 1, runCount,
+		"this test proves a held terminal-fresh run settles the frame, not the vacuous zero-run case")
 
 	var state string
 	pgtest.QueryRowForTest(ctx, t, d,
@@ -324,6 +315,11 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 	seedNode(t, ctx, d, instanceID, srcA, "fresh", nil)
 	seedNode(t, ctx, d, instanceID, srcB, "fresh", nil)
 
+	var preExistingMainScope uuid.UUID
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
+		[]any{instanceID}, &preExistingMainScope)
+
 	msg2ID := foundationshared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
 		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind, received_at)
@@ -339,11 +335,21 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 	require.Equal(t, 1, running, "at most one running frame per instance")
 
 	var openedTriggeringID string
+	var openedRootScope uuid.UUID
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT triggering_message_id::text FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
-		[]any{instanceID}, &openedTriggeringID)
+		`SELECT triggering_message_id::text, root_run_scope_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
+		[]any{instanceID}, &openedTriggeringID, &openedRootScope)
 	require.Equal(t, msgID.String(), openedTriggeringID,
 		"oldest pending message opens the running frame")
+	require.NotEqual(t, uuid.Nil, openedRootScope, "opening a frame must stamp a real root_run_scope_id")
+	require.NotEqual(t, preExistingMainScope, openedRootScope,
+		"opening a frame must create a fresh root run scope, not reuse the pre-existing 'main' scope")
+
+	var scopeCount int
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT COUNT(*) FROM rimsky_run_scopes WHERE id = $1 AND instance_id = $2 AND graph_name = 'main'`,
+		[]any{openedRootScope, instanceID}, &scopeCount)
+	require.Equal(t, 1, scopeCount, "the frame's root_run_scope_id must resolve to a real, distinct run_scope row")
 }
 
 func TestRunTick_ReapOrphanDispatch(t *testing.T) {
@@ -360,7 +366,7 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 		`UPDATE rimsky_frames SET ended_at = now() WHERE frame_id = $1`, frameID)
 
 	seedNode(t, ctx, d, instanceID, src, "fresh", nil)
-	seedDispatch(t, ctx, d, src, frameID, "supervisor-1")
+	seedNodeRun(t, ctx, d, instanceID, src, "running", frameID, "supervisor-1")
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 

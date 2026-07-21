@@ -23,7 +23,10 @@ import (
 
 func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Database) (shared.UUID, shared.UUID) {
 	t.Helper()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New()
@@ -76,7 +79,7 @@ func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Datab
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
-		nodeID.String(), instanceID.String(), frameID.String(),
+		nodeID.String(), instanceID.String(),
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
@@ -154,7 +157,10 @@ func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
 	ctx := context.Background()
 	d := openSQLite(t)
 	runID, _ := seedDispatchInstance(t, ctx, d)
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	if _, err := rawDB.ExecContext(ctx,
 		`UPDATE rimsky_node_runs SET async_ack_id = 'ack-sweep' WHERE id = ?`,
 		runID.String(),

@@ -61,7 +61,10 @@ func TestHandler_GetNodeRun_DistinguishesHeldFromRunning(t *testing.T) {
 	runID := seedPendingRun(t, ctx, d, fix.NodeID, frameID, fix.MainRunScopeID)
 	claimAndPromoteRun(t, ctx, d, runID, "sup-1")
 
-	rawDB := sqlitedriver.DBFromDatabase(d)
+	rawDB, ok := sqlitedriver.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	if _, err := rawDB.ExecContext(ctx, `UPDATE rimsky_node_runs SET state = 'held' WHERE id = ?`, runID.String()); err != nil {
 		t.Fatalf("force run to held: %v", err)
 	}

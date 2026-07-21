@@ -28,7 +28,10 @@ func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := sqlitedrv.DBFromDatabase(d)
+	db, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	if _, err := db.Exec(`CREATE TABLE poolprobe (id INTEGER PRIMARY KEY, payload TEXT)`); err != nil {
 		t.Fatalf("create table: %v", err)

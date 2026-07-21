@@ -39,7 +39,10 @@ type traceFixture struct {
 
 func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database, nOld int) traceFixture {
 	t.Helper()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
@@ -136,7 +139,7 @@ func seedTraceFixture(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
-		heldNode, instanceID, heldFrame,
+		heldNode, instanceID,
 	); err != nil {
 		t.Fatalf("seed held node: %v", err)
 	}
@@ -185,7 +188,10 @@ func TestSQLite_FrameRetention_PrunesOldTerminalFramesAndCascadesNodeRuns(t *tes
 	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	f := seedTraceFixture(t, ctx, d, 3)
 
 	store := d.Tables()
@@ -242,7 +248,10 @@ func TestSQLite_FrameRetention_CascadesWaitSet(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	f := seedTraceFixture(t, ctx, d, 1)
 
 	oldFrame := f.oldFrames[0]
@@ -301,7 +310,10 @@ func TestSQLite_EventRetention_DeleteOlderThan(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	f := seedTraceFixture(t, ctx, d, 2)
 
 	store := d.Tables()
@@ -335,7 +347,10 @@ func TestSQLite_EventTimeRoundTripThroughProductionPaths(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openSQLite(t)
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 	f := seedTraceFixture(t, ctx, d, 0)
 	store := d.Tables()
 

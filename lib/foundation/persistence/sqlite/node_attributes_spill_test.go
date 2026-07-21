@@ -21,7 +21,10 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
 	ctx := context.Background()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	mem := persistence.NewMemoryBackend()
 	d.SetBlobBackend(mem, 256, time.Hour)
@@ -117,7 +120,10 @@ func TestNodeAttributesMergeDeltaSpill(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
 	ctx := context.Background()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	mem := persistence.NewMemoryBackend()
 	d.SetBlobBackend(mem, 256, time.Hour)
@@ -154,7 +160,10 @@ func TestSnapshotBagCarriesForwardSpilledBlobWithoutAliasing(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
 	ctx := context.Background()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	mem := persistence.NewMemoryBackend()
 	d.SetBlobBackend(mem, 256, time.Hour)
@@ -225,7 +234,10 @@ func TestNodeAttributesBackendMismatchErrors(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
 	ctx := context.Background()
-	rawDB := sqlitedrv.DBFromDatabase(d)
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
 
 	mem := persistence.NewMemoryBackend()
 	d.SetBlobBackend(mem, 256, time.Hour)
