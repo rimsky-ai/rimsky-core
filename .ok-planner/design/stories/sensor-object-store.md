@@ -3,27 +3,19 @@ story: sensor-object-store
 status: as-is
 ---
 
-# Operator wires object-store-driven message
+# Workflow reacts to deposited content
 
-## Role
+## Story
 
-As an operator wiring an object-store-driven message into a workflow, I can use the bundled object-store sensor to poll a bucket-and-prefix at a fixed interval, send a message per newly-discovered object (with the object's metadata surfaced into the message payload), and persist discovery state so restarts don't re-send objects already discovered, so that I react to new objects landing in an external store without writing a custom publisher.
-
-## Capability
-
-Bundled object-store sensor publisher: bucket-and-prefix polling; per-object discovery message with metadata payload; durable discovery state across restart; pluggable object-store backend kinds.
-
-## Business value
-
-Operators react to new objects landing in an external store without writing a custom publisher; restart doesn't re-send objects already discovered.
+As an operator, I want my workflow to react when new content is deposited into a location I designate, so that upstream producers can hand work to the graph by simply dropping it there — without anyone writing custom integration code.
 
 ## Acceptance
 
-An object-store-sensor instance polling a real bucket and prefix discovers a new object dropped after the last poll, advances its discovery watermark past that object, and attempts to send a message carrying that object's metadata at most once; downstream nodes consume the message on a successful send; a process restart preserves discovery state and doesn't re-send objects already discovered, even one whose send previously failed. Backend kinds are pluggable.
+A producer deposits new content into the watched location → the workflow reacts to that deposit, observing the deposit's real identity and metadata. Each deposit is reacted to at least once, and a deposit already reacted to is not re-triggered by a restart of the watching component. A deposit still being written is never treated as work — the workflow sees it only once it is complete. The component delivering the reaction is real (not stubbed); the technology of the location and of the detection is a technical decision, not part of this story.
 
 ## Falsifier
 
-Restart re-sends already-discovered objects, OR the configured backend is ignored, OR metadata in the sent message is canned.
+A restart re-triggers deposits already reacted to, OR a still-being-written deposit is consumed as work, OR the reaction's payload is canned rather than the deposit's real identity and metadata, OR content deposited while the watcher was down is silently never reacted to.
 
 ## Proof
 

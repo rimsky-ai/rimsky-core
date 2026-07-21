@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -164,6 +166,100 @@ func TestSubscribe_RejectsBadWatermark(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown watermark_field")
 	}
+}
+
+func TestSubscribe_RejectsNegativeSettleWindow(t *testing.T) {
+	s := NewSensorService("http://unused", noopLogger{})
+	s.SetBackend("memory", NewMemoryLister())
+	cfg := map[string]any{"backend": "memory", "bucket": "b", "settle_window": "-5s"}
+	raw, _ := json.Marshal(cfg)
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+	})
+	if err == nil || !strings.Contains(err.Error(), "settle_window") {
+		t.Fatalf("want settle_window error, got %v", err)
+	}
+}
+
+// @decision: deposit-settle-window
+func TestTick_SettleWindowHoldsUnsettledObjectUntilQuiet(t *testing.T) {
+	var (
+		obsMu   sync.Mutex
+		obsIdem []string
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		obsMu.Lock()
+		obsIdem = append(obsIdem, r.Header.Get("Idempotency-Key"))
+		obsMu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer rimsky.Close()
+
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	inbox := filepath.Join(root, "inbox")
+	if err := os.MkdirAll(inbox, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, content string, mtime time.Time) string {
+		p := filepath.Join(inbox, name)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	write("settled.md", "a finished plan", pin.Add(-time.Minute))
+	midPath := write("mid-write.md", "half a pl", pin.Add(-1*time.Second))
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	s.clock = func() time.Time { return pin }
+	s.SetBackend("filesystem", NewFilesystemLister(root))
+
+	cfg := map[string]any{"backend": "filesystem", "bucket": "inbox", "poll_interval": "1s", "settle_window": "5s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Tick(context.Background())
+	obsMu.Lock()
+	if got, want := len(obsIdem), 1; got != want {
+		t.Fatalf("first tick messages: %d (want %d — the unsettled object must be held)", got, want)
+	}
+	if !strings.HasPrefix(obsIdem[0], "w1+settled.md+") {
+		t.Errorf("Idempotency-Key[0] = %q, want settled.md", obsIdem[0])
+	}
+	obsMu.Unlock()
+
+	write("mid-write.md", "the whole plan, finally complete", pin.Add(2*time.Second))
+	s.clock = func() time.Time { return pin.Add(6 * time.Second) }
+	s.Tick(context.Background())
+	obsMu.Lock()
+	if got, want := len(obsIdem), 1; got != want {
+		t.Fatalf("second tick messages: %d (want %d — still within settle of last write)", got, want)
+	}
+	obsMu.Unlock()
+
+	finalETag, err := hashFile(midPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.clock = func() time.Time { return pin.Add(10 * time.Second) }
+	s.Tick(context.Background())
+	obsMu.Lock()
+	if got, want := len(obsIdem), 2; got != want {
+		t.Fatalf("third tick messages: %d (want %d — file settled, published once)", got, want)
+	}
+	if got, want := obsIdem[1], "w1+mid-write.md+"+finalETag; got != want {
+		t.Errorf("Idempotency-Key[1] = %q, want %q (hash of the final content, never the partial)", got, want)
+	}
+	obsMu.Unlock()
 }
 
 func TestSubscribe_RejectsNonPositivePollInterval(t *testing.T) {
@@ -527,6 +623,7 @@ func TestTick_SameETagDifferentObjectsBothDeliveredWithDistinctIdempotencyKeys(t
 	}
 }
 
+// @decision: deposit-detection-watermark
 func TestTick_FailedPostDoesNotAdvanceWatermark(t *testing.T) {
 	var (
 		mu        sync.Mutex

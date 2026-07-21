@@ -3,6 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @story: sensor-object-store
+// @decision: object-store-watching-model
 package main
 
 import (

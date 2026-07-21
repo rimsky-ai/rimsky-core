@@ -43,6 +43,7 @@ type Watch struct {
 	Prefix         string
 	PollInterval   time.Duration
 	WatermarkField string
+	SettleWindow   time.Duration
 	MessageType    string
 	ResolvedConfig []byte
 
@@ -165,6 +166,7 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 			"bucket":          map[string]any{"type": "string"},
 			"prefix":          map[string]any{"type": "string"},
 			"poll_interval":   map[string]any{"type": "string"},
+			"settle_window":   map[string]any{"type": "string"},
 			"watermark_field": map[string]any{"type": "string", "enum": []string{"name", "last_modified"}},
 		},
 		"required": []string{"backend", "bucket"},
@@ -193,6 +195,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		Bucket         string `json:"bucket"`
 		Prefix         string `json:"prefix"`
 		PollInterval   string `json:"poll_interval"`
+		SettleWindow   string `json:"settle_window"`
 		WatermarkField string `json:"watermark_field"`
 	}
 	if err := json.Unmarshal(req.GetResolvedConfig(), &cfg); err != nil {
@@ -228,6 +231,17 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		}
 		interval = d
 	}
+	settle := time.Duration(0)
+	if cfg.SettleWindow != "" {
+		d, err := time.ParseDuration(cfg.SettleWindow)
+		if err != nil {
+			return nil, fmt.Errorf("invalid settle_window %q: %w", cfg.SettleWindow, err)
+		}
+		if d < 0 {
+			return nil, fmt.Errorf("settle_window %q must not be negative", cfg.SettleWindow)
+		}
+		settle = d
+	}
 	messageType := req.GetMessageType()
 	w := &Watch{
 		SubscriptionID: req.GetPublisherSubscriptionId(),
@@ -237,6 +251,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		Prefix:         cfg.Prefix,
 		PollInterval:   interval,
 		WatermarkField: cfg.WatermarkField,
+		SettleWindow:   settle,
 		MessageType:    messageType,
 		ResolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
 	}
@@ -410,6 +425,10 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		if !exists {
 			s.mu.Unlock()
 			return
+		}
+		if cur.SettleWindow > 0 && now.Sub(o.LastModified) < cur.SettleWindow {
+			s.mu.Unlock()
+			continue
 		}
 		if !isNewObject(cur, o) {
 			s.mu.Unlock()
