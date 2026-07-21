@@ -546,6 +546,54 @@ func TestTick_PollsDueWatchesConcurrently_OneSlowWatchDoesNotBlockAnother(t *tes
 	<-tickDone
 }
 
+func TestTick_PermanentRejectionDropsObservation_AdvancesStateAndDoesNotReEmit(t *testing.T) {
+	const upstreamBody = `{"status":"ready","version":1}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(upstreamBody))
+	}))
+	defer upstream.Close()
+
+	var attempts int32
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	raw, _ := json.Marshal(map[string]any{"url": upstream.URL, "poll_interval": "10s"})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Tick(context.Background())
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts after rejected tick: %d (want 1; permanent 4xx must not be retried within Send)", got)
+	}
+	sum := sha256.Sum256([]byte(upstreamBody))
+	wantHash := hex.EncodeToString(sum[:])
+	s.mu.Lock()
+	lastHash := s.watches["w1"].LastHash
+	s.mu.Unlock()
+	if lastHash != wantHash {
+		t.Fatalf("LastHash after permanent rejection: %q, want %q — a permanently rejected "+
+			"observation is consumed, so the dedup cursor must advance exactly as on success", lastHash, wantHash)
+	}
+
+	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
+	s.Tick(context.Background())
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts after next tick with unchanged body: %d (want still 1; "+
+			"the dropped observation must not be re-emitted)", got)
+	}
+}
+
 func TestTick_FailedEmissionDoesNotAdvanceState_NextTickRetriesSameObservation(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

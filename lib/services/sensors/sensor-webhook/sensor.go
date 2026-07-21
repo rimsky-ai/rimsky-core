@@ -28,6 +28,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorpub"
 )
 
@@ -359,10 +360,15 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		idemKey = fmt.Sprintf("%s+%s", w.SubscriptionID, idemKey)
 	}
 	if err := s.postMessage(req.Context(), w, obs, idemKey); err != nil {
-		s.logger.Warn("sensor-webhook.message_post_failed",
-			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-		http.Error(rw, "rimsky push failed", http.StatusBadGateway)
-		return
+		var rejected *publisherkit.RejectedError
+		if !errors.As(err, &rejected) {
+			s.logger.Warn("sensor-webhook.message_post_failed",
+				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			http.Error(rw, "rimsky push failed", http.StatusBadGateway)
+			return
+		}
+		s.logger.Error("sensor-webhook.message_rejected_dropped",
+			"publisher_subscription_id", w.SubscriptionID, "status", rejected.Status, "error", err.Error())
 	}
 	if inboundIdem != "" {
 		w.mu.Lock()

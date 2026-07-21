@@ -5,6 +5,7 @@ package publisherkit
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -101,6 +102,116 @@ func TestSend_4xx_NoRetry_LogsRejected(t *testing.T) {
 	}
 	if len(log.msgs) != 1 || log.msgs[0] != "publisher.message.rejected" {
 		t.Fatalf("expected publisher.message.rejected log, got %#v", log.msgs)
+	}
+}
+
+func TestSend_4xx_ErrIsTypedRejectedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	res := Send(context.Background(), srv.Client(), &captureLog{}, func(time.Duration) {}, Request{
+		URL:           srv.URL,
+		Envelope:      []byte(`{}`),
+		PublisherName: "test",
+	})
+	var rejected *RejectedError
+	if !errors.As(res.Err, &rejected) {
+		t.Fatalf("permanent 4xx must return *RejectedError, got %T: %v", res.Err, res.Err)
+	}
+	if rejected.Status != http.StatusForbidden {
+		t.Fatalf("RejectedError.Status = %d, want %d", rejected.Status, http.StatusForbidden)
+	}
+	if rejected.URL != srv.URL {
+		t.Fatalf("RejectedError.URL = %q, want %q", rejected.URL, srv.URL)
+	}
+}
+
+func TestSend_408And429_RetriedThenSucceed(t *testing.T) {
+	for _, code := range []int{http.StatusRequestTimeout, http.StatusTooManyRequests} {
+		var hits int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if atomic.AddInt32(&hits, 1) < 3 {
+				w.WriteHeader(code)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+		}))
+		res := Send(context.Background(), srv.Client(), &captureLog{}, func(time.Duration) {}, Request{
+			URL:           srv.URL,
+			Envelope:      []byte(`{}`),
+			PublisherName: "test",
+		})
+		srv.Close()
+		if res.Err != nil {
+			t.Fatalf("status %d: Send after retries: %v", code, res.Err)
+		}
+		if res.Attempts != 3 {
+			t.Fatalf("status %d: attempts = %d, want 3", code, res.Attempts)
+		}
+		if got := atomic.LoadInt32(&hits); got != 3 {
+			t.Fatalf("status %d: hits = %d, want 3", code, got)
+		}
+	}
+}
+
+func TestSend_408And429_ExhaustionIsTransientNotRejected(t *testing.T) {
+	for _, code := range []int{http.StatusRequestTimeout, http.StatusTooManyRequests} {
+		var hits int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.WriteHeader(code)
+		}))
+		log := &captureLog{}
+		res := Send(context.Background(), srv.Client(), log, func(time.Duration) {}, Request{
+			URL:           srv.URL,
+			Envelope:      []byte(`{}`),
+			PublisherName: "test",
+		})
+		srv.Close()
+		if res.Err == nil {
+			t.Fatalf("status %d: expected err on exhausted retries", code)
+		}
+		if res.Rejected {
+			t.Fatalf("status %d is retryable and must not set Rejected", code)
+		}
+		var rejected *RejectedError
+		if errors.As(res.Err, &rejected) {
+			t.Fatalf("status %d exhaustion must be a transient error, got *RejectedError", code)
+		}
+		if res.Attempts != 3 {
+			t.Fatalf("status %d: attempts = %d, want 3", code, res.Attempts)
+		}
+		if got := atomic.LoadInt32(&hits); got != 3 {
+			t.Fatalf("status %d: hits = %d, want 3", code, got)
+		}
+		log.mu.Lock()
+		msgs := append([]string(nil), log.msgs...)
+		log.mu.Unlock()
+		for _, m := range msgs {
+			if m == "publisher.message.rejected" {
+				t.Fatalf("status %d must not log publisher.message.rejected", code)
+			}
+		}
+	}
+}
+
+func TestSend_5xx_ErrIsNotRejectedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	res := Send(context.Background(), srv.Client(), &captureLog{}, func(time.Duration) {}, Request{
+		URL:           srv.URL,
+		Envelope:      []byte(`{}`),
+		PublisherName: "test",
+	})
+	if res.Err == nil {
+		t.Fatal("Send: expected err on exhausted retries")
+	}
+	var rejected *RejectedError
+	if errors.As(res.Err, &rejected) {
+		t.Fatal("5xx exhaustion must be a transient error, got *RejectedError")
 	}
 }
 

@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorpub"
 )
 
@@ -278,9 +280,14 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 	}
 	idemKey := cronIdempotencyKey(w.SubscriptionID, w.NextFireAt)
 	if err := s.postMessage(ctx, w, body, idemKey); err != nil {
-		s.logger.Warn("sensor-cron.message_post_failed",
-			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-		return
+		var rejected *publisherkit.RejectedError
+		if !errors.As(err, &rejected) {
+			s.logger.Warn("sensor-cron.message_post_failed",
+				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			return
+		}
+		s.logger.Error("sensor-cron.message_rejected_dropped",
+			"publisher_subscription_id", w.SubscriptionID, "status", rejected.Status, "error", err.Error())
 	}
 	s.mu.Lock()
 	cur, ok := s.watches[w.SubscriptionID]

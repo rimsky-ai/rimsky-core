@@ -746,6 +746,64 @@ func TestIdempotencyHeader_FailedPostAllowsRetry(t *testing.T) {
 	}
 }
 
+func TestServeWebhook_PermanentRejectionDropsDelivery_AdvancesWatermarkAndReturns200(t *testing.T) {
+	var attempts int32
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer rimsky.Close()
+
+	router := chi.NewRouter()
+	s := NewSensorService(rimsky.URL, router, noopLogger{})
+	cfg := map[string]any{"path_prefix": "/wh/drop", "idempotency_header": "X-Idem", "auth": map[string]any{"mode": "none"}}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", Kind: "webhook", ResolvedConfig: raw,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	post := func() int {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/drop", bytes.NewReader([]byte(`{"event":"x"}`)))
+		req.Header.Set("X-Idem", "k1")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if code := post(); code != http.StatusOK {
+		t.Fatalf("rejected delivery status: %d (want 200; a permanently rejected observation is "+
+			"consumed, so the webhook source must not be told to retry)", code)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts after rejected delivery: %d (want 1; permanent 4xx must not be retried within Send)", got)
+	}
+	s.mu.Lock()
+	w := s.watches["w1"]
+	s.mu.Unlock()
+	w.mu.Lock()
+	lastIdem := w.LastIdempotency
+	w.mu.Unlock()
+	if lastIdem != "k1" {
+		t.Fatalf("LastIdempotency after permanent rejection: %q, want %q — the watermark must "+
+			"advance exactly as on success", lastIdem, "k1")
+	}
+
+	if code := post(); code != http.StatusOK {
+		t.Fatalf("duplicate delivery status: %d (want 200)", code)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts after duplicate delivery: %d (want still 1; the dropped observation "+
+			"must be deduplicated, not re-posted)", got)
+	}
+}
+
 func TestIdempotencyHeader_ComposesSubIDWithIncomingHeader(t *testing.T) {
 	var gotIdem string
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

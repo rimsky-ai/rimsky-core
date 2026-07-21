@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -19,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorpub"
 )
 
@@ -429,9 +431,14 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		}
 		idemKey := fmt.Sprintf("%s+%s+%s", w.SubscriptionID, o.Name, o.ETag)
 		if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
-			s.logger.Warn("sensor-object-store.message_post_failed",
-				"publisher_subscription_id", w.SubscriptionID, "object_name", o.Name, "error", err.Error())
-			return
+			var rejected *publisherkit.RejectedError
+			if !errors.As(err, &rejected) {
+				s.logger.Warn("sensor-object-store.message_post_failed",
+					"publisher_subscription_id", w.SubscriptionID, "object_name", o.Name, "error", err.Error())
+				return
+			}
+			s.logger.Error("sensor-object-store.message_rejected_dropped",
+				"publisher_subscription_id", w.SubscriptionID, "object_name", o.Name, "status", rejected.Status, "error", err.Error())
 		}
 
 		s.mu.Lock()

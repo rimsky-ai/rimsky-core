@@ -600,6 +600,73 @@ func TestTick_FailedPostDoesNotAdvanceWatermark(t *testing.T) {
 	}
 }
 
+func TestTick_PermanentRejectionDropsObject_AdvancesWatermarkAndContinues(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		attempted []string
+	)
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		payload, _ := body["payload"].(map[string]any)
+		name, _ := payload["object_name"].(string)
+		mu.Lock()
+		attempted = append(attempted, name)
+		mu.Unlock()
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	lister := NewMemoryLister()
+	s.SetBackend("memory", lister)
+	lister.Put("test-bucket", ObjectMeta{Name: "events/a.json", LastModified: pin.Add(-1 * time.Hour), Size: 10, ETag: "etag-a"})
+	lister.Put("test-bucket", ObjectMeta{Name: "events/b.json", LastModified: pin.Add(-30 * time.Minute), Size: 20, ETag: "etag-b"})
+
+	cfg := map[string]any{"backend": "memory", "bucket": "test-bucket", "prefix": "events/", "poll_interval": "10s"}
+	raw, _ := json.Marshal(cfg)
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Tick(context.Background())
+	mu.Lock()
+	got := append([]string(nil), attempted...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != "events/a.json" || got[1] != "events/b.json" {
+		t.Fatalf("attempted during rejecting tick: %v (want [events/a.json events/b.json]; a permanent "+
+			"rejection consumes one object and the poll loop must continue to the next)", got)
+	}
+	s.mu.Lock()
+	w := s.watches["w1"]
+	watermark := w.WatermarkName
+	_, seenA := w.SeenNames["events/a.json"]
+	_, seenB := w.SeenNames["events/b.json"]
+	s.mu.Unlock()
+	if watermark != "events/b.json" {
+		t.Fatalf("watermark after permanent rejections: %q, want %q — a permanently rejected "+
+			"object is consumed, so the watermark must advance exactly as on success", watermark, "events/b.json")
+	}
+	if !seenA || !seenB {
+		t.Fatalf("seen names after permanent rejections: a=%v b=%v (want both marked seen)", seenA, seenB)
+	}
+
+	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
+	s.Tick(context.Background())
+	mu.Lock()
+	after := len(attempted)
+	mu.Unlock()
+	if after != 2 {
+		t.Fatalf("attempted after next tick: %d (want still 2; dropped objects must not be re-emitted)", after)
+	}
+}
+
 func TestPostMessage_EscapesInstanceIDPathSegment(t *testing.T) {
 	const hostileInstanceID = "../../../v1/auth/whoami?x=/..%2e"
 	gotSegment := make(chan string, 1)

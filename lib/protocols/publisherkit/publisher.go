@@ -24,6 +24,22 @@ type Result struct {
 	Attempts int
 }
 
+type RejectedError struct {
+	Status int
+	URL    string
+}
+
+func (e *RejectedError) Error() string {
+	return fmt.Sprintf("rimsky %s → %d (rejected)", e.URL, e.Status)
+}
+
+func permanentRejection(code int) bool {
+	if code < 400 || code >= 500 {
+		return false
+	}
+	return code != http.StatusRequestTimeout && code != http.StatusTooManyRequests
+}
+
 type Sleeper func(d time.Duration)
 
 type Request struct {
@@ -71,7 +87,7 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 		if resp.StatusCode < 300 {
 			return Result{Status: resp.StatusCode, Attempts: attempt}
 		}
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		if permanentRejection(resp.StatusCode) {
 			log.Warn("publisher.message.rejected",
 				"publisher", req.PublisherName,
 				"publisher_subscription_id", req.SubscriptionID,
@@ -80,7 +96,7 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 				"url", req.URL)
 			return Result{
 				Status:   resp.StatusCode,
-				Err:      fmt.Errorf("rimsky %s → %d (rejected)", req.URL, resp.StatusCode),
+				Err:      &RejectedError{Status: resp.StatusCode, URL: req.URL},
 				Rejected: true,
 				Attempts: attempt,
 			}

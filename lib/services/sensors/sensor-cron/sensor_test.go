@@ -353,6 +353,54 @@ func TestSubscribe_EvaluatesCronExpressionInUTCRegardlessOfProcessLocation(t *te
 	}
 }
 
+func TestTick_PermanentRejectionDropsFire_AdvancesNextFireWindow(t *testing.T) {
+	var attempts int32
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer rimsky.Close()
+
+	s := NewSensorService(rimsky.URL, noopLogger{})
+	pin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return pin }
+	raw, _ := json.Marshal(map[string]any{"cron": "*/5 * * * *"})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+		MessageType: "system/invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fireAt := pin.Add(6 * time.Minute)
+	s.clock = func() time.Time { return fireAt }
+	s.Tick(context.Background())
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts after rejected tick: %d (want 1; permanent 4xx must not be retried within Send)", got)
+	}
+
+	s.mu.Lock()
+	w := s.watches["w1"]
+	nextFireAt := w.NextFireAt
+	lastFireAt := w.LastFireAt
+	s.mu.Unlock()
+	wantNext := time.Date(2026, 1, 1, 0, 10, 0, 0, time.UTC)
+	if !nextFireAt.Equal(wantNext) {
+		t.Fatalf("next_fire_at after permanent rejection: %s, want %s — a permanently rejected "+
+			"fire is consumed, so the window cursor must advance exactly as on success", nextFireAt, wantNext)
+	}
+	if lastFireAt == nil || !lastFireAt.Equal(fireAt) {
+		t.Fatalf("last_fire_at after permanent rejection: %v, want %s", lastFireAt, fireAt)
+	}
+
+	s.clock = func() time.Time { return pin.Add(7 * time.Minute) }
+	s.Tick(context.Background())
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts after next tick before the next window: %d (want still 1; "+
+			"the dropped fire must not be re-attempted)", got)
+	}
+}
+
 func TestTick_FailedEmissionDoesNotAdvanceState_NextTickRetriesSameObservation(t *testing.T) {
 	var (
 		mu         sync.Mutex
