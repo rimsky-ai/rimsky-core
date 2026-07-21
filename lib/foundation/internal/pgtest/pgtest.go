@@ -6,7 +6,6 @@ package pgtest
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,16 +13,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	pgpersist "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pgpool"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-var sharedPool = pgpool.New(pgpool.Config{
-	Image:        "postgres:14-alpine",
-	Database:     "rimsky",
-	User:         "rimsky",
-	Password:     "rimsky",
-	InitTemplate: migrateTemplate,
-})
+var sharedPool = pgpool.NewRimskySchemaPool()
 
 func StartPostgres(ctx context.Context, t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -152,19 +144,4 @@ func OpenDriver(ctx context.Context, t *testing.T) persistence.Database {
 	t.Cleanup(func() { _ = d.Close() })
 
 	return d
-}
-
-func migrateTemplate(ctx context.Context, dsn string) error {
-	d, err := persistence.Open(ctx, persistence.Config{
-		Driver:   "postgres",
-		Postgres: &persistence.PostgresConfig{DSN: dsn},
-	})
-	if err != nil {
-		return fmt.Errorf("open template driver: %w", err)
-	}
-	defer func() { _ = d.Close() }()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		return fmt.Errorf("migrate template: %w", err)
-	}
-	return nil
 }

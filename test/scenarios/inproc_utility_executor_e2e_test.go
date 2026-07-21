@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -67,4 +68,14 @@ func TestInprocUtilityExecutorE2E(t *testing.T) {
 	require.NotNil(t, counter, "counter node missing from instance")
 
 	h.WaitForNodeState(counter.ID, cascade.NodeStateFresh)
+
+	var row *persistence.NodeAttributesRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, counter.ID, h.GetMainRunScopeID(iid), tx)
+		row = r
+		return err
+	}))
+	require.NotNil(t, row, "counter attribute row must exist after the loop settles")
+	require.EqualValues(t, 3, row.Data["count"],
+		"loop_counter must have incremented to max (3) before the `done` tag stopped the re-fire")
 }

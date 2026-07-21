@@ -183,6 +183,24 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 	require.Greater(t, acqRunCount, 0,
 		"the supervisor's ground-truth claim-holder row keys on the acquirer's node-run; "+
 			"the HTTP surface must reflect this exact holder")
+
+	var inheritorState string
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT state::text FROM rimsky_node_runs WHERE node_id = $1 ORDER BY enqueued_at DESC LIMIT 1`,
+		uuid.UUID(rcv.ID),
+	).Scan(&inheritorState))
+	require.Equal(t, string(cascade.NodeStateStale), inheritorState,
+		"inheritor must stay blocked behind the parked acquirer's held claim and never dispatch, "+
+			"even though the signaler it subscribes to already settled terminal/success")
+
+	var inheritorDispatchCount int
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'work_started'`,
+		uuid.UUID(rcv.ID),
+	).Scan(&inheritorDispatchCount))
+	require.Zero(t, inheritorDispatchCount,
+		"inheritor must never actually dispatch (no work_started event) while blocked behind "+
+			"the parked acquirer's held claim")
 }
 
 func waitForNodeOnParkedSurface(t *testing.T, h *scenario.Harness, nodeID string) {

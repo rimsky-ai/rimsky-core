@@ -252,6 +252,50 @@ func TestVerifyHeadersFlagsContradictoryMarkers(t *testing.T) {
 	}
 }
 
+func TestVerifyHeadersFlagsMissingHeader(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/nohead.go"
+	if err := writeTestFile(path, []byte("package x\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f := fileEntry{relPath: "nohead.go", absPath: path, kind: kindGo, classification: classApache}
+	vs := verifyHeaders([]fileEntry{f})
+	if len(vs) != 1 {
+		t.Fatalf("expected exactly one violation, got %d: %+v", len(vs), vs)
+	}
+	if !strings.Contains(vs[0].message, "missing license header") {
+		t.Errorf("violation message should call out the missing header, got %q", vs[0].message)
+	}
+}
+
+func TestVerifyHeadersFlagsWrongKind(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/wrongkind.go"
+	body := agplHeaderGo + "\npackage x\n"
+	if err := writeTestFile(path, []byte(body)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f := fileEntry{relPath: "wrongkind.go", absPath: path, kind: kindGo, classification: classApache}
+	vs := verifyHeaders([]fileEntry{f})
+	if len(vs) != 1 {
+		t.Fatalf("expected exactly one violation, got %d: %+v", len(vs), vs)
+	}
+	if !strings.Contains(vs[0].message, "expected Apache header but found AGPL or unknown") {
+		t.Errorf("violation message should call out the Apache/AGPL mismatch, got %q", vs[0].message)
+	}
+}
+
+func TestVerifyHeadersFlagsUnclassifiedFile(t *testing.T) {
+	f := fileEntry{relPath: "mystery.go", absPath: "/does/not/matter.go", kind: kindGo, classification: classUnknown}
+	vs := verifyHeaders([]fileEntry{f})
+	if len(vs) != 1 {
+		t.Fatalf("expected exactly one violation, got %d: %+v", len(vs), vs)
+	}
+	if !strings.Contains(vs[0].message, "unclassified source file") {
+		t.Errorf("violation message should call out the unclassified file, got %q", vs[0].message)
+	}
+}
+
 func TestStampOneStripsMixedMarkersAndEmitsSingleHeader(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/mixed.go"

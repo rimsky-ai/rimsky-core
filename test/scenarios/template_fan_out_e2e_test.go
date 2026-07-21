@@ -40,11 +40,17 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 		},
 	})
 
-	const leafDelay = 600 * time.Millisecond
+	const concurrencyBound = 500 * time.Millisecond
 
-	h.Stub.WhenType("fan-parent").
+	holds := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
+	builder := h.Stub.WhenType("fan-parent").
 		Success(map[string]any{"ok": true}, true, "ok").
-		Delay(leafDelay)
+		HoldUntil(holds[0])
+	for i := 1; i < len(holds); i++ {
+		builder = builder.Then().
+			Success(map[string]any{"ok": true}, true, "ok").
+			HoldUntil(holds[i])
+	}
 
 	openAttrs := scenario.WithAttributes(map[string]any{
 		"type": "object",
@@ -103,7 +109,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 
 	var spreadMs int64
 	h.QueryRowSQL(`
-		SELECT EXTRACT(EPOCH FROM (MAX(occurred_at) - MIN(occurred_at)))::bigint * 1000
+		SELECT (EXTRACT(EPOCH FROM (MAX(occurred_at) - MIN(occurred_at))) * 1000)::bigint
 		  FROM (
 		    SELECT occurred_at FROM rimsky_events
 		     WHERE node_id = $1 AND kind = 'work_started'
@@ -111,25 +117,14 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 		     LIMIT 3
 		  ) sub
 	`, []any{parentNode.ID}, &spreadMs)
-	require.Less(t, spreadMs, leafDelay.Milliseconds(),
+	require.Less(t, spreadMs, concurrencyBound.Milliseconds(),
 		"work_started events for the three partition runs must be concurrent — "+
-			"observed spread %dms ≥ per-leaf delay %dms suggests serialized dispatch "+
+			"observed spread %dms ≥ bound %dms suggests serialized dispatch "+
 			"(fan-out children must be dispatched in parallel, not one after another)",
-		spreadMs, leafDelay.Milliseconds())
+		spreadMs, concurrencyBound.Milliseconds())
 
-	verifiedParentHeld := false
-	deadline := time.Now().Add(90 * time.Second)
-	for time.Now().Before(deadline) {
-		var freshChildren, terminalChildren int
-		h.QueryRowSQL(`
-			SELECT COUNT(*)
-			  FROM rimsky_node_runs r
-			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
-			 WHERE r.state = 'fresh'
-			   AND rs.instance_id = $1
-			   AND rs.partition_key <> ''
-			   AND r.node_id = $2
-		`, []any{iid, parentNode.ID}, &freshChildren)
+	terminalChildren := func() int {
+		var n int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
 			  FROM rimsky_node_runs r
@@ -138,29 +133,29 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 			   AND rs.instance_id = $1
 			   AND rs.partition_key <> ''
 			   AND r.node_id = $2
-		`, []any{iid, parentNode.ID}, &terminalChildren)
-		if terminalChildren >= 1 && terminalChildren < 3 {
-			parentState := parentNodeState(t, h, parentNode.ID)
-			require.NotEqual(t, cascade.NodeStateFresh, parentState,
-				"parent fan-out node settled to fresh while only %d of 3 partition children had terminated — "+
-					"parent must wait for ALL sub-claims to resolve before settling",
-				terminalChildren)
-			require.NotEqual(t, cascade.NodeStateFailed, parentState,
-				"parent fan-out node settled to failed while only %d of 3 partition children had terminated",
-				terminalChildren)
-			verifiedParentHeld = true
-		}
-		if freshChildren >= 3 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+		`, []any{iid, parentNode.ID}, &n)
+		return n
 	}
-	require.True(t, verifiedParentHeld,
-		"never observed the parent in-flight with some-but-not-all partition children terminated — "+
-			"the leaf delay (%s) should have created a wide enough natural window for the 20ms poll "+
-			"to catch the moment; if this fails the aggregation path may be settling the parent "+
-			"out-of-order relative to the children",
-		leafDelay)
+
+	requireParentNotSettled := func(afterReleases int) {
+		parentState := parentNodeState(t, h, parentNode.ID)
+		require.NotEqual(t, cascade.NodeStateFresh, parentState,
+			"parent fan-out node settled to fresh after only %d of 3 partition children were released — "+
+				"parent must wait for ALL sub-claims to resolve before settling",
+			afterReleases)
+		require.NotEqual(t, cascade.NodeStateFailed, parentState,
+			"parent fan-out node settled to failed after only %d of 3 partition children were released",
+			afterReleases)
+	}
+
+	for i, hold := range holds[:len(holds)-1] {
+		close(hold)
+		require.Eventually(t, func() bool { return terminalChildren() == i+1 },
+			60*time.Second, 25*time.Millisecond,
+			"released partition child %d never reached a terminal run state", i+1)
+		requireParentNotSettled(i + 1)
+	}
+	close(holds[len(holds)-1])
 
 	h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh)
 }

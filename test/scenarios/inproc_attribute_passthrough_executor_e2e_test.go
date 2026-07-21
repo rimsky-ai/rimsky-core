@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -49,4 +50,15 @@ func TestInprocAttributePassthroughExecutorE2E(t *testing.T) {
 	require.NotNil(t, passthrough, "passthrough node missing from instance")
 
 	h.WaitForNodeState(passthrough.ID, cascade.NodeStateFresh)
+
+	var row *persistence.NodeAttributesRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, passthrough.ID, h.GetMainRunScopeID(iid), tx)
+		row = r
+		return err
+	}))
+	require.NotNil(t, row, "attribute row must exist after terminal/success")
+	require.Equal(t, true, row.Data["flag"], "schema default `flag` must pass through as an attribute")
+	require.Equal(t, "hello", row.Data["name"], "schema default `name` must pass through as an attribute")
+	require.EqualValues(t, 1, row.Data["count"], "schema default `count` must pass through as an attribute")
 }

@@ -49,6 +49,7 @@ type Call struct {
 	Verb     string
 	ClaimID  string
 	Selector string
+	Intent   string
 	Scope    []byte
 	Address  []byte
 }
@@ -100,10 +101,10 @@ func New(cfg Config) *Store {
 
 func (s *Store) Capabilities() claimproducer.Capabilities { return s.caps }
 
-func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer.OpenOutcome, error) {
+func (s *Store) Open(_ context.Context, claimID, selector, intent string) (claimproducer.OpenOutcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.calls = append(s.calls, Call{Verb: "open", ClaimID: claimID, Selector: selector})
+	s.calls = append(s.calls, Call{Verb: "open", ClaimID: claimID, Selector: selector, Intent: intent})
 	rws := s.realizedSemantics()
 	if pp, ok := s.pickPolicies[selector]; ok {
 		if len(pp.queue) == 0 {

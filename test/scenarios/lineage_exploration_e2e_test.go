@@ -160,9 +160,12 @@ func TestLineageExploration(t *testing.T) {
 			"the producer node must appear in the consumer's ancestors set; the consumer's substitution_refs cited the producer's run as source_kind=run and the walker must follow that link")
 	}
 
-	claimHandleID := mostRecentClaimHandleID(t, h, iid)
-	require.NotEqual(t, "", claimHandleID,
-		"the producer's committed claim handle id must be discoverable from rimsky_claim_handles")
+	var claimHandleID string
+	require.Eventually(t, func() bool {
+		claimHandleID = mostRecentClaimHandleID(t, h, iid)
+		return claimHandleID != ""
+	}, 30*time.Second, 200*time.Millisecond,
+		"the producer's committed claim handle id must be discoverable from rimsky_claim_handles; the claim_terminal lineage row lands asynchronously after the producer's commit")
 
 	require.Eventually(t, func() bool {
 		url := h.ControlBase + "/v1/lineage/claims/" + claimHandleID

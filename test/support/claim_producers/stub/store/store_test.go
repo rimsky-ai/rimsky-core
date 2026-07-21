@@ -36,14 +36,14 @@ func TestPickPolicyOpenDrainsQueueFIFO(t *testing.T) {
 	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	ctx := context.Background()
 
-	o1, err := st.Open(ctx, "c1", "@queue")
+	o1, err := st.Open(ctx, "c1", "@queue", "rw")
 	if err != nil {
 		t.Fatalf("Open c1: %v", err)
 	}
 	if !o1.Available {
 		t.Fatalf("Open c1 should be Available; got Unavailable")
 	}
-	o2, err := st.Open(ctx, "c2", "@queue")
+	o2, err := st.Open(ctx, "c2", "@queue", "rw")
 	if err != nil {
 		t.Fatalf("Open c2: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestPickPolicyOpenDrainsQueueFIFO(t *testing.T) {
 	if string(o1.Result.ClaimScope) == string(o2.Result.ClaimScope) {
 		t.Fatalf("different items should have different regions; got %s twice", o1.Result.ClaimScope)
 	}
-	o3, err := st.Open(ctx, "c3", "@queue")
+	o3, err := st.Open(ctx, "c3", "@queue", "rw")
 	if err != nil {
 		t.Fatalf("Open c3: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestApplyPickActionDelete(t *testing.T) {
 	items := []json.RawMessage{json.RawMessage(`{"value":"a"}`)}
 	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Pop}, action.Action{Kind: action.Pop})
 	ctx := context.Background()
-	o, _ := st.Open(ctx, "c1", "@queue")
+	o, _ := st.Open(ctx, "c1", "@queue", "rw")
 	if err := st.Commit(ctx, "c1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestApplyPickActionReleaseToBack(t *testing.T) {
 	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	ctx := context.Background()
 
-	o, _ := st.Open(ctx, "c1", "@queue")
+	o, _ := st.Open(ctx, "c1", "@queue", "rw")
 	if err := st.Commit(ctx, "c1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -113,20 +113,20 @@ func TestApplyPickActionRecycleAbandonReturnsItemToTail(t *testing.T) {
 	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	ctx := context.Background()
 
-	o, _ := st.Open(ctx, "c1", "@queue")
+	o, _ := st.Open(ctx, "c1", "@queue", "rw")
 	var pickedID string
 	_ = json.Unmarshal(o.Result.ClaimScope, &pickedID)
 
 	if err := st.Abandon(ctx, "c1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
-	o2, _ := st.Open(ctx, "c2", "@queue")
+	o2, _ := st.Open(ctx, "c2", "@queue", "rw")
 	var nextID string
 	_ = json.Unmarshal(o2.Result.ClaimScope, &nextID)
 	if pickedID == "" || pickedID == nextID {
 		t.Fatalf("recycle should send to tail, not head; got picked=%q, next=%q", pickedID, nextID)
 	}
-	o3, _ := st.Open(ctx, "c3", "@queue")
+	o3, _ := st.Open(ctx, "c3", "@queue", "rw")
 	var lastID string
 	_ = json.Unmarshal(o3.Result.ClaimScope, &lastID)
 	if lastID != pickedID {
@@ -138,7 +138,7 @@ func TestApplyPickActionUnknownConfiguredActionReturnsError(t *testing.T) {
 	items := []json.RawMessage{json.RawMessage(`{"v":"a"}`)}
 	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Kind("what-is-this")}, action.Action{Kind: action.Kind("what-is-this")})
 	ctx := context.Background()
-	o, _ := st.Open(ctx, "c1", "@queue")
+	o, _ := st.Open(ctx, "c1", "@queue", "rw")
 	err := st.Commit(ctx, "c1", o.Result.ClaimScope, o.Result.Address)
 	if err == nil {
 		t.Fatal("expected error for unknown configured action; got nil")
@@ -148,7 +148,7 @@ func TestApplyPickActionUnknownConfiguredActionReturnsError(t *testing.T) {
 func TestRegionalSelectorEchoesAsAddressAndRegion(t *testing.T) {
 	st := New(Config{Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}}})
 	ctx := context.Background()
-	o, err := st.Open(ctx, "c1", "concrete/path")
+	o, err := st.Open(ctx, "c1", "concrete/path", "rw")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestSeedPickPolicyItemUnknownSelector(t *testing.T) {
 func TestCallsRecorded(t *testing.T) {
 	st := New(Config{Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}}})
 	ctx := context.Background()
-	_, _ = st.Open(ctx, "c1", "x")
+	_, _ = st.Open(ctx, "c1", "x", "rw")
 	_ = st.Commit(ctx, "c1", []byte(`"x"`), []byte(`"x"`))
 	calls := st.Calls()
 	if len(calls) < 2 {
@@ -195,6 +195,9 @@ func TestCallsRecorded(t *testing.T) {
 	}
 	if calls[0].Verb != "open" || calls[1].Verb != "commit" {
 		t.Fatalf("call sequence wrong: %v", calls)
+	}
+	if calls[0].Intent != "rw" {
+		t.Fatalf("open call should record the caller's intent; got %q, want %q", calls[0].Intent, "rw")
 	}
 }
 

@@ -875,6 +875,9 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 	if spec.Description != "" {
 		out["description"] = spec.Description
 	}
+	if len(spec.LateBindServices) > 0 {
+		out["late_bind_services"] = spec.LateBindServices
+	}
 	if len(spec.ParamsSchema) > 0 {
 		out["params_schema"] = spec.ParamsSchema
 	}

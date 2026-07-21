@@ -99,10 +99,11 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 }
 
 func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
-	if intent := req.GetIntent(); intent != "r" && intent != "rw" {
+	intent := req.GetIntent()
+	if intent != "r" && intent != "rw" {
 		return nil, fmt.Errorf("stub.Open: intent must be \"r\" or \"rw\", got %q", intent)
 	}
-	outcome, err := s.Store.Open(ctx, req.GetClaimId(), req.GetSelector())
+	outcome, err := s.Store.Open(ctx, req.GetClaimId(), req.GetSelector(), intent)
 	if err != nil {
 		return nil, err
 	}

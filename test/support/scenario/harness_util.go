@@ -37,10 +37,6 @@ func MutexLock(name string) node.NodeLockRef {
 	return node.NodeLockRef{Name: name}
 }
 
-func CountingLock(name string) node.NodeLockRef {
-	return node.NodeLockRef{Name: name}
-}
-
 func StartStubExecutorWithSchema(t testing.TB, schema []byte) executor.Endpoint {
 	t.Helper()
 	s := stubexec.New()

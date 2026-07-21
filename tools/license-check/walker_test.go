@@ -149,6 +149,8 @@ func TestSourceKindFor(t *testing.T) {
 		{"foo.sh", kindShell, true},
 		{"README.md", 0, false},
 		{"x.txt", 0, false},
+		{"Dockerfile", 0, false},
+		{"Makefile", 0, false},
 	}
 	for _, tc := range cases {
 		got, ok := sourceKindFor(tc.name)

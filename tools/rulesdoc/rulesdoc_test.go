@@ -56,6 +56,32 @@ func TestRulesDoc_CitedPathsExist(t *testing.T) {
 	}
 }
 
+func TestLooksLikeRepoPath(t *testing.T) {
+	cases := []struct {
+		tok  string
+		want bool
+	}{
+		{"lib/foundation/persistence/", true},
+		{"lib/protocols/proto/v1/claim_producer.proto", true},
+		{"lib/protocols/proto/v1/*.proto", false},
+		{"deploy/values.json", true},
+		{"deploy/values.toml", true},
+		{"CLAUDE.md", true},
+		{"./CLAUDE.md", true},
+		{"RELEASING.md", true},
+		{".golangci.yml", true},
+		{"plumbline-cheatsheet.md", false},
+		{"time.Sleep", false},
+		{"make lint", false},
+		{"https://github.com/example/repo", false},
+	}
+	for _, c := range cases {
+		if got := looksLikeRepoPath(c.tok); got != c.want {
+			t.Errorf("looksLikeRepoPath(%q) = %v, want %v", c.tok, got, c.want)
+		}
+	}
+}
+
 func dropSearchScopingLine(content string) string {
 	lines := strings.Split(content, "\n")
 	kept := make([]string, 0, len(lines))
@@ -81,9 +107,7 @@ func citedPaths(content string) []string {
 }
 
 func looksLikeRepoPath(tok string) bool {
-	if !strings.Contains(tok, "/") {
-		return false
-	}
+	tok = strings.TrimPrefix(tok, "./")
 	if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
 		return false
 	}
@@ -96,12 +120,28 @@ func looksLikeRepoPath(tok string) bool {
 	if strings.HasSuffix(tok, "/") {
 		return true
 	}
-	for _, ext := range []string{".sh", ".yml", ".yaml", ".md", ".go"} {
+	hasRepoExt := false
+	for _, ext := range []string{".sh", ".yml", ".yaml", ".md", ".go", ".proto", ".ts", ".json", ".toml"} {
 		if strings.HasSuffix(tok, ext) {
-			return true
+			hasRepoExt = true
+			break
 		}
 	}
-	return false
+	if !hasRepoExt {
+		return false
+	}
+	if strings.Contains(tok, "/") {
+		return true
+	}
+	return looksLikeRootLevelFilename(tok)
+}
+
+func looksLikeRootLevelFilename(name string) bool {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	if strings.HasPrefix(base, ".") {
+		return true
+	}
+	return base == strings.ToUpper(base)
 }
 
 func backtickSpans(content string) []string {

@@ -61,7 +61,7 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 					WriteClaimRef("inbound", "@queue"),
 					ClaimRef("output", "region-A"),
 				),
-				WithLocks(MutexLock("global"), CountingLock("limited")),
+				WithLocks(MutexLock("global"), MutexLock("limited")),
 				WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

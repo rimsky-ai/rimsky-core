@@ -10,6 +10,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -134,7 +135,11 @@ func TestLoopCounterCapE2E(t *testing.T) {
 
 	require.Equal(t, int64(1), doneSink.Count(),
 		"done_sink invocations: got %d, want 1", doneSink.Count())
-	_ = loopSink
+
+	require.Eventually(t, func() bool { return loopSink.Count() == 1 }, 5*time.Second, 20*time.Millisecond,
+		"loop_sink invocations: got %d, want 1 (default most-recent cascade mode coalesces "+
+			"counter's two same-frame loop-tagged dispatches into loop_sink's latest pending only)",
+		loopSink.Count())
 }
 
 // @concept: error-policy

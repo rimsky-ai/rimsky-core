@@ -21,14 +21,15 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	const innerDelay = 600 * time.Millisecond
+	holdMid := make(chan struct{})
+	holdExit := make(chan struct{})
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("inner-mid").
 		Success(map[string]any{"ok": true}, true, "mid").
-		Delay(innerDelay)
+		HoldUntil(holdMid)
 	h.Stub.WhenType("inner-exit").
 		Success(map[string]any{"done": true}, true, "exit").
-		Delay(innerDelay)
+		HoldUntil(holdExit)
 
 	openAttrs := scenario.WithAttributes(map[string]any{
 		"type": "object",
@@ -87,6 +88,8 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 	require.NotNil(t, exitNode, "inner-exit node missing")
 	midNode := h.FindNode(iid, "inner-mid")
 	require.NotNil(t, midNode, "inner-mid node missing")
+	entryNode := h.FindNode(iid, "inner-entry")
+	require.NotNil(t, entryNode, "inner-entry node missing")
 
 	mainScopeID := h.GetMainRunScopeID(iid)
 	require.Eventually(t, func() bool {
@@ -122,66 +125,56 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 				"the sub-graph is the delegating node's execution unit", internal.typ)
 	}
 
-	heldWitnessed := false
-	deadline := time.Now().Add(90 * time.Second)
-	for time.Now().Before(deadline) {
-		var inflightInternals int
-		h.QueryRowSQL(`
-			SELECT COUNT(*) FROM rimsky_node_runs r
-			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
-			 WHERE rs.graph_name = 'worker'
-			   AND rs.instance_id = $1
-			   AND r.state IN ('pending','stale','running','held','parked')
-		`, []any{iid}, &inflightInternals)
-
-		var exitTerminal int
-		h.QueryRowSQL(`
-			SELECT COUNT(*) FROM rimsky_node_runs
-			 WHERE node_id = $1
-			   AND state = 'fresh'
-		`, []any{exitNode.ID}, &exitTerminal)
-
-		if inflightInternals >= 1 && exitTerminal == 0 {
-			var callerState string
-			h.QueryRowSQL(`
-				SELECT COALESCE(state, 'fresh')
-				  FROM rimsky_node_runs
-				 WHERE node_id = $1
-				 ORDER BY enqueued_at DESC
-				 LIMIT 1
-			`, []any{callerNode.ID}, &callerState)
-			require.NotEqual(t, string(cascade.NodeStateFresh), callerState,
-				"calling-node run row settled to 'fresh' while a sub-graph internal was still in flight "+
-					"(%d in-flight internals) — delegate must NOT settle before the sub-graph does",
-				inflightInternals)
-			require.NotEqual(t, string(cascade.NodeStateFailed), callerState,
-				"calling-node run row settled to 'failed' while a sub-graph internal was still in flight "+
-					"(%d in-flight internals) — delegate must NOT settle before the sub-graph does",
-				inflightInternals)
-			heldWitnessed = true
-		}
-		if exitTerminal >= 1 {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	require.True(t, heldWitnessed,
-		"never observed the calling node held non-settled while sub-graph internals were in flight; "+
-			"the %s per-leaf inner-delay should have created a wide enough window for the 25ms poll. "+
-			"If this fails without a delegate-pre-settles bug, widen innerDelay.", innerDelay)
-
-	h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh)
-
-	require.Eventually(t, func() bool {
-		var callerState string
+	callerState := func() string {
+		var state string
 		h.QueryRowSQL(`
 			SELECT COALESCE(state, 'fresh')
 			  FROM rimsky_node_runs
 			 WHERE node_id = $1
 			 ORDER BY enqueued_at DESC
 			 LIMIT 1
-		`, []any{callerNode.ID}, &callerState)
-		return callerState == string(cascade.NodeStateFresh)
+		`, []any{callerNode.ID}, &state)
+		return state
+	}
+	requireCallerHeld := func(reason string) {
+		state := callerState()
+		require.NotEqual(t, string(cascade.NodeStateFresh), state,
+			"calling-node run row settled to 'fresh' while %s — delegate must NOT settle before the sub-graph does", reason)
+		require.NotEqual(t, string(cascade.NodeStateFailed), state,
+			"calling-node run row settled to 'failed' while %s — delegate must NOT settle before the sub-graph does", reason)
+	}
+	nodeInFlight := func(nodeID shared.UUID) bool {
+		var n int
+		h.QueryRowSQL(`
+			SELECT COUNT(*) FROM rimsky_node_runs
+			 WHERE node_id = $1 AND state IN ('pending','stale','running','held','parked')
+		`, []any{nodeID}, &n)
+		return n >= 1
+	}
+
+	require.Eventually(t, func() bool { return nodeInFlight(midNode.ID) },
+		60*time.Second, 25*time.Millisecond, "inner-mid never reached an in-flight run state")
+	requireCallerHeld("inner-mid is held in flight")
+	close(holdMid)
+
+	h.WaitForNodeState(midNode.ID, cascade.NodeStateFresh)
+
+	require.Eventually(t, func() bool { return nodeInFlight(exitNode.ID) },
+		60*time.Second, 25*time.Millisecond, "inner-exit never reached an in-flight run state")
+	requireCallerHeld("inner-exit is held in flight")
+	close(holdExit)
+
+	h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh)
+
+	var entryRuns int
+	h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1`, []any{entryNode.ID}, &entryRuns)
+	require.Zero(t, entryRuns,
+		"inner-entry must never itself dispatch — its Executor is absorbed into the delegating caller "+
+			"node at canonicalization, so the sub-graph's entry terminal is synthesized from the "+
+			"caller's own run rather than a separate execution")
+
+	require.Eventually(t, func() bool {
+		return callerState() == string(cascade.NodeStateFresh)
 	}, 60*time.Second, 100*time.Millisecond,
 		"calling node's run row must aggregate to 'fresh' after the sub-graph settles — "+
 			"sub-graph's success outcome must propagate to the parent via "+

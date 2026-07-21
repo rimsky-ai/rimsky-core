@@ -141,7 +141,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		var phase string
 		var resumeAtStored *time.Time
 		h.QueryRowSQL(
-			`SELECT state, resume_at FROM rimsky_node_runs WHERE node_id = $1`,
+			`SELECT state, resume_at FROM rimsky_node_runs WHERE node_id = $1 ORDER BY sequence DESC LIMIT 1`,
 			[]any{thr.ID},
 			&phase, &resumeAtStored,
 		)

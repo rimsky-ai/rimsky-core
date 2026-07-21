@@ -125,6 +125,13 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 		"lifecycle-subscriber peer must observe OnInstanceCreated for the freshly created instance")
 	require.Equal(t, 1, fake.countFor("OnInstanceCreated"),
 		"OnInstanceCreated must fire EXACTLY once for one create; got %d", fake.countFor("OnInstanceCreated"))
+
+	created := fake.eventFor("OnInstanceCreated")
+	require.NotNil(t, created, "OnInstanceCreated event must have been recorded")
+	require.Equal(t, instanceID, created.instanceID,
+		"OnInstanceCreated must carry the created instance's id")
+	require.Equal(t, templateHash, created.templateHash,
+		"OnInstanceCreated must carry the deployed template's hash")
 }
 
 func postCreateInstance(t *testing.T, h *scenario.Harness, templateHash, instanceKey string) string {
@@ -265,6 +272,18 @@ func (f *fakeLifecycleServer) countFor(verb string) int {
 		}
 	}
 	return n
+}
+
+func (f *fakeLifecycleServer) eventFor(verb string) *lifecycleEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.events) - 1; i >= 0; i-- {
+		if f.events[i].verb == verb {
+			ev := f.events[i]
+			return &ev
+		}
+	}
+	return nil
 }
 
 func (f *fakeLifecycleServer) OnTemplateRegistered(_ context.Context, req *genv1.OnTemplateRegisteredRequest) (*genv1.LifecycleAck, error) {
