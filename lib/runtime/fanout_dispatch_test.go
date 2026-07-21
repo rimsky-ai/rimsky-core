@@ -50,6 +50,70 @@ func TestFanOutPartitions_ProjectsPartitionKeys(t *testing.T) {
 	}
 }
 
+func TestFanOutPartitions_NoDedup(t *testing.T) {
+	subClaims := []SubClaim{
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "dup"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "dup"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p3"},
+	}
+	parts := FanOutPartitions(subClaims)
+	if len(parts) != len(subClaims) {
+		t.Fatalf("FanOutPartitions must be a 1:1 projection over its input — sub-claim "+
+			"de-duplication, if any, happens upstream at acquisition time, not here; "+
+			"got %d outputs for %d inputs", len(parts), len(subClaims))
+	}
+}
+
+func TestFanOutPartitions_PreservesInputOrdering(t *testing.T) {
+	subClaims := []SubClaim{
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "z-last"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "m-middle"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "a-first"},
+	}
+	parts := FanOutPartitions(subClaims)
+	for i, p := range parts {
+		if p.PartitionKey != subClaims[i].PartitionKey {
+			t.Errorf("parts[%d]: %s (want %s; ordering must match producer's SubScopes, not a sort)",
+				i, p.PartitionKey, subClaims[i].PartitionKey)
+		}
+	}
+}
+
+func TestFanOutPartitions_EmptyReturnsEmpty(t *testing.T) {
+	if parts := FanOutPartitions(nil); len(parts) != 0 {
+		t.Errorf("empty sub-claims should produce empty partitions; got %d", len(parts))
+	}
+}
+
+func TestChildExecutionInput_FieldsWireThrough(t *testing.T) {
+	parentRun := shared.UUID(uuid.New())
+	parentNode := shared.UUID(uuid.New())
+	frameID := shared.UUID(uuid.New())
+	subClaims := []SubClaim{
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "us-east-1"},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "us-west-2"},
+	}
+	in := ChildExecutionInput{
+		ParentNodeRunID: parentRun,
+		FrameID:         frameID,
+		Partitions:      FanOutPartitions(subClaims),
+		Children: []ChildRunSpec{{
+			NodeID:                 parentNode,
+			Executor:               "my-loader",
+			RequiredClaimProducers: []string{"parquet-store"},
+		}},
+	}
+	if in.ParentNodeRunID != parentRun {
+		t.Errorf("in.ParentNodeRunID: %s (want %s)", in.ParentNodeRunID, parentRun)
+	}
+	if in.FrameID != frameID {
+		t.Errorf("in.FrameID: %s (want %s)", in.FrameID, frameID)
+	}
+	if len(in.Children) != 1 || in.Children[0].NodeID != parentNode || in.Children[0].Executor != "my-loader" {
+		t.Fatalf("child spec did not wire through unchanged; got %+v", in.Children)
+	}
+}
+
 func TestFanOutParallelismSemaphore_BoundsConcurrency(t *testing.T) {
 	sem := NewFanOutParallelismSemaphore(2)
 	if err := sem.Acquire(context.Background()); err != nil {

@@ -168,8 +168,7 @@ func TestBuildTerminalErrorSignal_CoversAllSchemaKeys(t *testing.T) {
 	if sig.Type != "terminal/error/http/timeout" {
 		t.Fatalf("type: got %q want terminal/error/http/timeout", sig.Type)
 	}
-	schemaKeys := []string{"error_class", "error_payload", "attempt", "retries_so_far", "attributes_delta", "tags"}
-	for _, k := range schemaKeys {
+	for k := range schemaFieldSet(reflect.TypeOf(TerminalErrorPayload{})) {
 		if _, ok := sig.Payload[k]; !ok {
 			t.Fatalf("payload missing schema key %q; payload=%+v", k, sig.Payload)
 		}
@@ -212,8 +211,7 @@ func TestBuildTerminalSuccessSignal_CoversAllSchemaKeys(t *testing.T) {
 	if sig.Type != "terminal/success" {
 		t.Fatalf("type: got %q want terminal/success", sig.Type)
 	}
-	schemaKeys := []string{"changed", "attributes_delta", "change_summary", "tags"}
-	for _, k := range schemaKeys {
+	for k := range schemaFieldSet(reflect.TypeOf(TerminalSuccessPayload{})) {
 		if _, ok := sig.Payload[k]; !ok {
 			t.Fatalf("payload missing schema key %q; payload=%+v", k, sig.Payload)
 		}

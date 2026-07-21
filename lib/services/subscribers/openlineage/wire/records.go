@@ -17,7 +17,6 @@ type LeafRunRecord struct {
 	TriggerMessageID   string            `json:"trigger_message_id,omitempty"`
 	HeldClaims         []HeldClaimRef    `json:"held_claims,omitempty"`
 	ExecutorName       string            `json:"executor_name,omitempty"`
-	ExecutorVersion    string            `json:"executor_version,omitempty"`
 	TemplateHash       string            `json:"template_hash,omitempty"`
 	TemplateNodeAlias  string            `json:"template_node_alias,omitempty"`
 	ParamsSnapshotHash string            `json:"params_snapshot_hash,omitempty"`

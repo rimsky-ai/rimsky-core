@@ -64,18 +64,7 @@ func BuildTerminalErrorSignal(errorClass string, errorPayload map[string]any, at
 	}
 	return Signal{
 		Type:    TypePath("terminal/error/" + errorClass),
-		Payload: terminalErrorPayloadToMap(p),
-	}
-}
-
-func terminalErrorPayloadToMap(p TerminalErrorPayload) map[string]any {
-	return map[string]any{
-		"error_class":      p.ErrorClass,
-		"error_payload":    p.ErrorPayload,
-		"attempt":          p.Attempt,
-		"retries_so_far":   p.RetriesSoFar,
-		"attributes_delta": p.AttributesDelta,
-		"tags":             p.Tags,
+		Payload: PayloadMap(p),
 	}
 }
 
@@ -88,17 +77,41 @@ func BuildTerminalSuccessSignal(changed bool, attributesDelta map[string]any, ch
 	}
 	return Signal{
 		Type:    TypePath("terminal/success"),
-		Payload: terminalSuccessPayloadToMap(p),
+		Payload: PayloadMap(p),
 	}
 }
 
-func terminalSuccessPayloadToMap(p TerminalSuccessPayload) map[string]any {
-	return map[string]any{
-		"changed":          p.Changed,
-		"attributes_delta": p.AttributesDelta,
-		"change_summary":   p.ChangeSummary,
-		"tags":             p.Tags,
+func PayloadMap(p any) map[string]any {
+	v := reflect.ValueOf(p)
+	t := v.Type()
+	out := make(map[string]any, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, ok := jsonFieldName(t.Field(i))
+		if !ok {
+			continue
+		}
+		out[name] = v.Field(i).Interface()
 	}
+	return out
+}
+
+func jsonFieldName(f reflect.StructField) (string, bool) {
+	if !f.IsExported() {
+		return "", false
+	}
+	name := f.Name
+	if tag, ok := f.Tag.Lookup("json"); ok && tag != "" {
+		if comma := strings.IndexByte(tag, ','); comma >= 0 {
+			tag = tag[:comma]
+		}
+		if tag == "-" {
+			return "", false
+		}
+		if tag != "" {
+			name = tag
+		}
+	}
+	return name, true
 }
 
 func orEmptyMap(m map[string]any) map[string]any {

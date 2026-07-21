@@ -328,7 +328,6 @@ func TestLeafRunRecord_WireContract(t *testing.T) {
 	    {"claim_handle_id":"c1","role":"acquire","producer_name":"p","claim_scope_data_hash":"s"}
 	  ],
 	  "executor_name": "claude-agent",
-	  "executor_version": "1.2.3",
 	  "template_hash": "sha256-aaa",
 	  "template_node_alias": "stage",
 	  "params_snapshot_hash": "sha256-bbb",
@@ -467,7 +466,6 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"TriggerMessageID", "trigger_message_id", true},
 		{"HeldClaims", "held_claims", true},
 		{"ExecutorName", "executor_name", true},
-		{"ExecutorVersion", "executor_version", true},
 		{"TemplateHash", "template_hash", true},
 		{"TemplateNodeAlias", "template_node_alias", true},
 		{"ParamsSnapshotHash", "params_snapshot_hash", true},

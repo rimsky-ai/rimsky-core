@@ -148,7 +148,6 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, namespace string)
 			"params_snapshot_hash": rec.ParamsSnapshotHash,
 			"attributes_hash":      rec.AttributesHash,
 			"executor_name":        rec.ExecutorName,
-			"executor_version":     rec.ExecutorVersion,
 			"frame_trigger_kind":   rec.FrameTriggerKind,
 			"trigger_message_id":   rec.TriggerMessageID,
 			"changed":              rec.Changed,

@@ -91,13 +91,14 @@ func applyTerminalPark(
 // @concept: executor
 func parkTerminalSignal(args RunArgs, t terminalEvent) signalpkg.Signal {
 	scratchSize := len(t.Scratch)
+	payload := signalpkg.PayloadMap(signalpkg.TransientParkPayload{
+		ResumeAt: t.ParkResumeAt,
+		Tags:     t.Tags,
+	})
+	payload["scratch_size"] = scratchSize
+	payload["scratch_spilled"] = shouldSpillBlob(args, scratchSize)
 	return signalpkg.Signal{
-		Type: "transient/park",
-		Payload: map[string]any{
-			"resume_at":       t.ParkResumeAt,
-			"tags":            t.Tags,
-			"scratch_size":    scratchSize,
-			"scratch_spilled": shouldSpillBlob(args, scratchSize),
-		},
+		Type:    "transient/park",
+		Payload: payload,
 	}
 }

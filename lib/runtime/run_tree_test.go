@@ -247,3 +247,38 @@ func TestAggregate_DefaultPolicyKind(t *testing.T) {
 		t.Fatalf("expected strict default → failed; got %+v", res)
 	}
 }
+
+func TestAggregate_UnknownKindFallsBackToStrict(t *testing.T) {
+	children := []ChildState{failure(), success(true)}
+	res := Aggregate(children, spec.AggregationPolicy{Kind: "bogus-unknown"})
+	if !res.IsSettled {
+		t.Fatalf("unknown kind should default-fall through to strict (which settles on failure)")
+	}
+	if res.ParentState != cascade.NodeStateFailed {
+		t.Errorf("unknown kind fallback (strict) should fail on any-failed child; got state %s", res.ParentState)
+	}
+}
+
+func TestAggregate_AllRecognizedKinds_AllSuccessSettlesFresh(t *testing.T) {
+	children := []ChildState{success(true), success(true)}
+	for _, kind := range []spec.AggregationKind{
+		spec.AggregationKindStrict,
+		spec.AggregationKindThreshold,
+		spec.AggregationKindBestEffort,
+		spec.AggregationKindFirst,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			policy := spec.AggregationPolicy{Kind: kind}
+			if kind == spec.AggregationKindThreshold {
+				policy.MaxFailures = 1
+			}
+			res := Aggregate(children, policy)
+			if !res.IsSettled {
+				t.Errorf("policy %s on all-success children should settle terminal", kind)
+			}
+			if res.ParentState != cascade.NodeStateFresh {
+				t.Errorf("policy %s parent state: %s (want fresh)", kind, res.ParentState)
+			}
+		})
+	}
+}

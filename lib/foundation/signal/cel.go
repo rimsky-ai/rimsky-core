@@ -189,18 +189,9 @@ func schemaFieldSet(t reflect.Type) map[string]struct{} {
 		return out
 	}
 	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() {
+		name, ok := jsonFieldName(t.Field(i))
+		if !ok {
 			continue
-		}
-		name := f.Name
-		if tag, ok := f.Tag.Lookup("json"); ok && tag != "" {
-			if comma := strings.IndexByte(tag, ','); comma >= 0 {
-				tag = tag[:comma]
-			}
-			if tag != "" && tag != "-" {
-				name = tag
-			}
 		}
 		out[name] = struct{}{}
 	}
