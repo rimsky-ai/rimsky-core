@@ -86,7 +86,7 @@ func driveProducerClassifiedRetry(
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	h.WaitForEventKind(worker.ID, "transient/retry/1/"+producerClassUnavailable)
+	h.WaitForEventCount(worker.ID, "transient/retry/1/"+producerClassUnavailable, 1)
 
 	var wLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

@@ -154,7 +154,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.True(t, resumeAtStored.Before(now.Add(30*time.Second)),
 			"429-leg: resume_at %v must reflect Retry-After: 1 (must be ≪ 30s default fallback)", *resumeAtStored)
 
-		h.WaitForEventKind(thr.ID, "parked_resume_started")
+		h.WaitForEventCount(thr.ID, "parked_resume_started", 1)
 
 		row := lastEventPayload(t, h, thr.ID, "parked_resume_started")
 		require.Equal(t, "deadline_elapsed", row["resume_reason"],
@@ -162,7 +162,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 
 		h.WaitForNodeState(thr.ID, cascade.NodeStateFresh)
 
-		h.WaitForEventKind(thr.ID, "terminal/success")
+		h.WaitForEventCount(thr.ID, "terminal/success", 1)
 	})
 
 	t.Run("leg3_4xx_with_configured_field", func(t *testing.T) {

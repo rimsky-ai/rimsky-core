@@ -42,7 +42,7 @@ func TestNamedLockAcquisitionMovesMetric(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	h.WaitForDispatch(n.ID)
+	h.WaitForDispatchCount(n.ID, 1)
 
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
@@ -104,8 +104,8 @@ func TestNamedLockContentionMovesUnavailableMetricDistinctFromClaimAcquisitions(
 	contender := h.FindNode(iidContender, "worker")
 	require.NotNil(t, holder)
 	require.NotNil(t, contender)
-	h.WaitForDispatch(holder.ID)
-	h.WaitForDispatch(contender.ID)
+	h.WaitForDispatchCount(holder.ID, 1)
+	h.WaitForDispatchCount(contender.ID, 1)
 
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })

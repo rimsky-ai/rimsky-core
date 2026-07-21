@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
@@ -107,6 +108,63 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	attrs := n["attributes"].(map[string]any)
 	schema := attrs["schema"].(map[string]any)
 	require.Equal(t, "object", schema["type"])
+}
+
+func TestWaitHelpersScopeToOccurrenceOrdinal(t *testing.T) {
+	t.Parallel()
+	h := Start(t, HarnessOpts{NoSupervisor: true})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "wait-helper-ordinal", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			{Type: "worker", Executor: "stub"},
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-wait-helper-ordinal", map[string]any{})
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+
+	h.WaitForDispatchCount(n.ID, 1)
+	require.Equal(t, 1, h.DispatchCount(n.ID),
+		"first dispatch must count exactly one run, so a want=2 wait cannot pass on the prior run")
+
+	frameID := h.GetRunningFrameID(iid)
+	scopeID := h.GetLatestFrameRootRunScopeID(iid)
+	dispatchDone := make(chan struct{})
+	go func() {
+		h.WaitForDispatchCount(n.ID, 2)
+		close(dispatchDone)
+	}()
+	h.ExecSQL(
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, sequence)
+		 VALUES ($1, $2, 'stub', '{}', NOW(), $3, $4, 999)`,
+		uuid.New(), n.ID, frameID, scopeID,
+	)
+	<-dispatchDone
+	require.Equal(t, 2, h.DispatchCount(n.ID))
+
+	require.Equal(t, 0, h.EventCount(n.ID, "probe/fired"))
+	require.False(t, h.HasEventKind(n.ID, "probe/fired"))
+	h.ExecSQL(
+		`INSERT INTO rimsky_events (instance_id, node_id, kind, payload) VALUES ($1, $2, 'probe/fired', '{}')`,
+		iid, n.ID,
+	)
+	h.WaitForEventCount(n.ID, "probe/fired", 1)
+	require.Equal(t, 1, h.EventCount(n.ID, "probe/fired"),
+		"first emission must count exactly one event, so a want=2 wait cannot pass on the prior emission")
+	require.True(t, h.HasEventKind(n.ID, "probe/fired"))
+
+	eventDone := make(chan struct{})
+	go func() {
+		h.WaitForEventCount(n.ID, "probe/fired", 2)
+		close(eventDone)
+	}()
+	h.ExecSQL(
+		`INSERT INTO rimsky_events (instance_id, node_id, kind, payload) VALUES ($1, $2, 'probe/fired', '{}')`,
+		iid, n.ID,
+	)
+	<-eventDone
+	require.Equal(t, 2, h.EventCount(n.ID, "probe/fired"))
 }
 
 func TestMakeNodeOptions(t *testing.T) {

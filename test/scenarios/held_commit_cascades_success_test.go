@@ -116,7 +116,7 @@ func TestHeldCommitCascadesSuccess(t *testing.T) {
 		"acquirer's settling_signal_type must be terminal/success (the auto-terminal commit signal)")
 
 	h.WaitForNodeState(observer.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(observer.ID, "terminal/success")
+	h.WaitForEventCount(observer.ID, "terminal/success", 1)
 
 	var acquirerSuccessTimes []time.Time
 	h.QuerySQL(`

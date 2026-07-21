@@ -6,6 +6,7 @@ package controlapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -19,6 +20,80 @@ func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/admin/diagnostics/held-frames", gate(deps, "diagnostics:read", handleAdminHeldFrames(deps)))
 	r.Get("/admin/diagnostics/parked-nodes", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
 	r.Get("/admin/diagnostics/wait-sets", gate(deps, "waitset:read", handleAdminWaitSets(deps)))
+	r.Get("/admin/diagnostics/producer-outbox", gate(deps, "diagnostics:read", handleAdminProducerOutbox(deps)))
+}
+
+type producerVerbOutboxProvider interface {
+	ProducerVerbOutbox() persistence.ProducerVerbOutboxTable
+}
+
+type ProducerOutboxResponse struct {
+	Depth            int                   `json:"depth"`
+	OldestEnqueuedAt *time.Time            `json:"oldest_enqueued_at,omitempty"`
+	OldestAgeSeconds *float64              `json:"oldest_age_seconds,omitempty"`
+	Entries          []ProducerOutboxEntry `json:"entries"`
+}
+
+type ProducerOutboxEntry struct {
+	Seq           int64     `json:"seq"`
+	ProducerName  string    `json:"producer_name"`
+	Verb          string    `json:"verb"`
+	ClaimHandleID string    `json:"claim_handle_id"`
+	InstanceID    *string   `json:"instance_id,omitempty"`
+	AttemptCount  int       `json:"attempt_count"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error,omitempty"`
+	EnqueuedAt    time.Time `json:"enqueued_at"`
+}
+
+// @concept: terminal-resolution
+func handleAdminProducerOutbox(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		provider, ok := deps.Persist.(producerVerbOutboxProvider)
+		if !ok {
+			writeError(w, fmt.Errorf("store %T does not expose the producer-verb outbox", deps.Persist))
+			return
+		}
+		out := ProducerOutboxResponse{Entries: []ProducerOutboxEntry{}}
+		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			rows, err := provider.ProducerVerbOutbox().ListAll(ctx, tx)
+			if err != nil {
+				return err
+			}
+			out.Depth = len(rows)
+			for _, row := range rows {
+				entry := ProducerOutboxEntry{
+					Seq:           row.Seq,
+					ProducerName:  row.ProducerName,
+					Verb:          string(row.Verb),
+					ClaimHandleID: row.ClaimHandleID.String(),
+					AttemptCount:  row.AttemptCount,
+					NextAttemptAt: row.NextAttemptAt,
+					LastError:     row.LastError,
+					EnqueuedAt:    row.EnqueuedAt,
+				}
+				if row.InstanceID != nil {
+					iid := row.InstanceID.String()
+					entry.InstanceID = &iid
+				}
+				if out.OldestEnqueuedAt == nil || row.EnqueuedAt.Before(*out.OldestEnqueuedAt) {
+					enqueuedAt := row.EnqueuedAt
+					out.OldestEnqueuedAt = &enqueuedAt
+				}
+				out.Entries = append(out.Entries, entry)
+			}
+			return nil
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if out.OldestEnqueuedAt != nil {
+			age := deps.Clock.Now().Sub(*out.OldestEnqueuedAt).Seconds()
+			out.OldestAgeSeconds = &age
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
 }
 
 type HeldFramesResponse struct {

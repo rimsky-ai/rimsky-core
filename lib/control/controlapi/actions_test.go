@@ -294,7 +294,7 @@ func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
 		"claim-holders:read":      1,
 		"asset:read":              4,
 		"asset:delete":            1,
-		"diagnostics:read":        1,
+		"diagnostics:read":        2,
 		"auth:read":               3,
 		"auth:create":             1,
 		"auth:revoke":             1,

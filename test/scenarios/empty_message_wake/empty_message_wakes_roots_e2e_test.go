@@ -101,10 +101,10 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 	h.WaitForNodeState(root1.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(root2.ID, cascade.NodeStateFresh)
 
-	h.WaitForEventKind(root1.ID, "terminal/success")
-	h.WaitForEventKind(root2.ID, "terminal/success")
+	h.WaitForEventCount(root1.ID, "terminal/success", 1)
+	h.WaitForEventCount(root2.ID, "terminal/success", 1)
 
-	h.WaitForEventKind(down.ID, "terminal/success")
+	h.WaitForEventCount(down.ID, "terminal/success", 1)
 
 	var emptyTriggerRunID shared.UUID
 	h.QueryRowSQL(`

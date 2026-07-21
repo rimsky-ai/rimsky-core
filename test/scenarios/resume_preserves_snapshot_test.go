@@ -104,7 +104,7 @@ func TestResumePreservesSnapshot_DeadlineWakeReusesDispatchTimeBag(t *testing.T)
 
 	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-resumed")
 
-	h.WaitForEventKind(b.ID, "parked_resume_started")
+	h.WaitForEventCount(b.ID, "parked_resume_started", 1)
 	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
 
 	allB := bInvocations()

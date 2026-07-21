@@ -86,5 +86,5 @@ func TestPerRunAttributes_FirstRunDivergingFromDefaultFiresChangedSignal(t *test
 	require.NotNil(t, aN)
 
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
-	h.WaitForEventKind(aN.ID, "attribute/x/changed")
+	h.WaitForEventCount(aN.ID, "attribute/x/changed", 1)
 }

@@ -130,7 +130,7 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 
 	clock.Advance(15 * time.Second)
 
-	h.WaitForEventKind(worker.ID, "parked_resume_started")
+	h.WaitForEventCount(worker.ID, "parked_resume_started", 1)
 
 	waitForStubWorkerCount(h, 3)
 	require.Equal(t, 3, stubWorkerCount(h),

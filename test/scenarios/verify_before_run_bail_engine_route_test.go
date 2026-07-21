@@ -72,7 +72,7 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
-	h.WaitForDispatch(worker.ID)
+	h.WaitForDispatchCount(worker.ID, 1)
 
 	var nodeRunID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

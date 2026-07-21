@@ -50,7 +50,7 @@ func TestParkedFrameHold_InstanceStaysNonTerminalUntilFrameEnds(t *testing.T) {
 		"the instance must not be terminal while its only node is parked; got terminated_at=%v", instWhileParked["terminated_at"])
 
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "resumed")
-	h.WaitForEventKind(worker.ID, "parked_resume_started")
+	h.WaitForEventCount(worker.ID, "parked_resume_started", 1)
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
 	for {

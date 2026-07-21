@@ -129,7 +129,7 @@ func TestStoryCascadeSend_SendsAndOpensNextFrame(t *testing.T) {
 	require.NotNil(t, h.FindNode(iid, "pong"))
 	require.NotNil(t, h.FindNode(iid, "sender"))
 
-	h.WaitForEventKind(tailNode.ID, "terminal/success")
+	h.WaitForEventCount(tailNode.ID, "terminal/success", 1)
 
 	var sentMsgID, sentSender, sentSenderKind string
 	var sentBody []byte

@@ -81,7 +81,7 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 	require.Contains(t, *wLatest.SettlingSignalType, "terminal/error/",
 		"give_up should record settling_signal_type=terminal/error/<class>")
 
-	h.WaitForEventKind(worker.ID, "terminal/error/acquire/unavailable")
+	h.WaitForEventCount(worker.ID, "terminal/error/acquire/unavailable", 1)
 
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when acquire/unavailable routes to give_up")

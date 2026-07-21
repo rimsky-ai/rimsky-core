@@ -122,7 +122,7 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 	require.NotNil(t, receiver, "receiver node must exist on the instance")
 
 	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(receiver.ID, "terminal/success")
+	h.WaitForEventCount(receiver.ID, "terminal/success", 1)
 
 	frames := getFrames(t, h.ControlBase, iid, "")
 	require.NotEmpty(t, frames, "at least one frame must exist for this instance")

@@ -121,7 +121,7 @@ func TestHeldAbandonCascadesAbandoned(t *testing.T) {
 		"acquirer's settling_signal_type must be terminal/error/abandoned (the new cascade-firable abandon signal)")
 
 	h.WaitForNodeState(observer.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(observer.ID, "terminal/success")
+	h.WaitForEventCount(observer.ID, "terminal/success", 1)
 
 	var observerLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

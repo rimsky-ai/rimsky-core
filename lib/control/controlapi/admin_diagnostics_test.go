@@ -348,6 +348,158 @@ func (f *fakeDiagnosticQueue) WriteScratchInTx(context.Context, persistence.Tx, 
 	return nil
 }
 
+type fakeOutboxStore struct {
+	noopStore
+	rows []persistence.ProducerVerbOutboxRow
+}
+
+func (s fakeOutboxStore) ProducerVerbOutbox() persistence.ProducerVerbOutboxTable {
+	return fakeOutboxTable{rows: s.rows}
+}
+
+type fakeOutboxTable struct {
+	rows []persistence.ProducerVerbOutboxRow
+}
+
+func (f fakeOutboxTable) Enqueue(context.Context, persistence.ProducerVerbOutboxInsertInput, persistence.Tx) error {
+	return nil
+}
+func (f fakeOutboxTable) ListAll(context.Context, persistence.Tx) ([]persistence.ProducerVerbOutboxRow, error) {
+	return f.rows, nil
+}
+func (f fakeOutboxTable) ListByProducer(context.Context, string, persistence.Tx) ([]persistence.ProducerVerbOutboxRow, error) {
+	return nil, nil
+}
+func (f fakeOutboxTable) RecordAttempt(context.Context, int64, time.Time, string, persistence.Tx) error {
+	return nil
+}
+func (f fakeOutboxTable) Delete(context.Context, int64, persistence.Tx) error { return nil }
+func (f fakeOutboxTable) CountByProducer(context.Context, persistence.Tx) (map[string]int, error) {
+	return nil, nil
+}
+
+func outboxDiagnosticsDeps(store persistence.Tables, clock shared.Clock) AppDeps {
+	return AppDeps{
+		Persist: store,
+		Queue:   &fakeDiagnosticQueue{},
+		Logger:  shared.SilentLogger{},
+		Clock:   clock,
+		AuthState: &AuthState{
+			Tables:   noopStore{},
+			Registry: BuildV1Registry(),
+			Clock:    shared.SystemClock{},
+			Logger:   shared.SilentLogger{},
+		},
+	}
+}
+
+func TestAdminProducerOutbox_ReportsDepthOldestAgeAndEntries(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	instanceID := shared.UUID{0xAA}
+	rows := []persistence.ProducerVerbOutboxRow{
+		{
+			Seq:           1,
+			ClaimHandleID: shared.UUID{0x01},
+			ProducerName:  "store-a",
+			Verb:          persistence.ProducerVerbCommit,
+			InstanceID:    &instanceID,
+			AttemptCount:  3,
+			NextAttemptAt: now.Add(30 * time.Second),
+			LastError:     "dial tcp: connection refused",
+			EnqueuedAt:    now.Add(-90 * time.Second),
+		},
+		{
+			Seq:           2,
+			ClaimHandleID: shared.UUID{0x02},
+			ProducerName:  "store-b",
+			Verb:          persistence.ProducerVerbAbandon,
+			AttemptCount:  0,
+			NextAttemptAt: now,
+			EnqueuedAt:    now.Add(-10 * time.Second),
+		},
+	}
+	deps := outboxDiagnosticsDeps(fakeOutboxStore{rows: rows}, shared.NewControllableClock(now))
+	srv := httptest.NewServer(NewApp(deps))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/admin/diagnostics/producer-outbox")
+	if err != nil {
+		t.Fatalf("GET producer-outbox: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	var got ProducerOutboxResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Depth != 2 || len(got.Entries) != 2 {
+		t.Fatalf("want depth=2 with 2 entries, got depth=%d entries=%d", got.Depth, len(got.Entries))
+	}
+	if got.OldestEnqueuedAt == nil || !got.OldestEnqueuedAt.Equal(now.Add(-90*time.Second)) {
+		t.Fatalf("oldest_enqueued_at: want %v, got %v", now.Add(-90*time.Second), got.OldestEnqueuedAt)
+	}
+	if got.OldestAgeSeconds == nil || *got.OldestAgeSeconds != 90 {
+		t.Fatalf("oldest_age_seconds: want 90, got %v", got.OldestAgeSeconds)
+	}
+	first := got.Entries[0]
+	if first.Seq != 1 || first.ProducerName != "store-a" || first.Verb != "commit" ||
+		first.AttemptCount != 3 || first.LastError != "dial tcp: connection refused" {
+		t.Fatalf("entry[0] fields drifted: %+v", first)
+	}
+	if first.InstanceID == nil || *first.InstanceID != instanceID.String() {
+		t.Fatalf("entry[0].instance_id: want %s, got %v", instanceID.String(), first.InstanceID)
+	}
+	if got.Entries[1].InstanceID != nil {
+		t.Fatalf("entry[1].instance_id should be omitted, got %v", *got.Entries[1].InstanceID)
+	}
+}
+
+func TestAdminProducerOutbox_EmptyOutbox(t *testing.T) {
+	t.Parallel()
+	deps := outboxDiagnosticsDeps(fakeOutboxStore{}, shared.SystemClock{})
+	srv := httptest.NewServer(NewApp(deps))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/admin/diagnostics/producer-outbox")
+	if err != nil {
+		t.Fatalf("GET producer-outbox: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	var got ProducerOutboxResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Depth != 0 || len(got.Entries) != 0 {
+		t.Fatalf("want empty outbox, got depth=%d entries=%d", got.Depth, len(got.Entries))
+	}
+	if got.OldestEnqueuedAt != nil || got.OldestAgeSeconds != nil {
+		t.Fatalf("oldest fields must be omitted on an empty outbox, got %v / %v",
+			got.OldestEnqueuedAt, got.OldestAgeSeconds)
+	}
+}
+
+func TestAdminProducerOutbox_StoreWithoutOutboxFailsLoudly(t *testing.T) {
+	t.Parallel()
+	deps := outboxDiagnosticsDeps(noopStore{}, shared.SystemClock{})
+	srv := httptest.NewServer(NewApp(deps))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/admin/diagnostics/producer-outbox")
+	if err != nil {
+		t.Fatalf("GET producer-outbox: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("a store without a producer-verb outbox must not report success")
+	}
+}
+
 func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC().Truncate(time.Second)

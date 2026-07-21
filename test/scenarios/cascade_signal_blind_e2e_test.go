@@ -81,7 +81,7 @@ func testCascadeTerminalSuccessPerSender(t *testing.T) {
 
 	h.WaitForNodeState(sender.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(sender.ID, "terminal/success")
+	h.WaitForEventCount(sender.ID, "terminal/success", 1)
 }
 
 func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
@@ -117,7 +117,7 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 
 	h.WaitForNodeState(sender.ID, cascade.NodeStateFailed)
 	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(sender.ID, "terminal/error/stub/giveup_class")
+	h.WaitForEventCount(sender.ID, "terminal/error/stub/giveup_class", 1)
 }
 
 func testCascadeTerminalErrorPassPerSender(t *testing.T) {
@@ -153,7 +153,7 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 
 	waitForNodeStateNoEvent(h, sender.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(sender.ID, "terminal/error/stub/pass_class")
+	h.WaitForEventCount(sender.ID, "terminal/error/stub/pass_class", 1)
 }
 
 func testCascadeAttributeChangedPerSender(t *testing.T) {
@@ -191,7 +191,7 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 
 	h.WaitForNodeState(sender.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(sender.ID, "attribute/score/changed")
+	h.WaitForEventCount(sender.ID, "attribute/score/changed", 1)
 }
 
 func testCascadeAttributeChangedDiffGate(t *testing.T) {
@@ -309,7 +309,7 @@ func testCascadeTerminalSuccessWithTagFilterPerSender(t *testing.T) {
 
 	h.WaitForNodeState(sender.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(sender.ID, "terminal/success")
+	h.WaitForEventCount(sender.ID, "terminal/success", 1)
 }
 
 func testCascadeTerminalSuccessWithTagFilterAbsentPerSender(t *testing.T) {
@@ -340,7 +340,7 @@ func testCascadeTerminalSuccessWithTagFilterAbsentPerSender(t *testing.T) {
 	require.NotNil(t, receiver)
 
 	h.WaitForNodeState(sender.ID, cascade.NodeStateFresh)
-	h.WaitForEventKind(sender.ID, "terminal/success")
+	h.WaitForEventCount(sender.ID, "terminal/success", 1)
 
 	var receiverRuns int
 	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`,

@@ -760,34 +760,21 @@ func (h *Harness) WaitForEventCount(nodeID shared.UUID, kind string, want int) {
 
 func (h *Harness) HasEventKind(nodeID shared.UUID, kind string) bool {
 	h.T.Helper()
+	return h.EventCount(nodeID, kind) > 0
+}
+
+func (h *Harness) DispatchCount(nodeID shared.UUID) int {
+	h.T.Helper()
 	var count int
-	err := h.Pool.QueryRow(h.Ctx, `
-        SELECT count(*) FROM rimsky_events
-        WHERE node_id = $1 AND kind = $2
-    `, nodeID, kind).Scan(&count)
-	return err == nil && count > 0
+	_ = h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`, nodeID,
+	).Scan(&count)
+	return count
 }
 
-func (h *Harness) WaitForEventKind(nodeID shared.UUID, kind string) {
+func (h *Harness) WaitForDispatchCount(nodeID shared.UUID, want int) {
 	h.T.Helper()
-	for {
-		if h.HasEventKind(nodeID, kind) {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-func (h *Harness) WaitForDispatch(nodeID shared.UUID) {
-	h.T.Helper()
-	for {
-		var count int
-		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`, nodeID,
-		).Scan(&count)
-		if err == nil && count > 0 {
-			return
-		}
+	for h.DispatchCount(nodeID) < want {
 		time.Sleep(50 * time.Millisecond)
 	}
 }

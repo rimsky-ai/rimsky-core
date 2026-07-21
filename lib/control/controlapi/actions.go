@@ -380,9 +380,12 @@ var v1Actions = []ActionEntry{
 		Description: "Delete an asset on an instance."},
 
 	{Action: "diagnostics:read", IsWrite: false,
-		Routes:      []Route{{Method: "GET", Path: "/v1/admin/diagnostics/held-frames"}},
+		Routes: []Route{
+			{Method: "GET", Path: "/v1/admin/diagnostics/held-frames"},
+			{Method: "GET", Path: "/v1/admin/diagnostics/producer-outbox"},
+		},
 		MCPTools:    []string{"held_frames_list"},
-		Description: "List frames held by holding-subgraph claims."},
+		Description: "List frames held by holding-subgraph claims and undelivered producer-verb outbox entries."},
 
 	{Action: "auth:read", IsWrite: false,
 		Routes: []Route{

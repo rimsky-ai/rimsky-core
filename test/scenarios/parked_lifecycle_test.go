@@ -56,7 +56,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
 
-	h.WaitForEventKind(worker.ID, "transient/park")
+	h.WaitForEventCount(worker.ID, "transient/park", 1)
 
 	var parkSettlingSignal string
 	h.QueryRowSQL(
@@ -69,7 +69,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.Equal(t, "transient/park", parkSettlingSignal,
 		"park leaf-run lineage row should carry settling_signal_type=transient/park")
 
-	h.WaitForEventKind(worker.ID, "parked_resume_started")
+	h.WaitForEventCount(worker.ID, "parked_resume_started", 1)
 	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")
 	require.Equal(t, "deadline_elapsed", row["resume_reason"],
 		"deadline-elapsed wake must persist resume_reason=deadline_elapsed; "+
@@ -97,7 +97,7 @@ func TestParkedLifecycle_TagsLandInAuditEvent(t *testing.T) {
 	require.NotNil(t, worker)
 
 	h.WaitForNodeState(worker.ID, cascade.NodeStateParked)
-	h.WaitForEventKind(worker.ID, "transient/park")
+	h.WaitForEventCount(worker.ID, "transient/park", 1)
 
 	row := lastEventPayload(t, h, worker.ID, "transient/park")
 	rawTags, ok := row["tags"].([]any)
@@ -126,7 +126,7 @@ func TestParkWithoutResumeAtRejectedAsProtocolViolation(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	h.WaitForEventKind(worker.ID, "terminal/error/executor_protocol_violation")
+	h.WaitForEventCount(worker.ID, "terminal/error/executor_protocol_violation", 1)
 	row := lastEventPayload(t, h, worker.ID, "terminal/error/executor_protocol_violation")
 	payload, _ := row["error_payload"].(map[string]any)
 	require.Equal(t, "park_missing_resume_at", payload["reason"],
@@ -200,7 +200,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.Equal(t, 1, lhCount,
 		"held claim_handle row must survive across the active → parked transition")
 
-	h.WaitForEventKind(acq.ID, "parked_resume_started")
+	h.WaitForEventCount(acq.ID, "parked_resume_started", 1)
 	h.WaitForNodeState(acq.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(inh.ID, cascade.NodeStateFresh)
 

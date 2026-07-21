@@ -126,7 +126,7 @@ func TestCascadeDefersDuringFlight_WalkerQueuesNewPendingWithoutMutatingInFlight
 			"created NEW cascade-driven runs for a's later self-cascade rounds rather than "+
 			"mutating b1's in-flight state. got %d queued", pendingBRuns)
 
-	h.WaitForEventKind(b.ID, "parked_resume_started")
+	h.WaitForEventCount(b.ID, "parked_resume_started", 1)
 
 	deadline := time.Now().Add(45 * time.Second)
 	var observedAfter int

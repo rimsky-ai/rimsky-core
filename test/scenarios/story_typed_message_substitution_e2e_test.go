@@ -187,7 +187,7 @@ func TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge(t *testi
 
 	receiver := h.FindNode(iid, "receiver")
 	require.NotNil(t, receiver)
-	h.WaitForEventKind(receiver.ID, "terminal/success")
+	h.WaitForEventCount(receiver.ID, "terminal/success", 1)
 
 	var resolvedBody []byte
 	h.QueryRowSQL(

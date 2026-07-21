@@ -62,8 +62,8 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	wB := h.FindNode(iidB, "worker")
 	require.NotNil(t, wA)
 	require.NotNil(t, wB)
-	h.WaitForDispatch(wA.ID)
-	h.WaitForDispatch(wB.ID)
+	h.WaitForDispatchCount(wA.ID, 1)
+	h.WaitForDispatchCount(wB.ID, 1)
 
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
@@ -214,8 +214,8 @@ func TestClaimScope_DisjointScopesCoexist(t *testing.T) {
 	wB := h.FindNode(iid, "worker-b")
 	require.NotNil(t, wA)
 	require.NotNil(t, wB)
-	h.WaitForDispatch(wA.ID)
-	h.WaitForDispatch(wB.ID)
+	h.WaitForDispatchCount(wA.ID, 1)
+	h.WaitForDispatchCount(wB.ID, 1)
 
 	waitForActiveClaimScopeCount(t, h, "content", 2)
 

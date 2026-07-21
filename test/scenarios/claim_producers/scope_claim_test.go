@@ -27,7 +27,9 @@ func TestScopeClaimEndToEnd(t *testing.T) {
 	})
 	t.Cleanup(teardown)
 
+	livenessOutlivingTestSoReapRecoveryCannotDuplicateVerbs := time.Hour
 	h := scenario.Start(t, scenario.HarnessOpts{
+		LivenessInterval: livenessOutlivingTestSoReapRecoveryCannotDuplicateVerbs,
 		ClaimProducers: config.RemoteClaimProducersConfig{
 			ClaimProducers: map[string]config.ClaimProducerEntry{
 				"content": {

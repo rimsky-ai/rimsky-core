@@ -75,10 +75,10 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 
 	h.Stub.WhenType("worker").Error("boom", map[string]any{"why": "post-resume-error"})
 
-	h.WaitForEventKind(worker.ID, "parked_resume_started")
+	h.WaitForEventCount(worker.ID, "parked_resume_started", 1)
 
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
-	h.WaitForEventKind(worker.ID, "terminal/error/stub/boom")
+	h.WaitForEventCount(worker.ID, "terminal/error/stub/boom", 1)
 
 	time.Sleep(2 * time.Second)
 
