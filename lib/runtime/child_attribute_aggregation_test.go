@@ -56,7 +56,7 @@ func TestSettleFromFanoutChild_ChildOwnAttributesNeverAggregateOntoParentBag(t *
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 	childNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), childNode.ID, frameID)
 

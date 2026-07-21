@@ -83,7 +83,7 @@ func newDriveSetupWithPartitionKey(
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, nd.ID, runScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, runScopeID)
 	nodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), nd.ID, frameID)
 
 	ackID := "ack-cbk-val-" + nodeRunID.String()

@@ -196,10 +196,7 @@ func collectCoHeldClaims(
 		return fmt.Errorf("collectCoHeldClaims: %w", err)
 	}
 	for _, r := range resolved {
-		localAlias := r.alias
-		if r.binding.As != "" {
-			localAlias = r.binding.As
-		}
+		localAlias := node.EffectiveHoldsLocalAlias(r.alias, r.binding)
 		out[localAlias] = claimproducer.ClaimResult{
 			Address:    r.claimHandle.Address,
 			Payload:    r.claimHandle.Payload,

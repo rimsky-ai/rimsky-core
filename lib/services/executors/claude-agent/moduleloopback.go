@@ -84,6 +84,9 @@ func standUpModuleLoopback(serverName string, specifier string, logger *slog.Log
 	}
 	module := factory()
 	token := uuid.NewString()
+	if logger == nil {
+		logger = slog.Default()
+	}
 	srv, err := startMcpHTTPServer(
 		&moduleToolProvider{module: module},
 		mcpHTTPServerOpts{logger: logger.With("component", "mcp-module", "module_server", serverName), bearerToken: token},

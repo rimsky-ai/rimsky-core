@@ -60,6 +60,14 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	require.NoError(t, h.Shutdown(shutdownCtx))
+
+	var afterShutdown *persistence.SupervisorRow
+	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := d.Tables().Supervisors().Get(ctx, supID, tx)
+		afterShutdown = r
+		return err
+	}))
+	require.Nil(t, afterShutdown, "Shutdown must Unregister the supervisor row")
 }
 
 // @concept: supervisor

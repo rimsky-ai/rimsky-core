@@ -48,7 +48,7 @@ func TestParseFromRight(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			folder, claim, nanos, err := parseFromRight(c.input)
+			folder, claim, nanos, err := ParseFromRight(c.input)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("expected error for %q, got nil", c.input)
@@ -383,7 +383,7 @@ func TestCommit_StaleReclaimedClaimantDoesNotClobberSuccessor(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("successor's in_progress entry should survive stale commit; got %d entries", len(entries))
 	}
-	_, c, _, perr := parseFromRight(entries[0].Name())
+	_, c, _, perr := ParseFromRight(entries[0].Name())
 	must(t, perr)
 	if c != "fresh" {
 		t.Fatalf("surviving in_progress entry claim_id = %q, want %q", c, "fresh")
@@ -590,7 +590,7 @@ func TestFindByScope_MatchesBatchLeaseNotSingleClaim(t *testing.T) {
 
 func entryClaimID(t *testing.T, entry string) string {
 	t.Helper()
-	_, c, _, err := parseFromRight(entry)
+	_, c, _, err := ParseFromRight(entry)
 	must(t, err)
 	return c
 }
@@ -603,7 +603,7 @@ func ageInProgressEntry(t *testing.T, root, selector string) {
 	if len(entries) != 1 {
 		t.Fatalf("ageInProgressEntry: expected exactly 1 in_progress entry, got %d", len(entries))
 	}
-	folder, claimID, _, perr := parseFromRight(entries[0].Name())
+	folder, claimID, _, perr := ParseFromRight(entries[0].Name())
 	must(t, perr)
 	aged := fmt.Sprintf("%s.%s.%d", folder, claimID, int64(0))
 	must(t, os.Rename(filepath.Join(inProg, entries[0].Name()), filepath.Join(inProg, aged)))

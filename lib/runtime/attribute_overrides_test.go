@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -25,6 +26,51 @@ func (f failingMatchEventPersist) Transaction(_ context.Context, _ func(ctx cont
 }
 
 func (f failingMatchEventPersist) Events() persistence.EventTable { return nil }
+
+type recordingEventTable struct {
+	persistence.EventTable
+	appended []persistence.EventAppendInput
+}
+
+func (r *recordingEventTable) Append(_ context.Context, in persistence.EventAppendInput, _ persistence.Tx) error {
+	r.appended = append(r.appended, in)
+	return nil
+}
+
+type recordingMatchEventPersist struct {
+	events *recordingEventTable
+}
+
+func (r recordingMatchEventPersist) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
+	return fn(ctx, nil)
+}
+
+func (r recordingMatchEventPersist) Events() persistence.EventTable { return r.events }
+
+func TestEmitOverrideMatchEventsAfterMerge_MatchedIndicesEachAppendOneEvent(t *testing.T) {
+	instanceID := shared.UUID(uuid.New())
+	recorder := &recordingEventTable{}
+
+	err := emitOverrideMatchEventsAfterMerge(context.Background(), recordingMatchEventPersist{events: recorder}, shared.SilentLogger{}, instanceID, []int{2, 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(recorder.appended) != 2 {
+		t.Fatalf("expected 2 appended events, got %d", len(recorder.appended))
+	}
+	wantIndices := []int{2, 0}
+	for i, in := range recorder.appended {
+		if in.Kind != events.KindAttributeOverrideMatched() {
+			t.Fatalf("event %d Kind = %v, want %v", i, in.Kind, events.KindAttributeOverrideMatched())
+		}
+		if in.InstanceID == nil || *in.InstanceID != instanceID {
+			t.Fatalf("event %d InstanceID = %v, want %v", i, in.InstanceID, instanceID)
+		}
+		if got := in.Payload["override_index"]; got != wantIndices[i] {
+			t.Fatalf("event %d payload[override_index] = %v, want %v", i, got, wantIndices[i])
+		}
+	}
+}
 
 func TestApplyAttributeOverrides(t *testing.T) {
 	logger := shared.SilentLogger{}

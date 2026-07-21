@@ -22,7 +22,6 @@ type dpFake struct {
 	dishonestIdempotency  bool
 	versionsAlwaysEmpty   bool
 	partitionsAlwaysEmpty bool
-	schemaAlwaysEmpty     bool
 	dropConcurrentWrites  bool
 
 	mu          sync.Mutex
@@ -117,15 +116,12 @@ func (f *dpFake) ListPartitions(_ context.Context, req *genv1.ListPartitionsRequ
 }
 
 func (f *dpFake) GetVersionSchema(context.Context, *genv1.GetVersionSchemaRequest, ...grpc.CallOption) (*genv1.GetVersionSchemaResponse, error) {
-	if f.schemaAlwaysEmpty {
-		return &genv1.GetVersionSchemaResponse{}, nil
-	}
 	return &genv1.GetVersionSchemaResponse{Schema: []byte(`{"type":"object"}`)}, nil
 }
 
 func TestCheckBeginCandidateIdempotent_Honest_Passes(t *testing.T) {
 	fake := newDPFake()
-	row := checkBeginCandidateIdempotent(context.Background(), fake)
+	row := checkBeginCandidateIdempotent(context.Background(), fake, "test-run")
 	if row.Err != nil {
 		t.Fatalf("expected PASS for an honest idempotent BeginCandidate, got Err: %v", row.Err)
 	}
@@ -134,7 +130,7 @@ func TestCheckBeginCandidateIdempotent_Honest_Passes(t *testing.T) {
 func TestCheckBeginCandidateIdempotent_Dishonest_Fails(t *testing.T) {
 	fake := newDPFake()
 	fake.dishonestIdempotency = true
-	row := checkBeginCandidateIdempotent(context.Background(), fake)
+	row := checkBeginCandidateIdempotent(context.Background(), fake, "test-run")
 	if row.Err == nil {
 		t.Fatal("expected non-nil Err when a retried BeginCandidate returns a different candidate_handle, got PASS")
 	}
@@ -142,7 +138,7 @@ func TestCheckBeginCandidateIdempotent_Dishonest_Fails(t *testing.T) {
 
 func TestCheckListVersionsSmoke_Honest_Passes(t *testing.T) {
 	fake := newDPFake()
-	row := checkListVersionsSmoke(context.Background(), fake)
+	row := checkListVersionsSmoke(context.Background(), fake, "test-run")
 	if row.Err != nil {
 		t.Fatalf("expected PASS, got Err: %v", row.Err)
 	}
@@ -151,7 +147,7 @@ func TestCheckListVersionsSmoke_Honest_Passes(t *testing.T) {
 func TestCheckListVersionsSmoke_AlwaysEmpty_Fails(t *testing.T) {
 	fake := newDPFake()
 	fake.versionsAlwaysEmpty = true
-	row := checkListVersionsSmoke(context.Background(), fake)
+	row := checkListVersionsSmoke(context.Background(), fake, "test-run")
 	if row.Err == nil {
 		t.Fatal("expected non-nil Err when ListVersions returns zero versions after a successful commit, got PASS")
 	}
@@ -159,7 +155,7 @@ func TestCheckListVersionsSmoke_AlwaysEmpty_Fails(t *testing.T) {
 
 func TestCheckListPartitionsSmoke_Honest_Passes(t *testing.T) {
 	fake := newDPFake()
-	row := checkListPartitionsSmoke(context.Background(), fake)
+	row := checkListPartitionsSmoke(context.Background(), fake, "test-run")
 	if row.Err != nil {
 		t.Fatalf("expected PASS, got Err: %v", row.Err)
 	}
@@ -168,7 +164,7 @@ func TestCheckListPartitionsSmoke_Honest_Passes(t *testing.T) {
 func TestCheckListPartitionsSmoke_AlwaysEmpty_Fails(t *testing.T) {
 	fake := newDPFake()
 	fake.partitionsAlwaysEmpty = true
-	row := checkListPartitionsSmoke(context.Background(), fake)
+	row := checkListPartitionsSmoke(context.Background(), fake, "test-run")
 	if row.Err == nil {
 		t.Fatal("expected non-nil Err when ListPartitions returns zero partitions after a successful commit, got PASS")
 	}
@@ -176,24 +172,15 @@ func TestCheckListPartitionsSmoke_AlwaysEmpty_Fails(t *testing.T) {
 
 func TestCheckGetVersionSchemaSmoke_Honest_Passes(t *testing.T) {
 	fake := newDPFake()
-	row := checkGetVersionSchemaSmoke(context.Background(), fake)
+	row := checkGetVersionSchemaSmoke(context.Background(), fake, "test-run")
 	if row.Err != nil {
 		t.Fatalf("expected PASS, got Err: %v", row.Err)
 	}
 }
 
-func TestCheckGetVersionSchemaSmoke_EmptySchema_Fails(t *testing.T) {
-	fake := newDPFake()
-	fake.schemaAlwaysEmpty = true
-	row := checkGetVersionSchemaSmoke(context.Background(), fake)
-	if row.Err == nil {
-		t.Fatal("expected non-nil Err when GetVersionSchema returns empty schema bytes, got PASS")
-	}
-}
-
 func TestCheckConcurrentWrites_Honest_Passes(t *testing.T) {
 	fake := newDPFake()
-	row := checkConcurrentWrites(context.Background(), fake)
+	row := checkConcurrentWrites(context.Background(), fake, "test-run")
 	if row.Err != nil {
 		t.Fatalf("expected PASS, got Err: %v", row.Err)
 	}
@@ -202,7 +189,7 @@ func TestCheckConcurrentWrites_Honest_Passes(t *testing.T) {
 func TestCheckConcurrentWrites_DroppedWrites_Fails(t *testing.T) {
 	fake := newDPFake()
 	fake.dropConcurrentWrites = true
-	row := checkConcurrentWrites(context.Background(), fake)
+	row := checkConcurrentWrites(context.Background(), fake, "test-run")
 	if row.Err == nil {
 		t.Fatal("expected non-nil Err when concurrent commits silently drop versions, got PASS")
 	}

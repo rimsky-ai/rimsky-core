@@ -565,6 +565,129 @@ func TestEvaluateBreakpoints_NotifyOnlyAutoResumeTTLOverflowNeverBlocks(t *testi
 	}
 }
 
+func TestEvaluateBreakpoints_OverflowAutoResumeAfterTTLSweepUnblocksRunner(t *testing.T) {
+	ctx := context.Background()
+	tables := openInMemoryTables(t)
+	instanceID := seedBreakpointEvalFixture(t, ctx, tables)
+	bpID := createBreakpointForEval(t, ctx, tables, persistence.BreakpointRow{
+		InstanceID:     instanceID,
+		Matcher:        map[string]any{},
+		Checkpoint:     persistence.CheckpointBeforeDispatch,
+		Mode:           persistence.BreakpointModePause,
+		OverflowPolicy: persistence.OverflowAutoResumeAfterTTL,
+		HitTTLSeconds:  3600,
+		CreatedByKey:   "test",
+	})
+	staleHitAt := time.Now().Add(-2 * time.Hour)
+	hitIDs := make([]shared.UUID, 0, 100)
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for i := 0; i < 100; i++ {
+			hitAt := time.Now()
+			if i == 0 {
+				hitAt = staleHitAt
+			}
+			id, _, err := tables.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+				BreakpointID: bpID,
+				InstanceID:   instanceID,
+				Checkpoint:   persistence.CheckpointBeforeDispatch,
+				Mode:         persistence.BreakpointModePause,
+				Snapshot:     map[string]any{"seed": i},
+				HitAt:        hitAt,
+			}, tx)
+			if err != nil {
+				return err
+			}
+			hitIDs = append(hitIDs, id)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed 100 hits: %v", err)
+	}
+
+	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+	cc := newCheckpointContext(instanceID)
+
+	type evalResult struct {
+		merged map[string]any
+		err    error
+	}
+	resultCh := make(chan evalResult, 1)
+	go func() {
+		out, err := runtime.EvaluateBreakpoints(ctx, args, cc)
+		resultCh <- evalResult{merged: out, err: err}
+	}()
+
+	select {
+	case <-resultCh:
+		t.Fatalf("EvaluateBreakpoints returned while queue at cap")
+	case <-time.After(400 * time.Millisecond):
+	}
+
+	if n := unresumedCountForBreakpoint(t, ctx, tables, bpID); n != 100 {
+		t.Fatalf("unresumed count before sweep = %d, want 100 (nothing auto-resumed yet)", n)
+	}
+
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		n, err := tables.BreakpointHits().AutoResumeStale(ctx, time.Now(), tx)
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			t.Fatalf("AutoResumeStale resumed %d rows, want 1 (only hitIDs[0] is past its TTL)", n)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("AutoResumeStale: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var newHitID shared.UUID
+	for time.Now().Before(deadline) {
+		hits := listHitsForBreakpoint(t, ctx, tables, bpID)
+		for _, h := range hits {
+			if h.ResumedAt != nil {
+				continue
+			}
+			if _, isSeed := h.Snapshot["seed"]; !isSeed {
+				newHitID = h.ID
+				break
+			}
+		}
+		if newHitID != (shared.UUID{}) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if newHitID == (shared.UUID{}) {
+		t.Fatalf("evaluator never wrote its own hit row after the TTL sweep freed capacity")
+	}
+	resumeHit(t, ctx, tables, newHitID, nil)
+
+	select {
+	case res := <-resultCh:
+		if res.err != nil {
+			t.Fatalf("EvaluateBreakpoints err: %v", res.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("EvaluateBreakpoints did not return after the sweep + final resume")
+	}
+
+	var stale *persistence.BreakpointHitRow
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		stale, err = tables.BreakpointHits().Get(ctx, hitIDs[0], tx)
+		return err
+	}); err != nil {
+		t.Fatalf("get swept hit: %v", err)
+	}
+	if stale.ResumedAt == nil {
+		t.Fatalf("hitIDs[0] (past its TTL) must be resumed by the sweep")
+	}
+	if stale.ResumedByKey == nil || *stale.ResumedByKey != "sweeper" {
+		t.Fatalf("hitIDs[0].ResumedByKey = %v, want %q", stale.ResumedByKey, "sweeper")
+	}
+}
+
 func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
@@ -606,9 +729,7 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 		err    error
 	}
 	resultCh := make(chan evalResult, 1)
-	var startOnce sync.Once
 	go func() {
-		startOnce.Do(func() {})
 		out, err := runtime.EvaluateBreakpoints(ctx, args, cc)
 		resultCh <- evalResult{merged: out, err: err}
 	}()

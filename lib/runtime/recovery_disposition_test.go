@@ -45,7 +45,7 @@ func seedDispositionFixture(ctx context.Context, t *testing.T, d persistence.Dat
 		workerNode = n
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, workerNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	runID := seedRunForNode(ctx, t, backend, d.Queue(), workerNode.ID, frameID)
 	return inst, workerNode, mainScopeID, frameID, runID
 }

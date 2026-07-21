@@ -26,6 +26,8 @@ func Suite(
 	t.Run("AdvisoryLockerSchedulerTick", func(t *testing.T) { testAdvisoryLockerSchedulerTick(t, factory(t)) })
 	t.Run("ForeignKeyCascade", func(t *testing.T) { testForeignKeyCascade(t, factory(t)) })
 	t.Run("ClaimScopeByteEquality", func(t *testing.T) { testClaimScopeByteEquality(t, factory(t)) })
+	t.Run("ClaimScopeCommittedDurableStillConflicts", func(t *testing.T) { testClaimScopeCommittedDurableStillConflicts(t, factory(t)) })
+	t.Run("ClaimScopeCommittedSubgraphDoesNotConflict", func(t *testing.T) { testClaimScopeCommittedSubgraphDoesNotConflict(t, factory(t)) })
 	t.Run("OrphanCutoffTime", func(t *testing.T) { testOrphanCutoffTime(t, factory(t)) })
 	t.Run("ReaperSkipsParkedHolder", func(t *testing.T) { testReaperSkipsParkedHolder(t, factory(t)) })
 	t.Run("SweepExecutorDeadlinesSkipsParkedRow", func(t *testing.T) { testSweepExecutorDeadlinesSkipsParkedRow(t, factory(t)) })

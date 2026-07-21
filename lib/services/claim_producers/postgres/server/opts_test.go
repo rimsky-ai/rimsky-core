@@ -154,3 +154,84 @@ func TestLoadOptsFromEnv_ExplicitWriteSemanticsWiredThrough(t *testing.T) {
 		t.Fatalf("Opts.WriteSemantics = %q, want %q", opts.WriteSemantics, claimproducer.WriteSemanticsSync)
 	}
 }
+
+func TestLoadOptsFromEnv_PartitionPolicyParamOrderPreservesYAMLKeyOrder(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeOptsConfig(t, cfgPath, `connection: postgres://example/db
+partition_policies:
+  by_region:
+    items_table: items
+    select: "*"
+    where: "region = $1 AND category = $2"
+    limit: 10
+    params_schema:
+      properties:
+        region: {type: string}
+        category: {type: string}
+        zeta: {type: string}
+        alpha: {type: string}
+`)
+	t.Setenv(ConfigEnv, cfgPath)
+
+	opts, err := LoadOptsFromEnv()
+	if err != nil {
+		t.Fatalf("LoadOptsFromEnv: %v", err)
+	}
+	pp, ok := opts.PartitionPolicies["by_region"]
+	if !ok {
+		t.Fatalf("PartitionPolicies missing %q", "by_region")
+	}
+	want := []string{"region", "category", "zeta", "alpha"}
+	if len(pp.ParamOrder) != len(want) {
+		t.Fatalf("ParamOrder = %v, want %v", pp.ParamOrder, want)
+	}
+	for i, k := range want {
+		if pp.ParamOrder[i] != k {
+			t.Fatalf("ParamOrder[%d] = %q, want %q (YAML key order is load-bearing for $1..$N SQL binding); got full order %v",
+				i, pp.ParamOrder[i], k, pp.ParamOrder)
+		}
+	}
+}
+
+func TestLoadOptsFromEnv_PickPolicyRejectsInvalidItemsTableIdentifier(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeOptsConfig(t, cfgPath, `connection: postgres://example/db
+pick_policies:
+  "@queue":
+    items_table: "items; DROP TABLE users;--"
+    on_commit: recycle
+    on_give_up: recycle
+`)
+	t.Setenv(ConfigEnv, cfgPath)
+
+	_, err := LoadOptsFromEnv()
+	if err == nil {
+		t.Fatal("LoadOptsFromEnv: expected an error for a non-identifier items_table, got nil")
+	}
+	if !strings.Contains(err.Error(), "items_table") {
+		t.Fatalf("LoadOptsFromEnv error = %q, want it to name items_table", err.Error())
+	}
+}
+
+func TestLoadOptsFromEnv_PartitionPolicyRejectsInvalidItemsTableIdentifier(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeOptsConfig(t, cfgPath, `connection: postgres://example/db
+partition_policies:
+  by_region:
+    items_table: "1items"
+    select: "*"
+    where: "1=1"
+`)
+	t.Setenv(ConfigEnv, cfgPath)
+
+	_, err := LoadOptsFromEnv()
+	if err == nil {
+		t.Fatal("LoadOptsFromEnv: expected an error for an items_table starting with a digit, got nil")
+	}
+	if !strings.Contains(err.Error(), "items_table") {
+		t.Fatalf("LoadOptsFromEnv error = %q, want it to name items_table", err.Error())
+	}
+}

@@ -34,15 +34,11 @@ func TestCascadeSendDemo_RunExitsZero(t *testing.T) {
 	)
 
 	demoScript := repoExampleSpecPath(t, "examples/cascade-send-demo.sh")
-	templatePath := repoExampleSpecPath(t, "examples/cascade-send-demo-template.yaml")
+	repoExampleSpecPath(t, "examples/cascade-send-demo-template.yaml")
 
 	stdout, exitCode := runCascadeSendDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {
 		t.Fatalf("cascade-send-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
-	}
-
-	if _, err := os.Stat(templatePath); err != nil {
-		t.Fatalf("shipped template %s missing on disk: %v — the cascade-send demo's template is broken", templatePath, err)
 	}
 
 	requireCascadeSendInstanceSentIterate(t, ep, 60*time.Second)

@@ -8,7 +8,6 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -136,15 +135,16 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 			senderARunID.String(), senderANodeID.String(), frameID.String(), mainScopeID.String(),
 		)
 		require.NoError(t, err)
-		drainedAt := time.Now()
 		require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return tables.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			if err := tables.WaitSet().Insert(ctx, persistence.WaitSetRow{
 				FrameID:           frameID,
 				ReceiverNodeRunID: firstPendingID,
 				SenderNodeRunID:   senderARunID,
 				TopicKind:         "terminal",
-				DrainedAt:         &drainedAt,
-			}, tx)
+			}, tx); err != nil {
+				return err
+			}
+			return tables.WaitSet().MarkDrainedBySender(ctx, frameID, senderARunID, tx)
 		}))
 
 		var after shared.UUID

@@ -50,7 +50,7 @@ func TestResolveClaimHandleTerminal_LineageRecordsTerminatingSupervisorAfterProm
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, workerNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	nodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), workerNode.ID, frameID)
 
 	const terminatingSupervisor = "sup-lineage-terminator"

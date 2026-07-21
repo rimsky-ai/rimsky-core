@@ -61,9 +61,13 @@ func TestFsStore_ClaimProducerConformance(t *testing.T) {
 func assertFsResultPassing(t *testing.T, results []cpconf.CheckResult, name string) {
 	t.Helper()
 	for _, r := range results {
-		if r.Name == name {
-			return
+		if r.Name != name {
+			continue
 		}
+		if r.Err != nil {
+			t.Errorf("claim-producer conformance row %q present but FAILED: %v", name, r.Err)
+		}
+		return
 	}
 	rowNames := make([]string, 0, len(results))
 	for _, r := range results {

@@ -11,25 +11,26 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/attribute_passthrough"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/loop_counter"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/send_message"
 )
 
-func TestRegisterAll_RegistersBothBuiltins(t *testing.T) {
+func TestRegisterAll_RegistersAllBuiltins(t *testing.T) {
 	t.Parallel()
 	reg := executor.NewInProcessRegistry()
 	aliases := node.NewKindAliasMap()
 	if err := RegisterAll(reg, aliases); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
-	for _, url := range []string{loop_counter.InProcURL, attribute_passthrough.InProcURL} {
+	for _, url := range []string{loop_counter.InProcURL, attribute_passthrough.InProcURL, send_message.InProcURL} {
 		if _, ok := reg.Lookup(url); !ok {
 			t.Errorf("registry does not contain %s after RegisterAll", url)
 		}
 	}
 }
 
-func TestIsBuiltinAlias_BothBuiltins(t *testing.T) {
+func TestIsBuiltinAlias_AllBuiltins(t *testing.T) {
 	t.Parallel()
-	for _, alias := range []string{loop_counter.ExecutorAlias, attribute_passthrough.ExecutorAlias} {
+	for _, alias := range []string{loop_counter.ExecutorAlias, attribute_passthrough.ExecutorAlias, send_message.ExecutorAlias} {
 		if !IsBuiltinAlias(alias) {
 			t.Errorf("IsBuiltinAlias(%q) = false, want true", alias)
 		}
@@ -39,9 +40,9 @@ func TestIsBuiltinAlias_BothBuiltins(t *testing.T) {
 	}
 }
 
-func TestSchemaFor_BothBuiltins(t *testing.T) {
+func TestSchemaFor_AllBuiltins(t *testing.T) {
 	t.Parallel()
-	for _, alias := range []string{loop_counter.ExecutorAlias, attribute_passthrough.ExecutorAlias} {
+	for _, alias := range []string{loop_counter.ExecutorAlias, attribute_passthrough.ExecutorAlias, send_message.ExecutorAlias} {
 		schema, ok := SchemaFor(alias)
 		if !ok {
 			t.Errorf("SchemaFor(%q) = !ok, want ok", alias)
@@ -56,9 +57,9 @@ func TestSchemaFor_BothBuiltins(t *testing.T) {
 	}
 }
 
-func TestDeclaredTagsFor_BothBuiltins(t *testing.T) {
+func TestDeclaredTagsFor_AllBuiltins(t *testing.T) {
 	t.Parallel()
-	for _, alias := range []string{loop_counter.ExecutorAlias, attribute_passthrough.ExecutorAlias} {
+	for _, alias := range []string{loop_counter.ExecutorAlias, attribute_passthrough.ExecutorAlias, send_message.ExecutorAlias} {
 		_, ok := DeclaredTagsFor(alias)
 		if !ok {
 			t.Errorf("DeclaredTagsFor(%q) = !ok, want ok", alias)
@@ -69,10 +70,10 @@ func TestDeclaredTagsFor_BothBuiltins(t *testing.T) {
 	}
 }
 
-func TestBuiltinExecutorAliases_BothBuiltins(t *testing.T) {
+func TestBuiltinExecutorAliases_AllBuiltins(t *testing.T) {
 	t.Parallel()
 	aliases := BuiltinExecutorAliases()
-	for _, want := range []string{loop_counter.ExecutorAlias, attribute_passthrough.ExecutorAlias} {
+	for _, want := range []string{loop_counter.ExecutorAlias, attribute_passthrough.ExecutorAlias, send_message.ExecutorAlias} {
 		ep, ok := aliases[want]
 		if !ok {
 			t.Errorf("BuiltinExecutorAliases missing %q", want)

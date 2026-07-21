@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,11 +24,39 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-type keepaliveStubTables struct {
-	persistence.Tables
+type stubTables struct{}
+
+func (stubTables) Templates() persistence.TemplateTable       { return nil }
+func (stubTables) TemplateTags() persistence.TemplateTagTable { return nil }
+func (stubTables) Instances() persistence.InstanceTable       { return nil }
+func (stubTables) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
+	return nil
+}
+func (stubTables) Nodes() persistence.NodeTable                              { return nil }
+func (stubTables) ClaimHandles() persistence.ClaimHandleTable                { return nil }
+func (stubTables) NodeAttributes() persistence.NodeAttributeTable            { return nil }
+func (stubTables) ClaimHolders() persistence.ClaimHolderTable                { return nil }
+func (stubTables) Events() persistence.EventTable                            { return nil }
+func (stubTables) Supervisors() persistence.SupervisorTable                  { return nil }
+func (stubTables) Frames() persistence.FrameTable                            { return nil }
+func (stubTables) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
+func (stubTables) WaitSet() persistence.WaitSetTable                         { return nil }
+func (stubTables) Messages() persistence.MessageTable                        { return nil }
+func (stubTables) MessageIdempotencies() persistence.MessageIdempotencyTable { return nil }
+func (stubTables) Lineage() persistence.LineageTable                         { return nil }
+func (stubTables) PublisherSubscriptions() persistence.PublisherSubscriptionTable {
+	return nil
+}
+func (stubTables) NodeRunTree() persistence.NodeRunTreeTable   { return nil }
+func (stubTables) RunScopes() persistence.RunScopeTable        { return nil }
+func (stubTables) APIKeys() persistence.APIKeyTable            { return nil }
+func (stubTables) DeploymentCA() persistence.DeploymentCATable { return nil }
+func (stubTables) Breakpoints() persistence.BreakpointTable    { return nil }
+func (stubTables) BreakpointHits() persistence.BreakpointHitTable {
+	return nil
 }
 
-func (keepaliveStubTables) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
+func (stubTables) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, nil)
 }
 
@@ -82,7 +111,7 @@ func TestKeepalive_MissingCancelTokenRejected(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		Persist:      keepaliveStubTables{},
+		Persist:      stubTables{},
 		Queue:        queue,
 	}
 	router := newKeepaliveRouter(c)
@@ -105,7 +134,7 @@ func TestKeepalive_WrongCancelTokenRejected(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		Persist:      keepaliveStubTables{},
+		Persist:      stubTables{},
 		Queue:        queue,
 	}
 	router := newKeepaliveRouter(c)
@@ -122,13 +151,58 @@ func TestKeepalive_WrongCancelTokenRejected(t *testing.T) {
 	}
 }
 
+func TestKeepalive_MissingBearerPrefixRejected(t *testing.T) {
+	t.Parallel()
+	queue := &keepaliveStubQueue{found: true}
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		Persist:      stubTables{},
+		Queue:        queue,
+	}
+	router := newKeepaliveRouter(c)
+
+	runID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID.String()+"/keepalive", nil)
+	req.Header.Set("Authorization", cancelTokenFor("sup-1", runID))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (Authorization header missing the \"Bearer \" prefix); body=%s", rec.Code, rec.Body.String())
+	}
+	if len(queue.calls) != 0 {
+		t.Fatalf("BumpLastProgressAt calls = %d, want 0 (no bump without auth)", len(queue.calls))
+	}
+}
+
+func TestKeepalive_BumpFailureReturns500(t *testing.T) {
+	t.Parallel()
+	queue := &keepaliveStubQueue{found: true, err: errors.New("boom")}
+	c := &CallbackServer{
+		Logger:       shared.SilentLogger{},
+		SupervisorID: "sup-1",
+		Persist:      stubTables{},
+		Queue:        queue,
+	}
+	router := newKeepaliveRouter(c)
+
+	runID := uuid.New()
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, keepaliveRequest(runID.String(), cancelTokenFor("sup-1", runID)))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (BumpLastProgressAt error); body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestKeepalive_WrongSupervisorTokenRejected(t *testing.T) {
 	t.Parallel()
 	queue := &keepaliveStubQueue{found: true}
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		Persist:      keepaliveStubTables{},
+		Persist:      stubTables{},
 		Queue:        queue,
 	}
 	router := newKeepaliveRouter(c)
@@ -166,7 +240,7 @@ func TestKeepalive_MTLSAcceptsVerifiedPrincipal(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		Persist:      keepaliveStubTables{},
+		Persist:      stubTables{},
 		Queue:        queue,
 		PeerAuth:     peer.PeerAuthMTLS,
 	}
@@ -216,7 +290,7 @@ func TestKeepalive_UnknownRun(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		Persist:      keepaliveStubTables{},
+		Persist:      stubTables{},
 		Queue:        queue,
 	}
 	router := newKeepaliveRouter(c)
@@ -242,7 +316,7 @@ func TestKeepalive_Success(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		Persist:      keepaliveStubTables{},
+		Persist:      stubTables{},
 		Queue:        queue,
 	}
 	router := newKeepaliveRouter(c)
@@ -270,7 +344,7 @@ func TestKeepalive_UsesInjectedClockNotWallClock(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		Persist:      keepaliveStubTables{},
+		Persist:      stubTables{},
 		Queue:        queue,
 		Clock:        clock,
 	}

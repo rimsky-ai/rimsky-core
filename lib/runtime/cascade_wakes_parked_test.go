@@ -65,7 +65,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
@@ -179,7 +179,7 @@ func TestCascadeWalk_NoWakeForUnsubscribedParkedNode(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `

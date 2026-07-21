@@ -341,43 +341,13 @@ func TestMostRecentRunIDForNode_ScopesByInstance(t *testing.T) {
 }
 
 type emitFakePersist struct {
+	stubTables
 	lt     persistence.LineageTable
 	frames persistence.FrameTable
 }
 
-func (f *emitFakePersist) Templates() persistence.TemplateTable       { return nil }
-func (f *emitFakePersist) TemplateTags() persistence.TemplateTagTable { return nil }
-func (f *emitFakePersist) Instances() persistence.InstanceTable       { return nil }
-func (f *emitFakePersist) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
-	return nil
-}
-func (f *emitFakePersist) Nodes() persistence.NodeTable                              { return nil }
-func (f *emitFakePersist) ClaimHandles() persistence.ClaimHandleTable                { return nil }
-func (f *emitFakePersist) NodeAttributes() persistence.NodeAttributeTable            { return nil }
-func (f *emitFakePersist) ClaimHolders() persistence.ClaimHolderTable                { return nil }
-func (f *emitFakePersist) Events() persistence.EventTable                            { return nil }
-func (f *emitFakePersist) Supervisors() persistence.SupervisorTable                  { return nil }
-func (f *emitFakePersist) Frames() persistence.FrameTable                            { return f.frames }
-func (f *emitFakePersist) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
-func (f *emitFakePersist) WaitSet() persistence.WaitSetTable                         { return nil }
-func (f *emitFakePersist) Messages() persistence.MessageTable                        { return nil }
-func (f *emitFakePersist) MessageIdempotencies() persistence.MessageIdempotencyTable { return nil }
-func (f *emitFakePersist) Lineage() persistence.LineageTable                         { return f.lt }
-func (f *emitFakePersist) PublisherSubscriptions() persistence.PublisherSubscriptionTable {
-	return nil
-}
-func (f *emitFakePersist) NodeRunTree() persistence.NodeRunTreeTable   { return nil }
-func (f *emitFakePersist) RunScopes() persistence.RunScopeTable        { return nil }
-func (f *emitFakePersist) APIKeys() persistence.APIKeyTable            { return nil }
-func (f *emitFakePersist) DeploymentCA() persistence.DeploymentCATable { return nil }
-func (f *emitFakePersist) Breakpoints() persistence.BreakpointTable    { return nil }
-func (f *emitFakePersist) BreakpointHits() persistence.BreakpointHitTable {
-	return nil
-}
-
-func (f *emitFakePersist) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
-	return fn(ctx, nil)
-}
+func (f *emitFakePersist) Frames() persistence.FrameTable    { return f.frames }
+func (f *emitFakePersist) Lineage() persistence.LineageTable { return f.lt }
 
 func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 	ctx := context.Background()

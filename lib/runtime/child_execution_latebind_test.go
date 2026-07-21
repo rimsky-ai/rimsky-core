@@ -50,7 +50,7 @@ func TestSettleFromFanoutChild_LateBoundProducer_ResolvesViaContext(t *testing.T
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	const lateBoundProducerName = "late-bound-store"

@@ -272,9 +272,14 @@ func TestTick_IdempotencyKeyIncludesObjectNameWhenETagEmpty(t *testing.T) {
 }
 
 func TestTick_LastModifiedWatermark(t *testing.T) {
-	var pushed int
+	var (
+		mu     sync.Mutex
+		pushed int
+	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		pushed++
+		mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
@@ -300,15 +305,19 @@ func TestTick_LastModifiedWatermark(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Tick(context.Background())
+	mu.Lock()
 	if pushed != 2 {
 		t.Errorf("pushed: %d (want 2)", pushed)
 	}
+	mu.Unlock()
 	lister.Put("test-bucket", ObjectMeta{Name: "b.json", LastModified: pin.Add(-30 * time.Minute)})
 	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
 	s.Tick(context.Background())
+	mu.Lock()
 	if pushed != 3 {
 		t.Errorf("pushed: %d (want 3)", pushed)
 	}
+	mu.Unlock()
 }
 
 func TestTick_LastModifiedWatermark_EqualTimestampSiblingsBothDelivered(t *testing.T) {

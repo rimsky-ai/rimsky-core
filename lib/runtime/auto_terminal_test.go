@@ -89,9 +89,8 @@ func seedRunForNode(
 	return out
 }
 
-func seedFrame(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, sourceNodeID, rootScope shared.UUID) shared.UUID {
+func seedFrame(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, rootScope shared.UUID) shared.UUID {
 	t.Helper()
-	_ = sourceNodeID
 	var frameID shared.UUID
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		msgID := shared.UUID(uuid.New())
@@ -197,7 +196,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	stubStore := storetest.NewFake("workspace", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("workspace", stubStore)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	inhRunID := seedRunForNode(ctx, t, backend, d.Queue(), inhNode.ID, frameID)
 
@@ -336,7 +335,7 @@ func TestCheckAndFireResolution_TransientInstancesLookupErrorPropagates(t *testi
 	stubStore := storetest.NewFake("workspace-inst-err", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("workspace-inst-err", stubStore)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	inhRunID := seedRunForNode(ctx, t, backend, d.Queue(), inhNode.ID, frameID)
 
@@ -438,7 +437,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	})
 	reg.Add("workspace", stubStore)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
 	storeName := "workspace"
@@ -656,7 +655,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -714,7 +713,7 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -773,7 +772,7 @@ func TestResolveParentClaimChain_Threshold_AbandonsAtExactMax(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -833,7 +832,7 @@ func TestResolveParentClaimChain_ThresholdFullCount_SurvivingSiblingsKeepRunning
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -912,7 +911,7 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -977,7 +976,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 	coRunID := seedRunForNode(ctx, t, backend, d.Queue(), coNode.ID, frameID)
 
@@ -1069,7 +1068,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -1176,7 +1175,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	stubStore := storetest.NewFake("workspace", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("workspace", stubStore)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	inhRunID := seedRunForNode(ctx, t, backend, d.Queue(), inhNode.ID, frameID)
 
@@ -1284,7 +1283,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -1354,7 +1353,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -1441,7 +1440,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -1586,7 +1585,7 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 	})
 	reg.Add(storeName, store)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	inhARunID := seedRunForNode(ctx, t, backend, d.Queue(), inhANode.ID, frameID)
 	inhBRunID := seedRunForNode(ctx, t, backend, d.Queue(), inhBNode.ID, frameID)
@@ -1755,7 +1754,7 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 	})
 	reg.Add(storeName, store)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	inhARunID := seedRunForNode(ctx, t, backend, d.Queue(), inhANode.ID, frameID)
 
@@ -1855,7 +1854,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -1959,7 +1958,7 @@ func TestSettleFromFanoutChild_MalformedAggregationPolicy_SafeFallback(t *testin
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -2079,7 +2078,7 @@ func TestCancelInFlightSiblings_DifferentSupervisorSkipped(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -2199,7 +2198,7 @@ func TestCancelDescendantClaims_DifferentSupervisorSkipped(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, rootNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	rootNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), rootNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -2342,7 +2341,7 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, rootNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	rootNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), rootNode.ID, frameID)
 
 	reg := locks.NewRegistry()
@@ -2510,7 +2509,7 @@ func TestCheckAndFireResolution_ProducerVerbDeliveryFailure_DecisionHoldsAndRetr
 	}
 	reg.Add("verb-err-store", store)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	coholderRunID := seedRunForNode(ctx, t, backend, d.Queue(), coholderNode.ID, frameID)
 
@@ -2663,7 +2662,7 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 	})
 	reg.Add("passive-holder-store", store)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	coholderRunID := seedRunForNode(ctx, t, backend, d.Queue(), coholderNode.ID, frameID)
 

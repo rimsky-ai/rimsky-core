@@ -571,7 +571,16 @@ func TestConfigDefaults(t *testing.T) {
 	if c.AgentLabel == "" {
 		t.Fatal("agent label should default to hostname-pid")
 	}
-	if _, err := strconv.Atoi(c.AgentLabel[len(c.AgentLabel)-1:]); err != nil {
-		_ = err
+	idx := strings.LastIndex(c.AgentLabel, "-")
+	if idx < 0 {
+		t.Fatalf("agent label %q does not have a hostname-pid shape (no trailing dash)", c.AgentLabel)
+	}
+	pidPart := c.AgentLabel[idx+1:]
+	pid, err := strconv.Atoi(pidPart)
+	if err != nil {
+		t.Fatalf("agent label %q pid suffix %q is not numeric: %v", c.AgentLabel, pidPart, err)
+	}
+	if pid != os.Getpid() {
+		t.Fatalf("agent label %q pid suffix = %d, want current pid %d", c.AgentLabel, pid, os.Getpid())
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func jsonEqual(a, b []byte) bool {
@@ -134,5 +136,128 @@ func testClaimScopeByteEquality(t *testing.T, d persistence.Database) {
 	}
 	if matchA != 2 || matchB != 1 {
 		t.Fatalf("scope byte-tally wrong: A=%d B=%d (want 2,1)", matchA, matchB)
+	}
+}
+
+func testClaimScopeCommittedDurableStillConflicts(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	scopeBytes := []byte(`"shared-scope"`)
+	producer := "p-x"
+	intent := "rw"
+
+	idA := shared.UUID(uuid.New())
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 idA,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &producer,
+			ClaimScopeData:     scopeBytes,
+			Address:            []byte(`"addr-A"`),
+			Intent:             &intent,
+			HolderSupervisorID: "sup-A",
+			HolderNodeID:       fix.NodeID,
+			ExpiresAt:          time.Now().Add(10 * time.Minute),
+			Lifetime:           spec.ClaimLifetimeDurable,
+		}, tx)
+	}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return store.ClaimHandles().Promote(ctx, idA, "sup-A", spec.ClaimHandleStateCommitted, tx)
+	}); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	var rowA *persistence.ClaimHandleRow
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := store.ClaimHandles().Get(ctx, idA, tx)
+		rowA = r
+		return err
+	}); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rowA == nil {
+		t.Fatalf("committed row missing")
+	}
+	if rowA.State != spec.ClaimHandleStateCommitted {
+		t.Fatalf("state = %v, want %v", rowA.State, spec.ClaimHandleStateCommitted)
+	}
+	if rowA.Lifetime != spec.ClaimLifetimeDurable {
+		t.Fatalf("lifetime = %v, want %v", rowA.Lifetime, spec.ClaimLifetimeDurable)
+	}
+	if rowA.HolderSupervisorID != nil && *rowA.HolderSupervisorID != "" {
+		t.Fatalf("committed row must have holder_supervisor_id NULL, got %q", *rowA.HolderSupervisorID)
+	}
+
+	var hits []persistence.ClaimHandleRow
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := store.ClaimHandles().ListByProducerClaimScope(ctx, producer, tx)
+		hits = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListByProducerClaimScope: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("ListByProducerClaimScope must surface the committed-durable row for conflict detection, got %d rows", len(hits))
+	}
+	if hits[0].ID != idA {
+		t.Fatalf("hits[0].ID = %v, want %v", hits[0].ID, idA)
+	}
+	if hits[0].State != spec.ClaimHandleStateCommitted {
+		t.Fatalf("hits[0].State = %v, want %v", hits[0].State, spec.ClaimHandleStateCommitted)
+	}
+	if hits[0].Lifetime != spec.ClaimLifetimeDurable {
+		t.Fatalf("hits[0].Lifetime = %v, want %v", hits[0].Lifetime, spec.ClaimLifetimeDurable)
+	}
+	if string(hits[0].ClaimScopeData) != string(scopeBytes) {
+		t.Fatalf("surfaced row must carry the byte-equal claim-scope: got %q want %q",
+			string(hits[0].ClaimScopeData), string(scopeBytes))
+	}
+}
+
+func testClaimScopeCommittedSubgraphDoesNotConflict(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	scopeBytes := []byte(`"shared-scope-sg"`)
+	producer := "p-sg"
+	intent := "rw"
+
+	idA := shared.UUID(uuid.New())
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 idA,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &producer,
+			ClaimScopeData:     scopeBytes,
+			Address:            []byte(`"addr-A"`),
+			Intent:             &intent,
+			HolderSupervisorID: "sup-A",
+			HolderNodeID:       fix.NodeID,
+			ExpiresAt:          time.Now().Add(10 * time.Minute),
+			Lifetime:           spec.ClaimLifetimeSubgraph,
+		}, tx); err != nil {
+			return err
+		}
+		return store.ClaimHandles().Promote(ctx, idA, "sup-A", spec.ClaimHandleStateCommitted, tx)
+	}); err != nil {
+		t.Fatalf("Insert+Promote: %v", err)
+	}
+
+	var hits []persistence.ClaimHandleRow
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := store.ClaimHandles().ListByProducerClaimScope(ctx, producer, tx)
+		hits = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListByProducerClaimScope: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("committed-subgraph row must NOT participate in scope-conflict detection (producer Released the scope at Commit), got %d rows", len(hits))
 	}
 }

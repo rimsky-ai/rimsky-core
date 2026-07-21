@@ -46,7 +46,7 @@ func (s *Store) sweepOnce() {
 		cutoff := time.Now().Add(-pp.VisibilityTimeout).UnixNano()
 		reclaimed := false
 		for _, e := range entries {
-			folder, _, claimedNanos, perr := parseFromRight(e.Name())
+			folder, _, claimedNanos, perr := ParseFromRight(e.Name())
 			if perr != nil {
 				continue
 			}

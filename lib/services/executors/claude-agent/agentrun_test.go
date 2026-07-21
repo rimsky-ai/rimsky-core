@@ -98,6 +98,27 @@ func (h *fakeHandle) waitStderrRegistered() {
 	}
 }
 
+func (h *fakeHandle) emitStdout(chunk string) {
+	h.mu.Lock()
+	cbs := append([]func(string){}, h.stdoutCbs...)
+	h.mu.Unlock()
+	for _, cb := range cbs {
+		cb(chunk)
+	}
+}
+
+func (h *fakeHandle) waitStdoutRegistered() {
+	for {
+		h.mu.Lock()
+		n := len(h.stdoutCbs)
+		h.mu.Unlock()
+		if n > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func (h *fakeHandle) exit(result ExitResult) {
 	h.mu.Lock()
 	if h.exited {
@@ -716,6 +737,54 @@ func TestRunAgentSilenceTimeoutFiresWithOpenToolUse(t *testing.T) {
 	outcome := <-done
 	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/timeout" {
 		t.Fatalf("outcome = %+v, want agent/timeout (silence_timeout must still fire while a tool_use is open and tool_use_timeout is unset)", outcome)
+	}
+}
+
+func TestRunAgentToolUseTimeout(t *testing.T) {
+	h := newFakeHandle(true)
+	runner := &fakeRunner{spawnHandles: []*fakeHandle{h}}
+	opts := baseRunOpts(runner)
+	toolUse := 150
+	opts.CliConfig = &CliConfig{ToolUseTimeoutMs: &toolUse}
+	done := make(chan AgentOutcome, 1)
+	go func() { done <- RunAgent(opts) }()
+	runner.waitForSpawn(t)
+	h.waitStdoutRegistered()
+	h.emitStdout(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_stuck","name":"Bash","input":{}}]}}` + "\n")
+
+	outcome := <-done
+	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/tool_use_timeout" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	payload, ok := outcome.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("Payload = %+v (%T), want map[string]any", outcome.Payload, outcome.Payload)
+	}
+	if toolUseID, _ := payload["tool_use_id"].(string); toolUseID != "toolu_stuck" {
+		t.Fatalf("Payload[tool_use_id] = %q, want %q (payload=%+v)", toolUseID, "toolu_stuck", payload)
+	}
+	if toolName, _ := payload["tool_name"].(string); toolName != "Bash" {
+		t.Fatalf("Payload[tool_name] = %q, want %q (payload=%+v)", toolName, "Bash", payload)
+	}
+}
+
+func TestRunAgentToolUseEndClearsOpenToolUseBeforeItTimesOut(t *testing.T) {
+	h := newFakeHandle(true)
+	runner := &fakeRunner{spawnHandles: []*fakeHandle{h}}
+	opts := baseRunOpts(runner)
+	toolUse := 150
+	silence := 400
+	opts.CliConfig = &CliConfig{ToolUseTimeoutMs: &toolUse, SilenceTimeoutMs: &silence}
+	done := make(chan AgentOutcome, 1)
+	go func() { done <- RunAgent(opts) }()
+	runner.waitForSpawn(t)
+	h.waitStdoutRegistered()
+	h.emitStdout(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_quick","name":"Bash","input":{}}]}}` + "\n")
+	h.emitStdout(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_quick"}]}}` + "\n")
+
+	outcome := <-done
+	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/timeout" {
+		t.Fatalf("outcome = %+v, want the silence timeout (tool_use_timeout must not fire for a tool_use that already ended)", outcome)
 	}
 }
 

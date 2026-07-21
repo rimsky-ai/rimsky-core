@@ -125,7 +125,7 @@ func folderInProgress(storeRoot, selector, folder string) bool {
 		return false
 	}
 	for _, e := range entries {
-		f, _, _, perr := parseFromRight(e.Name())
+		f, _, _, perr := ParseFromRight(e.Name())
 		if perr == nil && f == folder {
 			return true
 		}

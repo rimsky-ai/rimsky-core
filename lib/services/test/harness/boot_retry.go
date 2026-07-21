@@ -7,6 +7,8 @@ package harness
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -25,11 +27,11 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 }
 
 func runWithRetry(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*testcontainers.DockerContainer, error) {
-	return runContainerWithRetry(ctx,
+	return runContainerWithRetry(ctx, img,
 		func(ctx context.Context) (*testcontainers.DockerContainer, error) {
 			c, err := testcontainers.Run(ctx, img, opts...)
 			if err != nil && c != nil {
-				terminateBootFailure(ctx, c, err)
+				terminateBootFailure(ctx, img, c, err)
 			}
 			return c, err
 		},
@@ -43,11 +45,11 @@ func runWithRetry(ctx context.Context, img string, opts ...testcontainers.Contai
 }
 
 func runPostgresWithRetry(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*pgmodule.PostgresContainer, error) {
-	return runContainerWithRetry(ctx,
+	return runContainerWithRetry(ctx, img,
 		func(ctx context.Context) (*pgmodule.PostgresContainer, error) {
 			c, err := pgmodule.Run(ctx, img, opts...)
 			if err != nil && c != nil {
-				terminateBootFailure(ctx, c, err)
+				terminateBootFailure(ctx, img, c, err)
 			}
 			return c, err
 		},
@@ -57,6 +59,7 @@ func runPostgresWithRetry(ctx context.Context, img string, opts ...testcontainer
 
 func runContainerWithRetry[T any](
 	ctx context.Context,
+	img string,
 	run func(context.Context) (T, error),
 	failFast func(error) (error, bool),
 ) (T, error) {
@@ -73,6 +76,8 @@ func runContainerWithRetry[T any](
 			}
 		}
 		lastErr = err
+		slog.Warn("harness: container boot attempt failed",
+			"image", img, "attempt", attempt, "max_attempts", bootMaxAttempts, "error", err.Error())
 		if attempt < bootMaxAttempts {
 			time.Sleep(time.Duration(attempt) * bootRetryBackoff)
 		}
@@ -81,10 +86,22 @@ func runContainerWithRetry[T any](
 	return zero, fmt.Errorf("after %d boot attempts: %w", bootMaxAttempts, lastErr)
 }
 
-func terminateBootFailure(ctx context.Context, c testcontainers.Container, bootErr error) {
+func terminateBootFailure(ctx context.Context, img string, c testcontainers.Container, bootErr error) {
 	if c == nil || bootErr == nil {
 		return
 	}
+	logCtx, logCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	if logs, logErr := c.Logs(logCtx); logErr == nil {
+		if tail, readErr := io.ReadAll(logs); readErr == nil && len(tail) > 0 {
+			const maxTail = 4096
+			if len(tail) > maxTail {
+				tail = tail[len(tail)-maxTail:]
+			}
+			slog.Warn("harness: container logs at boot failure", "image", img, "logs_tail", string(tail))
+		}
+		_ = logs.Close()
+	}
+	logCancel()
 	termCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	_ = c.Terminate(termCtx)

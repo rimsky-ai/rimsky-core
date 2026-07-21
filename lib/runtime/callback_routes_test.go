@@ -20,7 +20,7 @@ func TestCallbackServer_MidDispatchScratchRouteIsGone(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		Persist:      keepaliveStubTables{},
+		Persist:      stubTables{},
 		Queue:        &keepaliveStubQueue{found: true},
 	}
 	addr, err := c.Start("127.0.0.1", 0)

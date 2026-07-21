@@ -145,8 +145,8 @@ func runExecutorRoleCheck(
 	for _, s := range n.ClaimProducers {
 		aliases = append(aliases, s.AliasOf())
 	}
-	for alias := range n.Holds {
-		aliases = append(aliases, alias)
+	for alias, binding := range n.Holds {
+		aliases = append(aliases, node.EffectiveHoldsLocalAlias(alias, binding))
 	}
 	res, err := client.ValidateExecutor(ctx, ValidateExecutorInput{
 		NodeAlias:        n.Type,

@@ -57,7 +57,7 @@ func TestCheckAndFireResolution_ProducerCandidateHandleRoundTripsFromDBToDataPro
 	dpClient := newFakeDataProcessingClient("workspace")
 	dpReg := newFakeDataProcessingRegistry(dpClient)
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
 	storeName := "workspace"

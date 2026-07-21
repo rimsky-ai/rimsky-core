@@ -36,7 +36,7 @@ func fsyncDir(dir string) {
 	}
 }
 
-func parseFromRight(name string) (folder, claimID string, claimedNanos int64, err error) {
+func ParseFromRight(name string) (folder, claimID string, claimedNanos int64, err error) {
 	lastDot := strings.LastIndexByte(name, '.')
 	if lastDot < 0 {
 		return "", "", 0, errors.New("missing claimed_nanos suffix")
@@ -116,7 +116,7 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 		tracked[k] = struct{}{}
 	}
 	for _, e := range inProgEntries {
-		folder, _, _, perr := parseFromRight(e.Name())
+		folder, _, _, perr := ParseFromRight(e.Name())
 		if perr != nil {
 			continue
 		}
@@ -454,7 +454,7 @@ func (s *Store) findByClaimID(claimID string) (pp *PickPolicy, selector, entry, 
 			continue
 		}
 		for _, e := range entries {
-			f, c, _, perr := parseFromRight(e.Name())
+			f, c, _, perr := ParseFromRight(e.Name())
 			if perr != nil || c != claimID {
 				continue
 			}
@@ -503,7 +503,7 @@ func (s *Store) findByScope(scope []byte, leaseToken string) (pp *PickPolicy, se
 			continue
 		}
 		for _, e := range entries {
-			f, c, nanos, perr := parseFromRight(e.Name())
+			f, c, nanos, perr := ParseFromRight(e.Name())
 			if perr != nil || fold(f) != wantFolder || !strings.HasPrefix(c, batchLeaseIDPrefix) {
 				continue
 			}

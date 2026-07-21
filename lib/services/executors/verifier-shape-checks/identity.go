@@ -11,7 +11,7 @@ const ExecutorName = "verifier-shape-checks"
 const InProcURL = "inproc://verifier-shape-checks"
 
 func SchemaBytes() []byte {
-	return []byte(`{"type":"object"}`)
+	return []byte(`{"type":"object","properties":{"checks":{"type":"array","minItems":1}},"required":["checks"]}`)
 }
 
 func DeclaredTags() []string {

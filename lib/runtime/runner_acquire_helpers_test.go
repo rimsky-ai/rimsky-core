@@ -26,42 +26,11 @@ import (
 )
 
 type scopeOnlyPersist struct {
+	stubTables
 	scopes persistence.RunScopeTable
 }
 
-func (p *scopeOnlyPersist) Templates() persistence.TemplateTable       { return nil }
-func (p *scopeOnlyPersist) TemplateTags() persistence.TemplateTagTable { return nil }
-func (p *scopeOnlyPersist) Instances() persistence.InstanceTable       { return nil }
-func (p *scopeOnlyPersist) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
-	return nil
-}
-func (p *scopeOnlyPersist) Nodes() persistence.NodeTable                              { return nil }
-func (p *scopeOnlyPersist) ClaimHandles() persistence.ClaimHandleTable                { return nil }
-func (p *scopeOnlyPersist) NodeAttributes() persistence.NodeAttributeTable            { return nil }
-func (p *scopeOnlyPersist) ClaimHolders() persistence.ClaimHolderTable                { return nil }
-func (p *scopeOnlyPersist) Events() persistence.EventTable                            { return nil }
-func (p *scopeOnlyPersist) Supervisors() persistence.SupervisorTable                  { return nil }
-func (p *scopeOnlyPersist) Frames() persistence.FrameTable                            { return nil }
-func (p *scopeOnlyPersist) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
-func (p *scopeOnlyPersist) WaitSet() persistence.WaitSetTable                         { return nil }
-func (p *scopeOnlyPersist) Messages() persistence.MessageTable                        { return nil }
-func (p *scopeOnlyPersist) MessageIdempotencies() persistence.MessageIdempotencyTable { return nil }
-func (p *scopeOnlyPersist) Lineage() persistence.LineageTable                         { return nil }
-func (p *scopeOnlyPersist) PublisherSubscriptions() persistence.PublisherSubscriptionTable {
-	return nil
-}
-func (p *scopeOnlyPersist) NodeRunTree() persistence.NodeRunTreeTable   { return nil }
-func (p *scopeOnlyPersist) RunScopes() persistence.RunScopeTable        { return p.scopes }
-func (p *scopeOnlyPersist) APIKeys() persistence.APIKeyTable            { return nil }
-func (p *scopeOnlyPersist) DeploymentCA() persistence.DeploymentCATable { return nil }
-func (p *scopeOnlyPersist) Breakpoints() persistence.BreakpointTable    { return nil }
-func (p *scopeOnlyPersist) BreakpointHits() persistence.BreakpointHitTable {
-	return nil
-}
-
-func (p *scopeOnlyPersist) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
-	return fn(ctx, nil)
-}
+func (p *scopeOnlyPersist) RunScopes() persistence.RunScopeTable { return p.scopes }
 
 type messagesPersist struct {
 	scopeOnlyPersist

@@ -187,6 +187,15 @@ func compileRowCountRatio(cfg map[string]any, schema, table string) (Compiled, e
 	if err != nil {
 		return Compiled{}, fmt.Errorf("row_count_ratio: %w", err)
 	}
+	if low < 0 {
+		return Compiled{}, fmt.Errorf("row_count_ratio: config.low must be >= 0, got %g", low)
+	}
+	if high < 0 {
+		return Compiled{}, fmt.Errorf("row_count_ratio: config.high must be >= 0, got %g", high)
+	}
+	if low > high {
+		return Compiled{}, fmt.Errorf("row_count_ratio: config.low (%g) must be <= config.high (%g); as configured, every ratio would fail", low, high)
+	}
 	sql := fmt.Sprintf("SELECT count(*) FROM %s", quoteQualified(schema, table))
 	return Compiled{
 		Kind: "row_count_ratio",

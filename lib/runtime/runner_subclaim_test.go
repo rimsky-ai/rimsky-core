@@ -269,7 +269,7 @@ func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedSt
 		parentNode = p
 		return err
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -375,7 +375,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -581,7 +581,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 		parentNode = p
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -742,7 +742,7 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 		parentNode = p
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -850,7 +850,7 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 		parentNode = p
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -962,7 +962,7 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 		parentNode = p
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	parentClaimID := shared.UUID(uuid.New())
@@ -1163,7 +1163,7 @@ func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 		childNode = c
 		return nil
 	}))
-	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 	childNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), childNode.ID, frameID)
 

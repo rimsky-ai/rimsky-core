@@ -82,6 +82,54 @@ func postOpen(t *testing.T, ts *httptest.Server) []byte {
 	return raw
 }
 
+func TestProducerHandler_BadIntent_400(t *testing.T) {
+	ts := mountFake(t, &fakeServer{})
+	body := []byte(`{"claim_id":"c1","producer_name":"fake","selector":"items/x","intent":"bogus"}`)
+	resp, err := http.Post(ts.URL+"/v1/open", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /v1/open: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("intent=bogus: status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestProducerHandler_MalformedJSONBody_400(t *testing.T) {
+	ts := mountFake(t, &fakeServer{})
+	resp, err := http.Post(ts.URL+"/v1/open", "application/json", bytes.NewReader([]byte(`{not-json`)))
+	if err != nil {
+		t.Fatalf("POST /v1/open: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed JSON: status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestMount_UnknownVerb_404(t *testing.T) {
+	mux := http.NewServeMux()
+	Mount(mux, &fakeServer{})
+	req := httptest.NewRequest(http.MethodPost, "/v1/nonexistent_verb", bytes.NewReader(nil))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown verb: status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestProducerHandler_NonPOST_405(t *testing.T) {
+	ts := mountFake(t, &fakeServer{})
+	resp, err := http.Get(ts.URL + "/v1/open")
+	if err != nil {
+		t.Fatalf("GET /v1/open: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/open: status = %d, want %d", resp.StatusCode, http.StatusMethodNotAllowed)
+	}
+}
+
 func TestOpenBridge_AcquiredOneof(t *testing.T) {
 	addr := []byte(`{"path":"/items/x"}`)
 	payload := []byte(`{"data":"hello"}`)

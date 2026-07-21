@@ -99,6 +99,80 @@ func TestCompile_RowCountAbsolute(t *testing.T) {
 	})
 }
 
+func TestCompile_RowCountRatio(t *testing.T) {
+	t.Run("default bounds", func(t *testing.T) {
+		c, err := Compile(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{"baseline": 1000}}, "s", "t")
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+		if c.SQL != `SELECT count(*) FROM "s"."t"` {
+			t.Fatalf("got SQL %q", c.SQL)
+		}
+		if res := c.Interpret(int64(1000)); !res.Pass {
+			t.Fatalf("expected pass at ratio 1.0, got %+v", res)
+		}
+		if res := c.Interpret(int64(400)); res.Pass {
+			t.Fatalf("expected fail at ratio 0.4 (below default low=0.5), got %+v", res)
+		}
+		if res := c.Interpret(int64(2100)); res.Pass {
+			t.Fatalf("expected fail at ratio 2.1 (above default high=2.0), got %+v", res)
+		}
+	})
+
+	t.Run("explicit bounds", func(t *testing.T) {
+		c, _ := Compile(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{
+			"baseline": 100, "low": 0.9, "high": 1.1,
+		}}, "s", "t")
+		if res := c.Interpret(int64(95)); !res.Pass {
+			t.Fatalf("expected pass at ratio 0.95 within [0.9,1.1], got %+v", res)
+		}
+		if res := c.Interpret(int64(80)); res.Pass {
+			t.Fatalf("expected fail at ratio 0.8 outside [0.9,1.1]")
+		}
+	})
+
+	t.Run("missing baseline rejected", func(t *testing.T) {
+		_, err := Compile(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{}}, "s", "t")
+		if err == nil {
+			t.Fatal("expected error for missing baseline")
+		}
+	})
+
+	t.Run("non-positive baseline rejected", func(t *testing.T) {
+		_, err := Compile(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{"baseline": 0}}, "s", "t")
+		if err == nil {
+			t.Fatal("expected error for baseline=0")
+		}
+	})
+
+	t.Run("low greater than high rejected", func(t *testing.T) {
+		_, err := Compile(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{
+			"baseline": 100, "low": 1.5, "high": 0.5,
+		}}, "s", "t")
+		if err == nil {
+			t.Fatal("expected error when low > high (every ratio would fail)")
+		}
+	})
+
+	t.Run("negative low rejected", func(t *testing.T) {
+		_, err := Compile(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{
+			"baseline": 100, "low": -0.1,
+		}}, "s", "t")
+		if err == nil {
+			t.Fatal("expected error for negative low bound")
+		}
+	})
+
+	t.Run("negative high rejected", func(t *testing.T) {
+		_, err := Compile(CheckSpec{Kind: "row_count_ratio", Config: map[string]any{
+			"baseline": 100, "high": -0.1,
+		}}, "s", "t")
+		if err == nil {
+			t.Fatal("expected error for negative high bound")
+		}
+	})
+}
+
 func TestCompile_PKUnique(t *testing.T) {
 	t.Run("single field", func(t *testing.T) {
 		c, err := Compile(CheckSpec{Kind: "pk_unique", Config: map[string]any{"fields": []any{"id"}}}, "s", "t")

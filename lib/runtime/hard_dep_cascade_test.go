@@ -32,7 +32,6 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 		inst persistence.InstanceRow
 		aN   persistence.NodeRow
 		bN   persistence.NodeRow
-		cN   persistence.NodeRow
 	)
 	instID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
@@ -63,14 +62,12 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 				aN = n
 			case "b":
 				bN = n
-			case "c":
-				cN = n
 			}
 		}
 		return nil
 	}))
 
-	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID, mainScopeID)
+	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
@@ -106,7 +103,6 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 			"pullForceRefreshUpstreams must not fire wake on a non-parked in-flight upstream; events: %+v",
 			events.Events)
 	}
-	_ = cN
 }
 
 func makeHardDepTemplate() nodepkg.TemplateSpec {

@@ -549,7 +549,7 @@ func TestSplitScope_BatchPickCommitClearsInProgress(t *testing.T) {
 		t.Fatalf("readdir in_progress after commits: %v", err)
 	}
 	for _, e := range entriesAfter {
-		f, _, _, perr := parseFromRightForTest(e.Name())
+		f, _, _, perr := fsstore.ParseFromRight(e.Name())
 		if perr != nil {
 			t.Errorf("unparseable in_progress entry %q: %v", e.Name(), perr)
 			continue
@@ -558,18 +558,6 @@ func TestSplitScope_BatchPickCommitClearsInProgress(t *testing.T) {
 			t.Errorf("sub-claim folder %q (rimsky-side committed) still in in_progress after Commit; entry=%q", f, e.Name())
 		}
 	}
-}
-
-func parseFromRightForTest(name string) (folder, claimID string, claimedNanos int64, err error) {
-	idx := strings.LastIndexByte(name, '.')
-	if idx < 0 {
-		return "", "", 0, fmt.Errorf("missing claimed_nanos suffix")
-	}
-	prev := strings.LastIndexByte(name[:idx], '.')
-	if prev < 0 {
-		return "", "", 0, fmt.Errorf("missing claim_id suffix")
-	}
-	return name[:prev], name[prev+1 : idx], 0, nil
 }
 
 func TestSplitScope_MalformedPartitionRequestRejected(t *testing.T) {

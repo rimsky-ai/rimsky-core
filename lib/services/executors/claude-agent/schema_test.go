@@ -93,9 +93,29 @@ func TestSchemaRejectsEmptyExposeEnvName(t *testing.T) {
 }
 
 func TestDeclaredErrorClassesMatchesRetiredTypeScriptSet(t *testing.T) {
-	classes := DeclaredErrorClasses()
-	if len(classes) != 13 {
-		t.Fatalf("expected 13 declared error classes, got %d", len(classes))
+	want := []string{
+		"agent/blocked",
+		"agent/internal_error",
+		"agent/attribute_invalid",
+		"agent/schema_violation",
+		"agent/cli_spawn_failed",
+		"agent/timeout",
+		"agent/tool_use_timeout",
+		"agent/subprocess_exit/*",
+		"agent/rate_limited",
+		"agent/context_exceeded",
+		"agent/tool_use_failed/*",
+		"agent/refused",
+		"agent/signoff_unobtained",
+	}
+	got := DeclaredErrorClasses()
+	if len(got) != len(want) {
+		t.Fatalf("DeclaredErrorClasses() = %v (len %d), want %v (len %d)", got, len(got), want, len(want))
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("DeclaredErrorClasses()[%d] = %q, want %q (full: got=%v want=%v)", i, got[i], w, got, want)
+		}
 	}
 }
 

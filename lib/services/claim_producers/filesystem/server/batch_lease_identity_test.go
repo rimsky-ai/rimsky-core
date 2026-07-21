@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
+	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/store"
+
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -51,7 +53,7 @@ func TestSplitScope_BatchPickLeaseTokenGuardsTerminalVerbs(t *testing.T) {
 		}
 		n := 0
 		for _, e := range entries {
-			f, _, _, perr := parseFromRightForTest(e.Name())
+			f, _, _, perr := fsstore.ParseFromRight(e.Name())
 			if perr == nil && f == folder {
 				n++
 			}

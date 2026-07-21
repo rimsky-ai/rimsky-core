@@ -11,7 +11,7 @@ const ExecutorName = "verifier-http"
 const InProcURL = "inproc://verifier-http"
 
 func SchemaBytes() []byte {
-	return []byte(`{"type":"object"}`)
+	return []byte(`{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}`)
 }
 
 func DeclaredTags() []string {

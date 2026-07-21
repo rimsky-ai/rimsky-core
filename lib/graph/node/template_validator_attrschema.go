@@ -71,7 +71,7 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 	}
 	heldAliases := make(map[string]struct{}, len(n.Holds))
 	for alias, binding := range n.Holds {
-		heldAliases[effectiveHoldsLocalAlias(alias, binding)] = struct{}{}
+		heldAliases[EffectiveHoldsLocalAlias(alias, binding)] = struct{}{}
 	}
 
 	walkSchemaForSourcesWithPath(n.Attributes.Schema, "", func(raw any, path string) {

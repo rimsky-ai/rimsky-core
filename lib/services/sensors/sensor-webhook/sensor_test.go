@@ -586,9 +586,14 @@ func TestSubscribe_RejectsBadKind(t *testing.T) {
 }
 
 func TestIdempotencyHeader_Deduplicates(t *testing.T) {
-	var pushed int
+	var (
+		mu     sync.Mutex
+		pushed int
+	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		pushed++
+		mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
@@ -615,9 +620,11 @@ func TestIdempotencyHeader_Deduplicates(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
+	mu.Lock()
 	if pushed != 1 {
 		t.Errorf("pushed: %d (want 1; idempotency dedup)", pushed)
 	}
+	mu.Unlock()
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/idem", bytes.NewReader([]byte(`{"event":"y"}`)))
 	req.Header.Set("X-Idem", "k2")
 	resp, err := http.DefaultClient.Do(req)
@@ -625,9 +632,11 @@ func TestIdempotencyHeader_Deduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	mu.Lock()
 	if pushed != 2 {
 		t.Errorf("pushed after new key: %d (want 2)", pushed)
 	}
+	mu.Unlock()
 }
 
 func TestIdempotencyHeader_FailedPostAllowsRetry(t *testing.T) {

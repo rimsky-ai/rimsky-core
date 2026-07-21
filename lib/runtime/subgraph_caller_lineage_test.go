@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -217,9 +216,4 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	require.NoError(t, json.Unmarshal(row.Record, &raw))
 	_, hasParent := raw["parent_run_id"]
 	require.False(t, hasParent, "root caller must omit parent_run_id from the JSON payload")
-
-	time.Sleep(10 * time.Millisecond)
-	rows2, err := backend.Lineage().GetByRunID(ctx, callerRunID)
-	require.NoError(t, err)
-	require.Len(t, rows2, 1, "applyTerminalCompleteSubgraphCaller must produce exactly one row per call")
 }

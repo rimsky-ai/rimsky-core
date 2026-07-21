@@ -47,7 +47,7 @@ func TestSweepDeliverMessages_NewFrameReceiverRunNeverProbesPriorFrameParkedRow(
 		return nil
 	}))
 
-	frame1ID := seedFrame(ctx, t, backend, inst.ID, receiverNode.ID, mainScopeID)
+	frame1ID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	parkedRunID := seedRunForNode(ctx, t, backend, d.Queue(), receiverNode.ID, frame1ID)
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

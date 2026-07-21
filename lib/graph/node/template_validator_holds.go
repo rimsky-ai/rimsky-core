@@ -146,7 +146,7 @@ func storeAliasDeclared(n TemplateNodeDef, alias string) bool {
 }
 
 // @concept: claim-co-holdership
-func effectiveHoldsLocalAlias(alias string, binding HoldsBinding) string {
+func EffectiveHoldsLocalAlias(alias string, binding HoldsBinding) string {
 	if as := strings.TrimSpace(binding.As); as != "" {
 		return as
 	}
@@ -156,7 +156,7 @@ func effectiveHoldsLocalAlias(alias string, binding HoldsBinding) string {
 // @concept: claim-co-holdership
 func resolveHeldClaimByLocalAlias(n TemplateNodeDef, localAlias string) (alias string, binding HoldsBinding, ok bool) {
 	for a, b := range n.Holds {
-		if effectiveHoldsLocalAlias(a, b) == localAlias {
+		if EffectiveHoldsLocalAlias(a, b) == localAlias {
 			return a, b, true
 		}
 	}
