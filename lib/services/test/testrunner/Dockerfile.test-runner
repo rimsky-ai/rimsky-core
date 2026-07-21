@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1.7
+#
+# In-stack test runner: every docker-stack test package under
+# lib/services/test/... and every test-bearing examples package is compiled
+# (`go test -c`) into /tests from the SAME tree snapshot as the images under
+# test — built by the same `make test-images` invocation — so test and
+# subject cannot diverge. The runner container joins the stack's network and
+# executes the suites named as its command against the base URL in
+# RIMSKY_TEST_STACK_BASE_URL; it orchestrates nothing (no docker socket).
+#
+# Build context: the rimsky-core repo root. The test packages build against
+# the in-tree modules via go.work — no module proxy, no published-tag pin.
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY go.work go.work.sum ./
+COPY go.mod go.sum ./
+COPY lib/foundation/go.mod lib/foundation/go.sum ./lib/foundation/
+COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
+COPY lib/services/go.mod lib/services/go.sum ./lib/services/
+# go.work lists ./examples, so its go.mod/go.sum must be present or
+# `go mod download` aborts loading the workspace.
+COPY examples/go.mod examples/go.sum ./examples/
+RUN cd lib/services && go mod download
+RUN cd examples && go mod download
+COPY . .
+RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/test-runner ./test/testrunner
+# One binary per test-bearing package, named by its repo-relative dir with
+# `/` mangled to `__` (the runner entrypoint reverses the mangling). The
+# enumeration is `go list` over the same patterns `make test-services` /
+# `make test-examples` run, so a new test package lands in the image without
+# a hand-kept list.
+RUN mkdir -p /tests && \
+    cd lib/services && \
+    for dir in $(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.Dir}}{{end}}' ./test/...); do \
+      rel="${dir#/src/}"; \
+      out="/tests/$(printf '%s' "$rel" | sed 's,/,__,g').test"; \
+      (cd "$dir" && CGO_ENABLED=0 GOOS=linux go test -trimpath -c -o "$out" .) || exit 1; \
+    done && \
+    cd /src/examples && \
+    for dir in $(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.Dir}}{{end}}' ./...); do \
+      rel="${dir#/src/}"; \
+      out="/tests/$(printf '%s' "$rel" | sed 's,/,__,g').test"; \
+      (cd "$dir" && CGO_ENABLED=0 GOOS=linux go test -trimpath -c -o "$out" .) || exit 1; \
+    done
+
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /out/test-runner /usr/local/bin/test-runner
+COPY --from=builder /tests /tests
+COPY --from=builder /src /src
+USER nonroot
+ENTRYPOINT ["/usr/local/bin/test-runner"]

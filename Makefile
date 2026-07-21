@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images test-images reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images test-images test-in-stack reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -246,6 +246,17 @@ test-images:
 	$(call build-test-image,lib/services/test/overlapproducer/Dockerfile.overlapproducer,rimsky-test/overlapproducer)
 	$(call build-test-image,examples/claimproducer/Dockerfile.example,rimsky-example/claim-producer)
 	$(call build-test-image,examples/validation/Dockerfile.example,rimsky-example/validation)
+	$(call build-test-image,lib/services/test/testrunner/Dockerfile.test-runner,rimsky-test/test-runner)
+
+# In-stack execution path per the ratified image-freshness mechanism: the
+# host-side driver test (lib/services/test/instackdriver) boots a rimsky
+# stack via testcontainers, then runs rimsky-test/test-runner — docker-stack
+# test binaries compiled from this same tree by `test-images` — INSIDE the
+# stack's network. The runner reaches rimsky by its network alias via
+# RIMSKY_TEST_STACK_BASE_URL and orchestrates nothing: no docker socket,
+# no docker-in-docker, no host-port tunnels.
+test-in-stack: core-images test-images
+	cd lib/services && $(GOTEST_GUARD) -timeout 600s -count=1 ./test/instackdriver/...
 
 # Retention for the content-addressed :src-* tags — one accumulates per source
 # tree built. Prunes rimsky-labeled images older than REAP_HOURS (default 72)
