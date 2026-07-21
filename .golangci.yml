@@ -33,7 +33,7 @@ linters-settings:
           - "!**/foundation/internal/pgtest/**"
           - "!**/foundation/pgpool/**"
           - "!**/cmd/**"
-          - "!**/test/support/pgmigrate/**"
+          - "!**/test/support/pgdbtest/**"
           - "!**/testpg/**"
           - "!**/test/support/scenario/**"
           - "!**/claim_producers/**"
@@ -43,7 +43,7 @@ linters-settings:
           - "!**/lib/services/test/scenarios/**"
         deny:
           - pkg: "github.com/jackc/pgx/v5"
-            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, foundation/pgpool/, cmd/, test/support/pgmigrate/, test/support/testpg/, test/support/scenario/, test/support/claim_producers/, sensors/, subscribers/, test/smoke/, lib/services/test/scenarios/, lib/services/claim_producers/, lib/services/sensors/, and lib/services/subscribers/. Use the persistence interfaces."
+            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, foundation/pgpool/, cmd/, test/support/pgdbtest/, test/support/testpg/, test/support/scenario/, test/support/claim_producers/, sensors/, subscribers/, test/smoke/, lib/services/test/scenarios/, lib/services/claim_producers/, lib/services/sensors/, and lib/services/subscribers/. Use the persistence interfaces."
           - pkg: "github.com/jackc/pgx/v5/pgxpool"
             desc: "see pgx isolation rule above"
           - pkg: "github.com/jackc/pgx/v5/pgconn"

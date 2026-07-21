@@ -16,39 +16,39 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-type HeldDurableReleaseReport struct {
+type CommittedDurableReleaseReport struct {
 	Attempted int
 	Succeeded int
-	Failures  []HeldDurableReleaseFailure
+	Failures  []CommittedDurableReleaseFailure
 }
 
-type HeldDurableReleaseFailure struct {
+type CommittedDurableReleaseFailure struct {
 	ClaimHandleID shared.UUID
 	ProducerName  string
 	Err           error
 }
 
-func ReleaseHeldDurableClaims(
+func ReleaseCommittedDurableClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	instanceID shared.UUID, log shared.Logger,
-) (HeldDurableReleaseReport, error) {
+) (CommittedDurableReleaseReport, error) {
 	rows, err := args.ClaimHandles.ListByInstanceAndState(
 		ctx, instanceID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, tx,
 	)
 	if err != nil {
-		return HeldDurableReleaseReport{}, fmt.Errorf("ReleaseHeldDurableClaims: list: %w", err)
+		return CommittedDurableReleaseReport{}, fmt.Errorf("ReleaseCommittedDurableClaims: list: %w", err)
 	}
-	report := HeldDurableReleaseReport{Attempted: len(rows)}
+	report := CommittedDurableReleaseReport{Attempted: len(rows)}
 	if len(rows) == 0 {
 		return report, nil
 	}
 	outbox := ProducerVerbOutboxOf(args)
 	if outbox == nil {
-		return HeldDurableReleaseReport{}, fmt.Errorf(
-			"ReleaseHeldDurableClaims: no producer-verb outbox wired (RunArgs.VerbOutbox or a Tables backend providing one is required)")
+		return CommittedDurableReleaseReport{}, fmt.Errorf(
+			"ReleaseCommittedDurableClaims: no producer-verb outbox wired (RunArgs.VerbOutbox or a Tables backend providing one is required)")
 	}
 	if args.Clock == nil {
-		return HeldDurableReleaseReport{}, fmt.Errorf("ReleaseHeldDurableClaims: RunArgs.Clock is required to stamp outbox rows")
+		return CommittedDurableReleaseReport{}, fmt.Errorf("ReleaseCommittedDurableClaims: RunArgs.Clock is required to stamp outbox rows")
 	}
 	now := args.Clock.Now()
 	for _, r := range rows {
@@ -69,19 +69,19 @@ func ReleaseHeldDurableClaims(
 			NextAttemptAt:  now,
 			EnqueuedAt:     now,
 		}, tx); err != nil {
-			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
+			report.Failures = append(report.Failures, CommittedDurableReleaseFailure{
 				ClaimHandleID: r.ID, ProducerName: producerName,
 				Err: fmt.Errorf("enqueue release: %w", err),
 			})
 			if log != nil {
-				log.Warn("ReleaseHeldDurableClaims: enqueue release failed; row preserved for retry",
+				log.Warn("ReleaseCommittedDurableClaims: enqueue release failed; row preserved for retry",
 					"claim_handle_id", r.ID.String(), "producer", producerName, "err", err.Error())
 			}
 			continue
 		}
 		if err := args.ClaimHandles.DeleteResolved(ctx, r.ID, tx); err != nil {
-			return HeldDurableReleaseReport{}, fmt.Errorf(
-				"ReleaseHeldDurableClaims: claim_handle %s: release verb enqueued but delete row failed, aborting to avoid a committed row referencing an already-queued release: %w",
+			return CommittedDurableReleaseReport{}, fmt.Errorf(
+				"ReleaseCommittedDurableClaims: claim_handle %s: release verb enqueued but delete row failed, aborting to avoid a committed row referencing an already-queued release: %w",
 				r.ID, err)
 		}
 		report.Succeeded++

@@ -31,7 +31,7 @@ func TestClaudeAgentPerNodeDivergence(t *testing.T) {
 
 	pubPEM, privPEM := mustGenerateEd25519PEMs(t)
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	executorEndpoint := harness.StartClaudeAgentFakeOnNetwork(
 		ctx, t, netName, "claude-agent-fake-per-node",
 		harness.ClaudeAgentFakeOptions{

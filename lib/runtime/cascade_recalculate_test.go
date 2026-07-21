@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type invTestQueue struct {
@@ -200,7 +200,7 @@ func newFixture(t *testing.T) *fixture {
 func newFixtureWithNodes(t *testing.T, defs []nodepkg.TemplateNodeDef) *fixture {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	tpl := insertDeployedTemplate(ctx, t, d.Tables(), nodepkg.TemplateSpec{
 		Name: "sched-test-" + uuid.NewString(), Version: "v1",
 		Nodes: defs,
@@ -262,31 +262,31 @@ func (f *fixture) createTypedNodeInState(t *testing.T, nodeType, executor string
 		return nil
 	}))
 	var count int
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 		[]any{f.instance.ID}, &count)
 	var frameID shared.UUID
 	if count == 0 {
 		msgID := uuid.New()
-		pgtest.ExecForTest(ctx, t, f.driver, `
+		pgdbtest.ExecForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_messages
                 (id, instance_id, type, sender, sender_kind, received_at)
             VALUES ($1, $2, 'test/seed', 'test', 'operator', now())
         `, msgID, f.instance.ID)
-		pgtest.QueryRowForTest(ctx, t, f.driver, `
+		pgdbtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
                 (instance_id, triggering_message_id, root_run_scope_id, started_at)
             VALUES ($1, $2, $3, now())
             RETURNING frame_id
         `, []any{f.instance.ID, msgID, f.mainScopeID}, &frameID)
 	} else {
-		pgtest.QueryRowForTest(ctx, t, f.driver, `
+		pgdbtest.QueryRowForTest(ctx, t, f.driver, `
             SELECT frame_id FROM rimsky_frames
             WHERE instance_id = $1 AND ended_at IS NULL
             LIMIT 1
         `, []any{f.instance.ID}, &frameID)
 	}
-	pgtest.ExecForTest(ctx, t, f.driver, `
+	pgdbtest.ExecForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES (gen_random_uuid(), $1, $2, ARRAY[]::text[], NOW(), $3, 1, 'cascade', $4, $5)
@@ -329,14 +329,14 @@ func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 	target := f.createNodeInState(t, "worker", cascade.NodeStateStale)
 
 	var frameID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL LIMIT 1`,
 		[]any{f.instance.ID}, &frameID)
 	var depRunID, targetRunID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
 		[]any{dep.ID, frameID}, &depRunID)
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
 		[]any{target.ID, frameID}, &targetRunID)
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -403,14 +403,14 @@ func TestRecalculateNode_StaleWithDrainedWaitSet_StillEnqueues(t *testing.T) {
 	target := f.createNodeInState(t, "runner", cascade.NodeStateStale)
 
 	var frameID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL LIMIT 1`,
 		[]any{f.instance.ID}, &frameID)
 	var depRunID, targetRunID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
 		[]any{dep.ID, frameID}, &depRunID)
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
 		[]any{target.ID, frameID}, &targetRunID)
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

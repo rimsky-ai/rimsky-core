@@ -26,7 +26,7 @@ var instanceIDLine = regexp.MustCompile(`(?m)^instance_id=([0-9a-fA-F-]{36})\s*$
 func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,

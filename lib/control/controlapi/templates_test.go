@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func templateBodyWithTag(name, tag string) map[string]any {
@@ -553,7 +553,7 @@ func TestInstanceCreate_RequiresDeployedTemplate(t *testing.T) {
 	instID := createdOut["instance_id"].(string)
 	require.NotEmpty(t, instID)
 
-	pgtest.ExecForTest(context.Background(), t, h.driver,
+	pgdbtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
 
 	undeployStatus, undeployOut := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/undeploy", map[string]any{})
@@ -569,7 +569,7 @@ func TestInstanceCreate_RequiresDeployedTemplate(t *testing.T) {
 func newConstrainedExecutorHarness(t *testing.T) (*harness, func()) {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	reg := locks.NewRegistry()
 	contentFake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})

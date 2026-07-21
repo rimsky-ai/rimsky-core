@@ -58,7 +58,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	h.WaitForNodeState(w.ID, cascade.NodeStateFresh)
-	firstRow := latestAttrRow(h, w.ID, h.GetMainRunScopeID(iid))
+	firstRow := latestAttrRow(h, w.ID, h.GetLatestFrameRootRunScopeID(iid))
 	require.NotNil(t, firstRow, "first run should persist a node_attributes row")
 	firstRunID := firstRow.NodeRunID
 	require.Equal(t, "first", firstRow.Data["value"])
@@ -69,7 +69,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	var second *persistence.NodeAttributesRow
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		second = latestAttrRow(h, w.ID, h.GetMainRunScopeID(iid))
+		second = latestAttrRow(h, w.ID, h.GetLatestFrameRootRunScopeID(iid))
 		if second != nil && second.NodeRunID != firstRunID && second.Data["value"] == "second" {
 			break
 		}

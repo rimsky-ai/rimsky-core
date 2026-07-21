@@ -70,7 +70,7 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	require.NotNil(t, terminatedAt,
 		"terminate must set terminated_at on the instance")
 
-	mainScope := h.GetMainRunScopeID(iid)
+	mainScope := h.GetLatestFrameRootRunScopeID(iid)
 	var scopeClosedAt *time.Time
 	h.QueryRowSQL(
 		`SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`,

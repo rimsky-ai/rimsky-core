@@ -1,13 +1,11 @@
 # Example config for the standard direct-mode filesystem store-service.
-# Per spec docs/history/2026-04-27-stores-redesign-v3-design.md §6.3 each
-# store-service owns its own config schema; rimsky neither defines nor
-# validates this file.
+# Each store-service owns its own config schema; rimsky neither defines
+# nor validates this file.
 #
-# Selector grammar: concrete paths only. v2's glob support is dropped
-# (per v3 spec §7.7 — byte-equal region conflict requires store
-# canonicalisation; glob canonicalisation is out of scope for the
-# standard filesystem). Operators who need glob semantics write a
-# custom store-service.
+# Selector grammar: concrete paths only. Glob support is out of scope —
+# byte-equal region conflict requires store canonicalisation, and glob
+# canonicalisation is out of scope for the standard filesystem.
+# Operators who need glob semantics write a custom store-service.
 
 # Filesystem root: every selector resolves to <root>/<path>.
 root: /var/lib/rimsky-store/content

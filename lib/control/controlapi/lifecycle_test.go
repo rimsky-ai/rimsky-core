@@ -21,7 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type fanOutFixture struct {
@@ -35,7 +35,7 @@ type fanOutFixture struct {
 func newFanOutFixture(t *testing.T) *fanOutFixture {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	reg := locks.NewRegistry()
 	alpha := storetest.NewFake("alpha", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	beta := storetest.NewFake("beta", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
@@ -261,7 +261,7 @@ func seedClosedFramesWithScopes(ctx context.Context, t *testing.T, f *fanOutFixt
 		fmt.Fprintf(&scopeSQL, "($%d,'main',$%d,'',now())", len(scopeArgs)+1, len(scopeArgs)+2)
 		scopeArgs = append(scopeArgs, id, instanceID)
 	}
-	pgtest.ExecForTest(ctx, t, f.driver, scopeSQL.String(), scopeArgs...)
+	pgdbtest.ExecForTest(ctx, t, f.driver, scopeSQL.String(), scopeArgs...)
 
 	msgIDs := make([]uuid.UUID, n)
 	for i := range msgIDs {
@@ -278,7 +278,7 @@ func seedClosedFramesWithScopes(ctx context.Context, t *testing.T, f *fanOutFixt
 			len(msgArgs)+1, len(msgArgs)+2, len(msgArgs)+3, len(msgArgs)+4)
 		msgArgs = append(msgArgs, id, instanceID, "operator", "test")
 	}
-	pgtest.ExecForTest(ctx, t, f.driver, msgSQL.String(), msgArgs...)
+	pgdbtest.ExecForTest(ctx, t, f.driver, msgSQL.String(), msgArgs...)
 
 	var frameSQL strings.Builder
 	frameSQL.WriteString("INSERT INTO rimsky_frames(frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at) VALUES ")
@@ -291,7 +291,7 @@ func seedClosedFramesWithScopes(ctx context.Context, t *testing.T, f *fanOutFixt
 			len(frameArgs)+1, len(frameArgs)+2, len(frameArgs)+3)
 		frameArgs = append(frameArgs, instanceID, msgIDs[i], scopeIDs[i])
 	}
-	pgtest.ExecForTest(ctx, t, f.driver, frameSQL.String(), frameArgs...)
+	pgdbtest.ExecForTest(ctx, t, f.driver, frameSQL.String(), frameArgs...)
 
 	return distinctScopes
 }

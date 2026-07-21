@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func seedCoHolderInstance(
@@ -158,7 +158,7 @@ func insertActiveClaimForProducer(
 func TestInsertCoHolderClaimHoldersAtAcquire_HappyPathInsertsRow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	inst, producerNode, coHolderNode, mainScopeID := seedCoHolderInstance(ctx, t, backend, "ck-happy")
@@ -206,7 +206,7 @@ func TestInsertCoHolderClaimHoldersAtAcquire_HappyPathInsertsRow(t *testing.T) {
 func TestInsertCoHolderClaimHoldersAtAcquire_UpstreamNodeMissingFailsLoud(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	inst, _, coHolderNode, mainScopeID := seedCoHolderInstance(ctx, t, backend, "ck-missing-upstream")
@@ -238,7 +238,7 @@ func TestInsertCoHolderClaimHoldersAtAcquire_UpstreamNodeMissingFailsLoud(t *tes
 func TestInsertCoHolderClaimHoldersAtAcquire_NoActiveClaimInCurrentFrameFailsLoud(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	inst, producerNode, coHolderNode, mainScopeID := seedCoHolderInstance(ctx, t, backend, "ck-wrong-frame")

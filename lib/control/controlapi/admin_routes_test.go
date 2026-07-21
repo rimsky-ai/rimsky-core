@@ -21,7 +21,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type adminHarness struct {
@@ -32,7 +32,7 @@ type adminHarness struct {
 func newAdminHarness(t *testing.T) *adminHarness {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	return &adminHarness{driver: d, persist: d.Tables()}
 }
 
@@ -127,7 +127,7 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 	instID := uuid.New()
 	nodeID := uuid.New()
 
-	pgtest.ExecForTest(ctx, t, h.driver,
+	pgdbtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_templates (id, spec, state, registered_at)
 		 VALUES ($1, '{}'::jsonb, 'deployed', now())`,
 		tplHash,
@@ -149,7 +149,7 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 		}, tx)
 		return err
 	}))
-	pgtest.ExecForTest(ctx, t, h.driver,
+	pgdbtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_nodes (
 		   id, instance_id, node_type, executor,
 		   created_at
@@ -165,30 +165,30 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID shared.UUID) shared.UUID {
 	t.Helper()
 	var instID, frameID, mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT instance_id FROM rimsky_nodes WHERE id = $1`,
 		[]any{nodeID}, &instID,
 	)
 	mainScopeID = shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver,
+	pgdbtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
 		 VALUES ($1, 'main', $2, '', now())`,
 		uuid.UUID(mainScopeID), instID,
 	)
 	msgID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver,
+	pgdbtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_messages(id, instance_id, type, sender, sender_kind, received_at)
 		 VALUES ($1, $2, 'test/seed', 'test', 'operator', now())`,
 		msgID, instID,
 	)
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_frames(instance_id, triggering_message_id, root_run_scope_id, started_at, last_progress_at)
 		 VALUES ($1, $2, $3, now(), now())
 		 RETURNING frame_id`,
 		[]any{instID, msgID, mainScopeID}, &frameID,
 	)
 	var runID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		 VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), 'stale', $2, $3, 0)
 		 RETURNING id`,

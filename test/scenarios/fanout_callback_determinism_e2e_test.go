@@ -103,7 +103,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"partition-child dispatch row should reach state ∈ {running, held}")
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	require.NotEqual(t, mainScopeID, partitionScopeID,
 		"partition RunScope id must differ from main scope id — "+
 			"the determinism rule resolves RunScopeID off the run row, so the "+

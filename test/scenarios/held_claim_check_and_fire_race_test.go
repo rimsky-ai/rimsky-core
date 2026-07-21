@@ -69,7 +69,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 	frameID := h.GetRunningFrameID(iid)
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	const supervisorID = "race-supervisor"
 
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE node_id IN ($1, $2)`, acq.ID, inh.ID)

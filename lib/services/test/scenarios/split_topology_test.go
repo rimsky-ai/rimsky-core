@@ -16,7 +16,7 @@ func TestSplitTopology_DriveNodeToTerminal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimskySplit(ctx, t,

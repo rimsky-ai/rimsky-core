@@ -22,7 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
@@ -219,7 +219,7 @@ func (r *fakeDataProcessingRegistry) Get(name string) (runtime.DataProcessingCli
 func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedStable(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	const storeName = "idem-key-store"
@@ -320,7 +320,7 @@ func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedSt
 func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	const storeName = "fan-out-store"
@@ -525,7 +525,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	const storeName = "xsup-store"
@@ -692,7 +692,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	const storeName = "ro-intent-store"
@@ -800,7 +800,7 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	const storeName = "rw-intent-store"
@@ -908,7 +908,7 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	const storeName = "addr-payload-store"
@@ -1106,7 +1106,7 @@ func TestAcquireSubClaims_RejectsNonJSONPayload(t *testing.T) {
 func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	const storeName = "linked-subclaim-store"

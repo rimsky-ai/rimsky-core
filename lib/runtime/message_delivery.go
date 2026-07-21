@@ -83,7 +83,7 @@ type DeliveredMessages struct {
 	Messages []persistence.MessageRow
 }
 
-func SweepDeliverMessagesForRunningFrames(
+func SweepDeliverTriggeringMessagesForRunningFrames(
 	ctx context.Context, persist persistence.Tables, logger shared.Logger, now time.Time,
 ) error {
 	if persist == nil {
@@ -100,12 +100,12 @@ func SweepDeliverMessagesForRunningFrames(
 			page = p
 			return err
 		}); err != nil {
-			return fmt.Errorf("SweepDeliverMessagesForRunningFrames: list: %w", err)
+			return fmt.Errorf("SweepDeliverTriggeringMessagesForRunningFrames: list: %w", err)
 		}
 		for _, f := range page.Rows {
 			if err := deliverForRunningFrame(ctx, persist, logger, f.InstanceID, f.FrameID, now); err != nil {
 				if logger != nil {
-					logger.Warn("SweepDeliverMessagesForRunningFrames: deliver failed",
+					logger.Warn("SweepDeliverTriggeringMessagesForRunningFrames: deliver failed",
 						"frame_id", f.FrameID.String(),
 						"instance_id", f.InstanceID.String(),
 						"error", err.Error())
@@ -140,7 +140,7 @@ func deliverForRunningFrame(
 		if frameRow == nil {
 			return nil
 		}
-		delivered, err := DeliverPendingMessages(ctx, tx, persist.Messages(),
+		delivered, err := DeliverTriggeringMessage(ctx, tx, persist.Messages(),
 			instanceID, frameID, frameRow.TriggeringMessageID, now)
 		if err != nil {
 			return err
@@ -263,13 +263,13 @@ func messagePayloadAsMap(payload []byte) map[string]any {
 	return map[string]any{"_raw_bytes": len(payload)}
 }
 
-func DeliverPendingMessages(
+func DeliverTriggeringMessage(
 	ctx context.Context, tx persistence.Tx, m persistence.MessageTable,
 	instanceID shared.UUID, frameID shared.UUID, triggeringMessageID shared.UUID, now time.Time,
 ) (DeliveredMessages, error) {
 	msg, err := m.GetInTx(ctx, tx, triggeringMessageID)
 	if err != nil {
-		return DeliveredMessages{}, fmt.Errorf("DeliverPendingMessages: get trigger %s: %w", triggeringMessageID, err)
+		return DeliveredMessages{}, fmt.Errorf("DeliverTriggeringMessage: get trigger %s: %w", triggeringMessageID, err)
 	}
 	if msg == nil {
 		return DeliveredMessages{}, nil
@@ -282,7 +282,7 @@ func DeliverPendingMessages(
 	}
 	ok, err := m.MarkDelivered(ctx, tx, triggeringMessageID, frameID, now)
 	if err != nil {
-		return DeliveredMessages{}, fmt.Errorf("DeliverPendingMessages: mark delivered %s: %w", triggeringMessageID, err)
+		return DeliveredMessages{}, fmt.Errorf("DeliverTriggeringMessage: mark delivered %s: %w", triggeringMessageID, err)
 	}
 	if !ok {
 		return DeliveredMessages{}, nil

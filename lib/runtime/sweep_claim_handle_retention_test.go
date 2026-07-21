@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func seedClaimHandleForSweep(
@@ -88,7 +88,7 @@ func seedClaimHandleForSweep(
 func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-1",
@@ -107,7 +107,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 func TestSweepClaimHandleRetention_SweepsSubgraphCommittedPastCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-2",
@@ -125,7 +125,7 @@ func TestSweepClaimHandleRetention_SweepsSubgraphCommittedPastCutoff(t *testing.
 func TestSweepClaimHandleRetention_SweepsAbandonedPastCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-3",
@@ -143,7 +143,7 @@ func TestSweepClaimHandleRetention_SweepsAbandonedPastCutoff(t *testing.T) {
 func TestSweepClaimHandleRetention_DoesNotSweepWithinCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	oneHourAgo := time.Now().Add(-1 * time.Hour)
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-4",
@@ -161,7 +161,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepWithinCutoff(t *testing.T) {
 func TestSweepClaimHandleRetention_DoesNotSweepActive(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-5",
 		spec.ClaimLifetimeSubgraph, spec.ClaimHandleStateActive, time.Time{})
@@ -179,7 +179,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepActive(t *testing.T) {
 func TestSweepClaimHandleRetention_DisabledByZeroTrailing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
 	seedClaimHandleForSweep(ctx, t, d, "sup-6",

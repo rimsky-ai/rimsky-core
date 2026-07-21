@@ -20,7 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type fakeQueue struct {
@@ -158,7 +158,7 @@ type pcFixture struct {
 func newPureCascadeFixture(t *testing.T) *pcFixture {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	return &pcFixture{persist: d.Tables(), driver: d}
 }
 
@@ -223,7 +223,7 @@ func pcCreateNodeWithType(ctx context.Context, t *testing.T, f *pcFixture, insta
 func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID, state string) {
 	t.Helper()
 	if state == "fresh" {
-		pgtest.ExecForTest(ctx, t, f.driver,
+		pgdbtest.ExecForTest(ctx, t, f.driver,
 			`DELETE FROM rimsky_node_runs WHERE node_id = $1
 			    AND state IN ('pending','stale','running','held','parked')`, id)
 		return
@@ -233,29 +233,29 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 		instanceID shared.UUID
 		frameN     sql.NullString
 	)
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT executor, instance_id::text FROM rimsky_nodes WHERE id = $1`,
 		[]any{id}, &executorN, &instanceID)
 	{
 		var count int
-		pgtest.QueryRowForTest(ctx, t, f.driver,
+		pgdbtest.QueryRowForTest(ctx, t, f.driver,
 			`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 			[]any{instanceID}, &count)
 		var fid shared.UUID
 		if count == 0 {
 			fid = pcSeedFrame(ctx, t, f, instanceID, id)
 		} else {
-			pgtest.QueryRowForTest(ctx, t, f.driver,
+			pgdbtest.QueryRowForTest(ctx, t, f.driver,
 				`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL LIMIT 1`,
 				[]any{instanceID}, &fid)
 		}
 		frameN = sql.NullString{String: fid.String(), Valid: true}
 	}
 	var mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
 		[]any{instanceID}, &mainScopeID)
-	pgtest.ExecForTest(ctx, t, f.driver,
+	pgdbtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
 		                               enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
 		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), $3, 1, 'cascade', $4::uuid, $5)`,
@@ -265,22 +265,22 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, nodeID shared.UUID) shared.UUID {
 	t.Helper()
 	var count int
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 		[]any{instanceID}, &count)
 	var frameID shared.UUID
 	if count == 0 {
 		var rootScope shared.UUID
-		pgtest.QueryRowForTest(ctx, t, f.driver,
+		pgdbtest.QueryRowForTest(ctx, t, f.driver,
 			`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
 			[]any{instanceID}, &rootScope)
 		msgID := uuid.New()
-		pgtest.ExecForTest(ctx, t, f.driver, `
+		pgdbtest.ExecForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_messages
                 (id, instance_id, type, sender, sender_kind, received_at)
             VALUES ($1, $2, 'test/seed', 'test', 'operator', now())
         `, msgID, instanceID)
-		pgtest.QueryRowForTest(ctx, t, f.driver, `
+		pgdbtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
                 (instance_id, triggering_message_id, root_run_scope_id, started_at)
             VALUES ($1, $2, $3, now())
@@ -288,7 +288,7 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
         `, []any{instanceID, msgID, rootScope}, &frameID)
 		_ = nodeID
 	} else {
-		pgtest.QueryRowForTest(ctx, t, f.driver,
+		pgdbtest.QueryRowForTest(ctx, t, f.driver,
 			`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL LIMIT 1`,
 			[]any{instanceID}, &frameID)
 	}
@@ -480,7 +480,7 @@ func TestProcessPureCascade_NativeClaimOnly_ReusesStaleRunAcrossTicks(t *testing
 	}
 
 	var inFlight int
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT COUNT(*) FROM rimsky_node_runs
 		  WHERE node_id = $1
 		    AND state IN ('pending','stale','running','held','parked')`,
@@ -488,7 +488,7 @@ func TestProcessPureCascade_NativeClaimOnly_ReusesStaleRunAcrossTicks(t *testing
 	assert.Equal(t, 1, inFlight, "five scheduler ticks must yield exactly one in-flight run, not one per tick")
 
 	var required []string
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT required_stores FROM rimsky_node_runs
 		  WHERE node_id = $1 AND state = 'stale'`,
 		[]any{claimNode.ID}, &required)
@@ -611,7 +611,7 @@ func TestProcessPureCascade_TemplateLookupTransactionErrorDoesNotSettleClaimNode
 	assert.Equal(t, 0, count, "a lookup failure must not count as a prepared/transitioned dispatch")
 
 	var required []string
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT required_stores FROM rimsky_node_runs WHERE node_id = $1`,
 		[]any{claimNode.ID}, &required)
 	assert.Empty(t, required,

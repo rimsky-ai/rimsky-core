@@ -80,7 +80,7 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 
 	h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh)
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	var inMain int
 	h.QueryRowSQL(`
 		SELECT COUNT(*) FROM rimsky_node_runs
@@ -162,7 +162,7 @@ func TestSubgraphEntryAliasSubscriptionAndNilTemplateExitE2E(t *testing.T) {
 	require.Less(t, middleIdx, exitIdx,
 		"the exit subscribes to inner-middle and must dispatch after it settles, proving the internal cascade order survives entry absorption")
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	for {
 		var childScopes, closedChildScopes int
 		h.QueryRowSQL(`

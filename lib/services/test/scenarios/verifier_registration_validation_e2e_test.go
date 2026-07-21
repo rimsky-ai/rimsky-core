@@ -18,7 +18,7 @@ func TestVerifierRegistrationValidation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	verifierEP := harness.StartVerifierShapeChecksOnNetwork(ctx, t, netName, "verifier-shape-checks")
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),

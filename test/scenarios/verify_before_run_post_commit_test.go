@@ -74,7 +74,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	require.NoError(t, err)
 	frameID := h.GetRunningFrameID(iid)
 	nodeRunID := uuid.New()
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, frame_id, run_scope_id, sequence)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', $3, $4, 1)`,

@@ -24,7 +24,7 @@ const composePrefix = "compose:" + composeProject + ":"
 func TestCLICompose_UpThenDown(t *testing.T) {
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName)
 
 	ep := harness.BringUpRimsky(ctx, t,

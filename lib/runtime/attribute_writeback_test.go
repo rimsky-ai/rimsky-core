@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func newWritebackServer(t *testing.T, backend persistence.Tables, q persistence.Queue, supervisorID string) http.Handler {
@@ -47,7 +47,7 @@ func postWriteback(router http.Handler, runID, token, body string) *httptest.Res
 func TestAttributeWriteback_AppliesDeltaAndBumpsProgressInOneTx(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	_, workerNode, _, _, runID := seedDispositionFixture(ctx, t, d, "attribute-writeback-route")
@@ -67,7 +67,7 @@ func TestAttributeWriteback_AppliesDeltaAndBumpsProgressInOneTx(t *testing.T) {
 		return nil
 	}))
 
-	pgtest.ExecForTest(ctx, t, d,
+	pgdbtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_node_runs SET last_progress_at = NULL WHERE id = $1`, runID)
 
 	router := newWritebackServer(t, backend, d.Queue(), supID)
@@ -86,7 +86,7 @@ func TestAttributeWriteback_AppliesDeltaAndBumpsProgressInOneTx(t *testing.T) {
 	require.Equal(t, "halfway", attrs.Data["progress_note"])
 
 	var lastProgress *time.Time
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT last_progress_at FROM rimsky_node_runs WHERE id = $1`, []any{runID}, &lastProgress)
 	require.NotNil(t, lastProgress,
 		"the attribute writeback must bump last_progress_at in the same transaction as the write")
@@ -106,7 +106,7 @@ func TestAttributeWriteback_AppliesDeltaAndBumpsProgressInOneTx(t *testing.T) {
 func TestAttributeWriteback_ContractStatuses(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	_, _, _, _, runID := seedDispositionFixture(ctx, t, d, "attribute-writeback-statuses")

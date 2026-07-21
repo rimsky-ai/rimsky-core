@@ -88,7 +88,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"sub-graph RunScope (graph_name='worker') must close after exit terminates")
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	require.Eventually(t, func() bool {
 		var row *persistence.NodeAttributesRow
 		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

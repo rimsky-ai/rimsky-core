@@ -23,7 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func fiveNodeTemplateBody(name string) map[string]any {
@@ -91,7 +91,7 @@ func TestTerminateInstance_ForceFailsAllFiveInFlightStates(t *testing.T) {
 
 	for st, runID := range runsByState {
 		var gotState, gotSignal string
-		pgtest.QueryRowForTest(ctx, t, h.driver,
+		pgdbtest.QueryRowForTest(ctx, t, h.driver,
 			`SELECT state, COALESCE(settling_signal_type, '') FROM rimsky_node_runs WHERE id = $1`,
 			[]any{uuid.UUID(runID)}, &gotState, &gotSignal)
 		require.Equal(t, "failed", gotState,
@@ -179,7 +179,7 @@ func TestTerminateInstance_CancelsPendingMessages(t *testing.T) {
 
 	var cancelled bool
 	var delivered *time.Time
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT cancelled, delivered_at FROM rimsky_messages WHERE id = $1`,
 		[]any{uuid.UUID(msgID)}, &cancelled, &delivered)
 	require.True(t, cancelled,
@@ -242,7 +242,7 @@ func TestTerminateInstance_ClosesNestedScopeTreeChildrenFirst(t *testing.T) {
 
 	for _, scopeID := range []shared.UUID{rootScope, subgraphScope, partitionScope} {
 		var closed *time.Time
-		pgtest.QueryRowForTest(ctx, t, h.driver,
+		pgdbtest.QueryRowForTest(ctx, t, h.driver,
 			`SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`,
 			[]any{uuid.UUID(scopeID)}, &closed)
 		require.NotNil(t, closed, "terminate must close run scope %s (nested scopes included)", scopeID)

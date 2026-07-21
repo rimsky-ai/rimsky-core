@@ -67,6 +67,18 @@ func TestMakeLeafRunEvent_DistinctNodeRunsOfSameInstanceGetDistinctRunIDs(t *tes
 	}
 }
 
+func TestMakeLeafRunEvent_UnaliasedNodeGetsGenericFallbackJobName(t *testing.T) {
+	t.Parallel()
+	rec := LeafRunRecord{
+		RunID:  "44444444-4444-4444-4444-444444444444",
+		NodeID: "node-123",
+	}
+	ev := MakeLeafRunEvent(rec, time.Now(), "ns")
+	if ev.Job.Name != "unaliased-node-node-123" {
+		t.Errorf("job.name = %q, want a generic node-id-derived fallback that does not assert a message-receiver semantic the record does not carry", ev.Job.Name)
+	}
+}
+
 func TestMakeClaimTerminalEvent_OutputDatasetFromProducerAndScopeHash(t *testing.T) {
 	t.Parallel()
 	rec := ClaimTerminalRecord{

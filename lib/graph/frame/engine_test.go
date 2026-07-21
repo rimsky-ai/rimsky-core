@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persistence.Database) (uuid.UUID, uuid.UUID) {
@@ -27,7 +27,7 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 	suffix = strings.ReplaceAll(suffix, "-", "")
 	suffix = (suffix + suffix)[:64]
 	templateHash := "sha256-" + suffix
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_templates (id, spec, state)
         VALUES ($1, $2::jsonb, 'deployed')
     `, templateHash, `{}`)
@@ -85,7 +85,7 @@ func (f *fakeMetricsHook) ObserveFrameDuration(seconds float64) {
 func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	instanceID uuid.UUID, nodeID uuid.UUID, state string, frameID *uuid.UUID) {
 	t.Helper()
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_nodes
             (id, instance_id, node_type)
         VALUES ($1, $2, 'n')
@@ -107,10 +107,10 @@ func seedNodeRun(t *testing.T, ctx context.Context, d persistence.Database,
 		claimedByPtr = claimedBy[0]
 	}
 	var mainScopeID uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
 		[]any{instanceID}, &mainScopeID)
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, claimed_by, frame_id, run_scope_id)
         VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, 1, 'cascade', $3, $4, $5)
@@ -132,10 +132,10 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 		progressAt = *startedAt
 	}
 	var rootScope uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
 		[]any{instanceID}, &rootScope)
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_frames
             (frame_id, instance_id, triggering_message_id, root_run_scope_id, started_at, ended_at, last_progress_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -145,7 +145,7 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 
 func markMessageDelivered(t *testing.T, ctx context.Context, d persistence.Database, messageID uuid.UUID) {
 	t.Helper()
-	pgtest.ExecForTest(ctx, t, d,
+	pgdbtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_messages SET delivered_at = now() WHERE id = $1`, messageID)
 }
 
@@ -153,7 +153,7 @@ func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
@@ -166,13 +166,13 @@ func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
 	var runCount int
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT COUNT(*) FROM rimsky_node_runs WHERE frame_id = $1`, []any{frameID}, &runCount)
 	require.Equal(t, 1, runCount,
 		"this test proves a held terminal-fresh run settles the frame, not the vacuous zero-run case")
 
 	var state string
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT
 		    CASE
 		        WHEN f.ended_at IS NULL THEN 'running'
@@ -187,7 +187,7 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
@@ -199,7 +199,7 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
 	var state string
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT
 		    CASE
 		        WHEN f.ended_at IS NULL THEN 'running'
@@ -214,7 +214,7 @@ func TestRunTick_FrameEndDetection_ObservesDBStampedDuration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
@@ -229,7 +229,7 @@ func TestRunTick_FrameEndDetection_ObservesDBStampedDuration(t *testing.T) {
 	require.Len(t, metrics.observed, 1, "exactly one frame-duration observation expected")
 
 	var dbStartedAt, dbEndedAt time.Time
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT started_at, ended_at FROM rimsky_frames WHERE frame_id = $1`, []any{frameID},
 		&dbStartedAt, &dbEndedAt)
 	require.False(t, dbEndedAt.IsZero(), "frame must have been ended")
@@ -246,7 +246,7 @@ func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
@@ -255,17 +255,17 @@ func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T)
 	seedNode(t, ctx, d, instanceID, src, "fresh", &frameID)
 
 	var rootScope uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{frameID}, &rootScope)
 	parentRunID := uuid.New()
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, NULL, ARRAY[]::text[], NOW(), 'fresh', 2, 'cascade', $3, $4)
     `, parentRunID, src, frameID, rootScope)
 	childScope := uuid.New()
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_run_scopes (id, parent_run_scope_id, parent_run_id, graph_name, instance_id, partition_key)
         VALUES ($1, $2, $3, 'sub-flow', $4, '')
     `, childScope, rootScope, parentRunID, instanceID)
@@ -275,7 +275,7 @@ func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T)
 
 	for _, scope := range []uuid.UUID{childScope, rootScope} {
 		var closed *time.Time
-		pgtest.QueryRowForTest(ctx, t, d,
+		pgdbtest.QueryRowForTest(ctx, t, d,
 			`SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`,
 			[]any{scope}, &closed)
 		require.NotNil(t, closed,
@@ -287,7 +287,7 @@ func TestRunTick_FrameEndDetection_UndeliveredTriggerNotCompleted(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	now := time.Now()
@@ -296,7 +296,7 @@ func TestRunTick_FrameEndDetection_UndeliveredTriggerNotCompleted(t *testing.T) 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
 	var endedAtNull bool
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT ended_at IS NULL FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &endedAtNull)
 	require.True(t, endedAtNull,
 		"a just-opened frame whose triggering message has not yet been delivered has zero node runs "+
@@ -307,7 +307,7 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	srcA := uuid.New()
@@ -316,12 +316,12 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 	seedNode(t, ctx, d, instanceID, srcB, "fresh", nil)
 
 	var preExistingMainScope uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT id FROM rimsky_run_scopes WHERE instance_id = $1 AND graph_name = 'main'`,
 		[]any{instanceID}, &preExistingMainScope)
 
 	msg2ID := foundationshared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
 		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind, received_at)
 		VALUES ($1, $2, 'test/seed', 'test', 'operator', now() + interval '1 second')`,
 		msg2ID, instanceID)
@@ -329,14 +329,14 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
 	var running int
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 		[]any{instanceID}, &running)
 	require.Equal(t, 1, running, "at most one running frame per instance")
 
 	var openedTriggeringID string
 	var openedRootScope uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT triggering_message_id::text, root_run_scope_id FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 		[]any{instanceID}, &openedTriggeringID, &openedRootScope)
 	require.Equal(t, msgID.String(), openedTriggeringID,
@@ -346,7 +346,7 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 		"opening a frame must create a fresh root run scope, not reuse the pre-existing 'main' scope")
 
 	var scopeCount int
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT COUNT(*) FROM rimsky_run_scopes WHERE id = $1 AND instance_id = $2 AND graph_name = 'main'`,
 		[]any{openedRootScope, instanceID}, &scopeCount)
 	require.Equal(t, 1, scopeCount, "the frame's root_run_scope_id must resolve to a real, distinct run_scope row")
@@ -356,13 +356,13 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
 	now := time.Now()
 	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "completed", &now)
-	pgtest.ExecForTest(ctx, t, d,
+	pgdbtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_frames SET ended_at = now() WHERE frame_id = $1`, frameID)
 
 	seedNode(t, ctx, d, instanceID, src, "fresh", nil)
@@ -371,7 +371,7 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
 	var claimedBy *string
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT claimed_by FROM rimsky_node_runs WHERE node_id = $1`, []any{src}, &claimedBy)
 	require.Nil(t, claimedBy)
 }
@@ -380,7 +380,7 @@ func TestEndFrameIfSettled_RefusesFrameWithInFlightRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	node := uuid.New()
@@ -397,7 +397,7 @@ func TestEndFrameIfSettled_RefusesFrameWithInFlightRun(t *testing.T) {
 	require.False(t, moved, "a frame with a non-terminal run must not be ended")
 
 	var endedAtNull bool
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT ended_at IS NULL FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &endedAtNull)
 	require.True(t, endedAtNull, "refused end must leave ended_at unset")
 }
@@ -412,7 +412,7 @@ func TestEndFrameIfSettled_ConcurrentRunInsertCannotEndFrame(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	node := uuid.New()
@@ -457,7 +457,7 @@ func TestEndFrameIfSettled_ConcurrentRunInsertCannotEndFrame(t *testing.T) {
 		"the stamp must re-check in-tx and refuse: a run committed after observation but before the stamp")
 
 	var endedAtNull bool
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT ended_at IS NULL FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &endedAtNull)
 	require.True(t, endedAtNull,
 		"a run inserted concurrently with the end-stamp must not end up in an ended frame")
@@ -467,7 +467,7 @@ func TestRunTick_NoOp_EmptyDB(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 }

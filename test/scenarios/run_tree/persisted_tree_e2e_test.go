@@ -143,7 +143,7 @@ func TestRunTreePersistedShapeAndStrictAggregation_AllSuccess(t *testing.T) {
 	parent := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parent)
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	parentRunID := waitForParentMainRunState(t, h, parent.ID, mainScopeID.String(), cascade.NodeStateFresh)
 
 	tree := readPersistedTree(t, h, iid)
@@ -178,7 +178,7 @@ func TestRunTreePersistedShapeAndStrictAggregation_ChildFailureFailsParent(t *te
 	parent := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parent)
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	parentRunID := waitForParentMainRunState(t, h, parent.ID, mainScopeID.String(), cascade.NodeStateFailed)
 
 	tree := readPersistedTree(t, h, iid)

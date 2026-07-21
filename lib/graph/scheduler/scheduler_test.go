@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 const pgSchedulerTickLockKey int64 = 4853127298010834892
@@ -39,7 +40,7 @@ type schedFixture struct {
 func newSchedFixture(t *testing.T) *schedFixture {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	tpl := insertDeployedTemplate(ctx, t, d.Tables(), nodepkg.TemplateSpec{
 		Name: "sched-loop-" + uuid.NewString(), Version: "v1",
@@ -103,7 +104,7 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 	if !ok {
 		frameID = insertRunningFrame(ctx, t, f, f.instance.ID, n.ID)
 	}
-	pgtest.ExecForTest(ctx, t, f.driver,
+	pgdbtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
 		                               enqueued_at, claimed_by, claimed_at,
 		                               state, sequence, creation_reason, frame_id, run_scope_id)
@@ -116,7 +117,7 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 func lookupRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, instanceID shared.UUID) (shared.UUID, bool) {
 	t.Helper()
 	var count int
-	pgtest.QueryRowForTest(ctx, t, f.driver, `
+	pgdbtest.QueryRowForTest(ctx, t, f.driver, `
         SELECT COUNT(*) FROM rimsky_frames
         WHERE instance_id = $1 AND ended_at IS NULL
     `, []any{instanceID}, &count)
@@ -124,7 +125,7 @@ func lookupRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 		return shared.UUID{}, false
 	}
 	var got shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver, `
+	pgdbtest.QueryRowForTest(ctx, t, f.driver, `
         SELECT frame_id FROM rimsky_frames
         WHERE instance_id = $1 AND ended_at IS NULL
         ORDER BY started_at DESC LIMIT 1
@@ -136,13 +137,13 @@ func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 	t.Helper()
 	_ = sourceNodeID
 	msgID := uuid.New()
-	pgtest.ExecForTest(ctx, t, f.driver, `
+	pgdbtest.ExecForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_messages
             (id, instance_id, type, sender, sender_kind, received_at)
         VALUES ($1, $2, 'test/seed', 'test', 'operator', now())
     `, msgID, instanceID)
 	var frameID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver, `
+	pgdbtest.QueryRowForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_frames
             (instance_id, triggering_message_id, root_run_scope_id, started_at)
         VALUES ($1, $2, $3, now())
@@ -177,6 +178,34 @@ func TestScheduler_TicksAndStops(t *testing.T) {
 	require.NoError(t, h.Shutdown(ctx))
 }
 
+func TestScheduler_ConcurrentShutdownDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	f := newSchedFixture(t)
+
+	cfg := f.schedConfig()
+	cfg.TickInterval = 50 * time.Millisecond
+	h := Start(cfg)
+
+	const shutdownCallers = 8
+	var wg sync.WaitGroup
+	errs := make([]error, shutdownCallers)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for i := 0; i < shutdownCallers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = h.Shutdown(ctx)
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "concurrent Shutdown call %d must not error", i)
+	}
+}
+
 func TestScheduler_Tick_SweepsPureCascadeReadyButSkipsExecutorNodes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -188,7 +217,7 @@ func TestScheduler_Tick_SweepsPureCascadeReadyButSkipsExecutorNodes(t *testing.T
 	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
 	var pureState string
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT state FROM rimsky_node_runs WHERE node_id = $1`,
 		[]any{pure.ID}, &pureState)
 	assert.Equal(t, "fresh", pureState,
@@ -198,7 +227,7 @@ func TestScheduler_Tick_SweepsPureCascadeReadyButSkipsExecutorNodes(t *testing.T
 		execState string
 		claimedBy sql.NullString
 	)
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT state, claimed_by FROM rimsky_node_runs WHERE node_id = $1`,
 		[]any{execNode.ID}, &execState, &claimedBy)
 	assert.Equal(t, "stale", execState,
@@ -312,7 +341,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		return nil
 	}))
 
-	pgtest.ExecForTest(ctx, t, f.driver,
+	pgdbtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_node_runs
 		    SET last_progress_at = NOW() - INTERVAL '10 minutes',
 		        async_ack_id = 'orphan-test-ack',
@@ -348,7 +377,7 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 	dep := f.createNode(t, "worker", cascade.NodeStateFresh)
 	target := f.createNode(t, "runner", cascade.NodeStateStale, dep.ID)
 
-	release := pgtest.HoldAdvisoryLock(ctx, t, f.driver, pgSchedulerTickLockKey)
+	release := pgdbtest.HoldAdvisoryLock(ctx, t, f.driver, pgSchedulerTickLockKey)
 	defer release()
 
 	done := make(chan error, 1)
@@ -367,7 +396,7 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 		runState  string
 		claimedBy sql.NullString
 	)
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT state, claimed_by FROM rimsky_node_runs
 		   WHERE node_id = $1
 		     AND state IN ('pending','stale','running','held','parked')`,
@@ -406,7 +435,7 @@ func TestScheduler_AdvisoryLockErrorSkipsSweepPass(t *testing.T) {
 		runState  string
 		claimedBy sql.NullString
 	)
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT state, claimed_by FROM rimsky_node_runs
 		   WHERE node_id = $1
 		     AND state IN ('pending','stale','running','held','parked')`,
@@ -469,10 +498,10 @@ func TestScheduler_BreakpointSweeps(t *testing.T) {
 		return nil
 	}))
 
-	pgtest.ExecForTest(ctx, t, f.driver,
+	pgdbtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_instance_breakpoints SET expires_at = NOW() - interval '1 hour' WHERE id = $1`,
 		expiredID)
-	pgtest.ExecForTest(ctx, t, f.driver,
+	pgdbtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_breakpoint_hits SET hit_at = NOW() - interval '1 hour' WHERE id = $1`,
 		hitID)
 
@@ -527,15 +556,15 @@ func TestScheduler_OrphanedBreakpointHitReap_ExcludesNotifyOnlyAndLiveBlockedRun
 
 	liveNode := f.createNode(t, "stub", cascade.NodeStateRunning)
 	var liveRunID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1`, []any{liveNode.ID}, &liveRunID)
-	pgtest.ExecForTest(ctx, t, f.driver,
+	pgdbtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_node_runs SET claimed_by = 'supervisor-live', claimed_at = NOW() WHERE id = $1`,
 		liveRunID)
 
 	deadNode := f.createNode(t, "stub", cascade.NodeStateRunning)
 	var deadRunID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver,
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1`, []any{deadNode.ID}, &deadRunID)
 
 	var notifyOnlyHitID, liveBlockedHitID, orphanedHitID shared.UUID
@@ -576,7 +605,7 @@ func TestScheduler_OrphanedBreakpointHitReap_ExcludesNotifyOnlyAndLiveBlockedRun
 	}))
 
 	for _, id := range []shared.UUID{notifyOnlyHitID, liveBlockedHitID, orphanedHitID} {
-		pgtest.ExecForTest(ctx, t, f.driver,
+		pgdbtest.ExecForTest(ctx, t, f.driver,
 			`UPDATE rimsky_breakpoint_hits SET hit_at = NOW() - interval '1 hour' WHERE id = $1`, id)
 	}
 

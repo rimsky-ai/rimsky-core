@@ -55,7 +55,7 @@ func TestPerRunAttributes_FreshScopeDefaultsAtFrameStart(t *testing.T) {
 
 	var firstRun *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetMainRunScopeID(iid), tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 		firstRun = r
 		return err
 	}))
@@ -70,7 +70,7 @@ func TestPerRunAttributes_FreshScopeDefaultsAtFrameStart(t *testing.T) {
 	var secondRun *persistence.NodeAttributesRow
 	for time.Now().Before(deadline) {
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetMainRunScopeID(iid), tx)
+			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			secondRun = r
 			return err
 		})

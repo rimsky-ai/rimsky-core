@@ -21,7 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func insertDeployedTemplateInternal(ctx context.Context, t *testing.T, sb persistence.Tables, spec node.TemplateSpec) persistence.TemplateRow {
@@ -131,7 +131,7 @@ func runStateInternal(ctx context.Context, t *testing.T, sb persistence.Tables, 
 func TestTryAcquire_NullFrameIDCandidateReturnsSentinelWithFullContext(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplateInternal(ctx, t, backend, node.TemplateSpec{
@@ -166,7 +166,7 @@ func TestTryAcquire_NullFrameIDCandidateReturnsSentinelWithFullContext(t *testin
 func TestHandleAcquireNilFrameID_TerminalizesPoisonRowInsteadOfLoopingForever(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 	q := d.Queue()
 
@@ -267,7 +267,7 @@ func TestAcquireFanOutIfDeclared_PartitionRequestSubstitutionFailureReturnsSenti
 func TestHandleAcquireFanOutSubstitutionFailed_TerminalizesRowInsteadOfHotLooping(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 	q := d.Queue()
 

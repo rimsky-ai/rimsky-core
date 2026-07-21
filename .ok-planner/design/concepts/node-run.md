@@ -53,6 +53,7 @@ running → fresh      (handler_complete with no active claim participation; han
 running → held       (handler_held — runner classifies a terminal outcome with active claim participation; fanout_dispatched — fan-out parent has yielded its synchronous dispatch phase and is acquirer of an active claim handle awaiting child aggregation, per `decision:held-as-state-not-phase`)
 running → parked     (handler_park)
 running → failed     (policy_give_up, auto_terminal_abandon, instance_killed, sibling_cancelled)
+running → stale      (release_and_requeue — `concept:error-policy`'s release_and_requeue action releases the claim and re-queues the row for retry via a fresh claim, distinct from policy_retry's in-place retry)
 
 (`policy_retry` is in-place on the existing row with no state transition firing — claims and bag preserved; see `decision:in-place-retry`.)
 

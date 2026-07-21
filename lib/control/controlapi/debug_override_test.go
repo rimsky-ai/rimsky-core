@@ -20,7 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func pauseInstanceForTest(t *testing.T, h *harness, instanceID shared.UUID) {
@@ -118,14 +118,14 @@ func findNodeIDByType(t *testing.T, h *harness, instanceID shared.UUID, typ stri
 func seedRunningFrameForTest(ctx context.Context, t *testing.T, h *harness, instanceID shared.UUID) shared.UUID {
 	t.Helper()
 	msgID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_messages
             (id, instance_id, type, sender_kind, sender, payload, received_at)
         VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
     `, msgID, instanceID)
 	rootScope := mainRunScopeIDForInstance(t, h, instanceID)
 	frameID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
             (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id)
         VALUES ($1, $2, now(), $3, $4)
@@ -408,25 +408,25 @@ func seedTerminalRunUnderEndedFrame(
 ) (runScopeID shared.UUID, frameID shared.UUID) {
 	t.Helper()
 	runScopeID = shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
         VALUES ($1, 'main', $2, '', now())
     `, uuid.UUID(runScopeID), instanceID)
 	msgID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_messages
             (id, instance_id, type, sender_kind, sender, payload, received_at)
         VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
     `, msgID, instanceID)
 	frameID = shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
             (frame_id, instance_id, ended_at, triggering_message_id, root_run_scope_id)
         VALUES ($1, $2, now(), $3, $4)
     `, uuid.UUID(frameID), instanceID, msgID, uuid.UUID(runScopeID))
 
 	runID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), 'fresh', $3, now(), $4, 0)
@@ -549,7 +549,7 @@ func seedRunInActiveFrame(
 ) shared.UUID {
 	t.Helper()
 	runID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), $3, $4, $5, 0)

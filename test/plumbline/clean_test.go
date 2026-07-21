@@ -6,6 +6,7 @@ package plumbline
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,18 +24,29 @@ func TestPlumblineClean(t *testing.T) {
 			"or CLAUDE_PLUGIN_ROOT to a plugin install whose bin/plumbline resolves")
 	}
 
-	cmd := exec.Command("node", binPath, ".")
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node interpreter not found on PATH; cannot execute the plumbline lint binary: " + err.Error())
+	}
+
+	cmd := exec.Command(nodePath, binPath, ".")
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
-	if err != nil || cmd.ProcessState.ExitCode() != 0 {
-		const maxBytes = 2000
-		snippet := out
-		if len(snippet) > maxBytes {
-			snippet = snippet[:maxBytes]
-		}
-		t.Fatalf("plumbline lint reported non-clean exit (code=%d, err=%v).\nOutput (truncated to %d bytes):\n%s",
-			cmd.ProcessState.ExitCode(), err, maxBytes, snippet)
+	if err == nil {
+		return
 	}
+	const maxBytes = 2000
+	snippet := out
+	if len(snippet) > maxBytes {
+		snippet = snippet[:maxBytes]
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("plumbline lint failed to run node %s %s: %v.\nOutput (truncated to %d bytes):\n%s",
+			binPath, repoRoot, err, maxBytes, snippet)
+	}
+	t.Fatalf("plumbline lint reported non-clean exit (code=%d).\nOutput (truncated to %d bytes):\n%s",
+		exitErr.ExitCode(), maxBytes, snippet)
 }
 
 func resolveBinPath(t *testing.T) string {

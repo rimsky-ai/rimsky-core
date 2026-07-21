@@ -32,7 +32,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	stubexec "github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	stubtest "github.com/rimsky-ai/rimsky-core/test/support/executors/stub/stubtest"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type Harness struct {
@@ -96,7 +96,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	if !ok {
 		t.Fatalf("scenario: Start requires *testing.T, got %T", t)
 	}
-	driver := pgtest.OpenDriver(ctx, tT)
+	driver := pgdbtest.OpenDriver(ctx, tT)
 	pool, _ := pgpersist.PoolFromDatabaseForTest(driver)
 	persistStore := driver.Tables()
 	q := driver.Queue()
@@ -628,9 +628,9 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 		h.T.Logf("driveFrameAndEnqueue: frame.RunTick (pre-sweep) failed; retrying next tick: %v", err)
 	}
 	// @decision: empty-message-as-root-trigger
-	if err := runtime.SweepDeliverMessagesForRunningFrames(h.Ctx, h.Persist,
+	if err := runtime.SweepDeliverTriggeringMessagesForRunningFrames(h.Ctx, h.Persist,
 		shared.SilentLogger{}, time.Now()); err != nil {
-		h.T.Logf("driveFrameAndEnqueue: SweepDeliverMessagesForRunningFrames failed; retrying next tick: %v", err)
+		h.T.Logf("driveFrameAndEnqueue: SweepDeliverTriggeringMessagesForRunningFrames failed; retrying next tick: %v", err)
 	}
 	if _, err := scheduler.ProcessPureCascade(h.Ctx, scheduler.PureCascadeArgs{
 		Persist: h.Persist, Queue: h.Queue, Clock: shared.SystemClock{},
@@ -845,7 +845,7 @@ func (h *Harness) GetRunningFrameID(instanceID shared.UUID) shared.UUID {
 }
 
 // @concept: run-scope
-func (h *Harness) GetMainRunScopeID(instanceID shared.UUID) shared.UUID {
+func (h *Harness) GetLatestFrameRootRunScopeID(instanceID shared.UUID) shared.UUID {
 	h.T.Helper()
 	var out shared.UUID
 	instArg := instanceID
@@ -857,14 +857,14 @@ func (h *Harness) GetMainRunScopeID(instanceID shared.UUID) shared.UUID {
 			return err
 		}
 		if len(page.Rows) == 0 {
-			h.T.Fatalf("GetMainRunScopeID: no frames for instance %s", instanceID)
+			h.T.Fatalf("GetLatestFrameRootRunScopeID: no frames for instance %s", instanceID)
 			return nil
 		}
 		out = page.Rows[0].RootRunScopeID
 		return nil
 	})
 	if err != nil {
-		h.T.Fatalf("GetMainRunScopeID: %v", err)
+		h.T.Fatalf("GetLatestFrameRootRunScopeID: %v", err)
 	}
 	return out
 }

@@ -19,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func seedNodeRunInState(
@@ -28,7 +28,7 @@ func seedNodeRunInState(
 ) shared.UUID {
 	t.Helper()
 	var runID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
          VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), $2, $3, $4, 0)

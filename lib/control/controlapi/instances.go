@@ -647,7 +647,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		}
 		if deps.ClaimProducers != nil {
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-				_, rErr := runtime.ReleaseHeldDurableClaims(ctx,
+				_, rErr := runtime.ReleaseCommittedDurableClaims(ctx,
 					runtime.RunArgs{
 						Persist:       deps.Persist,
 						ClaimHandles:  deps.Persist.ClaimHandles(),
@@ -657,7 +657,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 					}, tx, inst.ID, deps.Logger)
 				return rErr
 			}); err != nil && deps.Logger != nil {
-				deps.Logger.Warn("handleDeleteInstance: ReleaseHeldDurableClaims failed",
+				deps.Logger.Warn("handleDeleteInstance: ReleaseCommittedDurableClaims failed",
 					"instance_id", inst.ID.String(),
 					"error", err.Error())
 			}

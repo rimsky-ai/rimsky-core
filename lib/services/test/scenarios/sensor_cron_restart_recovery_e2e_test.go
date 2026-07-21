@@ -31,7 +31,7 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 
 	statePGContainer := startSensorStatePostgres(ctx, t, netName, "sensor-cron-pg")
 

@@ -124,7 +124,7 @@ func runPortableTemplateContainerized(t *testing.T, templateBytes []byte) portab
 	t.Helper()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	httpNodeEndpoint := harness.StartHttpNodeStubOnNetwork(ctx, t, netName, "http-node")
 	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
 		harness.FilesystemStoreSpec{

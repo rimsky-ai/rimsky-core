@@ -20,7 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestFrameSettlement_ClosesRootScopeAndFansOutExactlyOnce(t *testing.T) {
@@ -31,12 +31,12 @@ func TestFrameSettlement_ClosesRootScopeAndFansOutExactlyOnce(t *testing.T) {
 	instanceID := seedInstanceForRunScopeFanout(t, f, uuid.NewString())
 
 	rootScope := uuid.New()
-	pgtest.ExecForTest(ctx, t, f.driver, `
+	pgdbtest.ExecForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
         VALUES ($1, 'main', $2, '', now())
     `, rootScope, instanceID)
 	msgID := uuid.New()
-	pgtest.ExecForTest(ctx, t, f.driver, `
+	pgdbtest.ExecForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_messages
             (id, instance_id, type, sender_kind, sender, payload, received_at, delivered_at)
         VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now(), now())

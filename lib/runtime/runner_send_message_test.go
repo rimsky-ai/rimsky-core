@@ -18,13 +18,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-func openEmitTestDB(t *testing.T) persistence.Database {
+func openSendTestDB(t *testing.T) persistence.Database {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
 	d, err := persistence.Open(ctx, persistence.Config{
 		Driver: "sqlite",
-		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "emit.db")},
+		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "send.db")},
 	})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -36,7 +36,7 @@ func openEmitTestDB(t *testing.T) persistence.Database {
 	return d
 }
 
-func seedEmitInstance(t *testing.T, ctx context.Context, d persistence.Database) shared.UUID {
+func seedSendInstance(t *testing.T, ctx context.Context, d persistence.Database) shared.UUID {
 	t.Helper()
 	store := d.Tables()
 	templateHash := "sha256-" + uuid.NewString()
@@ -44,7 +44,7 @@ func seedEmitInstance(t *testing.T, ctx context.Context, d persistence.Database)
 	mainRunScopeID := shared.UUID(uuid.New())
 
 	tmpl := spec.TemplateSpec{
-		Name:    "emit-message-fixture",
+		Name:    "send-message-fixture",
 		Version: "1",
 		Messages: []spec.MessageSchema{{
 			Type: "ping/recheck",
@@ -83,12 +83,12 @@ func seedEmitInstance(t *testing.T, ctx context.Context, d persistence.Database)
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("seedEmitInstance: %v", err)
+		t.Fatalf("seedSendInstance: %v", err)
 	}
 	return instanceID
 }
 
-func seedEmitInstanceNoBodySchema(t *testing.T, ctx context.Context, d persistence.Database) shared.UUID {
+func seedSendInstanceNoBodySchema(t *testing.T, ctx context.Context, d persistence.Database) shared.UUID {
 	t.Helper()
 	store := d.Tables()
 	templateHash := "sha256-" + uuid.NewString()
@@ -96,7 +96,7 @@ func seedEmitInstanceNoBodySchema(t *testing.T, ctx context.Context, d persisten
 	mainRunScopeID := shared.UUID(uuid.New())
 
 	tmpl := spec.TemplateSpec{
-		Name:    "emit-message-no-schema-fixture",
+		Name:    "send-message-no-schema-fixture",
 		Version: "1",
 		Messages: []spec.MessageSchema{{
 			Type: "ping/unconstrained",
@@ -130,7 +130,7 @@ func seedEmitInstanceNoBodySchema(t *testing.T, ctx context.Context, d persisten
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("seedEmitInstanceNoBodySchema: %v", err)
+		t.Fatalf("seedSendInstanceNoBodySchema: %v", err)
 	}
 	return instanceID
 }
@@ -149,8 +149,8 @@ func countMessages(t *testing.T, ctx context.Context, d persistence.Database, in
 func TestSendCascadeMessageInTx_HappyPath(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := openEmitTestDB(t)
-	instanceID := seedEmitInstance(t, ctx, d)
+	d := openSendTestDB(t)
+	instanceID := seedSendInstance(t, ctx, d)
 	nodeID := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 
@@ -163,12 +163,12 @@ func TestSendCascadeMessageInTx_HappyPath(t *testing.T) {
 			return err
 		}
 		if replayed {
-			t.Errorf("first emit must not be a replay")
+			t.Errorf("first send must not be a replay")
 		}
 		msgID = id
 		return nil
 	}); err != nil {
-		t.Fatalf("emit tx: %v", err)
+		t.Fatalf("send tx: %v", err)
 	}
 
 	if msgID == (shared.UUID{}) {
@@ -203,23 +203,23 @@ func TestSendCascadeMessageInTx_HappyPath(t *testing.T) {
 func TestSendCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := openEmitTestDB(t)
-	instanceID := seedEmitInstance(t, ctx, d)
+	d := openSendTestDB(t)
+	instanceID := seedSendInstance(t, ctx, d)
 	nodeID := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 
 	preCount := countMessages(t, ctx, d, instanceID)
 
-	sentinelErr := errors.New("forced rollback after emit")
+	sentinelErr := errors.New("forced rollback after send")
 	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		id, replayed, emitErr := sendCascadeMessageInTx(ctx, d.Tables(), tx,
+		id, replayed, sendErr := sendCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
 			[]byte(`{"pong_status":"ok"}`))
-		if emitErr != nil {
-			return emitErr
+		if sendErr != nil {
+			return sendErr
 		}
 		if replayed {
-			t.Errorf("first emit must not be a replay")
+			t.Errorf("first send must not be a replay")
 		}
 		if id == (shared.UUID{}) {
 			t.Errorf("expected a non-zero candidate id inside the tx")
@@ -232,15 +232,15 @@ func TestSendCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 
 	postCount := countMessages(t, ctx, d, instanceID)
 	if postCount != preCount {
-		t.Fatalf("envelope row count = %d after rollback; want %d (rollback must unmake the emit)", postCount, preCount)
+		t.Fatalf("envelope row count = %d after rollback; want %d (rollback must unmake the send)", postCount, preCount)
 	}
 }
 
 func TestSendCascadeMessage_NotCancelledByLaterRollback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := openEmitTestDB(t)
-	instanceID := seedEmitInstance(t, ctx, d)
+	d := openSendTestDB(t)
+	instanceID := seedSendInstance(t, ctx, d)
 	nodeID := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 
@@ -250,7 +250,7 @@ func TestSendCascadeMessage_NotCancelledByLaterRollback(t *testing.T) {
 		t.Fatalf("sendCascadeMessage: %v", err)
 	}
 	if replayed {
-		t.Errorf("first emit must not be a replay")
+		t.Errorf("first send must not be a replay")
 	}
 
 	row, err := d.Tables().Messages().Get(ctx, msgID)
@@ -282,8 +282,8 @@ func TestSendCascadeMessage_NotCancelledByLaterRollback(t *testing.T) {
 func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := openEmitTestDB(t)
-	instanceID := seedEmitInstance(t, ctx, d)
+	d := openSendTestDB(t)
+	instanceID := seedSendInstance(t, ctx, d)
 	nodeID := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 
@@ -301,11 +301,11 @@ func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 		firstReplayed = replayed
 		return nil
 	}); err != nil {
-		t.Fatalf("first emit tx: %v", err)
+		t.Fatalf("first send tx: %v", err)
 	}
 
 	if firstReplayed {
-		t.Errorf("first emit must not be a replay")
+		t.Errorf("first send must not be a replay")
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -319,11 +319,11 @@ func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 		secondReplayed = replayed
 		return nil
 	}); err != nil {
-		t.Fatalf("second emit tx: %v", err)
+		t.Fatalf("second send tx: %v", err)
 	}
 
 	if !secondReplayed {
-		t.Errorf("second emit with same (node_id, frame_id) must be a replay; got replayed=false")
+		t.Errorf("second send with same (node_id, frame_id) must be a replay; got replayed=false")
 	}
 	if firstID != secondID {
 		t.Errorf("replayed id = %s; want first id %s", secondID.String(), firstID.String())
@@ -352,8 +352,8 @@ func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 func TestSendCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := openEmitTestDB(t)
-	instanceID := seedEmitInstance(t, ctx, d)
+	d := openSendTestDB(t)
+	instanceID := seedSendInstance(t, ctx, d)
 	nodeID := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 
@@ -366,12 +366,12 @@ func TestSendCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 			return err
 		}
 		if replayed {
-			t.Errorf("first emit must not be a replay")
+			t.Errorf("first send must not be a replay")
 		}
 		msgID = id
 		return nil
 	}); err != nil {
-		t.Fatalf("emit tx: %v", err)
+		t.Fatalf("send tx: %v", err)
 	}
 
 	row, err := d.Tables().Messages().Get(ctx, msgID)
@@ -392,8 +392,8 @@ func TestSendCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 func TestSendCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := openEmitTestDB(t)
-	instanceID := seedEmitInstance(t, ctx, d)
+	d := openSendTestDB(t)
+	instanceID := seedSendInstance(t, ctx, d)
 	nodeID := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 
@@ -404,7 +404,7 @@ func TestSendCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) 
 				[]byte(`{"pong_status":"v"}`))
 			return err
 		}); err != nil {
-			t.Fatalf("emit iter %d: %v", i, err)
+			t.Fatalf("send iter %d: %v", i, err)
 		}
 	}
 
@@ -416,8 +416,8 @@ func TestSendCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) 
 func TestSendCascadeMessageInTx_EmptyNonNilBodyDefaultsToJSONObject(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := openEmitTestDB(t)
-	instanceID := seedEmitInstanceNoBodySchema(t, ctx, d)
+	d := openSendTestDB(t)
+	instanceID := seedSendInstanceNoBodySchema(t, ctx, d)
 	nodeID := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 
@@ -428,7 +428,7 @@ func TestSendCascadeMessageInTx_EmptyNonNilBodyDefaultsToJSONObject(t *testing.T
 		msgID = id
 		return err
 	}); err != nil {
-		t.Fatalf("emit tx: %v", err)
+		t.Fatalf("send tx: %v", err)
 	}
 
 	row, err := d.Tables().Messages().Get(ctx, msgID)
@@ -451,8 +451,8 @@ func TestSendCascadeMessageInTx_EmptyNonNilBodyDefaultsToJSONObject(t *testing.T
 func TestSendCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := openEmitTestDB(t)
-	instanceID := seedEmitInstance(t, ctx, d)
+	d := openSendTestDB(t)
+	instanceID := seedSendInstance(t, ctx, d)
 
 	for i := 0; i < 3; i++ {
 		nodeID := shared.UUID(uuid.New())
@@ -463,7 +463,7 @@ func TestSendCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t
 				[]byte(`{"pong_status":"v"}`))
 			return err
 		}); err != nil {
-			t.Fatalf("emit iter %d: %v", i, err)
+			t.Fatalf("send iter %d: %v", i, err)
 		}
 	}
 	if got := countMessages(t, ctx, d, instanceID); got != 3 {

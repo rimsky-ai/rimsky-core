@@ -66,6 +66,7 @@ type Config struct {
 
 type Handle struct {
 	stop             chan struct{}
+	stopOnce         sync.Once
 	done             chan struct{}
 	addr             string
 	advertisedURL    string
@@ -75,11 +76,7 @@ type Handle struct {
 }
 
 func (h *Handle) Shutdown(ctx context.Context) error {
-	select {
-	case <-h.stop:
-	default:
-		close(h.stop)
-	}
+	h.stopOnce.Do(func() { close(h.stop) })
 	select {
 	case <-h.done:
 		return nil

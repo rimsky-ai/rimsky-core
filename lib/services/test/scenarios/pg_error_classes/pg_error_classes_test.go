@@ -33,7 +33,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	substrate := harness.StartPostgresOnNetwork(ctx, t, netName, "store-pg")
 	pool := dialSubstrate(ctx, t, substrate.HostDSN)
 
@@ -104,7 +104,7 @@ func testNotReplaceableDelivered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	substrate := harness.StartPostgresOnNetwork(ctx, t, netName, "store-pg")
 	pool := dialSubstrate(ctx, t, substrate.HostDSN)
 

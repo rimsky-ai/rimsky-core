@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package pgmigrate
+package pgdbtest
 
 import (
 	"context"
@@ -14,8 +14,7 @@ import (
 func TestHarnessStartsPostgres(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	pool, teardown := StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	pool := StartPostgres(ctx, t)
 
 	var count int
 	err := pool.QueryRow(ctx, "SELECT count(*) FROM rimsky_migrations").Scan(&count)

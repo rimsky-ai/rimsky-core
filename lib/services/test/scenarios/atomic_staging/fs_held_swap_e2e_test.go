@@ -29,7 +29,7 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 
 	popAndMoveCommitted := "{pop_and_move: " + fsCommittedSubdir + "}"
 	store := harness.StartFilesystemStore(ctx, t, netName, "store-fs", harness.FilesystemStoreSpec{

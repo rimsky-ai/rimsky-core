@@ -15,8 +15,7 @@ import "executor_observability.proto";
 // claim-producer MAY implement to expose per-claim views (state,
 // history, producer-chosen payload/address/scope disclosure) plus
 // optional admin views to dashboards. The dispatch protocol
-// (claim_producer.proto) is unchanged. See
-// docs/specs/2026-05-02-dashboard-and-observability-design.md §3.
+// (claim_producer.proto) is unchanged.
 service ClaimProducerObservability {
   rpc Capabilities(GetClaimProducerCapabilitiesRequest) returns (ClaimProducerObservabilityCapabilities);
   rpc GetClaim(GetClaimRequest) returns (ClaimDetail);

@@ -15,7 +15,7 @@ import (
 func TestFSPickVsScopeConcurrency(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 
 	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
 		harness.FilesystemStoreSpec{

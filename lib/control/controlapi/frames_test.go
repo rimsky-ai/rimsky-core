@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func mainRunScopeIDForInstance(t *testing.T, h *harness, instanceID shared.UUID) shared.UUID {
@@ -197,10 +197,10 @@ func markFrameFailed(t *testing.T, ctx context.Context, h *harness, instanceID, 
 		return nil
 	}))
 	var runScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{uuid.UUID(frameID)}, &runScopeID)
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'failed', $3, $4, 0)
@@ -259,7 +259,7 @@ func TestFrames_Get_IncludesRootRunScopeID(t *testing.T) {
 	frameID, _ := seedFrameForTest(t, ctx, h, instUUID, "test/root-scope")
 
 	var wantRootScope shared.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{uuid.UUID(frameID)}, &wantRootScope)
 

@@ -41,7 +41,7 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 
 	hostPort := hostPortOf(t, upstream.URL)
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	rimskyAlias := harness.NextRimskyAlias()
 	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
 	sensorEP := harness.StartSensorHTTP(ctx, t, netName, "sensor-http", rimskyInternalURL, hostPort)
@@ -104,7 +104,7 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 
 	hostPort := hostPortOf(t, upstream.URL)
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	rimskyAlias := harness.NextRimskyAlias()
 	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
 	sensorEP := harness.StartSensorHTTP(ctx, t, netName, "sensor-http", rimskyInternalURL, hostPort)

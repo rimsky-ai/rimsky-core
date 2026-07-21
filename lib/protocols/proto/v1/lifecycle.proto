@@ -1,13 +1,10 @@
 // Copyright © 2026 Fall Guy Consulting.
 // Licensed under the Apache License, Version 2.0.
 
-// LifecycleSubscriber wire protocol.
-//
-// Per spec docs/specs/2026-05-04-service-protocol-contract.md §3
-// (extracted from claim_producer.proto under the layer-crystallization
-// plan, Phase 4). Implementer pattern: return success from any method
-// the binary doesn't react to. Binaries that don't react to any event
-// simply don't implement the service.
+// LifecycleSubscriber wire protocol (extracted from claim_producer.proto
+// under the layer-crystallization plan, Phase 4). Implementer pattern:
+// return success from any method the binary doesn't react to. Binaries
+// that don't react to any event simply don't implement the service.
 //
 // Idempotency: rimsky tracks per-peer idempotency in the
 // rimsky_lifecycle_idempotencies table; subscribers can assume each

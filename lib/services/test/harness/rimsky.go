@@ -196,7 +196,7 @@ func WithBundledFilesystemClaimProducer(hostDir, configYAML string) Option {
 	}
 }
 
-func NewNetwork(ctx context.Context, t testing.TB) string {
+func SharedNetworkName(ctx context.Context, t testing.TB) string {
 	t.Helper()
 	name, err := sharedNetworkName(ctx)
 	if err != nil {
@@ -598,6 +598,7 @@ func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID stri
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var last string
+	everObservedSubscriptions := false
 	for time.Now().Before(end) {
 		status, raw := e.GetJSON(t, "/v1/instances/"+instanceID, "")
 		if status == http.StatusOK {
@@ -611,6 +612,9 @@ func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID stri
 			}
 			if err := json.Unmarshal(raw, &resp); err != nil {
 				t.Fatalf("harness: decode GET /v1/instances/%s: %v: %s", instanceID, err, string(raw))
+			}
+			if len(resp.Subscriptions) > 0 {
+				everObservedSubscriptions = true
 			}
 			allActive := len(resp.Subscriptions) > 0
 			states := make([]string, 0, len(resp.Subscriptions))
@@ -634,6 +638,11 @@ func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID stri
 			last = fmt.Sprintf("GET /v1/instances/%s returned %d", instanceID, status)
 		}
 		time.Sleep(200 * time.Millisecond)
+	}
+	if !everObservedSubscriptions {
+		t.Fatalf("harness: instance %s never showed any subscriptions within %v (last observed: %s) — "+
+			"no subscription rows appeared at all, distinct from a reconciler stuck short of state=active",
+			instanceID, deadline, last)
 	}
 	t.Fatalf("harness: subscriptions on instance %s never all reached state=active within "+
 		"%v (last observed: %s) — the mounting reconciler is not converging",

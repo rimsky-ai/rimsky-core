@@ -387,7 +387,7 @@ func TestEnqueueMessage_RejectsBodySchemaViolation(t *testing.T) {
 	}
 }
 
-func TestDeliverPendingMessages_OnlyDeliversFrameTrigger(t *testing.T) {
+func TestDeliverTriggeringMessage_OnlyDeliversFrameTrigger(t *testing.T) {
 	m := newFakeMessages()
 	ctx := context.Background()
 	inst := shared.UUID(uuid.New())
@@ -406,12 +406,12 @@ func TestDeliverPendingMessages_OnlyDeliversFrameTrigger(t *testing.T) {
 		ReceivedAt: now.Add(time.Second),
 	})
 
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame1, triggerID, now)
+	res, err := DeliverTriggeringMessage(ctx, nil, m, inst, frame1, triggerID, now)
 	if err != nil {
-		t.Fatalf("DeliverPendingMessages: %v", err)
+		t.Fatalf("DeliverTriggeringMessage: %v", err)
 	}
 	if len(res.Messages) != 1 || res.Messages[0].ID != triggerID {
-		t.Fatalf("DeliverPendingMessages: got %+v, want exactly the trigger %s", res.Messages, triggerID)
+		t.Fatalf("DeliverTriggeringMessage: got %+v, want exactly the trigger %s", res.Messages, triggerID)
 	}
 
 	remaining, _ := m.ListPendingForInstance(ctx, nil, inst)
@@ -420,9 +420,9 @@ func TestDeliverPendingMessages_OnlyDeliversFrameTrigger(t *testing.T) {
 			remaining, siblingID)
 	}
 
-	res, err = DeliverPendingMessages(ctx, nil, m, inst, frame1, triggerID, now)
+	res, err = DeliverTriggeringMessage(ctx, nil, m, inst, frame1, triggerID, now)
 	if err != nil {
-		t.Fatalf("DeliverPendingMessages (repeat): %v", err)
+		t.Fatalf("DeliverTriggeringMessage (repeat): %v", err)
 	}
 	if len(res.Messages) != 0 {
 		t.Fatalf("expected empty deliver-set on repeat call (idempotent), got %d", len(res.Messages))
@@ -461,7 +461,7 @@ func TestFakeMessagesTable_CancelledRowsExcludedFromPendingAndDelivery(t *testin
 	}
 }
 
-func TestDeliverPendingMessages_DeliveredMatchesTrigger(t *testing.T) {
+func TestDeliverTriggeringMessage_DeliveredMatchesTrigger(t *testing.T) {
 	m := newFakeMessages()
 	ctx := context.Background()
 	inst := shared.UUID(uuid.New())
@@ -474,12 +474,12 @@ func TestDeliverPendingMessages_DeliveredMatchesTrigger(t *testing.T) {
 		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
 	})
 
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, msgID, now)
+	res, err := DeliverTriggeringMessage(ctx, nil, m, inst, frame, msgID, now)
 	if err != nil {
-		t.Fatalf("DeliverPendingMessages: %v", err)
+		t.Fatalf("DeliverTriggeringMessage: %v", err)
 	}
 	if len(res.Messages) != 1 || res.Messages[0].ID != msgID {
-		t.Fatalf("DeliverPendingMessages: got %+v, want one row with id=%s", res.Messages, msgID)
+		t.Fatalf("DeliverTriggeringMessage: got %+v, want one row with id=%s", res.Messages, msgID)
 	}
 
 	delivered, err := m.ListDeliveredForFrame(ctx, nil, frame)

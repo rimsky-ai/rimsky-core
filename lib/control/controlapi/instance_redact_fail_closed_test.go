@@ -15,7 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type failingTemplateTable struct {
@@ -39,7 +39,7 @@ func (t templateLoadFailingTables) Templates() persistence.TemplateTable {
 func TestInstanceRedact_FailsClosedOnTemplateLoadError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	deps := AppDeps{
 		Persist: templateLoadFailingTables{Tables: d.Tables(), err: errors.New("injected template load failure")},
@@ -53,7 +53,7 @@ func TestInstanceRedact_FailsClosedOnTemplateLoadError(t *testing.T) {
 func TestInstanceRedact_FailsClosedOnTemplateNotFound(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	redact := instanceRedact(ctx, AppDeps{Persist: d.Tables(), Logger: shared.NewCapturingLogger()},
 		"sha256-"+uuid.NewString(), shared.UUID(uuid.New()))
@@ -64,7 +64,7 @@ func TestInstanceRedact_FailsClosedOnTemplateNotFound(t *testing.T) {
 func TestInstanceRedact_ReturnsDeclaredParamsRedactOnSuccess(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	hash := "sha256-" + uuid.NewString()
 	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

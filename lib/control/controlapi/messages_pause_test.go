@@ -58,7 +58,7 @@ func TestPausedInstance_MessageAccumulatesUndeliveredThenDrainsOnResume(t *testi
 	require.Equal(t, true, out["resumed"])
 
 	h.tickFrameEngine(t)
-	require.NoError(t, runtime.SweepDeliverMessagesForRunningFrames(context.Background(), h.persist, shared.SilentLogger{}, time.Now()))
+	require.NoError(t, runtime.SweepDeliverTriggeringMessagesForRunningFrames(context.Background(), h.persist, shared.SilentLogger{}, time.Now()))
 
 	status, out = h.httpJSON(t, "GET", "/v1/messages/"+msgID, nil)
 	require.Equal(t, http.StatusOK, status, out)
@@ -107,7 +107,7 @@ func TestPausedInstance_PublisherMessageAccumulatesUndeliveredThenDrainsOnResume
 	require.Equal(t, true, out["resumed"])
 
 	h.tickFrameEngine(t)
-	require.NoError(t, runtime.SweepDeliverMessagesForRunningFrames(context.Background(), h.persist, shared.SilentLogger{}, time.Now()))
+	require.NoError(t, runtime.SweepDeliverTriggeringMessagesForRunningFrames(context.Background(), h.persist, shared.SilentLogger{}, time.Now()))
 
 	status, out = h.httpJSON(t, "GET", "/v1/messages/"+msgID, nil)
 	require.Equal(t, http.StatusOK, status, out)

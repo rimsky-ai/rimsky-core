@@ -33,7 +33,7 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	scopeID := h.GetMainRunScopeID(iid)
+	scopeID := h.GetLatestFrameRootRunScopeID(iid)
 	frameID := h.GetRunningFrameID(iid)
 
 	var runID shared.UUID

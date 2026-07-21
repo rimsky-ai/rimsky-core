@@ -18,7 +18,7 @@ func TestExecutorReadsDispatchContext(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	executorEndpoint := harness.StartClaudeAgentFakeOnNetwork(
 		ctx, t, netName, "claude-agent-fake-dispatch-context",
 		harness.ClaudeAgentFakeOptions{},
@@ -42,12 +42,12 @@ func TestExecutorReadsDispatchContext(t *testing.T) {
 	iid := createScenarioInstance(t, ep, tid, "ck-executor-reads-dispatch-context")
 	workerID := resolveWorkerNodeID(t, ep, iid, "worker")
 
-	postWorkerInvalidate(t, ep, iid, "executor-reads-dispatch-context-1")
+	postWorkerRerunMessage(t, ep, iid, "executor-reads-dispatch-context-1")
 	waitForWorkerDispatchCount(t, ctx, pgPool, workerID, 1, 90*time.Second)
 	fresh := getWorkerDispatchesInOrder(t, ctx, pgPool, workerID)[0]
 	requireFreshDispatchContext(t, fresh)
 
-	postWorkerInvalidate(t, ep, iid, "executor-reads-dispatch-context-2")
+	postWorkerRerunMessage(t, ep, iid, "executor-reads-dispatch-context-2")
 	waitForWorkerDispatchCount(t, ctx, pgPool, workerID, 2, 90*time.Second)
 	dispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, workerID)
 	rerun := dispatches[1]

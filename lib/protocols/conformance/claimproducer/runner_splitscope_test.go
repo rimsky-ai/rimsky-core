@@ -45,7 +45,7 @@ func TestCheckSplitScope_SupportsTrue_ListShapeRoundTrip(t *testing.T) {
 		"SplitScopeListShapeReturnsAllElements",
 		"SplitScopeListShapePreservesPartitionKey",
 		"SplitScopeListShapePreservesPayload",
-		"SplitScopeListShapeAddressFieldPresent",
+		"SplitScopeListShapeAddressFieldEmpty",
 	} {
 		row := findRow(t, results, name)
 		if row.Err != nil {
@@ -57,9 +57,9 @@ func TestCheckSplitScope_SupportsTrue_ListShapeRoundTrip(t *testing.T) {
 func TestCheckSplitScope_SupportsTrue_NonEmptyAddressOnListShapeFails(t *testing.T) {
 	producer := newSplitScopeFakeListShape(true, true, false)
 	results := Run(context.Background(), producer)
-	row := findRow(t, results, "SplitScopeListShapeAddressFieldPresent")
+	row := findRow(t, results, "SplitScopeListShapeAddressFieldEmpty")
 	if row.Err == nil {
-		t.Errorf("SplitScopeListShapeAddressFieldPresent expected non-nil Err when producer returns non-empty Address on list shape, got PASS")
+		t.Errorf("SplitScopeListShapeAddressFieldEmpty expected non-nil Err when producer returns non-empty Address on list shape, got PASS")
 	}
 }
 
@@ -103,7 +103,7 @@ func TestCheckSplitScope_SupportsTrue_ProducerRejectsListShapeIsSkippedNotFailed
 		"SplitScopeListShapeReturnsAllElements",
 		"SplitScopeListShapePreservesPartitionKey",
 		"SplitScopeListShapePreservesPayload",
-		"SplitScopeListShapeAddressFieldPresent",
+		"SplitScopeListShapeAddressFieldEmpty",
 	} {
 		for _, r := range results {
 			if r.Name == name {

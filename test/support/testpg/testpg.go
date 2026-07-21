@@ -13,7 +13,7 @@ import (
 
 var sharedPool = pgpool.NewRimskySchemaPool()
 
-func StartFreshPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
+func StartFreshPostgresDSN(ctx context.Context, t *testing.T) string {
 	t.Helper()
-	return sharedPool.Acquire(ctx, t), func() {}
+	return sharedPool.Acquire(ctx, t)
 }

@@ -53,7 +53,7 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	h.WaitForNodeState(w.ID, cascade.NodeStateFresh)
 	var first *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetMainRunScopeID(iid), tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 		first = r
 		return err
 	}))
@@ -69,7 +69,7 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	var latest *persistence.NodeAttributesRow
 	for time.Now().Before(deadline) {
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetMainRunScopeID(iid), tx)
+			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			latest = r
 			return err
 		})

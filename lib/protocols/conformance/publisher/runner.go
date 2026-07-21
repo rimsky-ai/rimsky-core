@@ -49,7 +49,7 @@ func Run(ctx context.Context, c genv1.PublisherClient, opts RunOpts) []CheckResu
 	results = append(results, checkListSubscriptions(ctx, c, opts))
 	results = append(results, checkSubscribeIdempotent(ctx, c, opts))
 	if opts.MessageReceiver != nil {
-		results = append(results, checkMessagePush(c, opts))
+		results = append(results, checkMessagePush(opts))
 	}
 	results = append(results, checkUnsubscribe(ctx, c, opts))
 	results = append(results, checkUnsubscribeIdempotent(ctx, c, opts))
@@ -173,7 +173,7 @@ func checkSubscribeIdempotent(ctx context.Context, c genv1.PublisherClient, opts
 	return CheckResult{Name: "SubscribeIdempotent"}
 }
 
-func checkMessagePush(c genv1.PublisherClient, opts RunOpts) CheckResult {
+func checkMessagePush(opts RunOpts) CheckResult {
 	ok := opts.MessageReceiver.WaitForMessage(opts.InstanceID, opts.MessageTimeout)
 	if !ok {
 		return CheckResult{
@@ -182,7 +182,6 @@ func checkMessagePush(c genv1.PublisherClient, opts RunOpts) CheckResult {
 				opts.MessageTimeout, opts.InstanceID),
 		}
 	}
-	_ = c
 	return CheckResult{Name: "MessagePush"}
 }
 

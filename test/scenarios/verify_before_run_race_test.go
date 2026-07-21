@@ -38,7 +38,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 
 	frameID := h.GetRunningFrameID(iid)
 	nodeRunID := uuid.New()
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	tx, err := h.Pool.Begin(h.Ctx)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(h.Ctx) }()

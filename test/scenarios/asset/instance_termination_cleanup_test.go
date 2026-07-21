@@ -21,13 +21,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestInstanceTerminationCleanup_PreservesFailedReleaseForRetry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplateAsset(ctx, t, backend, node.TemplateSpec{
@@ -108,9 +108,9 @@ func TestInstanceTerminationCleanup_PreservesFailedReleaseForRetry(t *testing.T)
 		SupervisorID:  "sup-cleanup",
 		Clock:         clock,
 	}
-	var report runtime.HeldDurableReleaseReport
+	var report runtime.CommittedDurableReleaseReport
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := runtime.ReleaseHeldDurableClaims(ctx, args, tx, instID, shared.SilentLogger{})
+		r, err := runtime.ReleaseCommittedDurableClaims(ctx, args, tx, instID, shared.SilentLogger{})
 		report = r
 		return err
 	}))
@@ -175,7 +175,7 @@ func (f deleteResolvedFailingClaimHandles) DeleteResolved(ctx context.Context, i
 func TestInstanceTerminationCleanup_DeleteResolvedFailureAbortsWithoutOrphaningTheOutboxRow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplateAsset(ctx, t, backend, node.TemplateSpec{
@@ -249,7 +249,7 @@ func TestInstanceTerminationCleanup_DeleteResolvedFailureAbortsWithoutOrphaningT
 		Clock:         clock,
 	}
 	txErr := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := runtime.ReleaseHeldDurableClaims(ctx, args, tx, instID, shared.SilentLogger{})
+		_, err := runtime.ReleaseCommittedDurableClaims(ctx, args, tx, instID, shared.SilentLogger{})
 		return err
 	})
 	require.Error(t, txErr)

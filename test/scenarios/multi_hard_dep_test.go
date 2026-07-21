@@ -193,7 +193,7 @@ func latestAttrRowMultiHardDep(t *testing.T, h *scenario.Harness, instanceID, no
 	t.Helper()
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, e := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, nodeID, h.GetMainRunScopeID(instanceID), tx)
+		r, e := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, nodeID, h.GetLatestFrameRootRunScopeID(instanceID), tx)
 		row = r
 		return e
 	}))

@@ -55,11 +55,11 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	require.Len(t, pending, 1, "the cancelled message must not surface as pending")
 	require.Equal(t, liveID, pending[0].ID)
 
-	deadLettered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, staleID, now)
+	deadLettered, err := runtime.DeliverTriggeringMessage(ctx, nil, m, instanceID, frameID, staleID, now)
 	require.NoError(t, err)
 	require.Empty(t, deadLettered.Messages, "a cancelled message must never be delivered, even if named as a frame's trigger")
 
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, liveID, now)
+	delivered, err := runtime.DeliverTriggeringMessage(ctx, nil, m, instanceID, frameID, liveID, now)
 	require.NoError(t, err)
 	require.Len(t, delivered.Messages, 1, "the surviving message must still deliver")
 	require.Equal(t, "publisher", delivered.Messages[0].SenderKind)

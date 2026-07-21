@@ -34,7 +34,7 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 		},
 	})
 	instanceID := h.CreateInstance(tplHash, "", map[string]any{})
-	scopeID := h.GetMainRunScopeID(instanceID)
+	scopeID := h.GetLatestFrameRootRunScopeID(instanceID)
 
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(instanceID))
 

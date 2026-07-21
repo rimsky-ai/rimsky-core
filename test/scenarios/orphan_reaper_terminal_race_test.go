@@ -53,7 +53,7 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 	frameID := h.GetRunningFrameID(iid)
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 
 	const owner = "owner-supervisor"
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE node_id = $1`, worker.ID)

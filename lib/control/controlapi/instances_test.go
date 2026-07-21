@@ -25,7 +25,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestTerminateInstance_NoReasonEmptyBody(t *testing.T) {
@@ -553,9 +553,9 @@ func seedTerminatedInstanceWithoutTemplate(t *testing.T, h *harness, tag string)
 	status, out := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate", nil)
 	require.Equal(t, http.StatusOK, status, out)
 
-	pgtest.ExecForTest(ctx, t, h.driver,
+	pgdbtest.ExecForTest(ctx, t, h.driver,
 		`ALTER TABLE rimsky_instances DROP CONSTRAINT IF EXISTS rimsky_instances_template_hash_fkey`)
-	pgtest.ExecForTest(ctx, t, h.driver,
+	pgdbtest.ExecForTest(ctx, t, h.driver,
 		`DELETE FROM rimsky_templates WHERE id = $1`, inst.TemplateHash)
 
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

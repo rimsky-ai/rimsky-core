@@ -80,7 +80,7 @@ func printConformanceUsage(w *os.File) {
 func runConformanceExecutor(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance executor", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "endpoint URL (executor or lifecycle peer)")
-	transport := fs.String("transport", "grpc", "grpc|http")
+	transport := fs.String("transport", "grpc", "transport: grpc")
 	requireStub := fs.Bool("require-stub-mode", false, "fail if executor not in stub mode")
 	only := fs.String("scenarios", "", "comma-list of scenario names to run (default: all)")
 	skip := fs.String("skip", "", "comma-list of scenario names to skip")
@@ -101,6 +101,10 @@ func runConformanceExecutor(args []string) int {
 
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky conformance executor: --endpoint required")
+		return 2
+	}
+	if *transport != "grpc" {
+		fmt.Fprintf(os.Stderr, "rimsky conformance executor: --transport %q not supported; use grpc\n", *transport)
 		return 2
 	}
 
@@ -402,7 +406,7 @@ func runConformanceDataProcessing(args []string) int {
 func runConformanceProbe(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance probe", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "executor endpoint URL")
-	transport := fs.String("transport", "grpc", "grpc | http")
+	transport := fs.String("transport", "grpc", "transport: grpc")
 	timeout := fs.Duration("timeout", 15*time.Second, "request timeout")
 	callbackBind := fs.String("callback-bind", "127.0.0.1", "interface for the callback receiver (use 0.0.0.0 with containerized executors)")
 	callbackHost := fs.String("callback-host", "", "host the executor should reach the callback at (default: same as --callback-bind)")
@@ -411,6 +415,10 @@ func runConformanceProbe(args []string) int {
 	}
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky conformance probe: --endpoint required")
+		return 2
+	}
+	if *transport != "grpc" {
+		fmt.Fprintf(os.Stderr, "rimsky conformance probe: --transport %q not supported; use grpc\n", *transport)
 		return 2
 	}
 

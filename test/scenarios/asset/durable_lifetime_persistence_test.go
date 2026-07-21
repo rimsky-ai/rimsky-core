@@ -16,7 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestDurableLifetimePersistence_TaxonomyConstants(t *testing.T) {
@@ -32,7 +32,7 @@ func TestDurableLifetimePersistence_TaxonomyConstants(t *testing.T) {
 func TestDurableLifetimePersistence_InsertInputCarriesLifetime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplateAsset(ctx, t, backend, node.TemplateSpec{

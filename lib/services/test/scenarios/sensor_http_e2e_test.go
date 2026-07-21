@@ -54,7 +54,7 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 
 	hostPort := hostPortOf(t, upstream.URL)
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	statePG := startSensorStatePostgres(ctx, t, netName, "sensor-http-pg")
 
 	rimskyAlias := harness.NextRimskyAlias()

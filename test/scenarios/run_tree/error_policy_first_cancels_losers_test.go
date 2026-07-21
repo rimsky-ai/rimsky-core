@@ -54,7 +54,7 @@ func TestErrorPolicyFirst_WinnerCancelsInFlightLosers(t *testing.T) {
 	parent := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parent)
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 
 	for {
 		var n int

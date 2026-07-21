@@ -25,7 +25,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type harness struct {
@@ -39,7 +39,7 @@ type harness struct {
 func newAppHarness(t *testing.T, configure func(*AppDeps)) (*harness, func()) {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	reg := locks.NewRegistry()
 	contentFake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
@@ -439,7 +439,7 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	nodes, _ := out["nodes"].([]any)
 	require.Len(t, nodes, 4)
 
-	pgtest.ExecForTest(context.Background(), t, h.driver,
+	pgdbtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
 
 	status, _ = h.httpJSON(t, "DELETE", "/v1/instances/"+instID, nil)
@@ -470,14 +470,14 @@ func TestInstanceCreate_IsIdle(t *testing.T) {
 
 	// @story: instance-create-is-idle
 	var frameCount int
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1`,
 		[]any{instID}, &frameCount)
 	require.Equal(t, 0, frameCount,
 		"post-create the instance must have zero frames until a sender posts a message")
 
 	var msgCount int
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1`,
 		[]any{instID}, &msgCount)
 	require.Equal(t, 0, msgCount,
@@ -524,9 +524,9 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusConflict, status)
 
-	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1`, nodeRow.ID)
+	pgdbtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1`, nodeRow.ID)
 	mainScopeID, _, frameID := seedRunScopeMessageFrame(ctx, t, h, uuid.UUID(inst.ID), false)
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
         VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', $2, now(), $3, 0)
@@ -555,7 +555,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	// @story: node-admin
 	// @decision: node-reset-as-pure-retry-budget-clear
 	var resetFrameCount int
-	pgtest.QueryRowForTest(ctx, t, h.driver, `
+	pgdbtest.QueryRowForTest(ctx, t, h.driver, `
 		SELECT count(*) FROM rimsky_frames f
 		JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		WHERE f.instance_id = $1 AND m.type = 'node/reset'
@@ -575,23 +575,23 @@ func TestOperatorReset_AppendsOperatorOverrideAuditEvent(t *testing.T) {
 	nodeRow := firstNode(t, h, inst)
 
 	mainScopeID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
         VALUES ($1, 'main', $2, '', now())
     `, uuid.UUID(mainScopeID), inst.ID)
 	msgID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_messages
             (id, instance_id, type, sender_kind, sender, payload, received_at)
         VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
     `, msgID, inst.ID)
 	frameID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_frames
             (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id)
         VALUES ($1, $2, now(), $3, $4)
     `, frameID, inst.ID, msgID, mainScopeID)
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
         VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', $2, now(), $3, 0)
@@ -714,25 +714,25 @@ func seedInstance(t *testing.T, h *harness, tplName string) persistence.Instance
 func seedRunScopeMessageFrame(ctx context.Context, t *testing.T, h *harness, instanceID uuid.UUID, frameEnded bool) (mainScopeID shared.UUID, msgID, frameID uuid.UUID) {
 	t.Helper()
 	mainScopeID = shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
         VALUES ($1, 'main', $2, '', now())
     `, uuid.UUID(mainScopeID), instanceID)
 	msgID = uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_messages
             (id, instance_id, type, sender_kind, sender, payload, received_at)
         VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
     `, msgID, instanceID)
 	frameID = uuid.New()
 	if frameEnded {
-		pgtest.ExecForTest(ctx, t, h.driver, `
+		pgdbtest.ExecForTest(ctx, t, h.driver, `
             INSERT INTO rimsky_frames
                 (frame_id, instance_id, ended_at, triggering_message_id, root_run_scope_id)
             VALUES ($1, $2, now(), $3, $4)
         `, frameID, instanceID, msgID, mainScopeID)
 	} else {
-		pgtest.ExecForTest(ctx, t, h.driver, `
+		pgdbtest.ExecForTest(ctx, t, h.driver, `
             INSERT INTO rimsky_frames
                 (frame_id, instance_id, started_at, triggering_message_id, root_run_scope_id)
             VALUES ($1, $2, now(), $3, $4)

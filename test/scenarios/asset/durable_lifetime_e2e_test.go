@@ -26,13 +26,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestDurableLifetimeE2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplateAsset(ctx, t, backend, node.TemplateSpec{
@@ -147,9 +147,9 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.Len(t, durables, 1)
 	require.Equal(t, claimHandleID, durables[0].ID)
 
-	var report runtime.HeldDurableReleaseReport
+	var report runtime.CommittedDurableReleaseReport
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := runtime.ReleaseHeldDurableClaims(ctx, args, tx, inst.ID, shared.SilentLogger{})
+		r, err := runtime.ReleaseCommittedDurableClaims(ctx, args, tx, inst.ID, shared.SilentLogger{})
 		report = r
 		return err
 	}))
@@ -165,7 +165,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		row = r
 		return err
 	}))
-	require.Nil(t, row, "ReleaseHeldDurableClaims must drop the row")
+	require.Nil(t, row, "ReleaseCommittedDurableClaims must drop the row")
 
 	releaseSeen := false
 	for _, c := range stubStore.Calls() {

@@ -114,7 +114,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 			"strict's cancel-on-failure action cancels) — this is the strict-specific defect surface "+
 			"a best-effort-only e2e proof can never exercise")
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	require.Eventually(t, func() bool {
 		var n int
 		h.QueryRowSQL(`

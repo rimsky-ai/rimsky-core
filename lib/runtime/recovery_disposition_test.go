@@ -16,7 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func seedDispositionFixture(ctx context.Context, t *testing.T, d persistence.Database, templateName string) (persistence.InstanceRow, persistence.NodeRow, shared.UUID, shared.UUID, shared.UUID) {
@@ -52,7 +52,7 @@ func seedDispositionFixture(ctx context.Context, t *testing.T, d persistence.Dat
 
 func queryDispositionRow(ctx context.Context, t *testing.T, d persistence.Database, runID shared.UUID) (priorID *string, disposition *string, claimedBy *string, state string, lastProgress *time.Time) {
 	t.Helper()
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT prior_dispatch_id::text, prior_dispatch_disposition, claimed_by, state, last_progress_at
 		   FROM rimsky_node_runs WHERE id = $1`,
 		[]any{runID}, &priorID, &disposition, &claimedBy, &state, &lastProgress)
@@ -62,7 +62,7 @@ func queryDispositionRow(ctx context.Context, t *testing.T, d persistence.Databa
 func TestErrorPolicyRetry_StampsRetryAfterErrorAndBumpsProgressWithScratch(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	inst, workerNode, mainScopeID, frameID, runID := seedDispositionFixture(ctx, t, d, "retry-disposition-stamp")
@@ -116,7 +116,7 @@ func TestErrorPolicyRetry_StampsRetryAfterErrorAndBumpsProgressWithScratch(t *te
 		"the scratch write and the last_progress_at bump must land in the same transaction")
 
 	var scratch []byte
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT scratch_inline FROM rimsky_node_runs WHERE id = $1`, []any{runID}, &scratch)
 	require.Equal(t, "scratch-after-error", string(scratch))
 }
@@ -124,7 +124,7 @@ func TestErrorPolicyRetry_StampsRetryAfterErrorAndBumpsProgressWithScratch(t *te
 func TestSweepExecutorDeadlines_StampsStaleRecoveryOnReleasedRow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	_, _, _, _, runID := seedDispositionFixture(ctx, t, d, "quiet-period-stale-recovery")

@@ -53,7 +53,7 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 
 	rimskyAlias := harness.NextRimskyAlias()
 	rimskyInternalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
@@ -133,7 +133,7 @@ func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	statePGContainer := startSensorStatePostgres(ctx, t, netName, "sensor-webhook-pg")
 
 	rimskyAlias := harness.NextRimskyAlias()

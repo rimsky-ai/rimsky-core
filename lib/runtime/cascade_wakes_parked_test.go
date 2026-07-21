@@ -16,13 +16,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	spec := nodepkg.TemplateSpec{
@@ -68,7 +68,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 
 	aRunID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'running', 100, 'cascade', $3, $4)
@@ -76,7 +76,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 
 	parkedRunID := shared.UUID(uuid.New())
 	resumeAt := time.Now().UTC().Add(6 * time.Hour)
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id, parked_at, resume_at)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'parked', 100, 'cascade', $3, $4, NOW(), $5)
@@ -97,7 +97,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 		state       string
 		gotResumeAt *time.Time
 	)
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT state, resume_at FROM rimsky_node_runs WHERE id = $1`,
 		[]any{parkedRunID}, &state, &gotResumeAt)
 	require.Equal(t, "stale", state,
@@ -122,14 +122,14 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 	require.True(t, foundWake, "the cascade wake must append the parked_resume_started event in the same tx")
 
 	var pendingCount int
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND state = 'pending'`,
 		[]any{bN.ID}, &pendingCount)
 	require.Equal(t, 1, pendingCount,
 		"the walk still queues the cascade round as a new pending receiver run carrying the wait-set entry")
 
 	var waitRows int
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT count(*) FROM rimsky_wait_set w
 		  JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
 		 WHERE w.frame_id = $1 AND w.sender_run_id = $2 AND r.node_id = $3`,
@@ -141,7 +141,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 func TestCascadeWalk_NoWakeForUnsubscribedParkedNode(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	spec := nodepkg.TemplateSpec{
@@ -182,14 +182,14 @@ func TestCascadeWalk_NoWakeForUnsubscribedParkedNode(t *testing.T) {
 	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 
 	aRunID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'running', 100, 'cascade', $3, $4)
     `, aRunID, aN.ID, frameID, mainScopeID)
 
 	parkedRunID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id, parked_at, resume_at)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'parked', 100, 'cascade', $3, $4, NOW(), NOW() + interval '6 hours')
@@ -207,7 +207,7 @@ func TestCascadeWalk_NoWakeForUnsubscribedParkedNode(t *testing.T) {
 	}))
 
 	var state string
-	pgtest.QueryRowForTest(ctx, t, d,
+	pgdbtest.QueryRowForTest(ctx, t, d,
 		`SELECT state FROM rimsky_node_runs WHERE id = $1`, []any{parkedRunID}, &state)
 	require.Equal(t, "parked", state,
 		"only subscribed receivers wake on an upstream cascade; an unsubscribed parked node stays parked")

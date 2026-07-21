@@ -81,8 +81,8 @@ func TestObservability_Capabilities_Postgres(t *testing.T) {
 	if !caps.SupportsClaimGet || !caps.SupportsClaimStream || !caps.SupportsListClaims {
 		t.Fatalf("capabilities = %+v; want all three claim-* flags true", caps)
 	}
-	if caps.RetentionAfterTerminalSeconds == 0 {
-		t.Fatal("retention_after_terminal_seconds should be non-zero")
+	if caps.RetentionAfterTerminalSeconds != 0 {
+		t.Fatalf("retention_after_terminal_seconds = %d, want 0 (the ledger evicts by capacity, not time)", caps.RetentionAfterTerminalSeconds)
 	}
 	if want := 2; len(caps.AdminViews) != want {
 		t.Fatalf("admin_views = %d, want %d", len(caps.AdminViews), want)

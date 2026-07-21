@@ -41,7 +41,7 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 		"SplitScopeListShapeReturnsAllElements":    false,
 		"SplitScopeListShapePreservesPartitionKey": false,
 		"SplitScopeListShapePreservesPayload":      false,
-		"SplitScopeListShapeAddressFieldPresent":   false,
+		"SplitScopeListShapeAddressFieldEmpty":     false,
 		"ScopesConflict":                           false,
 	}
 	seenCounts := make(map[string]int, len(results))

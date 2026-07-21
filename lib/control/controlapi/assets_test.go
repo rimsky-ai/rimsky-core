@@ -21,7 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type stubDataProcessor struct {
@@ -69,7 +69,7 @@ type assetHarness struct {
 func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*assetHarness, func()) {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	reg := locks.NewRegistry()
 	contentFake := storetest.NewFake("content", claimproducer.Capabilities{
@@ -153,7 +153,7 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 	require.NoError(t, err)
 
 	mainScopeID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, h.driver,
+	pgdbtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_run_scopes(id, graph_name, instance_id, partition_key, created_at)
 		 VALUES ($1, 'main', $2, '', now())`,
 		uuid.UUID(mainScopeID), instID)
@@ -191,14 +191,14 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 	require.NotEqual(t, uuid.Nil, producerNodeID)
 
 	nodeRunID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 0)
 	`, nodeRunID, producerNodeID, frameID, mainScopeID)
 
 	claimID = uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_claim_handles
 			(id, node_run_id, lock_kind, producer_name, claim_scope_data, intent,
 			 holder_node_id, expires_at, lifetime, state, version_id, resolved_at)
@@ -217,19 +217,19 @@ func (ah *assetHarness) seedNonDataProcessingClaim(
 	h := ah.harness
 
 	var mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver,
+	pgdbtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{frameID}, &mainScopeID)
 
 	nodeRunID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 1)
 	`, nodeRunID, producerNodeID, frameID, mainScopeID)
 
 	claimID = uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_claim_handles
 			(id, node_run_id, lock_kind, producer_name, claim_scope_data, intent,
 			 holder_node_id, expires_at, lifetime, state, version_id, resolved_at)
@@ -264,7 +264,7 @@ func TestAssetEndpoints_NonDataProcessingProducerHiddenFromDetailAndDelete(t *te
 	require.Equal(t, http.StatusNotFound, status, "delete must not resolve a non-data-processing claim as an asset either")
 
 	var remaining int
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
 		[]any{claimID}, &remaining)
 	require.Equal(t, 1, remaining, "the non-asset claim row must be untouched")
@@ -288,15 +288,15 @@ func TestClaimHandles_DeleteResolvedIfNoActiveHolders_RefusesWithActiveHolder(t 
 
 	holderNodeRunID := uuid.New()
 	var mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{frameID}, &mainScopeID)
-	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
-	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state)
 		VALUES ($1, $2, $3, 'active')
 	`, uuid.New(), claimID, holderNodeRunID)
@@ -310,7 +310,7 @@ func TestClaimHandles_DeleteResolvedIfNoActiveHolders_RefusesWithActiveHolder(t 
 	require.False(t, deleted, "the atomic guard must refuse when an active holder exists, closing the check-then-act race even under a single statement")
 
 	var remaining int
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
 		[]any{claimID}, &remaining)
 	require.Equal(t, 1, remaining)
@@ -437,7 +437,7 @@ func TestAssetEndpoints_DeleteReleasesAndDeletes(t *testing.T) {
 	require.Equal(t, true, out["deleted"])
 
 	var remaining int
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
 		[]any{claimID}, &remaining)
 	require.Equal(t, 0, remaining, "asset row must be deleted")
@@ -470,7 +470,7 @@ func TestAssetEndpoints_DeleteDryRunReportsWithoutDeleting(t *testing.T) {
 	require.Equal(t, "producer", summary["node_type"])
 
 	var remaining int
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
 		[]any{claimID}, &remaining)
 	require.Equal(t, 1, remaining, "dry-run delete must not touch the asset row")
@@ -490,15 +490,15 @@ func TestAssetEndpoints_DeleteDryRunRefusesWithActiveHolder(t *testing.T) {
 
 	holderNodeRunID := uuid.New()
 	var mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{frameID}, &mainScopeID)
-	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
-	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state)
 		VALUES ($1, $2, $3, 'active')
 	`, uuid.New(), claimID, holderNodeRunID)
@@ -510,7 +510,7 @@ func TestAssetEndpoints_DeleteDryRunRefusesWithActiveHolder(t *testing.T) {
 	require.NotContains(t, out, "would_have_deleted_asset")
 
 	var remaining int
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
 		[]any{claimID}, &remaining)
 	require.Equal(t, 1, remaining)
@@ -540,19 +540,19 @@ func TestAssetEndpoints_ListExcludesRowWithNoResolvableAlias(t *testing.T) {
 	require.NotEqual(t, shared.UUID{}, downstreamNodeID, "template must contain a downstream node with no claim_producers stanza")
 
 	var mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{frameID}, &mainScopeID)
 
 	nodeRunID := uuid.New()
-	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'fresh', $3, $4, 2)
 	`, nodeRunID, uuid.UUID(downstreamNodeID), frameID, mainScopeID)
 
 	strayClaimID := uuid.New()
-	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_claim_handles
 			(id, node_run_id, lock_kind, producer_name, claim_scope_data, intent,
 			 holder_node_id, expires_at, lifetime, state, version_id, resolved_at)
@@ -578,15 +578,15 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 
 	holderNodeRunID := uuid.New()
 	var mainScopeID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT root_run_scope_id FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{frameID}, &mainScopeID)
-	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_node_runs
 			(id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, run_scope_id, sequence)
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'running', $3, $4, 0)
 	`, holderNodeRunID, producerNodeID, frameID, mainScopeID)
-	pgtest.ExecForTest(ctx, t, ah.harness.driver, `
+	pgdbtest.ExecForTest(ctx, t, ah.harness.driver, `
 		INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state)
 		VALUES ($1, $2, $3, 'active')
 	`, uuid.New(), claimID, holderNodeRunID)
@@ -596,7 +596,7 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	require.EqualValues(t, 1, out["active_count"])
 
 	var remaining int
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+	pgdbtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
 		[]any{claimID}, &remaining)
 	require.Equal(t, 1, remaining, "asset row must survive a refused delete")

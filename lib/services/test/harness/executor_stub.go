@@ -22,30 +22,38 @@ const (
 )
 
 var (
-	stubOnce    sync.Once
-	stubErr     error
-	stubErrOnce sync.Once
-	stubErrErr  error
+	stubMu          sync.Mutex
+	stubLaunched    = map[string]error{}
+	stubErrMu       sync.Mutex
+	stubErrLaunched = map[string]error{}
 )
 
 func StartExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName string) (endpoint string) {
 	t.Helper()
-	stubOnce.Do(func() {
-		stubErr = launchExecutorStub(ctx, networkName, sharedStubAlias, false)
-	})
-	if stubErr != nil {
-		t.Fatalf("harness: start executor-stub: %v", stubErr)
+	stubMu.Lock()
+	err, seen := stubLaunched[networkName]
+	if !seen {
+		err = launchExecutorStub(ctx, networkName, sharedStubAlias, false)
+		stubLaunched[networkName] = err
+	}
+	stubMu.Unlock()
+	if err != nil {
+		t.Fatalf("harness: start executor-stub: %v", err)
 	}
 	return sharedStubAlias + ":9300"
 }
 
 func StartErroringExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName string) (endpoint string) {
 	t.Helper()
-	stubErrOnce.Do(func() {
-		stubErrErr = launchExecutorStub(ctx, networkName, sharedStubErrAlias, true)
-	})
-	if stubErrErr != nil {
-		t.Fatalf("harness: start erroring executor-stub: %v", stubErrErr)
+	stubErrMu.Lock()
+	err, seen := stubErrLaunched[networkName]
+	if !seen {
+		err = launchExecutorStub(ctx, networkName, sharedStubErrAlias, true)
+		stubErrLaunched[networkName] = err
+	}
+	stubErrMu.Unlock()
+	if err != nil {
+		t.Fatalf("harness: start erroring executor-stub: %v", err)
 	}
 	return sharedStubErrAlias + ":9300"
 }

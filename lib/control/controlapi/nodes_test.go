@@ -17,7 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 // @decision: node-state-retired-from-operator-api
@@ -168,7 +168,7 @@ func seedTerminalRunWithSignalType(
 	mainScopeID, _, frameID := seedRunScopeMessageFrame(ctx, t, h, uuid.UUID(inst.ID), true)
 
 	runID := uuid.New()
-	pgtest.ExecForTest(ctx, t, h.driver, `
+	pgdbtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, frame_id, active_terminal_at, run_scope_id, sequence)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], now(), 'fresh', $3, now(), $4, 0)

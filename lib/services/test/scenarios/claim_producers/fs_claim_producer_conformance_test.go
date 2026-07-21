@@ -52,7 +52,7 @@ func TestFsStore_ClaimProducerConformance(t *testing.T) {
 		"SplitScopeListShapeReturnsAllElements",
 		"SplitScopeListShapePreservesPartitionKey",
 		"SplitScopeListShapePreservesPayload",
-		"SplitScopeListShapeAddressFieldPresent",
+		"SplitScopeListShapeAddressFieldEmpty",
 	} {
 		assertFsResultPassing(t, results, name)
 	}

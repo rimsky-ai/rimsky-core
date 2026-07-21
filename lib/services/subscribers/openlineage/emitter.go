@@ -122,7 +122,7 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, namespace string)
 		jobName = rec.NodeAlias
 	}
 	if jobName == "" {
-		jobName = "empty-message-receiver"
+		jobName = "unaliased-node-" + rec.NodeID
 	}
 	inputs := make([]DatasetRef, 0, len(rec.HeldClaims))
 	for _, hc := range rec.HeldClaims {

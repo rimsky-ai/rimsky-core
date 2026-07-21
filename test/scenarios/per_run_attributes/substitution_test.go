@@ -72,7 +72,7 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 
 	var downRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, downN.ID, h.GetMainRunScopeID(iid), tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, downN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 		downRow = r
 		return err
 	}))
@@ -88,7 +88,7 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, downN.ID, h.GetMainRunScopeID(iid), tx)
+			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, downN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			downRow = r
 			return err
 		})

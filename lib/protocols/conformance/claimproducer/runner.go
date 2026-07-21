@@ -286,11 +286,11 @@ func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps cl
 	}
 	if addrFailure != "" {
 		results = append(results, CheckResult{
-			Name: "SplitScopeListShapeAddressFieldPresent",
+			Name: "SplitScopeListShapeAddressFieldEmpty",
 			Err:  fmt.Errorf("%s", addrFailure),
 		})
 	} else {
-		results = append(results, CheckResult{Name: "SplitScopeListShapeAddressFieldPresent"})
+		results = append(results, CheckResult{Name: "SplitScopeListShapeAddressFieldEmpty"})
 	}
 
 	return results

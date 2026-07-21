@@ -25,7 +25,7 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	executorEndpoint := harness.StartClaudeAgentFakeOnNetwork(
 		ctx, t, netName, "claude-agent-fake-session-resume",
 		harness.ClaudeAgentFakeOptions{},
@@ -54,7 +54,7 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	subWorkerNodeID := resolveWorkerNodeID(t, ep, iid, "sub-worker")
 	callerNodeID := resolveWorkerNodeID(t, ep, iid, "caller")
 
-	postWorkerInvalidate(t, ep, iid, "session-resume-loop")
+	postWorkerRerunMessage(t, ep, iid, "session-resume-loop")
 
 	waitForWorkerDispatchCount(t, ctx, pgPool, workerNodeID, 3, 180*time.Second)
 	waitForNodeRunsQuiescent(t, ctx, pgPool, workerNodeID, 30*time.Second)
@@ -234,7 +234,7 @@ func sessionResumeAgentAttrs(userPrompt string) map[string]any {
 	}
 }
 
-func postWorkerInvalidate(t *testing.T, ep harness.RimskyEndpoint, instanceID, idempotencyKey string) {
+func postWorkerRerunMessage(t *testing.T, ep harness.RimskyEndpoint, instanceID, idempotencyKey string) {
 	t.Helper()
 	body := map[string]any{
 		"type":    "operator/worker-rerun",
@@ -242,7 +242,7 @@ func postWorkerInvalidate(t *testing.T, ep harness.RimskyEndpoint, instanceID, i
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		t.Fatalf("marshal invalidate body: %v", err)
+		t.Fatalf("marshal worker-rerun message body: %v", err)
 	}
 	path := "/v1/instances/" + instanceID + "/messages"
 	req, err := http.NewRequest(http.MethodPost, ep.BaseURL+path, bytes.NewReader(bodyBytes))

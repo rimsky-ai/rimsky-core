@@ -14,8 +14,7 @@ import (
 func TestStartFreshPostgresDSN_BasicConnect(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	dsn, teardown := StartFreshPostgresDSN(ctx, t)
-	t.Cleanup(teardown)
+	dsn := StartFreshPostgresDSN(ctx, t)
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

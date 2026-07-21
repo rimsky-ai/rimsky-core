@@ -101,7 +101,7 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 
 	workerPaused := h.FindNode(iidPaused, "worker")
 	require.NotNil(t, workerPaused, "worker node row must exist on the paused instance")
-	preMutateRunID := getInFlightRunID(t, h, workerPaused.ID)
+	preMutateRunID := getLatestRunID(t, h, workerPaused.ID)
 	require.NotNil(t, preMutateRunID,
 		"the parked breakpoint hit must leave an in-flight run row for the worker — "+
 			"the invalidate_node mutation arm needs one to stale-mark")
@@ -165,7 +165,7 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 
 	workerBP := h.FindNode(iidBP, "worker")
 	require.NotNil(t, workerBP)
-	preBPRunID := getInFlightRunID(t, h, workerBP.ID)
+	preBPRunID := getLatestRunID(t, h, workerBP.ID)
 	require.NotNil(t, preBPRunID,
 		"the parked breakpoint hit must leave an in-flight run row for the worker — "+
 			"the set_attribute mutation arm merges into its attribute row")
@@ -327,7 +327,7 @@ func waitForFirstHit(t *testing.T, h *scenario.Harness, bpID shared.UUID) persis
 	}
 }
 
-func getInFlightRunID(t *testing.T, h *scenario.Harness, nodeID shared.UUID) *shared.UUID {
+func getLatestRunID(t *testing.T, h *scenario.Harness, nodeID shared.UUID) *shared.UUID {
 	t.Helper()
 	var out *shared.UUID
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {

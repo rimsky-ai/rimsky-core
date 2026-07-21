@@ -16,7 +16,7 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/store"
-	sqlchecks "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/sql-checks"
+	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/sqlchecks"
 )
 
 // @concept: executor

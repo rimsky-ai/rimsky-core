@@ -137,7 +137,7 @@ func TestAttributeCarryForwardWithinRunScopeThenSubgraphSeesSchemaDefault(t *tes
 		"counter must advance step by step across three same-RunScope dispatches "+
 			"via writeback plus carry-forward (dispatch N sees dispatch N-1's count)")
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	mainAttrs := latestAttrRow(h, counterNode.ID, mainScopeID)
 	require.NotNil(t, mainAttrs, "counter must have a node_attributes row in the main RunScope")
 	require.Equal(t, float64(3), mainAttrs.Data["count"],

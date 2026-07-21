@@ -65,7 +65,7 @@ func TestSubscriberOpenlineage(t *testing.T) {
 
 	receiverHostPort := hostPortOf(t, marquez.URL)
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
 		harness.FilesystemStoreSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{

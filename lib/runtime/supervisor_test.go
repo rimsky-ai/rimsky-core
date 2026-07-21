@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,13 +20,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestSupervisor_StartShutdown(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	reg := locks.NewRegistry()
 
@@ -113,10 +114,58 @@ func TestSupervisor_ShutdownJoinsProducerVerbDispatcherBeforeReturning(t *testin
 	}
 }
 
+func TestSupervisor_ConcurrentShutdownDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
+	db, err := persistence.Open(ctx, persistence.Config{
+		Driver: "sqlite", SQLite: &persistence.SQLiteConfig{Path: dbPath},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Migrate(ctx, shared.SilentLogger{}))
+	t.Cleanup(func() { _ = db.Close() })
+
+	h, err := runtime.Start(runtime.Config{
+		SupervisorID:      "test-sv-concurrent-shutdown",
+		Persist:           db.Tables(),
+		Queue:             db.Queue(),
+		AdvisoryLocker:    db.AdvisoryLocker(),
+		Clock:             shared.SystemClock{},
+		Logger:            shared.SilentLogger{},
+		Concurrency:       1,
+		LivenessInterval:  200 * time.Millisecond,
+		ClaimPollInterval: 5 * time.Millisecond,
+		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
+		StoreRegistry:     locks.NewRegistry(),
+		CallbackHost:      "127.0.0.1",
+		CallbackPort:      0,
+	})
+	require.NoError(t, err)
+
+	const shutdownCallers = 8
+	var wg sync.WaitGroup
+	errs := make([]error, shutdownCallers)
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for i := 0; i < shutdownCallers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = h.Shutdown(shutdownCtx)
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "concurrent Shutdown call %d must not error", i)
+	}
+}
+
 func TestSupervisor_StartFailsFastOnWildcardBindWithoutAdvertise(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	_, err := runtime.Start(runtime.Config{
 		SupervisorID:      "test-sv-wildcard-advertise",

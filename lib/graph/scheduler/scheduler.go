@@ -6,6 +6,7 @@ package scheduler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
@@ -43,16 +44,13 @@ type Config struct {
 
 type Handle struct {
 	stop                chan struct{}
+	stopOnce            sync.Once
 	done                chan struct{}
 	lastOrphanBlobSweep time.Time
 }
 
 func (h *Handle) Shutdown(ctx context.Context) error {
-	select {
-	case <-h.stop:
-	default:
-		close(h.stop)
-	}
+	h.stopOnce.Do(func() { close(h.stop) })
 	select {
 	case <-h.done:
 		return nil
@@ -239,8 +237,8 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	if cfg.Persist != nil && cfg.Clock != nil {
-		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, log, cfg.Clock.Now()); err != nil {
-			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())
+		if err := runtime.SweepDeliverTriggeringMessagesForRunningFrames(ctx, cfg.Persist, log, cfg.Clock.Now()); err != nil {
+			log.Warn("tick: SweepDeliverTriggeringMessagesForRunningFrames failed", "error", err.Error())
 		}
 	}
 

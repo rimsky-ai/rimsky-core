@@ -20,7 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 type terminatorFixture struct {
@@ -34,7 +34,7 @@ type terminatorFixture struct {
 func newTerminatorFixture(t *testing.T) *terminatorFixture {
 	t.Helper()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	reg := locks.NewRegistry()
 	alpha := storetest.NewFake("alpha", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("alpha", alpha)
@@ -112,9 +112,9 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 	}))
 
 	if !withTemplate {
-		pgtest.ExecForTest(ctx, t, f.driver,
+		pgdbtest.ExecForTest(ctx, t, f.driver,
 			`ALTER TABLE rimsky_instances DROP CONSTRAINT IF EXISTS rimsky_instances_template_hash_fkey`)
-		pgtest.ExecForTest(ctx, t, f.driver,
+		pgdbtest.ExecForTest(ctx, t, f.driver,
 			`DELETE FROM rimsky_templates WHERE id = $1`, templateHash)
 	}
 	return templateHash, instanceID

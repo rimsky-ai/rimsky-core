@@ -89,7 +89,7 @@ func TestFakeConformanceFullCapabilities(t *testing.T) {
 		"SplitScopeListShapeReturnsAllElements":    false,
 		"SplitScopeListShapePreservesPartitionKey": false,
 		"SplitScopeListShapePreservesPayload":      false,
-		"SplitScopeListShapeAddressFieldPresent":   false,
+		"SplitScopeListShapeAddressFieldEmpty":     false,
 		"ScopesConflict":                           false,
 		"Serialization9b":                          false,
 	}

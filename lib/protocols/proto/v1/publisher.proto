@@ -15,10 +15,6 @@
 // POST /instances/{instance_id}/messages endpoint with
 // sender_kind="publisher" + publisher_subscription_id capability token.
 // There is no special observation deposit endpoint.
-//
-// Per spec
-// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher protocol unification.
 
 syntax = "proto3";
 

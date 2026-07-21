@@ -17,13 +17,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestSweepDeliverMessages_TypedMessageAfterParkDoesNotTransitionTheParkedRun(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -57,7 +57,7 @@ func TestSweepDeliverMessages_TypedMessageAfterParkDoesNotTransitionTheParkedRun
 		return backend.Nodes().UpdateState(ctx, parkedRunID, cascade.NodeStateParked, cascade.ReasonHandlerPark, nil, tx)
 	}))
 
-	require.NoError(t, runtime.SweepDeliverMessagesForRunningFrames(ctx, backend, shared.SilentLogger{}, time.Now()))
+	require.NoError(t, runtime.SweepDeliverTriggeringMessagesForRunningFrames(ctx, backend, shared.SilentLogger{}, time.Now()))
 
 	var msg2ID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -71,7 +71,7 @@ func TestSweepDeliverMessages_TypedMessageAfterParkDoesNotTransitionTheParkedRun
 		})
 	}))
 
-	require.NoError(t, runtime.SweepDeliverMessagesForRunningFrames(ctx, backend, shared.SilentLogger{}, time.Now()))
+	require.NoError(t, runtime.SweepDeliverTriggeringMessagesForRunningFrames(ctx, backend, shared.SilentLogger{}, time.Now()))
 
 	var gateAfter *persistence.NodeRunForGate
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

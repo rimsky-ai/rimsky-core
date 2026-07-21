@@ -109,7 +109,7 @@ func (p *observedProducer) Release(ctx context.Context, req *genv1.ReleaseReques
 func TestE2E_ExampleClaimProducerAgainstRunningRimsky(t *testing.T) {
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	prodInternal := startExampleClaimProducerOnNetwork(ctx, t, netName, "example-producer")
 	okEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName)
 	errEndpoint := harness.StartErroringExecutorStubOnNetwork(ctx, t, netName)

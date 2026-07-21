@@ -74,7 +74,7 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 	h.WaitForNodeState(innerMidNode.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(innerExitNode.ID, cascade.NodeStateFresh)
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	var subgraphScopes int
 	h.QueryRowSQL(`
 		SELECT COUNT(*) FROM rimsky_run_scopes

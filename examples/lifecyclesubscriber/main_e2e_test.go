@@ -32,7 +32,7 @@ func TestE2E_ExampleLifecycleSubscriberAgainstRunningRimsky(t *testing.T) {
 	execPort := freeHostPort(t)
 	startStubExecutor(t, execPort)
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	subEndpoint := harness.StartHostForwarderOnNetwork(ctx, t, netName, "sub-forward", subPort)
 	execEndpoint := fmt.Sprintf("host.testcontainers.internal:%d", execPort)
 	ep := harness.BringUpRimsky(ctx, t,

@@ -26,7 +26,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func withSyncVerbFlush(args runtime.RunArgs) runtime.RunArgs {
@@ -161,7 +161,7 @@ func insertDeployedTemplate(ctx context.Context, t *testing.T, sb persistence.Ta
 func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -300,7 +300,7 @@ func (t errInstancesTables) Instances() persistence.InstanceTable {
 func TestCheckAndFireResolution_TransientInstancesLookupErrorPropagates(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -407,7 +407,7 @@ func TestCheckAndFireResolution_TransientInstancesLookupErrorPropagates(t *testi
 func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -631,7 +631,7 @@ func countCallsOnID(calls []storetest.FakeCall, claimID string, verb string) int
 func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -689,7 +689,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -748,7 +748,7 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 func TestResolveParentClaimChain_Threshold_AbandonsAtExactMax(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -808,7 +808,7 @@ func TestResolveParentClaimChain_Threshold_AbandonsAtExactMax(t *testing.T) {
 func TestResolveParentClaimChain_ThresholdFullCount_SurvivingSiblingsKeepRunningAndCommit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -887,7 +887,7 @@ func TestResolveParentClaimChain_ThresholdFullCount_SurvivingSiblingsKeepRunning
 func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -945,7 +945,7 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -1044,7 +1044,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -1140,7 +1140,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -1259,7 +1259,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -1329,7 +1329,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -1416,7 +1416,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -1524,7 +1524,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	storeName := "held-subgraph-store"
@@ -1697,7 +1697,7 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	storeName := "held-subgraph-poison-store"
@@ -1830,7 +1830,7 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchildren(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -1934,7 +1934,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 func TestSettleFromFanoutChild_MalformedAggregationPolicy_SafeFallback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -2054,7 +2054,7 @@ func TestSettleFromFanoutChild_MalformedAggregationPolicy_SafeFallback(t *testin
 func TestCancelInFlightSiblings_DifferentSupervisorSkipped(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -2174,7 +2174,7 @@ func TestCancelInFlightSiblings_DifferentSupervisorSkipped(t *testing.T) {
 func TestCancelDescendantClaims_DifferentSupervisorSkipped(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -2317,7 +2317,7 @@ func TestCancelDescendantClaims_DifferentSupervisorSkipped(t *testing.T) {
 func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -2460,7 +2460,7 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 func TestCheckAndFireResolution_ProducerVerbDeliveryFailure_DecisionHoldsAndRetries(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -2625,7 +2625,7 @@ func verifyLineageOutcomeRT(
 func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{

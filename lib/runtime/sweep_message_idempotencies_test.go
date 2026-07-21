@@ -17,7 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func seedIdempotencyRow(ctx context.Context, t *testing.T, d persistence.Database, instanceID shared.UUID, createdAt time.Time) shared.UUID {
@@ -64,7 +64,7 @@ func seedInstanceForIdempotencyTest(ctx context.Context, t *testing.T, d persist
 func TestSweepMessageIdempotencies_DeletesPastCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID := seedInstanceForIdempotencyTest(ctx, t, d)
 	old := time.Now().Add(-25 * time.Hour)
@@ -79,7 +79,7 @@ func TestSweepMessageIdempotencies_DeletesPastCutoff(t *testing.T) {
 func TestSweepMessageIdempotencies_PreservesWithinCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	instanceID := seedInstanceForIdempotencyTest(ctx, t, d)
 	recent := time.Now().Add(-1 * time.Hour)
@@ -94,7 +94,7 @@ func TestSweepMessageIdempotencies_PreservesWithinCutoff(t *testing.T) {
 func TestSweepMessageIdempotencies_NoOpWhenEmpty(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 
 	cfg := runtime.RetentionConfig{MessageIdempotenciesTrailing: 24 * time.Hour}
 	n, err := runtime.SweepMessageIdempotencies(ctx, d.Tables().MessageIdempotencies(), cfg, time.Now(), shared.SilentLogger{})

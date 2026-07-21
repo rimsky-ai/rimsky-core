@@ -224,7 +224,7 @@ message Success {
 // `attributes_delta` and `tags` carry the uniform run-terminating
 // shape — error verdicts may write attributes and emit tags exactly
 // as Success does. Park is dispatch-internal and does not carry
-// either field.
+// attributes_delta; Park does carry `tags`, but audit-only (see Park.tags).
 message Error {
   string error_class = 1;
   google.protobuf.Struct payload = 2;

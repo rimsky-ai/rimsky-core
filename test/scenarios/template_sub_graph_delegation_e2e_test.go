@@ -91,7 +91,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 	entryNode := h.FindNode(iid, "inner-entry")
 	require.NotNil(t, entryNode, "inner-entry node missing")
 
-	mainScopeID := h.GetMainRunScopeID(iid)
+	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	require.Eventually(t, func() bool {
 		var subScopes int
 		h.QueryRowSQL(`

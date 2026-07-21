@@ -46,7 +46,7 @@ func TestPerRunAttributes_FallbackOperator_LiteralFires(t *testing.T) {
 
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetMainRunScopeID(iid), tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 		row = r
 		return err
 	}))

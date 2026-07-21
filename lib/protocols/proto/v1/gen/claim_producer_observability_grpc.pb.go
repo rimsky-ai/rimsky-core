@@ -37,8 +37,7 @@ const (
 // claim-producer MAY implement to expose per-claim views (state,
 // history, producer-chosen payload/address/scope disclosure) plus
 // optional admin views to dashboards. The dispatch protocol
-// (claim_producer.proto) is unchanged. See
-// docs/specs/2026-05-02-dashboard-and-observability-design.md §3.
+// (claim_producer.proto) is unchanged.
 type ClaimProducerObservabilityClient interface {
 	Capabilities(ctx context.Context, in *GetClaimProducerCapabilitiesRequest, opts ...grpc.CallOption) (*ClaimProducerObservabilityCapabilities, error)
 	GetClaim(ctx context.Context, in *GetClaimRequest, opts ...grpc.CallOption) (*ClaimDetail, error)
@@ -122,8 +121,7 @@ func (c *claimProducerObservabilityClient) GetAdminView(ctx context.Context, in 
 // claim-producer MAY implement to expose per-claim views (state,
 // history, producer-chosen payload/address/scope disclosure) plus
 // optional admin views to dashboards. The dispatch protocol
-// (claim_producer.proto) is unchanged. See
-// docs/specs/2026-05-02-dashboard-and-observability-design.md §3.
+// (claim_producer.proto) is unchanged.
 type ClaimProducerObservabilityServer interface {
 	Capabilities(context.Context, *GetClaimProducerCapabilitiesRequest) (*ClaimProducerObservabilityCapabilities, error)
 	GetClaim(context.Context, *GetClaimRequest) (*ClaimDetail, error)

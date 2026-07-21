@@ -5,11 +5,9 @@
 // implementations that materialize content (Parquet files, PostGIS
 // tables, etc.) against partitioned writes. Producers advertise it
 // via CapabilitiesResponse.protocols (claim_producer.proto). The
-// supervisor calls BeginCandidate at fan-out leaf dispatch time and
-// CommitCandidate / AbandonCandidate at leaf terminal.
-//
-// Per spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Protocol surfaces / DataProcessing.
+// supervisor calls BeginCandidate inside the rimsky-side sub-claim
+// acquisition transaction for fan-out and CommitCandidate /
+// AbandonCandidate at leaf terminal.
 
 syntax = "proto3";
 
@@ -50,9 +48,10 @@ message DataProcessingCapabilities {
 
 // BeginCandidateRequest is called inside the rimsky-side acquisition
 // transaction for fan-out sub-claims. The producer allocates a staging
-// candidate (e.g. a unique S3 prefix) keyed by idempotency_key
-// (rimsky-side run_id-derived) and returns an opaque candidate_handle
-// rimsky persists on col:rimsky_claim_handles.producer_candidate_handle.
+// candidate (e.g. a unique S3 prefix) keyed by idempotency_key (a fresh
+// UUID minted per sub-claim descriptor per acquisition attempt, not
+// stable across retries) and returns an opaque candidate_handle rimsky
+// persists on col:rimsky_claim_handles.producer_candidate_handle.
 message BeginCandidateRequest {
   string claim_handle_id      = 1;
   bytes  sub_scope_descriptor = 2;

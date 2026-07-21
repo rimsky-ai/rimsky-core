@@ -51,7 +51,7 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.GetClaimP
 		SupportsClaimGet:              true,
 		SupportsClaimStream:           true,
 		SupportsListClaims:            true,
-		RetentionAfterTerminalSeconds: 3600,
+		RetentionAfterTerminalSeconds: 0,
 		HttpBridgeUrl:                 s.httpBridgeURL,
 		AdminViews: []*genv1.AdminViewDecl{
 			{Name: "pick_policies", Title: "Pick policies", Description: "Configured pick policies"},

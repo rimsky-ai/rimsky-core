@@ -118,7 +118,7 @@ var conformanceSubcommands = []struct {
 	{
 		name:    "claim-producer",
 		run:     runConformanceClaimProducer,
-		flags:   []string{"endpoint", "timeout", "check-observability", "retention-test-seconds"},
+		flags:   []string{"endpoint", "transport", "timeout", "check-observability", "retention-test-seconds"},
 		reqMsg:  "--endpoint required",
 		reqExit: 2,
 	},

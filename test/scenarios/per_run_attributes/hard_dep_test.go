@@ -93,7 +93,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 
 	var cRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetMainRunScopeID(iid), tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 		cRow = r
 		return err
 	}))
@@ -110,7 +110,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetMainRunScopeID(iid), tx)
+			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			cRow = r
 			return err
 		})
@@ -196,7 +196,7 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 
 	var cRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetMainRunScopeID(iid), tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 		cRow = r
 		return err
 	}))
@@ -213,7 +213,7 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 	for time.Now().Before(bDeadline) {
 		var bRow *persistence.NodeAttributesRow
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, bN.ID, h.GetMainRunScopeID(iid), tx)
+			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, bN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			bRow = r
 			return err
 		})
@@ -227,7 +227,7 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetMainRunScopeID(iid), tx)
+			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			cRow = r
 			return err
 		})

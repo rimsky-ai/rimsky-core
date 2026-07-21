@@ -39,7 +39,7 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	netName := harness.NewNetwork(ctx, t)
+	netName := harness.SharedNetworkName(ctx, t)
 	statePG := startSensorStatePostgres(ctx, t, netName, "sensor-object-store-pg")
 
 	rimskyAlias := harness.NextRimskyAlias()

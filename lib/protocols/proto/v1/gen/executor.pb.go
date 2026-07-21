@@ -573,7 +573,7 @@ func (x *Success) GetTags() []string {
 // `attributes_delta` and `tags` carry the uniform run-terminating
 // shape — error verdicts may write attributes and emit tags exactly
 // as Success does. Park is dispatch-internal and does not carry
-// either field.
+// attributes_delta; Park does carry `tags`, but audit-only (see Park.tags).
 type Error struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	ErrorClass string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`

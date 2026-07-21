@@ -15,13 +15,13 @@ import (
 	shared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := pgtest.OpenDriver(ctx, t)
+	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
 	spec := makeHardDepTemplate()
@@ -70,13 +70,13 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 
 	aRunID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'running', 100, 'cascade', $4, $5)
     `, aRunID, aN.ID, "stub", frameID, mainScopeID)
 	bRunID := shared.UUID(uuid.New())
-	pgtest.ExecForTest(ctx, t, d, `
+	pgdbtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, state, sequence, creation_reason, frame_id, run_scope_id)
         VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'stale', 100, 'cascade', $3, $4)
