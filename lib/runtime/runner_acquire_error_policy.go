@@ -14,6 +14,10 @@ const acquireUnavailableSyntheticClass = "acquire/unavailable"
 
 const producerAcquireErrorFallbackClass = "acquire/producer_error"
 
+const nilFrameIDSyntheticClass = "acquire/nil_frame_id"
+
+const fanOutSubstitutionFailedSyntheticClass = "acquire/fan_out_partition_request_substitution_failed"
+
 // @concept: terminal-resolution
 // @concept: error-policy
 // @decision: in-place-retry
@@ -70,6 +74,47 @@ func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisiti
 		"node_type":     acq.NodeType,
 	}
 	return runAcquireErrorPolicy(ctx, args, &acq, primaryClass, producerAcquireErrorFallbackClass, payload, "handleAcquireProducerError")
+}
+
+// @concept: frame
+// @concept: error-policy
+func handleAcquireNilFrameID(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) *policyDecision {
+	if acq.NodeDef == nil {
+		return nil
+	}
+	if !reclaimDispatchRowShortTx(ctx, args, cand, "handleAcquireNilFrameID") {
+		return nil
+	}
+	payload := map[string]any{
+		"source":      "acquire_nil_frame_id",
+		"dispatch_id": cand.NodeRunID.String(),
+		"node_id":     cand.NodeID.String(),
+		"node_type":   acq.NodeType,
+	}
+	return runAcquireErrorPolicy(ctx, args, &acq, nilFrameIDSyntheticClass, nilFrameIDSyntheticClass, payload, "handleAcquireNilFrameID")
+}
+
+// @concept: fan-out
+// @concept: error-policy
+func handleAcquireFanOutSubstitutionFailed(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) *policyDecision {
+	if acq.NodeDef == nil {
+		return nil
+	}
+	abandonPartialLocks(ctx, args, acq.PartialLocks)
+
+	if !reclaimDispatchRowShortTx(ctx, args, cand, "handleAcquireFanOutSubstitutionFailed") {
+		return nil
+	}
+
+	payload := map[string]any{
+		"source":        "acquire_fan_out_partition_request_substitution_failed",
+		"error":         acq.FanOutSubstitutionErr,
+		"partial_locks": len(acq.PartialLocks),
+		"dispatch_id":   cand.NodeRunID.String(),
+		"node_id":       cand.NodeID.String(),
+		"node_type":     acq.NodeType,
+	}
+	return runAcquireErrorPolicy(ctx, args, &acq, fanOutSubstitutionFailedSyntheticClass, fanOutSubstitutionFailedSyntheticClass, payload, "handleAcquireFanOutSubstitutionFailed")
 }
 
 func runAcquireErrorPolicy(

@@ -21,7 +21,7 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 			"dispatch_id", acq.NodeRunID.String(), "error", err.Error())
 		return false
 	}
-	return ownership.Kind == "claimed_by" && ownership.SupervisorID == args.SupervisorID
+	return ownership.Kind == persistence.ClaimOwnershipKindClaimedBy && ownership.SupervisorID == args.SupervisorID
 }
 
 // @concept: terminal-resolution

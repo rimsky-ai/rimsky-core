@@ -356,6 +356,9 @@ func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) term
 					"tag":           tag,
 					"declared_tags": declared,
 				},
+				AttributesDel: t.AttributesDel,
+				ParkResumeAt:  t.ParkResumeAt,
+				Scratch:       t.Scratch,
 			}
 		}
 	}

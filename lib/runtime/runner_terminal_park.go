@@ -51,9 +51,6 @@ func applyTerminalPark(
 		cascade.NodeStateParked, cascade.ReasonHandlerPark, &parkSigType, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
-	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeRunID); err != nil {
-		return nil, fmt.Errorf("applyTerminalPark: %w", err)
-	}
 	// @concept: signal
 	parkSig := parkTerminalSignal(args, t)
 	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
@@ -90,10 +87,6 @@ func applyTerminalPark(
 		}
 	}
 	return post, nil
-}
-
-func shouldSpillBlob(args RunArgs, size int) bool {
-	return persistence.ShouldSpillBlob(args.Blob, args.BlobSpillThreshold, size)
 }
 
 // @concept: signal

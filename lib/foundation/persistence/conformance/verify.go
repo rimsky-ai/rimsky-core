@@ -62,7 +62,7 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy: %v", err)
 	}
-	if owner.Kind != "claimed_by" || owner.SupervisorID != supID {
+	if owner.Kind != persistence.ClaimOwnershipKindClaimedBy || owner.SupervisorID != supID {
 		t.Fatalf("expected claimed_by/%s, got kind=%s sup=%s", supID, owner.Kind, owner.SupervisorID)
 	}
 
@@ -73,7 +73,7 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy: %v", err)
 	}
-	if owner2.Kind != "unclaimed" {
+	if owner2.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("expected unclaimed, got %s/%s", owner2.Kind, owner2.SupervisorID)
 	}
 
@@ -81,7 +81,7 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy (missing run): %v", err)
 	}
-	if missing.Kind != "not_found" {
+	if missing.Kind != persistence.ClaimOwnershipKindNotFound {
 		t.Fatalf("GetClaimedBy for a nonexistent node_run_id: expected kind=not_found, got %s/%s", missing.Kind, missing.SupervisorID)
 	}
 }

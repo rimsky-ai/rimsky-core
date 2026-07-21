@@ -81,8 +81,6 @@ func declaredMessageTypesForTemplate(
 // @concept: node-subscription
 var templateHardDepEdges sync.Map
 
-// @concept: claim-handle
-// @decision: held-as-state-not-phase
 func loadTemplateSpec(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
 ) (*node.TemplateSpec, error) {

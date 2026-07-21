@@ -158,16 +158,41 @@ func TestValidator_RejectsInvalidSyncStrategy(t *testing.T) {
 	}
 }
 
-func TestValidator_DefaultsEmptySyncStrategyToOnOpen(t *testing.T) {
+func TestApplyPickPolicyDefaults_SetsEmptySyncStrategyToOnOpen(t *testing.T) {
+	pp := &PickPolicy{SyncStrategy: ""}
+	applyPickPolicyDefaults(pp)
+	if pp.SyncStrategy != "on_open" {
+		t.Errorf("expected SyncStrategy defaulted to on_open; got %q", pp.SyncStrategy)
+	}
+}
+
+func TestApplyPickPolicyDefaults_LeavesExplicitSyncStrategyAlone(t *testing.T) {
+	pp := &PickPolicy{SyncStrategy: "on_drain"}
+	applyPickPolicyDefaults(pp)
+	if pp.SyncStrategy != "on_drain" {
+		t.Errorf("expected SyncStrategy left as on_drain; got %q", pp.SyncStrategy)
+	}
+}
+
+func TestValidator_RejectsEmptySyncStrategyWithoutDefaulting(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
 	pp.SyncStrategy = ""
 	res := validatePickPolicy(root, "@r", pp)
-	if !res.OK() {
-		t.Fatalf("expected OK with empty SyncStrategy (defaults to on_open); got: %v", res.Errors)
+	if res.OK() {
+		t.Fatal("validatePickPolicy must not silently default an empty sync_strategy; defaulting is applyPickPolicyDefaults's job, called once by New before validation")
+	}
+}
+
+func TestNew_DefaultsEmptySyncStrategyViaConfig(t *testing.T) {
+	root, sub := validatorTestRoot(t)
+	pp := newValidPolicy(root, sub)
+	pp.SyncStrategy = ""
+	if _, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}}); err != nil {
+		t.Fatalf("New: %v", err)
 	}
 	if pp.SyncStrategy != "on_open" {
-		t.Errorf("expected SyncStrategy defaulted to on_open; got %q", pp.SyncStrategy)
+		t.Errorf("expected SyncStrategy defaulted to on_open by New; got %q", pp.SyncStrategy)
 	}
 }
 

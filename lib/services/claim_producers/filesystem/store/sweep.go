@@ -58,7 +58,9 @@ func (s *Store) sweepOnce() {
 			if _, statErr := os.Stat(folderAbs); statErr != nil {
 				if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
 					slog.Warn("filesystem store: sweep unlink orphan sentinel", "selector", selector, "folder", folder, "error", err.Error())
+					continue
 				}
+				fsyncDir(inProg)
 				continue
 			}
 			dst := filepath.Join(avail, folder)
@@ -68,6 +70,8 @@ func (s *Store) sweepOnce() {
 				}
 				continue
 			}
+			fsyncDir(inProg)
+			fsyncDir(avail)
 			reclaimed = true
 		}
 		if reclaimed {

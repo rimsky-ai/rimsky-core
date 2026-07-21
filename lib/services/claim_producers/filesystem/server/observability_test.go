@@ -28,8 +28,8 @@ func TestObservability_Capabilities(t *testing.T) {
 	if !caps.SupportsClaimGet || !caps.SupportsClaimStream || !caps.SupportsListClaims {
 		t.Fatalf("capabilities = %+v; want all three claim-* flags true", caps)
 	}
-	if caps.RetentionAfterTerminalSeconds == 0 {
-		t.Fatal("retention_after_terminal_seconds should be non-zero")
+	if caps.RetentionAfterTerminalSeconds != 0 {
+		t.Fatalf("retention_after_terminal_seconds = %d, want 0 (eviction is count-based only; the store advertises no time-based retention guarantee)", caps.RetentionAfterTerminalSeconds)
 	}
 }
 

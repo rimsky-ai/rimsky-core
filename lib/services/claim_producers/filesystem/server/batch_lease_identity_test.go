@@ -43,7 +43,7 @@ func TestSplitScope_BatchPickLeaseTokenGuardsTerminalVerbs(t *testing.T) {
 		return resp.SubScopes[0]
 	}
 
-	subEntries := func() int {
+	subEntries := func(folder string) int {
 		t.Helper()
 		entries, err := os.ReadDir(filepath.Join(root, ".fs-store", "queue", "in_progress"))
 		if err != nil {
@@ -52,7 +52,7 @@ func TestSplitScope_BatchPickLeaseTokenGuardsTerminalVerbs(t *testing.T) {
 		n := 0
 		for _, e := range entries {
 			f, _, _, perr := parseFromRightForTest(e.Name())
-			if perr == nil && f == "f1" {
+			if perr == nil && f == folder {
 				n++
 			}
 		}
@@ -72,6 +72,10 @@ func TestSplitScope_BatchPickLeaseTokenGuardsTerminalVerbs(t *testing.T) {
 	if liveLease.GetLeaseToken() == staleLease.GetLeaseToken() {
 		t.Fatalf("successor lease reused token %q", liveLease.GetLeaseToken())
 	}
+	liveFolder := liveLease.GetPartitionKey()
+	if liveFolder == "" {
+		t.Fatal("batch_pick descriptor must carry a non-empty partition_key naming the picked folder")
+	}
 
 	if _, err := srv.Commit(ctx, &genv1.CommitRequest{
 		ClaimId:    "rimsky-sub-1",
@@ -80,8 +84,8 @@ func TestSplitScope_BatchPickLeaseTokenGuardsTerminalVerbs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("stale Commit must be a lease no-op, not an error: %v", err)
 	}
-	if got := subEntries(); got != 1 {
-		t.Fatalf("stale-token Commit clobbered the successor lease: f1 in_progress entries = %d, want 1", got)
+	if got := subEntries(liveFolder); got != 1 {
+		t.Fatalf("stale-token Commit clobbered the successor lease: %s in_progress entries = %d, want 1", liveFolder, got)
 	}
 
 	if _, err := srv.Commit(ctx, &genv1.CommitRequest{
@@ -91,7 +95,7 @@ func TestSplitScope_BatchPickLeaseTokenGuardsTerminalVerbs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("current-token Commit: %v", err)
 	}
-	if got := subEntries(); got != 0 {
-		t.Fatalf("current-token Commit must resolve the lease: f1 in_progress entries = %d, want 0", got)
+	if got := subEntries(liveFolder); got != 0 {
+		t.Fatalf("current-token Commit must resolve the lease: %s in_progress entries = %d, want 0", liveFolder, got)
 	}
 }

@@ -85,7 +85,7 @@ func acquireClaim(
 		Intent:             &intentCopy,
 		HolderSupervisorID: args.SupervisorID,
 		HolderNodeID:       cand.NodeID,
-		ExpiresAt:          args.Clock.Now().Add(5 * livenessInterval),
+		ExpiresAt:          claimExpiryFromLiveness(args.Clock.Now(), livenessInterval),
 		FrameID:            &frameID,
 		IsHeld:             isHeld,
 		// @concept: claim-lifetime
@@ -142,7 +142,7 @@ func acquireClaim(
 		}
 	}
 
-	if err := insertHeldClaimHoldersAtAcquire(ctx, args, tx, rowID, cand, spec.Alias, heldSubgraphs); err != nil {
+	if err := insertHeldClaimHoldersAtAcquire(ctx, args, tx, rowID, cand, isHeld); err != nil {
 		return AcquiredLock{}, openResultBail, err
 	}
 

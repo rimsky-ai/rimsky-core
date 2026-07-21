@@ -39,6 +39,14 @@ const (
 
 func (o TerminalOutcome) IsAbandon() bool { return o != OutcomeCommit }
 
+func (o TerminalOutcome) valid() bool {
+	switch o {
+	case OutcomeCommit, OutcomeAbandon, OutcomeAbandonSiblingCancel, OutcomeAbandonDescendantCancel:
+		return true
+	}
+	return false
+}
+
 func (o TerminalOutcome) CauseString() string {
 	switch o {
 	case OutcomeAbandon:
@@ -109,6 +117,10 @@ func ResolveClaimHandleTerminal(
 ) (postCommitFn, error) {
 	if td.Producer == nil {
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: producer is nil for claim_handle %s", td.ClaimHandleID)
+	}
+	if !td.Outcome.valid() {
+		return nil, fmt.Errorf("ResolveClaimHandleTerminal: unknown terminal outcome %q for claim_handle %s",
+			td.Outcome, td.ClaimHandleID)
 	}
 	versionID, err := dispatchDataProcessingTerminal(ctx, args, tx, td)
 	if err != nil {

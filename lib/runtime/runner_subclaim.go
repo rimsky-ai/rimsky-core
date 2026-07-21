@@ -168,7 +168,7 @@ func AcquireSubClaims(
 				claimHandleID:   subID.String(),
 				candidateHandle: candidateHandle,
 			})
-			emitSubclaimBeginCandidate(ctx, args, tx, parentID, subID, in.ProducerName, len(candidateHandle))
+			emitSubclaimBeginCandidate(ctx, args, tx, parentID, subID, in.InstanceID, in.HolderNodeID, in.ProducerName, len(candidateHandle))
 		}
 		intent := in.ParentIntent
 		insert := persistence.ClaimHandleInsertInput{
@@ -182,7 +182,7 @@ func AcquireSubClaims(
 			Intent:                  &intent,
 			HolderSupervisorID:      in.HolderSupervisorID,
 			HolderNodeID:            in.HolderNodeID,
-			ExpiresAt:               args.Clock.Now().Add(5 * in.LivenessInterval),
+			ExpiresAt:               claimExpiryFromLiveness(args.Clock.Now(), in.LivenessInterval),
 			FrameID:                 in.FrameID,
 			ParentClaimHandleID:     &parentID,
 			Lifetime:                lifetime,
@@ -205,7 +205,7 @@ func AcquireSubClaims(
 			ProducerLeaseToken:      desc.LeaseToken,
 		})
 	}
-	emitSubclaimAcquired(ctx, args, tx, parentID, in.HolderNodeID, in.ProducerName, len(out))
+	emitSubclaimAcquired(ctx, args, tx, parentID, in.InstanceID, in.HolderNodeID, in.ProducerName, len(out))
 	return out, nil
 }
 
@@ -263,13 +263,16 @@ func reuseLinkedSubClaim(
 
 func emitSubclaimBeginCandidate(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	parentID, subID shared.UUID, producerName string, candidateHandleSize int,
+	parentID, subID, instanceID, holderNodeID shared.UUID, producerName string, candidateHandleSize int,
 ) {
 	if args.Persist == nil {
 		return
 	}
+	nodeID := holderNodeID
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		Kind: events.KindSubclaimBeginCandidate(),
+		InstanceID: &instanceID,
+		NodeID:     &nodeID,
+		Kind:       events.KindSubclaimBeginCandidate(),
 		Payload: map[string]any{
 			"parent_claim_handle_id":      parentID.String(),
 			"sub_claim_handle_id":         subID.String(),
@@ -286,15 +289,16 @@ func emitSubclaimBeginCandidate(
 
 func emitSubclaimAcquired(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	parentID, holderNodeID shared.UUID, producerName string, subScopeCount int,
+	parentID, instanceID, holderNodeID shared.UUID, producerName string, subScopeCount int,
 ) {
 	if args.Persist == nil || subScopeCount == 0 {
 		return
 	}
 	nodeID := holderNodeID
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &nodeID,
-		Kind:   events.KindSubclaimAcquired(),
+		InstanceID: &instanceID,
+		NodeID:     &nodeID,
+		Kind:       events.KindSubclaimAcquired(),
 		Payload: map[string]any{
 			"parent_claim_handle_id":     parentID.String(),
 			"sub_scope_descriptor_count": subScopeCount,

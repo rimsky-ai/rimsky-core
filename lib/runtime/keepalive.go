@@ -85,7 +85,7 @@ func (c *CallbackServer) renewClaimExpiryForRun(ctx context.Context, tx persiste
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
-	newExpiry := c.clockNow().UTC().Add(5 * interval)
+	newExpiry := claimExpiryFromLiveness(c.clockNow().UTC(), interval)
 	return c.ClaimHandles.RenewExpiryForHolderRun(ctx, runID, newExpiry, tx)
 }
 

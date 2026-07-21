@@ -77,6 +77,12 @@ type ClaimOwnership struct {
 	SupervisorID string
 }
 
+const (
+	ClaimOwnershipKindNotFound  = "not_found"
+	ClaimOwnershipKindUnclaimed = "unclaimed"
+	ClaimOwnershipKindClaimedBy = "claimed_by"
+)
+
 type DispatchListFilter struct {
 	State        string
 	ExecutorName string

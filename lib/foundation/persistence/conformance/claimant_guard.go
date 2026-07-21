@@ -177,7 +177,7 @@ func assertRunOwnedBy(ctx context.Context, t *testing.T, d persistence.Database,
 	if err != nil {
 		t.Fatalf("%s: GetClaimedBy: %v", op, err)
 	}
-	if owner.Kind != "claimed_by" || owner.SupervisorID != supID {
+	if owner.Kind != persistence.ClaimOwnershipKindClaimedBy || owner.SupervisorID != supID {
 		t.Fatalf("%s: ownership mutated by wrong claimant: got %s/%s want claimed_by/%s",
 			op, owner.Kind, owner.SupervisorID, supID)
 	}
@@ -846,7 +846,7 @@ func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy after owner release: %v", err)
 	}
-	if owner.Kind != "unclaimed" {
+	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("owner ReleaseClaim did not release: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 	releasedRow, err := q.GetByID(ctx, nodeRunID)
@@ -890,7 +890,7 @@ func testClaimantGuardRunComplete(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy after owner Complete: %v", err)
 	}
-	if owner.Kind != "unclaimed" {
+	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("owner Complete did not release claim: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 }
@@ -917,7 +917,7 @@ func testClaimantGuardRunRemoveForNode(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy after owner remove: %v", err)
 	}
-	if owner.Kind != "unclaimed" {
+	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("owner RemoveForNodeInTx did not release claim: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 }
@@ -964,7 +964,7 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy after park: %v", err)
 	}
-	if owner.Kind != "unclaimed" {
+	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("park did not clear claimed_by: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 }
@@ -987,7 +987,7 @@ func testClaimantGuardRunForceOverride(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy after ForceReleaseClaim: %v", err)
 	}
-	if owner.Kind != "unclaimed" {
+	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("ForceReleaseClaim did not release A's row: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 
@@ -1017,7 +1017,7 @@ func testClaimantGuardRunForceOverride(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy after ForceComplete: %v", err)
 	}
-	if cowner.Kind != "unclaimed" {
+	if cowner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("ForceComplete did not release A's row: %s/%s", cowner.Kind, cowner.SupervisorID)
 	}
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -1044,7 +1044,7 @@ func testClaimantGuardRunForceOverride(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy after ForceRemoveForNodeInTx: %v", err)
 	}
-	if rowner.Kind != "unclaimed" {
+	if rowner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("ForceRemoveForNodeInTx did not release A's row: %s/%s", rowner.Kind, rowner.SupervisorID)
 	}
 }

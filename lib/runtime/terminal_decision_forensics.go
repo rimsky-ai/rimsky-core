@@ -41,10 +41,12 @@ func emitTerminalForensics(
 	var subIDs []string
 	if args.ClaimHandles != nil {
 		children, cerr := args.ClaimHandles.ListChildClaimHandles(ctx, td.ClaimHandleID, tx)
-		if cerr != nil && args.Logger != nil {
-			args.Logger.Warn("ResolveClaimHandleTerminal: ListChildClaimHandles failed",
-				"claim_handle_id", td.ClaimHandleID.String(),
-				"error", cerr.Error())
+		if cerr != nil {
+			if args.Logger != nil {
+				args.Logger.Warn("ResolveClaimHandleTerminal: ListChildClaimHandles failed",
+					"claim_handle_id", td.ClaimHandleID.String(),
+					"error", cerr.Error())
+			}
 		} else {
 			subIDs = make([]string, 0, len(children))
 			for _, c := range children {
@@ -96,9 +98,9 @@ func emitTerminalForensics(
 	if td.Outcome.IsAbandon() {
 		kind = events.KindClaimResolutionAbandon()
 		payload["cause"] = td.Outcome.CauseString()
-		if rec.VersionID == "" {
-			delete(payload, "version_id")
-		}
+	}
+	if rec.VersionID == "" {
+		delete(payload, "version_id")
 	}
 	nodeID := td.LineageHint.NodeID
 	instanceID := td.LineageHint.InstanceID

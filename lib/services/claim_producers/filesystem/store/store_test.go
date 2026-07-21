@@ -17,6 +17,48 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 )
 
+func newTestPickPolicy(sub string) *PickPolicy {
+	return &PickPolicy{
+		Root:              sub,
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_open",
+	}
+}
+
+func TestNew_RejectsSelectorWithPathSeparator(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cases := []string{"a/b", "@a/b", "a\\b", "..", "@.."}
+	for _, sel := range cases {
+		t.Run(sel, func(t *testing.T) {
+			_, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{sel: newTestPickPolicy(sub)}})
+			if err == nil {
+				t.Fatalf("New with selector %q: expected rejection, got nil", sel)
+			}
+		})
+	}
+}
+
+func TestNew_RejectsSelectorCollisionAfterAtTrim(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{
+		"@ring": newTestPickPolicy(sub),
+		"ring":  newTestPickPolicy(sub),
+	}})
+	if err == nil {
+		t.Fatal("New with selectors \"@ring\" and \"ring\" (same state directory once '@' is stripped): expected rejection, got nil")
+	}
+}
+
 func TestNewRejectsEmptyRoot(t *testing.T) {
 	if _, err := New(Config{Root: ""}); err == nil {
 		t.Fatal("New(\"\") should error; got nil")
@@ -132,6 +174,40 @@ func TestOpenRejectsPathTraversal(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsStoreStateDirectory(t *testing.T) {
+	st, _ := New(Config{Root: t.TempDir()})
+	cases := []string{
+		".fs-store",
+		".fs-store/r/available/alpha",
+		".fs-store/r/in_progress/alpha.c1.123",
+	}
+	for _, sel := range cases {
+		t.Run(sel, func(t *testing.T) {
+			if _, err := st.Open(context.Background(), "claim-1", sel); err == nil {
+				t.Fatalf("Open(%q): expected rejection of the store's internal state directory; got nil", sel)
+			}
+		})
+	}
+}
+
+func TestOpen_SymlinkEscapingRootIsRejected(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "secret"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("symlinks unsupported in this environment: %v", err)
+	}
+	st, err := New(Config{Root: root})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := st.Open(context.Background(), "claim-1", "escape/secret"); err == nil {
+		t.Fatal("Open through a symlink that escapes the store root: expected rejection, got nil")
+	}
+}
+
 func TestOpenRejectsAbsolutePath(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	if _, err := st.Open(context.Background(), "c1", "/etc/passwd"); err == nil {
@@ -161,7 +237,7 @@ func TestCommitAbandonReleaseAreNoops(t *testing.T) {
 	if err := st.Abandon(context.Background(), "claim-2", nil, nil, ""); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
-	if err := st.Release(context.Background(), "claim-3", nil, nil); err != nil {
+	if err := st.Release(context.Background(), "claim-3", nil, nil, ""); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 }
@@ -267,6 +343,18 @@ func TestCapabilitiesIsSyncEnvelope(t *testing.T) {
 	caps := st.Capabilities()
 	if len(caps.WriteSemanticsAllowed) != 1 || string(caps.WriteSemanticsAllowed[0]) != "sync" {
 		t.Fatalf("expected envelope [sync], got %v", caps.WriteSemanticsAllowed)
+	}
+	if !caps.SupportsSplitScope {
+		t.Error("store.Capabilities() must advertise SupportsSplitScope=true; the gRPC server derives its own capability response from this single source")
+	}
+	found := false
+	for _, c := range caps.DeclaredErrorClasses {
+		if c == RootUnavailableClass {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("store.Capabilities() DeclaredErrorClasses = %v, want to contain %q", caps.DeclaredErrorClasses, RootUnavailableClass)
 	}
 }
 

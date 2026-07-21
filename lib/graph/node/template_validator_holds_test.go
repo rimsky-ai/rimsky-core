@@ -126,6 +126,47 @@ func TestValidateHolds_DisconnectedFromButAcyclicIsLegal(t *testing.T) {
 		"holds: from a node the holder does not subscribe to (mixed-upstream wedge diagnostics pattern) must remain legal as long as it is acyclic; errors: %+v", res.Errors)
 }
 
+func TestValidateHolds_AsRemapCollisionRejected(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{
+			{
+				Type:     "producer_a",
+				Executor: "handler.producer_a",
+				ClaimProducers: []NodeClaimProducerRef{
+					{Name: "content", Alias: "claim_a", Intent: "rw", Selector: "{{params.s}}"},
+				},
+			},
+			{
+				Type:     "producer_b",
+				Executor: "handler.producer_b",
+				ClaimProducers: []NodeClaimProducerRef{
+					{Name: "content", Alias: "claim_b", Intent: "rw", Selector: "{{params.s}}"},
+				},
+			},
+			{
+				Type:     "consumer",
+				Executor: "handler.consumer",
+				Subscribes: []SubscriptionEntry{
+					{Node: "producer_a", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "producer_b", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)},
+				},
+				Holds: map[string]HoldsBinding{
+					"claim_a": {From: "producer_a", As: "shared_local_name"},
+					"claim_b": {From: "producer_b", As: "shared_local_name"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+	require.False(t, res.Ok(),
+		"two holds: entries resolving to the same local alias must be rejected — the runtime keys co-held claims by that alias and would silently drop one")
+	if !findErrorContains(res.Errors, "holds_local_alias_collision") {
+		t.Fatalf("expected holds_local_alias_collision error, got %+v", res.Errors)
+	}
+}
+
 func TestValidateHolds_UnknownClaimAlias(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",

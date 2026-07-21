@@ -603,51 +603,48 @@ func pullForceRefreshUpstreams(
 		return nil
 	}
 	for _, upstreamType := range refreshEdges[receiver.NodeType] {
-		upstreamNodes := byType[upstreamType]
-		if len(upstreamNodes) == 0 {
-			continue
-		}
-		upstreamNode := upstreamNodes[0]
-		if _, seen := visited[upstreamNode.ID]; seen {
-			continue
-		}
-		visited[upstreamNode.ID] = struct{}{}
-		upstreamRunScopeID := targetRunScopeID
-		upstreamRunID, hasInFlight, err := args.Queue.GetInFlightRunForNode(
-			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
-		)
-		if err != nil {
-			return fmt.Errorf("pullForceRefreshUpstreams: probe upstream %s: %w", upstreamType, err)
-		}
-		if !hasInFlight {
-			settledThisFrame, err := args.Persist.Nodes().HasRunForNodeInFrame(
-				ctx, upstreamNode.ID, senderFrameID, tx,
-			)
-			if err != nil {
-				return fmt.Errorf("pullForceRefreshUpstreams: probe settled upstream %s: %w", upstreamType, err)
-			}
-			if settledThisFrame {
+		for _, upstreamNode := range byType[upstreamType] {
+			if _, seen := visited[upstreamNode.ID]; seen {
 				continue
 			}
-			newID, err := args.Persist.Nodes().CreateCascadePending(ctx, tx, upstreamNode.ID, upstreamRunScopeID, senderFrameID)
+			visited[upstreamNode.ID] = struct{}{}
+			upstreamRunScopeID := targetRunScopeID
+			upstreamRunID, hasInFlight, err := args.Queue.GetInFlightRunForNode(
+				ctx, tx, upstreamNode.ID, upstreamRunScopeID,
+			)
 			if err != nil {
-				if errors.Is(err, persistence.ErrRunScopeClosed) {
+				return fmt.Errorf("pullForceRefreshUpstreams: probe upstream %s: %w", upstreamType, err)
+			}
+			if !hasInFlight {
+				settledThisFrame, err := args.Persist.Nodes().HasRunForNodeInFrame(
+					ctx, upstreamNode.ID, senderFrameID, tx,
+				)
+				if err != nil {
+					return fmt.Errorf("pullForceRefreshUpstreams: probe settled upstream %s: %w", upstreamType, err)
+				}
+				if settledThisFrame {
 					continue
 				}
-				return fmt.Errorf("pullForceRefreshUpstreams: create pending upstream %s: %w", upstreamType, err)
+				newID, err := args.Persist.Nodes().CreateCascadePending(ctx, tx, upstreamNode.ID, upstreamRunScopeID, senderFrameID)
+				if err != nil {
+					if errors.Is(err, persistence.ErrRunScopeClosed) {
+						continue
+					}
+					return fmt.Errorf("pullForceRefreshUpstreams: create pending upstream %s: %w", upstreamType, err)
+				}
+				upstreamRunID = newID
+				if err := evaluateOneGate(ctx, args, tx, newID); err != nil {
+					return fmt.Errorf("pullForceRefreshUpstreams: evaluate gate for upstream %s: %w", upstreamType, err)
+				}
 			}
-			upstreamRunID = newID
-			if err := evaluateOneGate(ctx, args, tx, newID); err != nil {
-				return fmt.Errorf("pullForceRefreshUpstreams: evaluate gate for upstream %s: %w", upstreamType, err)
+			if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
+				FrameID:           senderFrameID,
+				ReceiverNodeRunID: receiverNodeRunID,
+				SenderNodeRunID:   upstreamRunID,
+				TopicKind:         "attribute",
+			}, tx); err != nil {
+				return fmt.Errorf("pullForceRefreshUpstreams: insert wait-set: %w", err)
 			}
-		}
-		if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID:           senderFrameID,
-			ReceiverNodeRunID: receiverNodeRunID,
-			SenderNodeRunID:   upstreamRunID,
-			TopicKind:         "attribute",
-		}, tx); err != nil {
-			return fmt.Errorf("pullForceRefreshUpstreams: insert wait-set: %w", err)
 		}
 	}
 	return nil

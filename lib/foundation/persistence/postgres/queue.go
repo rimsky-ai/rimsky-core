@@ -463,14 +463,14 @@ func (q *queueImpl) getDispatchNode(ctx context.Context, exec querier, nodeRunID
 	).Scan(&nodeID, &claimedBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
+			return shared.UUID{}, persistence.ClaimOwnership{Kind: persistence.ClaimOwnershipKindNotFound}, nil
 		}
 		return shared.UUID{}, persistence.ClaimOwnership{}, err
 	}
 	if claimedBy == nil {
-		return nodeID, persistence.ClaimOwnership{Kind: "unclaimed"}, nil
+		return nodeID, persistence.ClaimOwnership{Kind: persistence.ClaimOwnershipKindUnclaimed}, nil
 	}
-	return nodeID, persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: *claimedBy}, nil
+	return nodeID, persistence.ClaimOwnership{Kind: persistence.ClaimOwnershipKindClaimedBy, SupervisorID: *claimedBy}, nil
 }
 
 func (q *queueImpl) GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (persistence.ClaimOwnership, error) {
@@ -481,14 +481,14 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (pe
 	).Scan(&claimedBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return persistence.ClaimOwnership{Kind: "not_found"}, nil
+			return persistence.ClaimOwnership{Kind: persistence.ClaimOwnershipKindNotFound}, nil
 		}
 		return persistence.ClaimOwnership{}, err
 	}
 	if claimedBy == nil {
-		return persistence.ClaimOwnership{Kind: "unclaimed"}, nil
+		return persistence.ClaimOwnership{Kind: persistence.ClaimOwnershipKindUnclaimed}, nil
 	}
-	return persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: *claimedBy}, nil
+	return persistence.ClaimOwnership{Kind: persistence.ClaimOwnershipKindClaimedBy, SupervisorID: *claimedBy}, nil
 }
 
 func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx, ackID string) (*persistence.DispatchRow, error) {

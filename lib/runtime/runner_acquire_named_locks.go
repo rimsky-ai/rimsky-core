@@ -84,7 +84,7 @@ func acquireNamedLock(
 		LockName:           &nameCopy,
 		HolderSupervisorID: args.SupervisorID,
 		HolderNodeID:       cand.NodeID,
-		ExpiresAt:          args.Clock.Now().Add(5 * livenessInterval),
+		ExpiresAt:          claimExpiryFromLiveness(args.Clock.Now(), livenessInterval),
 		FrameID:            &frameID,
 		IsHeld:             false,
 	}

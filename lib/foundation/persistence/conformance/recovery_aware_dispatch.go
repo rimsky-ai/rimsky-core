@@ -215,7 +215,7 @@ func testRecoveryDispositionStamps(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy: %v", err)
 	}
-	if own.Kind != "claimed_by" || own.SupervisorID != "sup-owner" {
+	if own.Kind != persistence.ClaimOwnershipKindClaimedBy || own.SupervisorID != "sup-owner" {
 		t.Fatalf("wrong-claimant release must be a no-op; ownership = %+v", own)
 	}
 

@@ -53,7 +53,8 @@ func acquireFanOutIfDeclared(
 		args.Logger.Warn("tryAcquire: fan-out partition_request substitution failed",
 			"node_id", cand.NodeID.String(),
 			"error", err.Error())
-		return fmt.Errorf("acquireFanOutIfDeclared: partition_request substitution: %w", err)
+		out.FanOutSubstitutionErr = fmt.Errorf("partition_request substitution: %w", err).Error()
+		return errAcquireFanOutSubstitutionFailed
 	}
 	subClaims, err := AcquireSubClaims(ctx, args, tx, AcquireSubClaimsInput{
 		ParentClaimHandleID: parent.ClaimHandleID,

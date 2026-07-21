@@ -90,6 +90,9 @@ type acquisition struct {
 
 	// @concept: executor
 	Scratch []byte
+
+	// @concept: fan-out
+	FanOutSubstitutionErr string
 }
 
 type openResult int
@@ -106,6 +109,10 @@ var errAcquireUnavailable = fmt.Errorf("supervisor: acquire bailed on Unavailabl
 var errAcquireProducerErrored = fmt.Errorf("supervisor: acquire bailed on producer-faulted claim (sentinel)")
 
 var errAcquireRestampLost = fmt.Errorf("supervisor: acquire lost sub-claim restamp CAS (sentinel)")
+
+var errAcquireNilFrameID = fmt.Errorf("supervisor: acquire bailed on candidate with null frame_id (sentinel)")
+
+var errAcquireFanOutSubstitutionFailed = fmt.Errorf("supervisor: acquire bailed on fan-out partition_request substitution failure (sentinel)")
 
 const defaultSelectCandidatesLimit = 8
 
@@ -143,13 +150,6 @@ func tryAcquireBatch(
 	livenessInterval time.Duration,
 ) (acquisition, bool, error) {
 	for _, cand := range candidates {
-		if cand.FrameID == (shared.UUID{}) {
-			args.Logger.Warn("acquireCandidate: skipping candidate with nil frame_id",
-				"dispatch_id", cand.NodeRunID.String(),
-				"node_id", cand.NodeID.String(),
-				"reason", "frame_id_null")
-			continue
-		}
 		acq, ok, err := acquireOneCandidateWithRetry(ctx, args, cand, livenessInterval)
 		if err != nil {
 			return acquisition{}, false, err
@@ -249,6 +249,34 @@ func acquireOneCandidateWithRetry(
 				"node_id", cand.NodeID.String())
 			return acquisition{}, false, nil
 		}
+		if err == errAcquireNilFrameID {
+			decision := handleAcquireNilFrameID(ctx, args, acq, cand)
+			if decision != nil && decision.IsRetry() {
+				if delay := time.Duration(decision.DelayMs) * time.Millisecond; delay > 0 {
+					select {
+					case <-ctx.Done():
+						return acquisition{}, false, ctx.Err()
+					case <-time.After(delay):
+					}
+				}
+				continue
+			}
+			return acquisition{}, false, nil
+		}
+		if err == errAcquireFanOutSubstitutionFailed {
+			decision := handleAcquireFanOutSubstitutionFailed(ctx, args, acq, cand)
+			if decision != nil && decision.IsRetry() {
+				if delay := time.Duration(decision.DelayMs) * time.Millisecond; delay > 0 {
+					select {
+					case <-ctx.Done():
+						return acquisition{}, false, ctx.Err()
+					case <-time.After(delay):
+					}
+				}
+				continue
+			}
+			return acquisition{}, false, nil
+		}
 		if err != nil {
 			return acquisition{}, false, err
 		}
@@ -316,6 +344,12 @@ func tryAcquireWithTx(
 		abandonPartialLocks(ctx, args, acq.PartialLocks)
 		return acquisition{}, false, errAcquireRestampLost
 	}
+	if err == errAcquireNilFrameID {
+		return acq, false, errAcquireNilFrameID
+	}
+	if err == errAcquireFanOutSubstitutionFailed {
+		return acq, false, errAcquireFanOutSubstitutionFailed
+	}
 	if err != nil && err != errTryAcquireRollback {
 		abandonPartialLocks(ctx, args, acq.PartialLocks)
 		return acquisition{}, false, fmt.Errorf("tryAcquireWithTx: %w", err)
@@ -365,6 +399,29 @@ func tryAcquire(
 			return acquisition{}, false, nil
 		}
 		runScopeID = row.RunScopeID
+	}
+	// @concept: frame
+	if cand.FrameID == (shared.UUID{}) {
+		out := acquisition{
+			NodeRunID:                 cand.NodeRunID,
+			NodeID:                    cand.NodeID,
+			InstanceID:                nd.InstanceID,
+			NodeType:                  nd.NodeType,
+			Executor:                  nd.Executor,
+			GraphName:                 graphName,
+			RunScopeID:                runScopeID,
+			PriorNodeRunID:            cand.PriorNodeRunID,
+			PriorDispatchDisposition:  cand.PriorDispatchDisposition,
+			FrameID:                   cand.FrameID,
+			NodeDef:                   nodeDef,
+			TemplateAttributeDefaults: templateAttributeDefaults,
+		}
+		if inst != nil {
+			out.InstanceParams = inst.Params
+			out.InstanceAttributeOverrides = inst.AttributeOverrides
+			out.TemplateHash = inst.TemplateHash
+		}
+		return out, false, errAcquireNilFrameID
 	}
 	// @decision: walker-rule-per-sender-node
 	specs, heldClaims, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, tmpl, inst, cand.NodeRunID, cand.FrameID, runScopeID)
@@ -481,6 +538,10 @@ func tryAcquire(
 		out.HeldClaims = heldClaims
 	}
 	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, livenessInterval); err != nil {
+		if err == errAcquireFanOutSubstitutionFailed {
+			out.PartialLocks = acquiredLocks
+			return out, false, errAcquireFanOutSubstitutionFailed
+		}
 		return acquisition{PartialLocks: acquiredLocks}, false, err
 	}
 	if err := restampLinkedSubClaimHolders(ctx, args, tx, cand); err != nil {
@@ -553,11 +614,10 @@ func bindLeafCandidateHandles(ctx context.Context, args RunArgs, tx persistence.
 			continue
 		}
 		for j := range out.Locks {
-			sp, ok := out.Locks[j].Spec.(claimproducer.ClaimSpec)
-			if !ok || sp.ProducerName != *row.ProducerName {
+			if _, ok := out.Locks[j].Spec.(claimproducer.ClaimSpec); !ok {
 				continue
 			}
-			if len(out.Locks[j].ProducerCandidateHandle) > 0 {
+			if *row.ParentClaimHandleID != out.Locks[j].ClaimHandleID {
 				continue
 			}
 			out.Locks[j].ProducerCandidateHandle = row.ProducerCandidateHandle

@@ -155,10 +155,10 @@ func RunNode(
 	if err := validateRunArgs(args); err != nil {
 		return RunnerResult{}, err
 	}
-	log := args.Logger
-	if log == nil {
-		log = shared.SilentLogger{}
+	if args.Logger == nil {
+		args.Logger = shared.SilentLogger{}
 	}
+	log := args.Logger
 	livenessInterval := args.LivenessInterval
 	if livenessInterval <= 0 {
 		livenessInterval = 5 * time.Second

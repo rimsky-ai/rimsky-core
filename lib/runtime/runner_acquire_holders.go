@@ -17,11 +17,9 @@ import (
 
 func insertHeldClaimHoldersAtAcquire(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	claimHandleID shared.UUID, cand persistence.Candidate, alias string,
-	heldSubgraphs []node.HoldingSubgraph,
+	claimHandleID shared.UUID, cand persistence.Candidate, isHeld bool,
 ) error {
-	subgraph, ok := findHoldingSubgraphForAcquirer(heldSubgraphs, cand.NodeType, alias)
-	if !ok || !subgraph.IsHeld() {
+	if !isHeld {
 		return nil
 	}
 	if err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{

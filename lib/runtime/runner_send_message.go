@@ -59,7 +59,7 @@ func sendCascadeMessageInTx(
 	if sendMessageType == "" {
 		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: sends_message type required")
 	}
-	if body == nil {
+	if len(body) == 0 {
 		body = []byte(`{}`)
 	}
 

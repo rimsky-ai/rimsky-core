@@ -14,6 +14,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
+func shouldSpillBlob(args RunArgs, size int) bool {
+	return persistence.ShouldSpillBlob(args.Blob, args.BlobSpillThreshold, size)
+}
+
 // @concept: executor
 func applyTerminalScratchInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, scratch []byte,

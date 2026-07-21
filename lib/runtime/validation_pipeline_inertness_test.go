@@ -120,3 +120,53 @@ func TestRunValidationPipeline_ForwardsClaimAndPublisherBytesVerbatim(t *testing
 			pubV.publisherIn.ResolvedConfig, pubConfig)
 	}
 }
+
+type executorCapturingValidator struct {
+	capturingValidator
+	executorIn ValidateExecutorInput
+	sawExec    bool
+}
+
+func (v *executorCapturingValidator) SupportedRoles() []string { return []string{"executor"} }
+
+func (v *executorCapturingValidator) ValidateExecutor(
+	_ context.Context, in ValidateExecutorInput,
+) (ValidationOutcome, error) {
+	v.executorIn = in
+	v.sawExec = true
+	return ValidationOutcome{}, nil
+}
+
+// @concept: validation
+func TestRunValidationPipeline_MalformedExecutorSchemaWarnsAndDropsExecutorLayer(t *testing.T) {
+	v := &executorCapturingValidator{capturingValidator: capturingValidator{name: "exec-a"}}
+	reg := &singleValidatorRegistry{byName: map[string]ValidationClient{"exec-a": v}}
+
+	tpl := spec.TemplateSpec{
+		Nodes: []spec.TemplateNodeDef{
+			{Type: "worker", Executor: "exec-a"},
+		},
+	}
+
+	lookup := func(executor string) ([]byte, bool) {
+		return []byte(`{not-json`), true
+	}
+
+	out, err := RunValidationPipeline(context.Background(), reg, tpl, "tpl-1", UnreachableValidatorPermissiveWarn, lookup)
+	if err != nil {
+		t.Fatalf("RunValidationPipeline: %v", err)
+	}
+	if len(out.Errors) != 0 {
+		t.Fatalf("a malformed advertised schema must degrade to a warning, not a hard error: %v", out.Errors)
+	}
+	if len(out.Warnings) != 1 {
+		t.Fatalf("expected exactly one warning for the malformed schema, got %d: %v", len(out.Warnings), out.Warnings)
+	}
+	if out.Warnings[0].Class != "expected_attributes_schema_malformed" {
+		t.Fatalf("Warnings[0].Class = %q; want expected_attributes_schema_malformed", out.Warnings[0].Class)
+	}
+	if !v.sawExec {
+		t.Fatal("ValidateExecutor was never invoked despite the malformed schema; the executor layer should " +
+			"drop out of the merged schema, not abort the whole node's validation")
+	}
+}

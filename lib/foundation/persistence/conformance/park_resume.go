@@ -353,7 +353,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy after resume: %v", err)
 	}
-	if owner.Kind != "unclaimed" {
+	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("resumed row ownership = %s/%s, want unclaimed", owner.Kind, owner.SupervisorID)
 	}
 	postResumeRow, err := q.GetByID(ctx, runID)

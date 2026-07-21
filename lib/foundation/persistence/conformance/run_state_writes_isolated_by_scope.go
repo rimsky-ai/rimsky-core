@@ -299,7 +299,7 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 	if err != nil {
 		t.Fatalf("GetClaimedBy(A): %v", err)
 	}
-	if ownerA.Kind != "unclaimed" {
+	if ownerA.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("RemoveForNodeInTx(A) did not clear scope A's claim (a no-op node_id/run_scope_id filter "+
 			"would silently match zero rows): ownership=%s/%s", ownerA.Kind, ownerA.SupervisorID)
 	}

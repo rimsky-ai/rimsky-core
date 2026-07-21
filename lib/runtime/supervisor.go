@@ -409,7 +409,10 @@ func runLoop(
 				return
 			}
 			if result.Ran && result.NodeRunID != (shared.UUID{}) {
-				_ = cfg.Queue.Complete(context.Background(), result.NodeRunID, cfg.SupervisorID)
+				if err := cfg.Queue.Complete(context.Background(), result.NodeRunID, cfg.SupervisorID); err != nil {
+					cfg.Logger.Warn("supervisor: Queue.Complete failed",
+						"dispatch_id", result.NodeRunID.String(), "error", err.Error())
+				}
 			}
 		}()
 	}

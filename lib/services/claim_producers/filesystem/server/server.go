@@ -75,8 +75,10 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	grpcSrv := grpc.NewServer(identity.GRPCServerOptions()...)
 	genv1.RegisterClaimProducerServer(grpcSrv, srv)
+	var lifecycleSrv *lifecycle.Server
 	if cfg.EnableLifecycle {
-		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lifecycle.NewServer())
+		lifecycleSrv = lifecycle.NewServer()
+		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lifecycleSrv)
 	}
 	obsSrv := srv.RegisterObservability(grpcSrv, cfg.Root, cfg.PickPolicies)
 	obsSrv.SetHTTPBridgeURL(cfg.HTTPBridgeURL)
@@ -89,7 +91,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	mux := http.NewServeMux()
 	bridge.Mount(mux, srv)
 	if cfg.EnableLifecycle {
-		bridge.MountLifecycle(mux, lifecycle.NewServer())
+		bridge.MountLifecycle(mux, lifecycleSrv)
 	}
 	bridge.MountObservability(mux, obsSrv)
 	httpSrv := identity.HTTPServer(mux)
@@ -125,12 +127,6 @@ type Server struct {
 	store *fsstore.Store
 }
 
-func producerDeclaredErrorClasses() []string {
-	return []string{
-		fsstore.RootUnavailableClass,
-	}
-}
-
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.store.Capabilities()
 	out := make([]genv1.WriteSemantics, 0, len(c.WriteSemanticsAllowed))
@@ -139,14 +135,14 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 	}
 	return &genv1.CapabilitiesResponse{
 		WriteSemanticsAllowed: out,
-		DeclaredErrorClasses:  producerDeclaredErrorClasses(),
-		SupportsSplitScope:    true,
+		DeclaredErrorClasses:  c.DeclaredErrorClasses,
+		SupportsSplitScope:    c.SupportsSplitScope,
 	}, nil
 }
 
 func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	if intent := req.GetIntent(); intent != "r" && intent != "rw" {
-		return nil, fmt.Errorf("filesystem.Open: intent must be \"r\" or \"rw\", got %q", intent)
+		return nil, status.Errorf(codes.InvalidArgument, "filesystem.Open: intent must be \"r\" or \"rw\", got %q", intent)
 	}
 	outcome, err := s.store.Open(ctx, req.GetClaimId(), req.GetSelector())
 	if err != nil {
@@ -182,7 +178,7 @@ func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1
 }
 
 func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
-	if err := s.store.Release(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
+	if err := s.store.Release(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress(), req.GetLeaseToken()); err != nil {
 		return nil, classedStatus(err)
 	}
 	return &genv1.ReleaseResponse{}, nil
@@ -312,9 +308,11 @@ func (s *Server) splitBatchPick(ctx context.Context, parent parentClaimInfo, bat
 		MaxItems int    `json:"max_items"`
 		Policy   string `json:"policy"`
 	}
-	if err := json.Unmarshal(batchPickJSON, &body); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(batchPickJSON))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument,
-			"filesystem store: SplitScope batch_pick: invalid body: %v", err)
+			"filesystem store: SplitScope batch_pick: invalid body or unknown keys (only max_items / policy are permitted): %v", err)
 	}
 	if body.MaxItems <= 0 {
 		return nil, status.Errorf(codes.InvalidArgument,
@@ -488,9 +486,13 @@ func classedStatus(err error) error {
 	if err == nil {
 		return nil
 	}
+	var ve *fsstore.ValidationError
+	if errors.As(err, &ve) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
 	var ce *fsstore.ClassedError
 	if !errors.As(err, &ce) || ce.Class == "" {
-		return err
+		return status.Error(codes.Internal, err.Error())
 	}
 	st := status.New(codes.Internal, ce.Error())
 	withInfo, derr := st.WithDetails(&errdetails.ErrorInfo{

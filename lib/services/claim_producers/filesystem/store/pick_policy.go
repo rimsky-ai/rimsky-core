@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,6 +23,18 @@ import (
 )
 
 const batchLeaseIDPrefix = "batchlease~"
+
+func fsyncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		slog.Warn("filesystem store: fsync dir: open", "dir", dir, "error", err.Error())
+		return
+	}
+	defer func() { _ = d.Close() }()
+	if err := d.Sync(); err != nil {
+		slog.Warn("filesystem store: fsync dir", "dir", dir, "error", err.Error())
+	}
+}
 
 func parseFromRight(name string) (folder, claimID string, claimedNanos int64, err error) {
 	lastDot := strings.LastIndexByte(name, '.')
@@ -46,8 +59,10 @@ func parseFromRight(name string) (folder, claimID string, claimedNanos int64, er
 	return name[:prev], name[prev+1 : lastDot], n, nil
 }
 
+const fsStoreStateDirName = ".fs-store"
+
 func PolicyStateDir(storeRoot, selector string) string {
-	return filepath.Join(storeRoot, ".fs-store", trimAtPrefix(selector))
+	return filepath.Join(storeRoot, fsStoreStateDirName, trimAtPrefix(selector))
 }
 
 func (s *Store) runSync(selector string, pp *PickPolicy) error {
@@ -65,10 +80,16 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 	extant := make(map[string]struct{}, len(extantEntries))
 	for _, e := range extantEntries {
 		name := e.Name()
-		if !e.IsDir() {
+		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		if strings.HasPrefix(name, ".") {
+		isDir := e.IsDir()
+		if !isDir && e.Type()&fs.ModeSymlink != 0 {
+			if info, statErr := os.Stat(filepath.Join(subRoot, name)); statErr == nil && info.IsDir() {
+				isDir = true
+			}
+		}
+		if !isDir {
 			continue
 		}
 		if pp.FolderPattern != nil && !pp.FolderPattern.MatchString(name) {
@@ -103,6 +124,7 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 	}
 
 	addedAny := false
+	changedAny := false
 	for folder := range extant {
 		if _, ok := tracked[folder]; ok {
 			continue
@@ -112,6 +134,7 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 		if err == nil {
 			_ = f.Close()
 			addedAny = true
+			changedAny = true
 			continue
 		}
 		if !errors.Is(err, fs.ErrExist) {
@@ -126,6 +149,10 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 		if err := os.Remove(filepath.Join(availDir, folder)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("unlink stale available sentinel %s: %w", folder, err)
 		}
+		changedAny = true
+	}
+	if changedAny {
+		fsyncDir(availDir)
 	}
 	if addedAny {
 		removeDrainedIfPresent(state)
@@ -134,7 +161,10 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 }
 
 func removeDrainedIfPresent(state string) {
-	_ = os.Remove(filepath.Join(state, "drained"))
+	drainedPath := filepath.Join(state, "drained")
+	if err := os.Remove(drainedPath); err == nil {
+		fsyncDir(state)
+	}
 }
 
 func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (claimproducer.OpenOutcome, error) {
@@ -158,6 +188,7 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (claimp
 				if err := os.Remove(drainedPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return claimproducer.OpenOutcome{}, fmt.Errorf("filesystem store: remove drained: %w", err)
 				}
+				fsyncDir(state)
 				return claimproducer.OpenOutcome{Available: false}, nil
 			}
 			if err := s.runSync(selector, pp); err != nil {
@@ -175,20 +206,22 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (claimp
 	}
 	if outcome.Available {
 		if pp.SyncStrategy == "on_drain" && lastItem {
-			f, ferr := os.OpenFile(drainedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-			if ferr == nil {
-				_ = f.Close()
-			}
+			createDrainedSentinel(drainedPath)
 		}
 		return outcome, nil
 	}
 	if pp.SyncStrategy == "on_drain" {
-		f, ferr := os.OpenFile(drainedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if ferr == nil {
-			_ = f.Close()
-		}
+		createDrainedSentinel(drainedPath)
 	}
 	return claimproducer.OpenOutcome{Available: false}, nil
+}
+
+func createDrainedSentinel(drainedPath string) {
+	f, err := os.OpenFile(drainedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err == nil {
+		_ = f.Close()
+		fsyncDir(filepath.Dir(drainedPath))
+	}
 }
 
 type claimedFolder struct {
@@ -234,6 +267,8 @@ func (s *Store) claimNextAvailable(availDir, inProgDir string, pp *PickPolicy, c
 			}
 			return claimedFolder{}, false, fmt.Errorf("filesystem store: claim rename: %w", err)
 		}
+		fsyncDir(availDir)
+		fsyncDir(inProgDir)
 		addr, err := json.Marshal(absPath)
 		if err != nil {
 			return claimedFolder{}, false, err
@@ -310,28 +345,29 @@ func entryLeaseToken(claimID string, claimedNanos int64) (string, bool) {
 
 func (s *Store) BatchPop(_ context.Context, selector string, claimIDs []string) ([]PickedItem, error) {
 	if len(claimIDs) == 0 {
-		return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs must be non-empty (one distinct id per item to pop)")
+		return nil, newValidationError("filesystem store: BatchPop: claimIDs must be non-empty (one distinct id per item to pop)")
 	}
 	seen := make(map[string]struct{}, len(claimIDs))
 	for i, id := range claimIDs {
 		if err := validateClaimID(id); err != nil {
-			return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs[%d]: %w", i, err)
+			return nil, newValidationError("filesystem store: BatchPop: claimIDs[%d]: %w", i, err)
 		}
 		if _, dup := seen[id]; dup {
-			return nil, fmt.Errorf("filesystem store: BatchPop: claimIDs[%d] = %q duplicates a prior entry; every id must be unique", i, id)
+			return nil, newValidationError("filesystem store: BatchPop: claimIDs[%d] = %q duplicates a prior entry; every id must be unique", i, id)
 		}
 		seen[id] = struct{}{}
 	}
-	if err := s.checkRootAvailable("BatchPop"); err != nil {
+	if err := s.checkRootAvailable("BatchPop", true); err != nil {
 		return nil, err
 	}
 	pp, ok := s.pickPolicies[selector]
 	if !ok {
-		return nil, fmt.Errorf("filesystem store: BatchPop: unknown pick policy %q", selector)
+		return nil, newValidationError("filesystem store: BatchPop: unknown pick policy %q", selector)
 	}
 	state := PolicyStateDir(s.root, selector)
 	availDir := filepath.Join(state, "available")
 	inProgDir := filepath.Join(state, "in_progress")
+	drainedPath := filepath.Join(state, "drained")
 
 	switch pp.SyncStrategy {
 	case "on_open":
@@ -344,6 +380,13 @@ func (s *Store) BatchPop(_ context.Context, selector string, claimIDs []string) 
 			return nil, fmt.Errorf("filesystem store: BatchPop readdir available: %w", err)
 		}
 		if empty {
+			if drainedFileExists(drainedPath) {
+				if err := os.Remove(drainedPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return nil, fmt.Errorf("filesystem store: BatchPop remove drained: %w", err)
+				}
+				fsyncDir(state)
+				return nil, nil
+			}
 			if err := s.runSync(selector, pp); err != nil {
 				return nil, fmt.Errorf("filesystem store: BatchPop sync: %w", err)
 			}
@@ -361,11 +404,15 @@ func (s *Store) BatchPop(_ context.Context, selector string, claimIDs []string) 
 		}
 		out = append(out, item)
 	}
+	if pp.SyncStrategy == "on_drain" {
+		if empty, err := isDirEmpty(availDir); err == nil && empty {
+			createDrainedSentinel(drainedPath)
+		}
+	}
 	return out, nil
 }
 
 func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inProgDir string) (PickedItem, bool, error) {
-	_ = selector
 	claimed, ok, err := s.claimNextAvailable(availDir, inProgDir, pp, batchLeaseIDPrefix+claimID)
 	if err != nil {
 		return PickedItem{}, false, err
@@ -373,6 +420,7 @@ func (s *Store) popOne(claimID, selector string, pp *PickPolicy, availDir, inPro
 	if !ok {
 		return PickedItem{}, false, nil
 	}
+	s.ledger.RecordOpen(claimID, selector, claimed.addr, claimed.scope)
 	return PickedItem{
 		ClaimID:         claimID,
 		Folder:          claimed.folder,
@@ -472,14 +520,16 @@ func (s *Store) findByScope(scope []byte, leaseToken string) (pp *PickPolicy, se
 }
 
 func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, act action.Action) error {
-	inProgDir := filepath.Join(PolicyStateDir(s.root, selector), "in_progress")
-	availDir := filepath.Join(PolicyStateDir(s.root, selector), "available")
+	state := PolicyStateDir(s.root, selector)
+	inProgDir := filepath.Join(state, "in_progress")
+	availDir := filepath.Join(state, "available")
 	src := filepath.Join(inProgDir, entry)
 	switch act.Kind {
 	case action.Pop:
 		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: pop unlink in_progress: %w", err)
 		}
+		fsyncDir(inProgDir)
 		return nil
 	case action.PopAndMove:
 		folderAbs := filepath.Join(s.root, pp.Root, folder)
@@ -487,19 +537,24 @@ func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, 
 		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: pop_and_move unlink in_progress: %w", err)
 		}
+		fsyncDir(inProgDir)
 		if err := os.Rename(folderAbs, targetAbs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: pop_and_move rename %q→%q: %w",
 				folderAbs, targetAbs, err)
 		}
+		fsyncDir(filepath.Dir(folderAbs))
+		fsyncDir(filepath.Dir(targetAbs))
 		return nil
 	case action.PopAndDelete:
 		folderAbs := filepath.Join(s.root, pp.Root, folder)
 		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: pop_and_delete unlink in_progress: %w", err)
 		}
+		fsyncDir(inProgDir)
 		if err := os.RemoveAll(folderAbs); err != nil {
 			return fmt.Errorf("filesystem store: pop_and_delete removeall %s: %w", folderAbs, err)
 		}
+		fsyncDir(filepath.Dir(folderAbs))
 		return nil
 	case action.Recycle:
 		now := time.Now()
@@ -509,6 +564,9 @@ func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, 
 		if err := os.Rename(src, filepath.Join(availDir, folder)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: recycle rename: %w", err)
 		}
+		fsyncDir(inProgDir)
+		fsyncDir(availDir)
+		removeDrainedIfPresent(state)
 		return nil
 	default:
 		return fmt.Errorf("filesystem store: unknown pick action %q", act.Kind)

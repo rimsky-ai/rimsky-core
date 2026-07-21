@@ -70,7 +70,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetDispatchNode not_found: err: %v", err)
 	}
-	if owner.Kind != "not_found" {
+	if owner.Kind != persistence.ClaimOwnershipKindNotFound {
 		t.Fatalf("GetDispatchNode not_found: kind=%q want %q", owner.Kind, "not_found")
 	}
 	if gotNode != (shared.UUID{}) {
@@ -81,7 +81,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetDispatchNode unclaimed: err: %v", err)
 	}
-	if owner.Kind != "unclaimed" {
+	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("GetDispatchNode unclaimed: kind=%q want %q", owner.Kind, "unclaimed")
 	}
 	if gotNode != fix.NodeID {
@@ -129,7 +129,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetDispatchNode claimed_by: err: %v", err)
 	}
-	if owner.Kind != "claimed_by" {
+	if owner.Kind != persistence.ClaimOwnershipKindClaimedBy {
 		t.Fatalf("GetDispatchNode claimed_by: kind=%q want %q", owner.Kind, "claimed_by")
 	}
 	if owner.SupervisorID != supID {
@@ -151,7 +151,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetDispatchNode after rollback: err: %v", err)
 	}
-	if owner.Kind != "claimed_by" || owner.SupervisorID != supID {
+	if owner.Kind != persistence.ClaimOwnershipKindClaimedBy || owner.SupervisorID != supID {
 		t.Fatalf("RemoveForNodeInTx rollback failed: row gone or claim cleared (kind=%q, sup=%q)",
 			owner.Kind, owner.SupervisorID)
 	}
@@ -165,7 +165,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetDispatchNode after wrong-sup remove: err: %v", err)
 	}
-	if owner.Kind != "claimed_by" {
+	if owner.Kind != persistence.ClaimOwnershipKindClaimedBy {
 		t.Fatalf("RemoveForNodeInTx with wrong supervisor was not a no-op: kind=%q", owner.Kind)
 	}
 
@@ -182,7 +182,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetDispatchNode after retire: err: %v", err)
 	}
-	if owner.Kind != "unclaimed" {
+	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("RemoveForNodeInTx commit did not clear claim (expected kind=unclaimed): kind=%q", owner.Kind)
 	}
 	if found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID); found != (shared.UUID{}) {

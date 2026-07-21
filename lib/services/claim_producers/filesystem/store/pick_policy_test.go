@@ -435,6 +435,123 @@ func TestCommit_CoexistingScopedReaderDoesNotClobberPickEntry(t *testing.T) {
 	}
 }
 
+func TestRelease_RecyclesPickPolicyEntryPromptly(t *testing.T) {
+	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
+	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
+
+	o, _ := st.Open(context.Background(), "c-1", "@r")
+	if !o.Available {
+		t.Fatal("pick should be Available")
+	}
+	inProgDir := filepath.Join(root, ".fs-store", "r", "in_progress")
+	entries, err := os.ReadDir(inProgDir)
+	must(t, err)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 in_progress entry after Open, got %d", len(entries))
+	}
+
+	must(t, st.Release(context.Background(), "c-1", o.Result.ClaimScope, o.Result.Address, ""))
+
+	entries, err = os.ReadDir(inProgDir)
+	must(t, err)
+	if len(entries) != 0 {
+		t.Errorf("Release must return the pick-policy entry to available immediately, not leave it stranded in in_progress; got %v", entries)
+	}
+	availDir := filepath.Join(root, ".fs-store", "r", "available")
+	availEntries, err := os.ReadDir(availDir)
+	must(t, err)
+	if len(availEntries) != 1 || availEntries[0].Name() != "alpha" {
+		t.Errorf("expected alpha back in available/ after Release, got %v", availEntries)
+	}
+
+	o2, _ := st.Open(context.Background(), "c-2", "@r")
+	if !o2.Available {
+		t.Fatal("re-Open after Release should be Available without waiting for a sweep")
+	}
+}
+
+func TestRelease_ScopedClaimIsNoop(t *testing.T) {
+	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
+	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
+	reader, _ := st.Open(context.Background(), "reader", filepath.Join(sub, "alpha"))
+	if !reader.Available {
+		t.Fatal("scoped reader claim should be Available")
+	}
+	must(t, st.Release(context.Background(), "reader", reader.Result.ClaimScope, reader.Result.Address, ""))
+}
+
+func TestBatchPop_RecordsOpenInLedger(t *testing.T) {
+	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
+	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
+
+	items, err := st.BatchPop(context.Background(), "@r", []string{"id-1"})
+	must(t, err)
+	if len(items) != 1 {
+		t.Fatalf("BatchPop: got %d items, want 1", len(items))
+	}
+
+	rec, ok := st.Ledger().Get("id-1")
+	if !ok {
+		t.Fatal("BatchPop must record an OPEN ledger entry under the batch item's claim_id")
+	}
+	if rec.State != ClaimStateOpen {
+		t.Errorf("state = %s, want OPEN", rec.State)
+	}
+
+	must(t, st.Commit(context.Background(), "id-1", items[0].ClaimScopeBytes, items[0].AddressBytes, items[0].LeaseToken))
+	rec2, ok := st.Ledger().Get("id-1")
+	if !ok {
+		t.Fatal("expected ledger record to survive Commit")
+	}
+	if rec2.State != ClaimStateCommitted {
+		t.Errorf("state after Commit = %s, want COMMITTED (not synthesized UNKNOWN)", rec2.State)
+	}
+	if len(rec2.History) != 2 {
+		t.Errorf("history = %d events, want 2 (open+commit); a missing RecordOpen collapses this to a synthesized 1-event UNKNOWN record", len(rec2.History))
+	}
+}
+
+func TestBatchPop_HonorsDrainedSentinel(t *testing.T) {
+	root := t.TempDir()
+	sub := "docs"
+	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
+	pp := &PickPolicy{
+		Root:              sub,
+		OnCommit:          action.Action{Kind: action.PopAndDelete},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_drain",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
+	must(t, err)
+
+	items, err := st.BatchPop(context.Background(), "@r", []string{"id-1"})
+	must(t, err)
+	if len(items) != 1 {
+		t.Fatalf("BatchPop pass 1: got %d items, want 1", len(items))
+	}
+	if _, err := os.Stat(drainedPathFor(root, "@r")); err != nil {
+		t.Fatalf("expected drained sentinel after BatchPop drained the queue; stat err = %v", err)
+	}
+
+	items2, err := st.BatchPop(context.Background(), "@r", []string{"id-2"})
+	must(t, err)
+	if len(items2) != 0 {
+		t.Fatalf("BatchPop must return 0 items on the drained pass-boundary call instead of re-syncing immediately; got %d", len(items2))
+	}
+	if _, err := os.Stat(drainedPathFor(root, "@r")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("drained sentinel should be consumed by the boundary call; stat err = %v", err)
+	}
+
+	must(t, st.Commit(context.Background(), "id-1", items[0].ClaimScopeBytes, items[0].AddressBytes, items[0].LeaseToken))
+	must(t, os.MkdirAll(filepath.Join(root, sub, "beta"), 0o755))
+	items3, err := st.BatchPop(context.Background(), "@r", []string{"id-3"})
+	must(t, err)
+	if len(items3) != 1 || items3[0].Folder != "beta" {
+		t.Fatalf("BatchPop pass 2 (post-boundary) should resync and pick up the new folder; got %+v", items3)
+	}
+}
+
 func TestFindByScope_MatchesBatchLeaseNotSingleClaim(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"

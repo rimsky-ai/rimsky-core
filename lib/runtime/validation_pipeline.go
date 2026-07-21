@@ -9,6 +9,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -115,7 +116,16 @@ func runExecutorRoleCheck(
 	var execSchema map[string]any
 	if execSchemaLookup != nil {
 		if bytesIn, ok := execSchemaLookup(n.Executor); ok && len(bytesIn) > 0 {
-			_ = json.Unmarshal(bytesIn, &execSchema)
+			if err := json.Unmarshal(bytesIn, &execSchema); err != nil {
+				out.Warnings = append(out.Warnings, ValidationFinding{
+					ServiceName: client.Name(),
+					Role:        "executor",
+					NodeAlias:   n.Type,
+					Class:       "expected_attributes_schema_malformed",
+					Message:     fmt.Sprintf("advertised expected-attributes schema is not valid JSON: %s", err.Error()),
+				})
+				execSchema = nil
+			}
 		}
 	}
 	var l1Defaults map[string]any

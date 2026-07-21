@@ -95,7 +95,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("GetClaimedBy: %v", err)
 	}
-	if ownership.Kind != "unclaimed" {
+	if ownership.Kind != persistence.ClaimOwnershipKindUnclaimed {
 		t.Fatalf("rollback failed: dispatch row %s has ownership %+v, want unclaimed", claimedNodeRunID, ownership)
 	}
 

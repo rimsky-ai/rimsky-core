@@ -121,6 +121,40 @@ func TestLedgerEviction_NeverEvictsOpenRecords(t *testing.T) {
 	}
 }
 
+func TestLedgerList_CursorSurvivesEvictionOfItsRecord(t *testing.T) {
+	l := NewClaimLedger(2)
+	l.RecordOpen("a", "/x", nil, nil)
+	l.RecordTerminal("a", "claim_committed", nil)
+
+	page1, cursor := l.List("", "", 1)
+	if len(page1) != 1 || page1[0].ClaimID != "a" || cursor == "" {
+		t.Fatalf("page1=%+v cursor=%q", page1, cursor)
+	}
+
+	l.RecordOpen("b", "/x", nil, nil)
+	l.RecordOpen("c", "/x", nil, nil)
+	l.RecordOpen("d", "/x", nil, nil)
+
+	if _, ok := l.Get("a"); ok {
+		t.Fatal("test setup: expected closed record 'a' to be evicted once open records exceed the cap")
+	}
+
+	page2, _ := l.List("", cursor, 10)
+	got := make([]string, len(page2))
+	for i, r := range page2 {
+		got[i] = r.ClaimID
+	}
+	want := []string{"b", "c", "d"}
+	if len(got) != len(want) {
+		t.Fatalf("cursor pointing at a since-evicted record must still resume correctly; got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
 func TestLedgerEviction_EvictsClosedRecordsBeforeCap(t *testing.T) {
 	l := NewClaimLedger(3)
 	l.RecordOpen("closed-1", "/x", nil, nil)

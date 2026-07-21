@@ -123,7 +123,7 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 	if err != nil {
 		t.Fatalf("getClaimedBy: %v", err)
 	}
-	if owner.Kind != "claimed_by" || owner.SupervisorID != winner {
+	if owner.Kind != persistence.ClaimOwnershipKindClaimedBy || owner.SupervisorID != winner {
 		t.Fatalf("guard violated: kind=%s sup=%s; want claimed_by/%s",
 			owner.Kind, owner.SupervisorID, winner)
 	}

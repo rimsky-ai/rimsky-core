@@ -138,40 +138,15 @@ func reconcilePublisherSubscriptionsOnce(ctx context.Context, deps PublisherLife
 	}
 }
 
-func callListSubscriptionsWithRetry(ctx context.Context, client PublisherClient, log shared.Logger) ([]ListedPublisherSubscription, error) {
+func retryRPCWithBackoff(
+	ctx context.Context, log shared.Logger, logEvent string,
+	logFields func(attempt int, err error) []any,
+	attempt func(attemptCtx context.Context) error,
+) error {
 	var lastErr error
-	for attempt := 0; attempt < subscribeRetryAttempts; attempt++ {
-		if attempt > 0 {
-			d := time.Duration(float64(subscribeRetryBase) * pow28(attempt))
-			j := time.Duration(rand.Float64()*0.5*float64(d)) - d/4
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(d + j):
-			}
-		}
-		attemptCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
-		live, err := client.ListSubscriptions(attemptCtx)
-		cancel()
-		if err == nil {
-			return live, nil
-		}
-		lastErr = err
-		if log != nil {
-			log.Warn("publisher.resync.list_retry",
-				"publisher_name", client.Name(),
-				"attempt", attempt+1,
-				"error", err.Error())
-		}
-	}
-	return nil, lastErr
-}
-
-func callSubscribeWithRetry(ctx context.Context, client PublisherClient, req SubscribeRequest, log shared.Logger) error {
-	var lastErr error
-	for attempt := 0; attempt < subscribeRetryAttempts; attempt++ {
-		if attempt > 0 {
-			d := time.Duration(float64(subscribeRetryBase) * pow28(attempt))
+	for i := 0; i < subscribeRetryAttempts; i++ {
+		if i > 0 {
+			d := time.Duration(float64(subscribeRetryBase) * pow28(i))
 			j := time.Duration(rand.Float64()*0.5*float64(d)) - d/4
 			select {
 			case <-ctx.Done():
@@ -180,20 +155,49 @@ func callSubscribeWithRetry(ctx context.Context, client PublisherClient, req Sub
 			}
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
-		err := client.Subscribe(attemptCtx, req)
+		err := attempt(attemptCtx)
 		cancel()
 		if err == nil {
 			return nil
 		}
 		lastErr = err
 		if log != nil {
-			log.Warn("publisher.subscribe.retry",
-				"publisher_subscription_id", req.PublisherSubscriptionID.String(),
-				"attempt", attempt+1,
-				"error", err.Error())
+			log.Warn(logEvent, logFields(i+1, err)...)
 		}
 	}
 	return lastErr
+}
+
+func callListSubscriptionsWithRetry(ctx context.Context, client PublisherClient, log shared.Logger) ([]ListedPublisherSubscription, error) {
+	var live []ListedPublisherSubscription
+	err := retryRPCWithBackoff(ctx, log, "publisher.resync.list_retry",
+		func(attempt int, err error) []any {
+			return []any{"publisher_name", client.Name(), "attempt", attempt, "error", err.Error()}
+		},
+		func(attemptCtx context.Context) error {
+			l, err := client.ListSubscriptions(attemptCtx)
+			if err != nil {
+				return err
+			}
+			live = l
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return live, nil
+}
+
+func callSubscribeWithRetry(ctx context.Context, client PublisherClient, req SubscribeRequest, log shared.Logger) error {
+	return retryRPCWithBackoff(ctx, log, "publisher.subscribe.retry",
+		func(attempt int, err error) []any {
+			return []any{"publisher_subscription_id", req.PublisherSubscriptionID.String(), "attempt", attempt, "error", err.Error()}
+		},
+		func(attemptCtx context.Context) error {
+			return client.Subscribe(attemptCtx, req)
+		},
+	)
 }
 
 func pow28(n int) float64 {

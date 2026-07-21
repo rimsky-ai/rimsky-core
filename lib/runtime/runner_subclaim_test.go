@@ -407,7 +407,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-FAN",
-			InstanceID:          shared.UUID{},
+			InstanceID:          inst.ID,
 			LivenessInterval:    30 * time.Second,
 			ParentIsHeld:        false,
 			ParentIntent:        string(claimproducer.IntentReadWrite),
@@ -612,7 +612,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  supOne,
-			InstanceID:          shared.UUID{},
+			InstanceID:          inst.ID,
 			LivenessInterval:    30 * time.Second,
 			ParentIntent:        string(claimproducer.IntentReadWrite),
 		})

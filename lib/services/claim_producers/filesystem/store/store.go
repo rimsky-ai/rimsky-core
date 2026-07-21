@@ -68,6 +68,48 @@ func (s *Store) ScopeBytesForAbs(absPath string) ([]byte, error) {
 	return s.scopeBytes(rel)
 }
 
+func (s *Store) foldForContainment(cleaned string) string {
+	if s.caseFold {
+		return strings.ToLower(cleaned)
+	}
+	return cleaned
+}
+
+func longestExistingAncestor(path string) (string, error) {
+	for {
+		if _, err := os.Lstat(path); err == nil {
+			return path, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", fmt.Errorf("no existing ancestor found for %q", path)
+		}
+		path = parent
+	}
+}
+
+func (s *Store) symlinkEscapes(addrPath string) (resolvedAncestor, resolvedRoot string, escapes bool) {
+	resolvedRoot, err := filepath.EvalSymlinks(s.root)
+	if err != nil {
+		return "", "", false
+	}
+	ancestor, err := longestExistingAncestor(addrPath)
+	if err != nil {
+		return "", "", false
+	}
+	resolvedAncestor, err = filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", "", false
+	}
+	rel, relErr := filepath.Rel(resolvedRoot, resolvedAncestor)
+	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return resolvedAncestor, resolvedRoot, true
+	}
+	return "", "", false
+}
+
 func detectCaseInsensitiveRoot(root string) bool {
 	f, err := os.CreateTemp(root, "rimsky-fs-case-probe-lower-*")
 	if err != nil {
@@ -115,7 +157,21 @@ func New(cfg Config) (*Store, error) {
 	if cfg.Root == "" {
 		return nil, errors.New("filesystem store: root must not be empty")
 	}
+	seenStateDirs := make(map[string]string, len(cfg.PickPolicies))
 	for selector, pp := range cfg.PickPolicies {
+		if err := validateSelectorName(selector); err != nil {
+			return nil, fmt.Errorf("filesystem store: pick_policies[%q]: %w", selector, err)
+		}
+		trimmed := trimAtPrefix(selector)
+		if prior, dup := seenStateDirs[trimmed]; dup {
+			return nil, fmt.Errorf(
+				"filesystem store: pick_policies[%q] and pick_policies[%q] both resolve to state directory %q; "+
+					"pick-policy selectors must be unique once a leading '@' is stripped",
+				prior, selector, trimmed)
+		}
+		seenStateDirs[trimmed] = selector
+
+		applyPickPolicyDefaults(pp)
 		res := validatePickPolicy(cfg.Root, selector, pp)
 		if !res.OK() {
 			msgs := make([]string, 0, len(res.Errors))
@@ -155,20 +211,37 @@ func trimAtPrefix(selector string) string {
 	return selector
 }
 
+func validateSelectorName(selector string) error {
+	trimmed := trimAtPrefix(selector)
+	if trimmed == "" {
+		return errors.New("selector must not be empty (or just \"@\")")
+	}
+	if strings.ContainsAny(trimmed, "/\\") {
+		return fmt.Errorf("selector %q must not contain a path separator (it names a state directory under .fs-store)", selector)
+	}
+	if trimmed == "." || trimmed == ".." {
+		return fmt.Errorf("selector %q is not a valid pick-policy name", selector)
+	}
+	return nil
+}
+
 func (s *Store) Capabilities() claimproducer.Capabilities {
 	return claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+		DeclaredErrorClasses:  []string{RootUnavailableClass},
 	}
 }
 
 func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer.OpenOutcome, error) {
 	if err := validateClaimID(claimID); err != nil {
-		return claimproducer.OpenOutcome{}, fmt.Errorf("filesystem store: Open: %w", err)
+		return claimproducer.OpenOutcome{}, newValidationError("filesystem store: Open: %w", err)
 	}
-	if err := s.checkRootAvailable("Open"); err != nil {
+	pp, isPickPolicy := s.pickPolicies[selector]
+	if err := s.checkRootAvailable("Open", isPickPolicy); err != nil {
 		return claimproducer.OpenOutcome{}, err
 	}
-	if pp, ok := s.pickPolicies[selector]; ok {
+	if isPickPolicy {
 		return s.openPickPolicy(claimID, selector, pp)
 	}
 	return s.openScoped(claimID, selector)
@@ -177,25 +250,31 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer
 func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome, error) {
 	raw := strings.TrimSpace(selector)
 	if raw == "" {
-		return claimproducer.OpenOutcome{}, errors.New("filesystem store: Open: empty selector")
+		return claimproducer.OpenOutcome{}, newValidationError("filesystem store: Open: empty selector")
 	}
 	if hasGlobMeta(raw) {
-		return claimproducer.OpenOutcome{}, fmt.Errorf(
+		return claimproducer.OpenOutcome{}, newValidationError(
 			"filesystem store: Open: selector %q contains glob metacharacters; v3 standard filesystem supports concrete paths only",
 			raw)
 	}
 	cleaned := filepath.Clean(strings.TrimPrefix(raw, "./"))
 	if filepath.IsAbs(cleaned) {
-		return claimproducer.OpenOutcome{}, fmt.Errorf(
+		return claimproducer.OpenOutcome{}, newValidationError(
 			"filesystem store: Open: selector %q is absolute; selectors must be relative paths under the configured root", raw)
 	}
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return claimproducer.OpenOutcome{}, fmt.Errorf(
+		return claimproducer.OpenOutcome{}, newValidationError(
 			"filesystem store: Open: selector %q escapes the configured root", raw)
 	}
 	if cleaned == "." || cleaned == "" {
-		return claimproducer.OpenOutcome{}, fmt.Errorf(
+		return claimproducer.OpenOutcome{}, newValidationError(
 			"filesystem store: Open: selector %q resolves to the root itself; selectors must name a concrete entry", raw)
+	}
+	if fold := s.foldForContainment(cleaned); fold == fsStoreStateDirName ||
+		strings.HasPrefix(fold, fsStoreStateDirName+string(filepath.Separator)) {
+		return claimproducer.OpenOutcome{}, newValidationError(
+			"filesystem store: Open: selector %q resolves under the store's internal state directory %q, which is reserved for pick-policy bookkeeping",
+			raw, fsStoreStateDirName)
 	}
 
 	scopeBytes, err := s.scopeBytes(cleaned)
@@ -205,8 +284,13 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 	addrPath := filepath.Join(s.root, cleaned)
 	rel, relErr := filepath.Rel(s.root, addrPath)
 	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return claimproducer.OpenOutcome{}, fmt.Errorf(
+		return claimproducer.OpenOutcome{}, newValidationError(
 			"filesystem store: Open: selector %q resolved to %q which escapes the configured root %q", raw, addrPath, s.root)
+	}
+	if resolvedAncestor, resolvedRoot, escapes := s.symlinkEscapes(addrPath); escapes {
+		return claimproducer.OpenOutcome{}, newValidationError(
+			"filesystem store: Open: selector %q resolves (through a symlink) to %q which escapes the configured root %q",
+			raw, resolvedAncestor, resolvedRoot)
 	}
 	addrBytes, err := json.Marshal(addrPath)
 	if err != nil {
@@ -230,50 +314,72 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 }
 
 func (s *Store) Commit(_ context.Context, claimID string, scope []byte, _ []byte, leaseToken string) error {
-	if err := s.checkRootAvailable("Commit"); err != nil {
+	if err := s.checkRootAvailable("Commit", false); err != nil {
 		return err
 	}
 	pp, sel, entry, folder := s.findByClaimID(claimID)
 	if pp == nil {
 		pp, sel, entry, folder = s.findByScope(scope, leaseToken)
 	}
-	s.mu.Lock()
-	delete(s.claims, claimID)
-	s.mu.Unlock()
 	if pp != nil {
+		if err := s.checkRootAvailable("Commit", true); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
 		if err := s.applyPickAction(pp, sel, entry, folder, pp.OnCommit); err != nil {
 			s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
 			return err
 		}
 	}
+	s.mu.Lock()
+	delete(s.claims, claimID)
+	s.mu.Unlock()
 	s.ledger.RecordTerminal(claimID, "claim_committed", nil)
 	return nil
 }
 
 func (s *Store) Abandon(_ context.Context, claimID string, scope []byte, _ []byte, leaseToken string) error {
-	if err := s.checkRootAvailable("Abandon"); err != nil {
+	if err := s.checkRootAvailable("Abandon", false); err != nil {
 		return err
 	}
 	pp, sel, entry, folder := s.findByClaimID(claimID)
 	if pp == nil {
 		pp, sel, entry, folder = s.findByScope(scope, leaseToken)
 	}
-	s.mu.Lock()
-	delete(s.claims, claimID)
-	s.mu.Unlock()
 	if pp != nil {
+		if err := s.checkRootAvailable("Abandon", true); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
 		if err := s.applyPickAction(pp, sel, entry, folder, pp.OnGiveUp); err != nil {
 			s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
 			return err
 		}
 	}
+	s.mu.Lock()
+	delete(s.claims, claimID)
+	s.mu.Unlock()
 	s.ledger.RecordTerminal(claimID, "claim_abandoned", nil)
 	return nil
 }
 
-func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) error {
-	if err := s.checkRootAvailable("Release"); err != nil {
+func (s *Store) Release(_ context.Context, claimID string, scope []byte, _ []byte, leaseToken string) error {
+	if err := s.checkRootAvailable("Release", false); err != nil {
 		return err
+	}
+	pp, sel, entry, folder := s.findByClaimID(claimID)
+	if pp == nil {
+		pp, sel, entry, folder = s.findByScope(scope, leaseToken)
+	}
+	if pp != nil {
+		if err := s.checkRootAvailable("Release", true); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_release_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
+		if err := s.applyPickAction(pp, sel, entry, folder, action.Action{Kind: action.Recycle}); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_release_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
 	}
 	s.mu.Lock()
 	delete(s.claims, claimID)
@@ -282,15 +388,22 @@ func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) e
 	return nil
 }
 
-func (s *Store) checkRootAvailable(verb string) error {
+func (s *Store) checkRootAvailable(verb string, requireWrite bool) error {
 	if _, err := os.Stat(s.root); err != nil {
 		return &ClassedError{Class: RootUnavailableClass, Err: fmt.Errorf(
 			"filesystem store: %s: configured root %q is not accessible: %v", verb, s.root, err)}
 	}
-	if err := syscall.Access(s.root, 0x2); err != nil {
+	if !requireWrite {
+		return nil
+	}
+	probe, err := os.CreateTemp(s.root, ".rimsky-fs-store-write-probe-*")
+	if err != nil {
 		return &ClassedError{Class: RootUnavailableClass, Err: fmt.Errorf(
 			"filesystem store: %s: configured root %q is not writable: %v", verb, s.root, err)}
 	}
+	name := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(name)
 	return nil
 }
 
@@ -310,6 +423,15 @@ func validateClaimID(claimID string) error {
 			claimID)
 	}
 	return nil
+}
+
+func applyPickPolicyDefaults(pp *PickPolicy) {
+	if pp == nil {
+		return
+	}
+	if pp.SyncStrategy == "" {
+		pp.SyncStrategy = "on_open"
+	}
 }
 
 func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.ValidationResult {
@@ -378,8 +500,6 @@ func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.Valid
 	}
 
 	switch pp.SyncStrategy {
-	case "":
-		pp.SyncStrategy = "on_open"
 	case "on_open", "on_drain", "explicit", "never":
 	default:
 		addErr(fmt.Errorf("sync_strategy: must be on_open|on_drain|explicit|never, got %q", pp.SyncStrategy))

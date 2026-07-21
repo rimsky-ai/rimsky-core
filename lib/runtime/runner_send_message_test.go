@@ -88,6 +88,53 @@ func seedEmitInstance(t *testing.T, ctx context.Context, d persistence.Database)
 	return instanceID
 }
 
+func seedEmitInstanceNoBodySchema(t *testing.T, ctx context.Context, d persistence.Database) shared.UUID {
+	t.Helper()
+	store := d.Tables()
+	templateHash := "sha256-" + uuid.NewString()
+	instanceID := shared.UUID(uuid.New())
+	mainRunScopeID := shared.UUID(uuid.New())
+
+	tmpl := spec.TemplateSpec{
+		Name:    "emit-message-no-schema-fixture",
+		Version: "1",
+		Messages: []spec.MessageSchema{{
+			Type: "ping/unconstrained",
+		}},
+		Nodes: []spec.TemplateNodeDef{
+			{Type: "n", SendsMessage: "ping/unconstrained"},
+		},
+	}
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID:     templateHash,
+			Spec:   tmpl,
+			State:  persistence.TemplateStateRegistered,
+			Source: "direct",
+		}, tx); err != nil {
+			return err
+		}
+		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainRunScopeID,
+			GraphName:  spec.MainGraphName,
+			InstanceID: instanceID,
+		}); err != nil {
+			return err
+		}
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:           instanceID,
+			TemplateHash: templateHash,
+		}, tx); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seedEmitInstanceNoBodySchema: %v", err)
+	}
+	return instanceID
+}
+
 func countMessages(t *testing.T, ctx context.Context, d persistence.Database, instanceID shared.UUID) int {
 	t.Helper()
 	page, err := d.Tables().Messages().List(ctx,
@@ -363,6 +410,41 @@ func TestSendCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) 
 
 	if got := countMessages(t, ctx, d, instanceID); got != 1 {
 		t.Fatalf("envelope count = %d; want 1 (replay dedups envelope)", got)
+	}
+}
+
+func TestSendCascadeMessageInTx_EmptyNonNilBodyDefaultsToJSONObject(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := openEmitTestDB(t)
+	instanceID := seedEmitInstanceNoBodySchema(t, ctx, d)
+	nodeID := shared.UUID(uuid.New())
+	frameID := shared.UUID(uuid.New())
+
+	var msgID shared.UUID
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		id, _, err := sendCascadeMessageInTx(ctx, d.Tables(), tx,
+			instanceID, nodeID, frameID, "ping/unconstrained", []byte{})
+		msgID = id
+		return err
+	}); err != nil {
+		t.Fatalf("emit tx: %v", err)
+	}
+
+	row, err := d.Tables().Messages().Get(ctx, msgID)
+	if err != nil {
+		t.Fatalf("Messages.Get: %v", err)
+	}
+	if row == nil {
+		t.Fatalf("expected envelope row, got nil")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(row.Payload, &body); err != nil {
+		t.Fatalf("an empty non-nil body must be defaulted to a valid JSON object, "+
+			"got unparseable payload %q: %v", string(row.Payload), err)
+	}
+	if len(body) != 0 {
+		t.Errorf("payload = %v; want empty object", body)
 	}
 }
 

@@ -6,6 +6,7 @@ package node
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -13,6 +14,7 @@ func validateHolds(n TemplateNodeDef, base string, spec *TemplateSpec, declared 
 	if len(n.Holds) == 0 {
 		return
 	}
+	validateHoldsLocalAliasCollisions(n, base, res)
 	for alias, binding := range n.Holds {
 		hbase := fmt.Sprintf("%s.holds[%s]", base, alias)
 		from := strings.TrimSpace(binding.From)
@@ -51,6 +53,33 @@ func validateHolds(n TemplateNodeDef, base string, spec *TemplateSpec, declared 
 					from, alias),
 			})
 		}
+	}
+}
+
+// @concept: claim-co-holdership
+func validateHoldsLocalAliasCollisions(n TemplateNodeDef, base string, res *ValidationResult) {
+	byLocalAlias := make(map[string][]string, len(n.Holds))
+	for alias, binding := range n.Holds {
+		localAlias := effectiveHoldsLocalAlias(alias, binding)
+		byLocalAlias[localAlias] = append(byLocalAlias[localAlias], alias)
+	}
+	localAliases := make([]string, 0, len(byLocalAlias))
+	for localAlias := range byLocalAlias {
+		localAliases = append(localAliases, localAlias)
+	}
+	sort.Strings(localAliases)
+	for _, localAlias := range localAliases {
+		aliases := byLocalAlias[localAlias]
+		if len(aliases) < 2 {
+			continue
+		}
+		sort.Strings(aliases)
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fmt.Sprintf("%s.holds", base),
+			Msg: fmt.Sprintf(
+				"holds_local_alias_collision: aliases %s resolve to the same local alias %q (via as: or the alias itself); each holds: entry must resolve to a distinct local alias",
+				strings.Join(aliases, ", "), localAlias),
+		})
 	}
 }
 

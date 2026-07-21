@@ -5,6 +5,7 @@
 package claimledger
 
 import (
+	"strconv"
 	"sync"
 	"time"
 
@@ -39,6 +40,8 @@ type ClaimRecord struct {
 	OpenedAt time.Time
 	ClosedAt *time.Time
 	History  []ClaimEvent
+
+	seq int64
 }
 
 type subscriber struct {
@@ -51,6 +54,7 @@ type ClaimLedger struct {
 	order   []string
 	max     int
 	subs    map[string]map[*subscriber]struct{}
+	nextSeq int64
 }
 
 func NewClaimLedger(max int) *ClaimLedger {
@@ -80,6 +84,7 @@ func (l *ClaimLedger) RecordOpen(claimID, selector string, address, scope []byte
 			"selector": selector,
 		},
 	}
+	l.nextSeq++
 	rec := &ClaimRecord{
 		ClaimID:  claimID,
 		State:    ClaimStateOpen,
@@ -88,11 +93,20 @@ func (l *ClaimLedger) RecordOpen(claimID, selector string, address, scope []byte
 		Selector: selector,
 		OpenedAt: now,
 		History:  []ClaimEvent{openEvent},
+		seq:      l.nextSeq,
 	}
 	l.records[claimID] = rec
 	l.order = append(l.order, claimID)
 	l.broadcast(claimID, openEvent)
 	l.evictIfNeeded()
+}
+
+func (l *ClaimLedger) newUnknownRecordLocked(claimID string) *ClaimRecord {
+	l.nextSeq++
+	rec := &ClaimRecord{ClaimID: claimID, State: ClaimStateUnknown, OpenedAt: time.Now().UTC(), seq: l.nextSeq}
+	l.records[claimID] = rec
+	l.order = append(l.order, claimID)
+	return rec
 }
 
 func (l *ClaimLedger) RecordEvent(claimID, category, severity string, attrs map[string]any) {
@@ -103,9 +117,7 @@ func (l *ClaimLedger) RecordEvent(claimID, category, severity string, attrs map[
 	defer l.mu.Unlock()
 	rec, ok := l.records[claimID]
 	if !ok {
-		rec = &ClaimRecord{ClaimID: claimID, State: ClaimStateUnknown, OpenedAt: time.Now().UTC()}
-		l.records[claimID] = rec
-		l.order = append(l.order, claimID)
+		rec = l.newUnknownRecordLocked(claimID)
 	}
 	now := time.Now().UTC()
 	if severity == "" {
@@ -131,9 +143,7 @@ func (l *ClaimLedger) RecordTerminal(claimID, category string, attrs map[string]
 	defer l.mu.Unlock()
 	rec, ok := l.records[claimID]
 	if !ok {
-		rec = &ClaimRecord{ClaimID: claimID, State: ClaimStateUnknown, OpenedAt: time.Now().UTC()}
-		l.records[claimID] = rec
-		l.order = append(l.order, claimID)
+		rec = l.newUnknownRecordLocked(claimID)
 	}
 	now := time.Now().UTC()
 	rec.ClosedAt = &now
@@ -230,18 +240,19 @@ func (l *ClaimLedger) List(stateFilter, cursor string, limit int) ([]*ClaimRecor
 	if limit <= 0 {
 		limit = 50
 	}
-	skip := cursor != ""
-	out := make([]*ClaimRecord, 0, limit)
-	lastID := ""
-	for _, id := range l.order {
-		if skip {
-			if id == cursor {
-				skip = false
-			}
-			continue
+	afterSeq := int64(0)
+	if cursor != "" {
+		parsed, err := strconv.ParseInt(cursor, 10, 64)
+		if err != nil {
+			return nil, ""
 		}
+		afterSeq = parsed
+	}
+	out := make([]*ClaimRecord, 0, limit)
+	lastSeq := afterSeq
+	for _, id := range l.order {
 		rec, ok := l.records[id]
-		if !ok {
+		if !ok || rec.seq <= afterSeq {
 			continue
 		}
 		if stateFilter != "" && string(rec.State) != stateFilter {
@@ -250,14 +261,14 @@ func (l *ClaimLedger) List(stateFilter, cursor string, limit int) ([]*ClaimRecor
 		cp := *rec
 		cp.History = append([]ClaimEvent(nil), rec.History...)
 		out = append(out, &cp)
-		lastID = id
+		lastSeq = rec.seq
 		if len(out) >= limit {
 			break
 		}
 	}
 	next := ""
-	if len(out) >= limit && lastID != "" {
-		next = lastID
+	if len(out) >= limit && lastSeq != afterSeq {
+		next = strconv.FormatInt(lastSeq, 10)
 	}
 	return out, next
 }

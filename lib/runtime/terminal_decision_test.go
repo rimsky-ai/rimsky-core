@@ -5,9 +5,13 @@
 package runtime
 
 import (
+	"context"
 	"testing"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 func TestTerminalOutcomeKey_MapsEachOutcome(t *testing.T) {
@@ -57,6 +61,28 @@ func TestTerminalOutcome_IsAbandonAndCauseString(t *testing.T) {
 				t.Errorf("%v.CauseString() = %q (want %q)", c.outcome, got, c.cause)
 			}
 		})
+	}
+}
+
+func TestResolveClaimHandleTerminal_RejectsUnknownOutcomeBeforeAnyProducerVerb(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := storetest.NewFake("bogus-outcome-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+	})
+
+	_, err := ResolveClaimHandleTerminal(ctx, RunArgs{}, nil, TerminalDecision{
+		ClaimHandleID: shared.UUID{},
+		Producer:      store,
+		Outcome:       TerminalOutcome(""),
+	})
+	if err == nil {
+		t.Fatalf("expected an error for a zero-value TerminalOutcome; a garbage/unset outcome must not " +
+			"be silently classified as an abandon")
+	}
+
+	for _, c := range store.Calls() {
+		t.Errorf("unknown-outcome decision must not reach the producer at all; got verb %q", c.Verb)
 	}
 }
 

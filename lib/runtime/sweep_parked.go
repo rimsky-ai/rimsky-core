@@ -29,7 +29,11 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	now := args.Clock.Now()
+	clock := args.Clock
+	if clock == nil {
+		clock = shared.SystemClock{}
+	}
+	now := clock.Now()
 	limit := args.Limit
 	if limit <= 0 {
 		limit = 100
