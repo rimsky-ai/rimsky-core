@@ -15,6 +15,8 @@ type CliProgressEvent struct {
 	Name string
 }
 
+const maxPendingStdoutLineBytes = 8 * 1024 * 1024
+
 type CliStreamParser struct {
 	buf strings.Builder
 }
@@ -37,6 +39,9 @@ func (p *CliStreamParser) Push(chunk string) []CliProgressEvent {
 		if line != "" {
 			events = extractEvents(line, events)
 		}
+	}
+	if len(pending) > maxPendingStdoutLineBytes {
+		pending = pending[len(pending)-maxPendingStdoutLineBytes:]
 	}
 	p.buf.Reset()
 	p.buf.WriteString(pending)

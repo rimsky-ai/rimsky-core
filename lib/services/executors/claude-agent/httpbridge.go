@@ -18,6 +18,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
+const maxExecuteBodyBytes = 10 * 1024 * 1024
+
 type httpExecuteBody struct {
 	NodeID                   string         `json:"node_id"`
 	InstanceID               string         `json:"instance_id"`
@@ -69,6 +71,7 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxExecuteBodyBytes)
 		var body httpExecuteBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)

@@ -14,6 +14,9 @@ func FieldList(cfg map[string]any) ([]string, error) {
 		return []string{v}, nil
 	}
 	if vs, ok := cfg["fields"].([]any); ok {
+		if len(vs) == 0 {
+			return nil, fmt.Errorf("fields must be a non-empty array")
+		}
 		out := make([]string, 0, len(vs))
 		for _, v := range vs {
 			s, ok := v.(string)
@@ -25,6 +28,9 @@ func FieldList(cfg map[string]any) ([]string, error) {
 		return out, nil
 	}
 	if vs, ok := cfg["fields"].([]string); ok {
+		if len(vs) == 0 {
+			return nil, fmt.Errorf("fields must be a non-empty array")
+		}
 		return append([]string(nil), vs...), nil
 	}
 	return nil, fmt.Errorf("config: `field` (string) or `fields` ([]string) required")

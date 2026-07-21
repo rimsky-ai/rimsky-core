@@ -34,7 +34,7 @@ func ClassifyAgentError(stderr string) string {
 	if strings.Contains(lower, "(refusal)") ||
 		strings.Contains(lower, "refused by the model") ||
 		strings.Contains(lower, "declined to respond") ||
-		refusalWordRe.MatchString(lower) {
+		(refusalWordRe.MatchString(lower) && !refusalNegatedRe.MatchString(lower)) {
 		return "agent/refused"
 	}
 
@@ -42,10 +42,11 @@ func ClassifyAgentError(stderr string) string {
 }
 
 var (
-	refusalWordRe = regexp.MustCompile(`\brefusal\b`)
-	toolQuotedRe  = regexp.MustCompile("(?i)tool\\s+[\"'`]([^\"'`]+)[\"'`]")
-	toolColonRe   = regexp.MustCompile("(?i)tool_use_failed[:\\s]+[\"'`]?([A-Za-z0-9_./-]+)[\"'`]?")
-	toolBareRe    = regexp.MustCompile(`(?i)\btool\s+([A-Za-z0-9_./-]+)\s+(?:returned|failed|errored)`)
+	refusalWordRe    = regexp.MustCompile(`\brefusal\b`)
+	refusalNegatedRe = regexp.MustCompile(`(?i)\b(?:no|not|non|isn'?t|wasn'?t|without)\b(?:\s+\S+){0,3}\s+refusal\b`)
+	toolQuotedRe     = regexp.MustCompile("(?i)tool\\s+[\"'`]([^\"'`]+)[\"'`]")
+	toolColonRe      = regexp.MustCompile("(?i)tool_use_failed[:\\s]+[\"'`]?([A-Za-z0-9_./-]+)[\"'`]?")
+	toolBareRe       = regexp.MustCompile(`(?i)\btool\s+([A-Za-z0-9_./-]+)\s+(?:returned|failed|errored)`)
 )
 
 func parseToolName(stderr string) string {

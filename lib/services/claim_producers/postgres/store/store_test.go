@@ -5,8 +5,10 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 )
@@ -64,6 +66,89 @@ func TestValidPickAction(t *testing.T) {
 func TestNewRejectsEmptyConnection(t *testing.T) {
 	if _, err := New(t.Context(), Config{}); err == nil {
 		t.Fatal("New with empty Connection should error; got nil")
+	}
+}
+
+func TestNew_PingsPoolAndFailsFastOnUnreachableConnection(t *testing.T) {
+	if _, err := New(t.Context(), Config{Connection: "postgres://rimsky:rimsky@127.0.0.1:1/rimsky?sslmode=disable&connect_timeout=1"}); err == nil {
+		t.Fatal("New with an unreachable connection string should error at startup (a live Ping), not boot a producer that only fails at first Open")
+	}
+}
+
+func TestNew_VerifiesPartitionPolicyItemsTableExists(t *testing.T) {
+	_, dsn := bootPostgresTestContainer(t)
+	_, err := New(t.Context(), Config{
+		Connection: dsn,
+		PartitionPolicies: map[string]*PartitionPolicy{
+			"@missing": {ItemsTable: "table_that_does_not_exist", Select: "id", Where: "true"},
+		},
+	})
+	if err == nil {
+		t.Fatal("New with a partition_policies items_table that does not exist should error at startup")
+	}
+}
+
+func TestNew_AcceptsPartitionPolicyWithExistingItemsTable(t *testing.T) {
+	pool, dsn := bootPostgresTestContainer(t)
+	if _, err := pool.Exec(t.Context(), "CREATE TABLE partition_probe (id TEXT, payload TEXT)"); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	st, err := New(t.Context(), Config{
+		Connection: dsn,
+		PartitionPolicies: map[string]*PartitionPolicy{
+			"@ok": {ItemsTable: "partition_probe", Select: "id", Where: "true"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(st.Close)
+}
+
+func TestInsertItems_MidBatchFailureRollsBackWholeBatch(t *testing.T) {
+	pool, dsn := bootPostgresTestContainer(t)
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE dup_items (
+		item_id     TEXT PRIMARY KEY,
+		payload     JSONB NOT NULL,
+		state       TEXT NOT NULL,
+		claim_token TEXT,
+		claimed_at  TIMESTAMPTZ,
+		enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		priority    INT NOT NULL DEFAULT 0,
+		sequence    BIGSERIAL,
+		UNIQUE (payload)
+	)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	st, err := New(t.Context(), Config{
+		Connection: dsn,
+		PickPolicies: map[string]*PickPolicy{
+			"@dup": {
+				ItemsTable:        "dup_items",
+				OnCommit:          action.Action{Kind: action.Pop},
+				OnGiveUp:          action.Action{Kind: action.Pop},
+				VisibilityTimeout: time.Minute,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(st.Close)
+
+	payloads := []json.RawMessage{
+		json.RawMessage(`{"v":1}`),
+		json.RawMessage(`{"v":1}`),
+	}
+	if err := st.InsertItems(t.Context(), "@dup", payloads); err == nil {
+		t.Fatal("InsertItems: expected an error from the UNIQUE violation on the second row, got nil")
+	}
+	var count int
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM dup_items").Scan(&count); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rows in dup_items = %d, want 0 (a mid-batch failure must roll back the whole batch, not leave a partial insert committed)", count)
 	}
 }
 

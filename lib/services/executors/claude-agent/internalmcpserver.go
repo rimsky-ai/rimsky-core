@@ -299,6 +299,10 @@ func serveMcpRequest(
 
 	switch req.Method {
 	case "initialize":
+		if sid != "" {
+			sessions.evict(sid)
+			log.Info("mcp.session_reinitialized", "old_session_id", sid)
+		}
 		newSid := uuid.NewString()
 		sessions.open(newSid)
 		log.Info("mcp.session_opened", "session_id", newSid)

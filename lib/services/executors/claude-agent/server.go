@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -156,6 +157,11 @@ func (s *ExecutorServer) runAndCallback(
 	callbackURLFor func(base string) string,
 	decorateBody func(body map[string]any),
 ) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.handleDispatchPanic(inputs, traceID, r, logger, callbackURLFor, decorateBody)
+		}
+	}()
 	cliConfig, err := ParseCliConfig(inputs.Attributes["cli"])
 	if err != nil {
 		s.postFailure(inputs, ackID, traceID, err, logger, callbackURLFor, decorateBody)
@@ -257,6 +263,39 @@ func (s *ExecutorServer) postFailure(
 	}
 	s.cfg.PostCallback(callbackURLFor(inputs.CallbackURL), body, logger)
 	_ = ackID
+}
+
+func (s *ExecutorServer) handleDispatchPanic(
+	inputs dispatchInputs,
+	traceID string,
+	recovered any,
+	logger *slog.Logger,
+	callbackURLFor func(base string) string,
+	decorateBody func(body map[string]any),
+) {
+	const errorClass = "agent/internal_error"
+	msg := fmt.Sprintf("%v", recovered)
+	logger.Error("agent run panicked", "panic", msg, "error_class", errorClass, "stack", string(debug.Stack()))
+	if s.cfg.Observability != nil {
+		s.cfg.Observability.AppendEvent(traceID, makeTraceEvent("error", genv1.Severity_ERROR, "", map[string]any{
+			"error":       msg,
+			"error_class": errorClass,
+		}))
+		s.cfg.Observability.MarkTerminal(traceID)
+	}
+	if inputs.CallbackURL == "" {
+		return
+	}
+	body := map[string]any{
+		"error": map[string]any{
+			"error_class": errorClass,
+			"payload":     map[string]any{"error": msg},
+		},
+	}
+	if decorateBody != nil {
+		decorateBody(body)
+	}
+	s.cfg.PostCallback(callbackURLFor(inputs.CallbackURL), body, logger)
 }
 
 var cancelProbeHTTPClient = &http.Client{Timeout: 5 * time.Second}

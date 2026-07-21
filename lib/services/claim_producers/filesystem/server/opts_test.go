@@ -7,6 +7,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,43 @@ func TestLoadOptsFromEnv_LedgerMaxRecordsWiredThrough(t *testing.T) {
 	}
 	if opts.ServerConfig().LedgerMaxRecords != 2048 {
 		t.Fatalf("ServerConfig().LedgerMaxRecords = %d, want 2048", opts.ServerConfig().LedgerMaxRecords)
+	}
+}
+
+func TestLoadOptsFromEnv_PortsDefaultToDocumentedValuesWhenOmitted(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	root := filepath.Join(dir, "store")
+	writeFile(t, cfgPath, "root: "+root+"\n")
+
+	t.Setenv(ConfigEnv, cfgPath)
+
+	opts, err := LoadOptsFromEnv()
+	if err != nil {
+		t.Fatalf("LoadOptsFromEnv: %v", err)
+	}
+	if opts.GRPCPort != defaultGRPCPort {
+		t.Fatalf("Opts.GRPCPort = %d, want documented default %d (an omitted grpc_port must not silently bind an ephemeral port)", opts.GRPCPort, defaultGRPCPort)
+	}
+	if opts.HTTPPort != defaultHTTPPort {
+		t.Fatalf("Opts.HTTPPort = %d, want documented default %d", opts.HTTPPort, defaultHTTPPort)
+	}
+}
+
+func TestLoadOptsFromEnv_UndefinedEnvVarInConfigFailsStartup(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, cfgPath, "root: \"${STORE_FILESYSTEM_TEST_UNDEFINED_VAR}\"\n")
+
+	t.Setenv(ConfigEnv, cfgPath)
+	os.Unsetenv("STORE_FILESYSTEM_TEST_UNDEFINED_VAR")
+
+	_, err := LoadOptsFromEnv()
+	if err == nil {
+		t.Fatal("LoadOptsFromEnv: expected an error for an undefined ${VAR} reference, got nil")
+	}
+	if !strings.Contains(err.Error(), "STORE_FILESYSTEM_TEST_UNDEFINED_VAR") {
+		t.Fatalf("LoadOptsFromEnv error = %q, want it to name the undefined variable", err.Error())
 	}
 }
 

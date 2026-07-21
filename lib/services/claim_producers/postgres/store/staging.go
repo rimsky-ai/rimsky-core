@@ -8,10 +8,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -77,24 +79,46 @@ func (e *ClassedError) Unwrap() error { return e.Err }
 
 const stagingSchemaPrefix = "rimsky_stg_"
 
-var schemaIdentRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+const stagingSchemaHashHexLen = 48
 
 func stagingSchemaName(claimID string) string {
-	safe := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
-			return r
-		case r >= 'A' && r <= 'Z':
-			return r + ('a' - 'A')
-		default:
-			return '_'
-		}
-	}, claimID)
-	return stagingSchemaPrefix + safe
+	sum := sha256.Sum256([]byte(claimID))
+	return stagingSchemaPrefix + hex.EncodeToString(sum[:])[:stagingSchemaHashHexLen]
+}
+
+const stagingReservationsTable = "rimsky_staging_reservations"
+
+func (s *Store) ensureStagingReservationsTable(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS `+stagingReservationsTable+` (
+		schema_name text PRIMARY KEY,
+		claim_id    text NOT NULL,
+		reserved_at timestamptz NOT NULL DEFAULT now()
+	)`)
+	if err != nil {
+		return fmt.Errorf("postgres store: ensure staging reservations table: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) recordStagingReservation(ctx context.Context, staging, claimID string) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO `+stagingReservationsTable+` (schema_name, claim_id, reserved_at) VALUES ($1, $2, now())
+		 ON CONFLICT (schema_name) DO UPDATE SET claim_id = EXCLUDED.claim_id, reserved_at = now()`,
+		staging, claimID)
+	if err != nil {
+		return fmt.Errorf("postgres store: record staging reservation for %q: %w", staging, err)
+	}
+	return nil
+}
+
+func (s *Store) clearStagingReservation(ctx context.Context, staging string) {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM `+stagingReservationsTable+` WHERE schema_name = $1`, staging); err != nil {
+		slog.Warn("postgres store: clear staging reservation", "staging", staging, "error", err.Error())
+	}
 }
 
 func (s *Store) openStaging(ctx context.Context, claimID, selector string) (json.RawMessage, json.RawMessage, error) {
-	if !schemaIdentRegex.MatchString(selector) {
+	if !ItemsTableIdentRegex.MatchString(selector) {
 		return nil, nil, fmt.Errorf(
 			"postgres store: staged claim selector %q is not a valid schema identifier "+
 				"(lowercase letters/digits/underscore; not starting with a digit)", selector)
@@ -118,6 +142,9 @@ func (s *Store) openStaging(ctx context.Context, claimID, selector string) (json
 	if _, err := s.pool.Exec(ctx, stmt); err != nil {
 		return nil, nil, fmt.Errorf("postgres store: reserve staging schema %q: %w", staging, err)
 	}
+	if err := s.recordStagingReservation(ctx, staging, claimID); err != nil {
+		return nil, nil, err
+	}
 	addr, err := json.Marshal(staging)
 	if err != nil {
 		return nil, nil, fmt.Errorf("postgres store: marshal staging address: %w", err)
@@ -130,7 +157,7 @@ func (s *Store) openStaging(ctx context.Context, claimID, selector string) (json
 }
 
 func requireStagingSchemaIdent(staging string) error {
-	if !schemaIdentRegex.MatchString(staging) || !strings.HasPrefix(staging, stagingSchemaPrefix) {
+	if !ItemsTableIdentRegex.MatchString(staging) || !strings.HasPrefix(staging, stagingSchemaPrefix) {
 		return fmt.Errorf(
 			"postgres store: refusing to drop or rename schema %q: not a rimsky staging schema "+
 				"(must be a valid identifier carrying the %q prefix)", staging, stagingSchemaPrefix)
@@ -140,7 +167,7 @@ func requireStagingSchemaIdent(staging string) error {
 
 func (s *Store) commitStagingSwap(ctx context.Context, canonical, staging string) error {
 	swapFailed := func(err error) error { return &ClassedError{Class: SwapFailedClass, Err: err} }
-	if !schemaIdentRegex.MatchString(canonical) {
+	if !ItemsTableIdentRegex.MatchString(canonical) {
 		return swapFailed(fmt.Errorf("postgres store: canonical %q is not a valid schema identifier", canonical))
 	}
 	if strings.HasPrefix(canonical, stagingSchemaPrefix) {
@@ -204,6 +231,7 @@ func (s *Store) commitStagingSwap(ctx context.Context, canonical, staging string
 		return swapFailed(fmt.Errorf("postgres store: commit swap tx: %w", err))
 	}
 	committed = true
+	s.clearStagingReservation(ctx, staging)
 	return nil
 }
 
@@ -215,6 +243,7 @@ func (s *Store) dropStaging(ctx context.Context, staging string) error {
 	if _, err := s.pool.Exec(ctx, stmt); err != nil {
 		return fmt.Errorf("postgres store: drop staging schema %q: %w", staging, err)
 	}
+	s.clearStagingReservation(ctx, staging)
 	return nil
 }
 

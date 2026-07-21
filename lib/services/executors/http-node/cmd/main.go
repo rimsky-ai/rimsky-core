@@ -22,6 +22,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
+const grpcShutdownGracePeriod = 10 * time.Second
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	opts, err := httpnode.LoadOptsFromEnv()
@@ -59,10 +61,9 @@ func main() {
 		}
 	}()
 
-	httpBridgeURL := opts.HTTPBridgeURL
 	mux := http.NewServeMux()
 	httpnode.MountBridge(mux, s)
-	httpnode.MountObservabilityBridge(mux, obs, httpBridgeURL)
+	httpnode.MountObservabilityBridge(mux, obs)
 	httpAddr := fmt.Sprintf("%s:%d", opts.Host, opts.HTTPPort)
 	httpLis, err := net.Listen("tcp", httpAddr)
 	if err != nil {
@@ -102,7 +103,7 @@ func main() {
 	<-sigCh
 	slog.Info("http-node stopping")
 	cancelSweep()
-	grpcSrv.GracefulStop()
+	httpnode.GracefulStopWithDeadline(grpcSrv, grpcShutdownGracePeriod)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)

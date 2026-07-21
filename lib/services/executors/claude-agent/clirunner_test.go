@@ -6,6 +6,7 @@ package claudeagent
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,7 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 var testPaths = CliArgPaths{
@@ -246,6 +249,33 @@ func TestBuildClaudeCliResumeArgs(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeCliResumeArgsMaxBudgetEnvFallback(t *testing.T) {
+	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "10.00")
+	args, err := BuildClaudeCliResumeArgs(CliResumeRequest{
+		SessionID: "550e8400-e29b-41d4-a716-446655440000",
+		Prompt:    "resume",
+	}, CliArgPaths{McpConfigPath: "/tmp/mcp.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.Index(args, "--max-budget-usd")
+	if i < 0 || args[i+1] != "10.00" {
+		t.Fatalf("resume without an explicit request budget must fall back to RIMSKY_DISPATCH_MAX_USD, same as spawn: %v", args)
+	}
+
+	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
+	args, err = BuildClaudeCliResumeArgs(CliResumeRequest{
+		SessionID: "550e8400-e29b-41d4-a716-446655440000",
+		Prompt:    "resume",
+	}, CliArgPaths{McpConfigPath: "/tmp/mcp.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(args, "--max-budget-usd") {
+		t.Fatalf("expected no budget flag when neither the request nor the env var is set: %v", args)
+	}
+}
+
 func TestBuildClaudeCliResumeArgsCarriesRestrictionsAndBudget(t *testing.T) {
 	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
 	args, err := BuildClaudeCliResumeArgs(CliResumeRequest{
@@ -440,6 +470,45 @@ func TestSpawnSignalTermination(t *testing.T) {
 	if result.Signal == "" {
 		t.Fatal("expected signal name")
 	}
+}
+
+func TestSpawnSigkillTerminatesWholeProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "grandchild.pid")
+	binary := writeFakeCli(t, fmt.Sprintf(`(sleep 30 & echo $! > %q); wait`, pidFile))
+	runner := NewClaudeCliRunner(CliRunnerOpts{BinaryPath: binary})
+	handle, err := runner.Spawn(baseReq(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var childPID int
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(pidFile)
+		if readErr == nil && len(data) > 0 {
+			if pid, convErr := strconv.Atoi(strings.TrimSpace(string(data))); convErr == nil && pid > 0 {
+				childPID = pid
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if childPID == 0 {
+		t.Fatal("grandchild pid was never written")
+	}
+
+	handle.SendSigkill()
+	handle.WaitExit()
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(childPID, 0); err != nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("grandchild pid %d is still alive after SendSigkill; SendSigkill must terminate the whole process group, not just the direct child", childPID)
 }
 
 func TestSpawnMissingBinaryReturnsError(t *testing.T) {

@@ -47,7 +47,7 @@ func Serve(opts Opts) error {
 		callbackClient.Transport = &http.Transport{TLSClientConfig: identity.ClientTLSConfig()}
 	}
 
-	obs := NewObservabilityServer(opts.ObservabilityHTTPBridgeURL)
+	obs := NewObservabilityServer(opts.ObservabilityHTTPBridgeURL, opts.DeclaredTags)
 	executor := NewExecutorServer(ServerConfig{
 		Opts:          opts,
 		Observability: obs,

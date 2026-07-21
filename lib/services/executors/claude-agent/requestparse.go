@@ -123,18 +123,34 @@ func stringOrEmpty(v any) string {
 	return s
 }
 
-func stringArrayOrNil(v any) []string {
+func stringOrEmptyStrict(v any, field string) (string, error) {
+	if v == nil {
+		return "", nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", &CliConfigError{Message: fmt.Sprintf("%s must be a string, got %T", field, v)}
+	}
+	return s, nil
+}
+
+func stringArrayOrNil(v any, field string) ([]string, error) {
+	if v == nil {
+		return nil, nil
+	}
 	items, ok := v.([]any)
 	if !ok {
-		return nil
+		return nil, &CliConfigError{Message: fmt.Sprintf("%s must be an array, got %T", field, v)}
 	}
 	var out []string
-	for _, item := range items {
-		if s, ok := item.(string); ok && s != "" {
-			out = append(out, s)
+	for i, item := range items {
+		s, ok := item.(string)
+		if !ok || s == "" {
+			return nil, &CliConfigError{Message: fmt.Sprintf("%s[%d] must be a non-empty string, got %v", field, i, item)}
 		}
+		out = append(out, s)
 	}
-	return out
+	return out, nil
 }
 
 func stringMapOrNil(v any) map[string]string {
@@ -169,31 +185,55 @@ func ParseCliConfig(v any) (*CliConfig, error) {
 	if bare, ok := cli["bare"].(bool); ok {
 		out.Bare = bare
 	}
-	out.PermissionMode = stringOrEmpty(cli["permission_mode"])
-	out.AllowedTools = stringArrayOrNil(cli["allowed_tools"])
-	out.DisallowedTools = stringArrayOrNil(cli["disallowed_tools"])
-	out.AddDirs = stringArrayOrNil(cli["add_dirs"])
+	permissionMode, err := stringOrEmptyStrict(cli["permission_mode"], "cli.permission_mode")
+	if err != nil {
+		return nil, err
+	}
+	out.PermissionMode = permissionMode
+	allowedTools, err := stringArrayOrNil(cli["allowed_tools"], "cli.allowed_tools")
+	if err != nil {
+		return nil, err
+	}
+	out.AllowedTools = allowedTools
+	disallowedTools, err := stringArrayOrNil(cli["disallowed_tools"], "cli.disallowed_tools")
+	if err != nil {
+		return nil, err
+	}
+	out.DisallowedTools = disallowedTools
+	addDirs, err := stringArrayOrNil(cli["add_dirs"], "cli.add_dirs")
+	if err != nil {
+		return nil, err
+	}
+	out.AddDirs = addDirs
 	out.MaxBudgetUSD = stringOrEmpty(cli["max_budget_usd"])
 	if hr, ok := cli["handle_rate_limits"].(bool); ok {
 		out.HandleRateLimits = &hr
 	}
-	if msc, ok := numberAsInt(cli["max_schema_corrections"]); ok {
-		out.MaxSchemaCorrections = &msc
+	msc, err := nonNegativeIntOrNil(cli["max_schema_corrections"], "cli.max_schema_corrections")
+	if err != nil {
+		return nil, err
 	}
+	out.MaxSchemaCorrections = msc
 	servers, err := parseMcpServers(cli["mcp_servers"])
 	if err != nil {
 		return nil, err
 	}
 	out.McpServers = servers
-	out.ExposeEnv = stringArrayOrNil(cli["expose_env"])
+	exposeEnv, err := stringArrayOrNil(cli["expose_env"], "cli.expose_env")
+	if err != nil {
+		return nil, err
+	}
+	out.ExposeEnv = exposeEnv
 	signoffs, err := parseRequiredSignoffs(cli["required_signoffs"])
 	if err != nil {
 		return nil, err
 	}
 	out.RequiredSignoffs = signoffs
-	if msa, ok := numberAsInt(cli["max_signoff_attempts"]); ok {
-		out.MaxSignoffAttempts = &msa
+	msa, err := nonNegativeIntOrNil(cli["max_signoff_attempts"], "cli.max_signoff_attempts")
+	if err != nil {
+		return nil, err
 	}
+	out.MaxSignoffAttempts = msa
 	stm, err := nonNegativeIntOrNil(cli["silence_timeout_ms"], "cli.silence_timeout_ms")
 	if err != nil {
 		return nil, err
@@ -207,21 +247,13 @@ func ParseCliConfig(v any) (*CliConfig, error) {
 	return out, nil
 }
 
-func numberAsInt(v any) (int, bool) {
-	f, ok := v.(float64)
-	if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, false
-	}
-	return int(f), true
-}
-
 func nonNegativeIntOrNil(v any, field string) (*int, error) {
 	if v == nil {
 		return nil, nil
 	}
 	f, ok := v.(float64)
 	if !ok || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f != math.Trunc(f) {
-		return nil, &CliConfigError{Message: fmt.Sprintf("%s must be a non-negative integer (ms), got %v", field, v)}
+		return nil, &CliConfigError{Message: fmt.Sprintf("%s must be a non-negative integer, got %v", field, v)}
 	}
 	i := int(f)
 	return &i, nil
@@ -250,10 +282,14 @@ func parseMcpServers(v any) ([]McpServerInput, error) {
 		if name == "" {
 			return nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers[%d].name must be a non-empty string", i)}
 		}
+		allowedTools, err := stringArrayOrNil(e["allowed_tools"], fmt.Sprintf("cli.mcp_servers[%d].allowed_tools", i))
+		if err != nil {
+			return nil, err
+		}
 		entry := McpServerInput{
 			Transport:    transport,
 			Name:         name,
-			AllowedTools: stringArrayOrNil(e["allowed_tools"]),
+			AllowedTools: allowedTools,
 		}
 		switch transport {
 		case mcpTransportHTTP:
@@ -267,7 +303,11 @@ func parseMcpServers(v any) ([]McpServerInput, error) {
 			if entry.Command == "" {
 				return nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers[%d] (stdio) requires a non-empty command", i)}
 			}
-			entry.Args = stringArrayOrNil(e["args"])
+			args, err := stringArrayOrNil(e["args"], fmt.Sprintf("cli.mcp_servers[%d].args", i))
+			if err != nil {
+				return nil, err
+			}
+			entry.Args = args
 			entry.Env = stringMapOrNil(e["env"])
 		case mcpTransportModule, mcpTransportHTTPLoopback:
 			entry.Module = stringOrEmpty(e["module"])

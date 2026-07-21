@@ -31,6 +31,13 @@ func TestDetectRateLimitHTTP429(t *testing.T) {
 	}
 }
 
+func TestDetectRateLimitIgnoresCoincidental429Count(t *testing.T) {
+	r := DetectRateLimit("build failed after processing 429 files", time.Now())
+	if r.Detected {
+		t.Fatalf("expected no detection for a coincidental '429' item count, got %+v", r)
+	}
+}
+
 func TestDetectRateLimitParsesRetryAfterSeconds(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	r := DetectRateLimit("rate limit\nretry-after: 60", now)

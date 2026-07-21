@@ -48,6 +48,18 @@ func TestFieldList_RequiresFieldOrFields(t *testing.T) {
 	}
 }
 
+func TestFieldList_RejectsEmptyFieldsArray(t *testing.T) {
+	if _, err := FieldList(map[string]any{"fields": []any{}}); err == nil {
+		t.Fatal("expected error for an empty fields: [] array (would compile syntactically invalid SQL)")
+	}
+}
+
+func TestFieldList_RejectsEmptyFieldsStringSlice(t *testing.T) {
+	if _, err := FieldList(map[string]any{"fields": []string{}}); err == nil {
+		t.Fatal("expected error for an empty fields string slice")
+	}
+}
+
 func TestNumeric_CoversAllNumericKinds(t *testing.T) {
 	cases := []any{
 		float64(1), float32(1), int(1), int8(1), int16(1), int32(1), int64(1),

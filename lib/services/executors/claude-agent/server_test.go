@@ -60,7 +60,7 @@ func (r *callbackRecorder) waitForCall(t *testing.T) capturedCallback {
 func startTestExecutor(t *testing.T) (*ExecutorServer, *ObservabilityServer, *callbackRecorder) {
 	t.Helper()
 	recorder := &callbackRecorder{}
-	obs := NewObservabilityServer("http://bridge.invalid")
+	obs := NewObservabilityServer("http://bridge.invalid", DeclaredTags())
 	executor := NewExecutorServer(ServerConfig{
 		Opts:          Opts{StubMode: true},
 		CliRunner:     &fakeRunner{},
@@ -180,6 +180,53 @@ func TestGrpcExecuteProbeCancelSignalsObservedThenAcknowledgedAndSurfacesCancele
 	}
 	if status.Code(execErr) != codes.Canceled {
 		t.Fatalf("expected codes.Canceled, got %v", execErr)
+	}
+}
+
+type panicRunner struct{}
+
+func (panicRunner) Spawn(req CliSpawnRequest) (CliHandle, error) {
+	panic("boom: simulated panic inside CliRunner.Spawn")
+}
+
+func (panicRunner) Resume(req CliResumeRequest) (CliHandle, error) {
+	panic("boom: simulated panic inside CliRunner.Resume")
+}
+
+func TestGrpcExecuteRecoversDispatchGoroutinePanicAndReportsInternalError(t *testing.T) {
+	recorder := &callbackRecorder{}
+	obs := NewObservabilityServer("http://bridge.invalid", nil)
+	executor := NewExecutorServer(ServerConfig{
+		Opts:          Opts{StubMode: false, Auth: CliAuthConfig{AnthropicAPIKey: "test-key"}},
+		CliRunner:     panicRunner{},
+		Observability: obs,
+		PostCallback:  recorder.post,
+	})
+	client, _ := dialTestGrpc(t, executor, obs)
+
+	attributes, err := structpb.NewStruct(map[string]any{"user_prompt": "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := client.Execute(context.Background(), &genv1.ExecuteRequest{
+		NodeId:      "node-a",
+		NodeType:    "claude-agent",
+		DispatchId:  "disp-panic",
+		Attributes:  attributes,
+		CallbackUrl: "http://supervisor.invalid/cb/",
+		CancelToken: "ct-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.GetAwaitAsync() == nil {
+		t.Fatalf("expected await_async outcome, got %+v", outcome)
+	}
+
+	call := recorder.waitForCall(t)
+	errBody, ok := call.body["error"].(map[string]any)
+	if !ok || errBody["error_class"] != "agent/internal_error" {
+		t.Fatalf("expected an agent/internal_error callback after the panic was recovered, got %v", call.body)
 	}
 }
 

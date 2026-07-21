@@ -172,9 +172,13 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	if limit <= 0 {
 		limit = 10 * 1024 * 1024
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return execoutcome.Errored(classifyTransportErr(err), "read body: "+err.Error()), nil
+	}
+	if int64(len(body)) > limit {
+		return execoutcome.Errored("http/response_truncated",
+			fmt.Sprintf("response body exceeds the %d-byte cap; refusing to deliver a truncated (possibly corrupt) body", limit)), nil
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests && !statusOK(resp.StatusCode, expectStatus) {

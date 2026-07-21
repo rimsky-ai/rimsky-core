@@ -51,6 +51,52 @@ func dialLifecycleSubscriberClient(t *testing.T, addr string) genv1.LifecycleSub
 	return genv1.NewLifecycleSubscriberClient(conn)
 }
 
+func dialClaimProducerClient(t *testing.T, addr string) genv1.ClaimProducerClient {
+	t.Helper()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial %s: %v", addr, err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return genv1.NewClaimProducerClient(conn)
+}
+
+func TestFilesystemServer_LifecycleEnabled_CapabilitiesAdvertisesProtocol(t *testing.T) {
+	addr := startFilesystemServerForLifecycleGateTest(t, true)
+	client := dialClaimProducerClient(t, addr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := client.Capabilities(ctx, &genv1.CapabilitiesRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	found := false
+	for _, p := range resp.GetProtocols() {
+		if p == "lifecycle_subscriber" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Capabilities.protocols = %v, want it to include %q since Run was started with EnableLifecycle:true", resp.GetProtocols(), "lifecycle_subscriber")
+	}
+}
+
+func TestFilesystemServer_LifecycleDisabled_CapabilitiesOmitsProtocol(t *testing.T) {
+	addr := startFilesystemServerForLifecycleGateTest(t, false)
+	client := dialClaimProducerClient(t, addr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := client.Capabilities(ctx, &genv1.CapabilitiesRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if len(resp.GetProtocols()) != 0 {
+		t.Fatalf("Capabilities.protocols = %v, want empty since Run was started with EnableLifecycle:false", resp.GetProtocols())
+	}
+}
+
 func TestFilesystemServer_LifecycleDisabled_RPCUnimplemented(t *testing.T) {
 	addr := startFilesystemServerForLifecycleGateTest(t, false)
 	client := dialLifecycleSubscriberClient(t, addr)

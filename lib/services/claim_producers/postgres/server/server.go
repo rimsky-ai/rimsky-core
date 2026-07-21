@@ -56,7 +56,18 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{store: st}, nil
+	return &Server{store: st, protocols: declaredProtocols(cfg)}, nil
+}
+
+func declaredProtocols(cfg Config) []string {
+	var protocols []string
+	if cfg.EnableLifecycle {
+		protocols = append(protocols, claimproducer.ProtocolLifecycleSubscriber)
+	}
+	if cfg.EnableExecutor {
+		protocols = append(protocols, claimproducer.ProtocolExecutor)
+	}
+	return protocols
 }
 
 func (s *Server) RunSweep(ctx context.Context, interval time.Duration) {
@@ -118,9 +129,17 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	<-ctx.Done()
 	bridge.GracefulStop(grpcSrv, gracefulStopBudget)
-	_ = httpSrv.Close()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), gracefulStopBudget)
+	defer cancelShutdown()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("postgres store: http graceful shutdown", "error", err.Error())
+		_ = httpSrv.Close()
+	}
 	if adminSrv != nil {
-		_ = adminSrv.Close()
+		if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("postgres store: admin graceful shutdown", "error", err.Error())
+			_ = adminSrv.Close()
+		}
 	}
 	st.Close()
 	return nil
@@ -128,7 +147,8 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 type Server struct {
 	genv1.UnimplementedClaimProducerServer
-	store *pgsstore.Store
+	store     *pgsstore.Store
+	protocols []string
 }
 
 func producerDeclaredErrorClasses() []string {
@@ -149,12 +169,13 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 		WriteSemanticsAllowed: out,
 		DeclaredErrorClasses:  producerDeclaredErrorClasses(),
 		SupportsSplitScope:    true,
+		Protocols:             s.protocols,
 	}, nil
 }
 
 func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	if intent := req.GetIntent(); intent != "r" && intent != "rw" {
-		return nil, fmt.Errorf("postgres.Open: intent must be \"r\" or \"rw\", got %q", intent)
+		return nil, status.Errorf(codes.InvalidArgument, "postgres.Open: intent must be \"r\" or \"rw\", got %q", intent)
 	}
 	outcome, err := s.store.Open(ctx, req.GetClaimId(), req.GetSelector(), claimproducer.Intent(req.GetIntent()))
 	if err != nil {

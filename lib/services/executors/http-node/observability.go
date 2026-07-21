@@ -43,7 +43,7 @@ func (s *ObservabilityServer) MarkTerminal(nodeRunID string) { s.store.MarkTermi
 
 func (s *ObservabilityServer) SweepEvicted(now time.Time) { s.store.SweepEvicted(now) }
 
-func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
+func (s *ObservabilityServer) CapabilitiesPayload() *genv1.ObservabilityCapabilities {
 	return &genv1.ObservabilityCapabilities{
 		SupportsTraceGet:              true,
 		SupportsTraceStream:           true,
@@ -52,7 +52,11 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 		ExpectedAttributesSchema:      SchemaBytes(),
 		DeclaredTags:                  DeclaredTags(),
 		DeclaredErrorClasses:          DeclaredErrorClasses(),
-	}, nil
+	}
+}
+
+func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
+	return s.CapabilitiesPayload(), nil
 }
 
 func (s *ObservabilityServer) GetTrace(ctx context.Context, req *genv1.GetTraceRequest) (*genv1.Trace, error) {

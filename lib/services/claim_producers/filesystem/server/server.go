@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/store"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/lifecycle"
@@ -54,7 +55,15 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{store: st}, nil
+	return &Server{store: st, protocols: declaredProtocols(cfg)}, nil
+}
+
+func declaredProtocols(cfg Config) []string {
+	var protocols []string
+	if cfg.EnableLifecycle {
+		protocols = append(protocols, claimproducer.ProtocolLifecycleSubscriber)
+	}
+	return protocols
 }
 
 func (s *Server) RunSweep(ctx context.Context, interval time.Duration) {
@@ -115,16 +124,25 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	<-ctx.Done()
 	bridge.GracefulStop(grpcSrv, gracefulStopBudget)
-	_ = httpSrv.Close()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), gracefulStopBudget)
+	defer cancelShutdown()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("filesystem store: http graceful shutdown", "error", err.Error())
+		_ = httpSrv.Close()
+	}
 	if adminSrv != nil {
-		_ = adminSrv.Close()
+		if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("filesystem store: admin graceful shutdown", "error", err.Error())
+			_ = adminSrv.Close()
+		}
 	}
 	return nil
 }
 
 type Server struct {
 	genv1.UnimplementedClaimProducerServer
-	store *fsstore.Store
+	store     *fsstore.Store
+	protocols []string
 }
 
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
@@ -137,6 +155,7 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 		WriteSemanticsAllowed: out,
 		DeclaredErrorClasses:  c.DeclaredErrorClasses,
 		SupportsSplitScope:    c.SupportsSplitScope,
+		Protocols:             s.protocols,
 	}, nil
 }
 
@@ -200,7 +219,11 @@ func (s *Server) SplitScope(ctx context.Context, req *genv1.SplitScopeRequest) (
 	}
 	parentPath, ok := s.store.LookupClaimPath(claimID)
 	if !ok {
-		return nil, status.Errorf(codes.NotFound, "filesystem store: SplitScope: unknown or non-open claim_handle_id %q", claimID)
+		if rec, found := s.store.Ledger().Get(claimID); found {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"filesystem store: SplitScope: claim %q is not OPEN (state=%s)", claimID, rec.State)
+		}
+		return nil, status.Errorf(codes.NotFound, "filesystem store: SplitScope: unknown claim_handle_id %q", claimID)
 	}
 	parent := parentClaimInfo{ClaimID: claimID, AbsPath: parentPath}
 	if sel, pp, ok := s.store.LookupClaimPickPolicy(claimID); ok {

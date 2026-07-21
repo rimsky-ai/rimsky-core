@@ -93,13 +93,14 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 		})
 	}
 	idle := s.idleTimeout
+	var idleTimer *time.Timer
+	var idleC <-chan time.Time
+	if idle > 0 {
+		idleTimer = time.NewTimer(idle)
+		defer idleTimer.Stop()
+		idleC = idleTimer.C
+	}
 	for {
-		var idleC <-chan time.Time
-		if idle > 0 {
-			t := time.NewTimer(idle)
-			defer t.Stop()
-			idleC = t.C
-		}
 		select {
 		case <-stream.Context().Done():
 			return nil
@@ -121,6 +122,15 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 			}
 			if err := stream.Send(claimEventToProto(ev)); err != nil {
 				return err
+			}
+			if idleTimer != nil {
+				if !idleTimer.Stop() {
+					select {
+					case <-idleTimer.C:
+					default:
+					}
+				}
+				idleTimer.Reset(idle)
 			}
 		}
 	}

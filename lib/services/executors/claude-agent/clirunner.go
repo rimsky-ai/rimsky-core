@@ -131,10 +131,12 @@ func rejectFlagLike(field, value string) error {
 	return nil
 }
 
+const defaultPermissionMode = "bypassPermissions"
+
 func sessionConfigArgs(cfg cliSessionConfig) ([]string, error) {
 	permissionMode := cfg.PermissionMode
 	if permissionMode == "" {
-		permissionMode = "bypassPermissions"
+		permissionMode = defaultPermissionMode
 	}
 	maxBudgetUSD := cfg.MaxBudgetUSD
 	if maxBudgetUSD == "" {
@@ -217,14 +219,7 @@ func BuildClaudeCliResumeArgs(req CliResumeRequest, paths CliArgPaths) ([]string
 }
 
 func joinTools(tools []string) string {
-	out := ""
-	for i, t := range tools {
-		if i > 0 {
-			out += " "
-		}
-		out += t
-	}
-	return out
+	return strings.Join(tools, " ")
 }
 
 func mcpConfigJSON(tools []CliToolConfig) ([]byte, error) {
@@ -391,6 +386,7 @@ func spawnChild(binary string, args []string, cwd string, env []string, stdin st
 	cmd.Dir = cwd
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cleanup()
@@ -506,13 +502,13 @@ func (h *realCliHandle) OnExit(cb func(ExitResult)) {
 
 func (h *realCliHandle) SendSigterm() {
 	if h.cmd.Process != nil {
-		_ = h.cmd.Process.Signal(syscall.SIGTERM)
+		_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGTERM)
 	}
 }
 
 func (h *realCliHandle) SendSigkill() {
 	if h.cmd.Process != nil {
-		_ = h.cmd.Process.Kill()
+		_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
 	}
 }
 

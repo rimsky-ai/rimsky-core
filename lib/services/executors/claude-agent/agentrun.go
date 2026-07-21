@@ -669,16 +669,15 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 			}
 			lastStdoutAt := state.lastStdoutAt
 			state.mu.Unlock()
-			if oldest != nil {
-				if toolUseTimeoutMs > 0 && now.Sub(oldest.startedAt) > time.Duration(toolUseTimeoutMs)*time.Millisecond {
-					teardownAndResolve(erroredOutcome("agent/tool_use_timeout", map[string]any{
-						"tool_use_id": oldestID,
-						"tool_name":   oldest.name,
-						"duration_ms": now.Sub(oldest.startedAt).Milliseconds(),
-					}))
-					return
-				}
-			} else if silenceTimeoutMs > 0 && now.Sub(lastStdoutAt) > time.Duration(silenceTimeoutMs)*time.Millisecond {
+			if oldest != nil && toolUseTimeoutMs > 0 && now.Sub(oldest.startedAt) > time.Duration(toolUseTimeoutMs)*time.Millisecond {
+				teardownAndResolve(erroredOutcome("agent/tool_use_timeout", map[string]any{
+					"tool_use_id": oldestID,
+					"tool_name":   oldest.name,
+					"duration_ms": now.Sub(oldest.startedAt).Milliseconds(),
+				}))
+				return
+			}
+			if silenceTimeoutMs > 0 && now.Sub(lastStdoutAt) > time.Duration(silenceTimeoutMs)*time.Millisecond {
 				teardownAndResolve(erroredOutcome("agent/timeout", map[string]any{
 					"silence_duration_ms": now.Sub(lastStdoutAt).Milliseconds(),
 				}))
@@ -846,7 +845,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 
 func permissionModeOrDefault(mode string) string {
 	if mode == "" {
-		return "bypassPermissions"
+		return defaultPermissionMode
 	}
 	return mode
 }

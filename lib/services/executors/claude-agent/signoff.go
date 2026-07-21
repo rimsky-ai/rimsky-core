@@ -75,18 +75,31 @@ func canonicalizeJSON(raw []byte) (string, error) {
 }
 
 func ValueAtPath(obj any, path string) any {
+	v, _ := valueAtPathExists(obj, path)
+	return v
+}
+
+func valueAtPathExists(obj any, path string) (any, bool) {
 	if path == "" {
-		return obj
+		return obj, true
 	}
 	cur := obj
-	for _, seg := range strings.Split(path, ".") {
+	segs := strings.Split(path, ".")
+	for i, seg := range segs {
 		m, ok := cur.(map[string]any)
 		if !ok {
-			return nil
+			return nil, false
 		}
-		cur = m[seg]
+		v, present := m[seg]
+		if !present {
+			return nil, false
+		}
+		cur = v
+		if i == len(segs)-1 {
+			return cur, true
+		}
 	}
-	return cur
+	return cur, true
 }
 
 func VerifyRequiredSignoffs(
@@ -117,8 +130,15 @@ func VerifyRequiredSignoffs(
 		}
 
 		var value any
+		exists := req.Path == ""
 		if attributesDelta != nil {
-			value = ValueAtPath(attributesDelta, req.Path)
+			v, ok := valueAtPathExists(attributesDelta, req.Path)
+			value = v
+			exists = exists || ok
+		}
+		if !exists {
+			unmet = append(unmet, UnmetSignoff{Path: reportPath, Reason: UnmetSignoffReasonMissing})
+			continue
 		}
 		message, err := BuildSignoffMessage(nodeRunID, value)
 		if err != nil {

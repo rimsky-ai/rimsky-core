@@ -85,6 +85,7 @@ func (l *ClaimLedger) RecordOpen(claimID, selector string, address, scope []byte
 		},
 	}
 	l.nextSeq++
+	_, existed := l.records[claimID]
 	rec := &ClaimRecord{
 		ClaimID:  claimID,
 		State:    ClaimStateOpen,
@@ -96,7 +97,9 @@ func (l *ClaimLedger) RecordOpen(claimID, selector string, address, scope []byte
 		seq:      l.nextSeq,
 	}
 	l.records[claimID] = rec
-	l.order = append(l.order, claimID)
+	if !existed {
+		l.order = append(l.order, claimID)
+	}
 	l.broadcast(claimID, openEvent)
 	l.evictIfNeeded()
 }

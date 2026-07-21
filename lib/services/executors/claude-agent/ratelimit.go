@@ -18,10 +18,11 @@ type RateLimitSignal struct {
 }
 
 var (
-	http429Re    = regexp.MustCompile(`\b429\b`)
-	retryAfterRe = regexp.MustCompile(`(?i)retry-after:\s*(\d+)`)
-	epochResetRe = regexp.MustCompile(`(?i)anthropic-ratelimit(?:-tokens|-requests)?-reset:\s*(\d+)`)
-	isoResetRe   = regexp.MustCompile(`(?i)resetat[:= ]\s*([0-9T:\-+.Z]+)`)
+	http429Re      = regexp.MustCompile(`\b429\b`)
+	http429NoiseRe = regexp.MustCompile(`(?i)\b429\b\s*(files?|items?|rows?|records?|lines?|tests?|requests?\s+processed|errors?\s+logged)\b`)
+	retryAfterRe   = regexp.MustCompile(`(?i)retry-after:\s*(\d+)`)
+	epochResetRe   = regexp.MustCompile(`(?i)anthropic-ratelimit(?:-tokens|-requests)?-reset:\s*(\d+)`)
+	isoResetRe     = regexp.MustCompile(`(?i)resetat[:= ]\s*([0-9T:\-+.Z]+)`)
 )
 
 func DetectRateLimit(stderr string, now time.Time) RateLimitSignal {
@@ -31,7 +32,7 @@ func DetectRateLimit(stderr string, now time.Time) RateLimitSignal {
 	lower := strings.ToLower(stderr)
 	detected := strings.Contains(lower, "rate_limit_error") ||
 		strings.Contains(lower, "rate limit") ||
-		http429Re.MatchString(lower)
+		(http429Re.MatchString(lower) && !http429NoiseRe.MatchString(lower))
 	if !detected {
 		return RateLimitSignal{}
 	}

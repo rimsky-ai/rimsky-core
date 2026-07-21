@@ -87,6 +87,58 @@ func TestLoadOptsFromEnv_WriteSemanticsDefaultsToStagedAsync(t *testing.T) {
 	}
 }
 
+func TestLoadOptsFromEnv_PortsDefaultToDocumentedValuesWhenOmitted(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeOptsConfig(t, cfgPath, "connection: postgres://example/db\n")
+
+	t.Setenv(ConfigEnv, cfgPath)
+
+	opts, err := LoadOptsFromEnv()
+	if err != nil {
+		t.Fatalf("LoadOptsFromEnv: %v", err)
+	}
+	if opts.GRPCPort != defaultGRPCPort {
+		t.Fatalf("Opts.GRPCPort = %d, want documented default %d (an omitted grpc_port must not silently bind an ephemeral port)", opts.GRPCPort, defaultGRPCPort)
+	}
+	if opts.HTTPPort != defaultHTTPPort {
+		t.Fatalf("Opts.HTTPPort = %d, want documented default %d", opts.HTTPPort, defaultHTTPPort)
+	}
+}
+
+func TestLoadOptsFromEnv_ExplicitPortsWinOverDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeOptsConfig(t, cfgPath, "connection: postgres://example/db\ngrpc_port: 5555\nhttp_port: 5556\n")
+
+	t.Setenv(ConfigEnv, cfgPath)
+
+	opts, err := LoadOptsFromEnv()
+	if err != nil {
+		t.Fatalf("LoadOptsFromEnv: %v", err)
+	}
+	if opts.GRPCPort != 5555 || opts.HTTPPort != 5556 {
+		t.Fatalf("Opts = {GRPCPort:%d HTTPPort:%d}, want explicit 5555/5556", opts.GRPCPort, opts.HTTPPort)
+	}
+}
+
+func TestLoadOptsFromEnv_UndefinedEnvVarInConfigFailsStartup(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeOptsConfig(t, cfgPath, "connection: \"postgres://user:${STORE_POSTGRES_TEST_UNDEFINED_VAR}@db/rimsky\"\n")
+
+	t.Setenv(ConfigEnv, cfgPath)
+	os.Unsetenv("STORE_POSTGRES_TEST_UNDEFINED_VAR")
+
+	_, err := LoadOptsFromEnv()
+	if err == nil {
+		t.Fatal("LoadOptsFromEnv: expected an error for an undefined ${VAR} reference, got nil")
+	}
+	if !strings.Contains(err.Error(), "STORE_POSTGRES_TEST_UNDEFINED_VAR") {
+		t.Fatalf("LoadOptsFromEnv error = %q, want it to name the undefined variable", err.Error())
+	}
+}
+
 func TestLoadOptsFromEnv_ExplicitWriteSemanticsWiredThrough(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

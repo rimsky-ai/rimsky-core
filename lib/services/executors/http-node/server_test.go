@@ -344,6 +344,28 @@ func TestExecute_NonJSONResponse_Base64(t *testing.T) {
 	}
 }
 
+func TestExecute_OversizedResponseBody_RejectedAsTruncated(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write(bytes.Repeat([]byte("x"), (1<<20)+1))
+	}))
+	defer ts.Close()
+
+	s := testServer(t, false)
+	req := newRequest(t, map[string]any{"url": ts.URL})
+	outcome, err := s.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	errOutcome := outcome.GetError()
+	if errOutcome == nil {
+		t.Fatalf("expected an Error outcome for a body exceeding the cap, got %T", outcome.GetOutcome())
+	}
+	if errOutcome.GetErrorClass() != "http/response_truncated" {
+		t.Fatalf("error_class = %q, want http/response_truncated (a truncated body must never silently become a Success)", errOutcome.GetErrorClass())
+	}
+}
+
 func TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -474,6 +474,104 @@ func canonicalItemCount(t *testing.T, pool *pgxpool.Pool, schema string) int {
 	return count
 }
 
+func TestStagingSchemaName_DistinctClaimIDsNeverCollideOnPunctuation(t *testing.T) {
+	a := stagingSchemaName("a-b")
+	b := stagingSchemaName("a.b")
+	if a == b {
+		t.Fatalf("stagingSchemaName(%q) = %q collides with stagingSchemaName(%q) = %q; distinct claim IDs must never map to the same staging schema", "a-b", a, "a.b", b)
+	}
+}
+
+func TestStagingSchemaName_LongClaimIDStaysUnderNAMEDATALEN(t *testing.T) {
+	longID := strings.Repeat("x", 500)
+	name := stagingSchemaName(longID)
+	const postgresNAMEDATALEN = 63
+	if len(name) > postgresNAMEDATALEN {
+		t.Fatalf("stagingSchemaName(500-byte id) = %d bytes, want <= %d (postgres truncates identifiers past NAMEDATALEN, which can collide two distinct long claim IDs onto one schema)", len(name), postgresNAMEDATALEN)
+	}
+}
+
+func TestAtomicStaging_OrphanedStagingSchemaSweptAfterHorizon(t *testing.T) {
+	pool, st := bootStagingStore(t)
+	ctx := context.Background()
+
+	claimID := uuid.NewString()
+	out, err := st.Open(ctx, claimID, "orphan_probe", claimproducer.IntentReadWrite)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	staging := addressSchema(t, out.Result.Address)
+	if !schemaExists(t, pool, staging) {
+		t.Fatalf("expected staging schema %q to exist after Open", staging)
+	}
+
+	if _, err := pool.Exec(ctx,
+		"UPDATE "+stagingReservationsTable+" SET reserved_at = now() - interval '25 hours' WHERE schema_name = $1",
+		staging,
+	); err != nil {
+		t.Fatalf("backdate reservation: %v", err)
+	}
+
+	st.sweepStagingOrphans(ctx)
+
+	if schemaExists(t, pool, staging) {
+		t.Fatalf("staging schema %q should have been swept as an orphan past the horizon, but it still exists", staging)
+	}
+	var reservationCount int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+stagingReservationsTable+" WHERE schema_name = $1", staging).Scan(&reservationCount); err != nil {
+		t.Fatalf("count reservation rows: %v", err)
+	}
+	if reservationCount != 0 {
+		t.Fatalf("expected the swept reservation row to be gone, found %d", reservationCount)
+	}
+}
+
+func TestAtomicStaging_ReservationClearedOnCommitAndAbandon(t *testing.T) {
+	pool, st := bootStagingStore(t)
+	ctx := context.Background()
+
+	const canonical = "reservation_commit_canonical"
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+canonical); err != nil {
+		t.Fatalf("create canonical schema: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "CREATE TABLE "+canonical+".items (id TEXT, payload TEXT)"); err != nil {
+		t.Fatalf("create canonical table: %v", err)
+	}
+	claimID := uuid.NewString()
+	out, err := st.Open(ctx, claimID, canonical, claimproducer.IntentReadWrite)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	staging := addressSchema(t, out.Result.Address)
+	if err := st.Commit(ctx, claimID, out.Result.ClaimScope, out.Result.Address); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+stagingReservationsTable+" WHERE schema_name = $1", staging).Scan(&count); err != nil {
+		t.Fatalf("count reservation rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected Commit to clear the staging reservation, found %d rows for %q", count, staging)
+	}
+
+	claimID2 := uuid.NewString()
+	out2, err := st.Open(ctx, claimID2, "reservation_abandon_probe", claimproducer.IntentReadWrite)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	staging2 := addressSchema(t, out2.Result.Address)
+	if err := st.Abandon(ctx, claimID2, out2.Result.ClaimScope, out2.Result.Address); err != nil {
+		t.Fatalf("Abandon: %v", err)
+	}
+	var count2 int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+stagingReservationsTable+" WHERE schema_name = $1", staging2).Scan(&count2); err != nil {
+		t.Fatalf("count reservation rows: %v", err)
+	}
+	if count2 != 0 {
+		t.Fatalf("expected Abandon to clear the staging reservation, found %d rows for %q", count2, staging2)
+	}
+}
+
 func TestAtomicStaging_WriteOnInvalidSchemaIdentSelectorIsRejected(t *testing.T) {
 	_, st := bootStagingStore(t)
 	ctx := context.Background()

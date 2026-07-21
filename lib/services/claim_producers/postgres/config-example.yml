@@ -1,12 +1,14 @@
-# Example config for the standard postgres store-service. Per spec §6.3
-# each store-service owns its own config schema; rimsky neither defines
+# Example config for the standard postgres store-service. Each
+# store-service owns its own config schema; rimsky neither defines
 # nor validates this file.
 
 # Postgres connection string for the store's own pool.
 connection: "postgres://store_postgres:store_postgres@db:5432/rimsky?sslmode=disable"
 
-# Store's advertised write_semantics. Operator declares the same
-# value in stores.yml; the rimsky-side handshake is strict-equal.
+# Store's advertised write_semantics. The operator declares the
+# permitted subset in rimsky.yml under
+# claim_producers.<name>.write_semantics_allowed; rimsky requires
+# that declared set to be a subset of the value advertised here.
 write_semantics: sync
 
 # Pick policies are store-internal — rimsky never sees them. Each
@@ -44,8 +46,9 @@ pick_policies:
 #         since: {}
 #     limit: 100
 
-# Listen addresses. The admin port hosts the store-internal items
-# insertion endpoint (per spec §13.1).
+# Listen addresses. grpc_port / http_port default to 9101 / 9111 when
+# omitted. The admin port hosts the store-internal items insertion
+# endpoint; it stays disabled (no admin listener) when omitted.
 host: 0.0.0.0
 grpc_port: 9101
 http_port: 9111
@@ -54,10 +57,14 @@ admin_port: 9121
 # Store's internal sweep interval (visibility-timeout reclamation).
 sweep_interval_seconds: 30
 
-# Per spec 2026-05-19 §Item 6: when true, the binary registers the
-# Executor protocol alongside ClaimProducer on the same gRPC server.
-# Reuses the store's own connection pool to run aggregate-only SQL
-# verifier checks against staged content. Operators wanting role
-# isolation deploy two binaries with distinct env (e.g. read-only DB
-# role for the verifier).
+# When true, the binary registers the LifecycleSubscriber protocol
+# alongside ClaimProducer on the same gRPC server.
+# enable_lifecycle: true
+
+# When true, the binary registers the Executor protocol alongside
+# ClaimProducer on the same gRPC server. Reuses the store's own
+# connection pool to run aggregate-only SQL verifier checks against
+# staged content. Operators wanting role isolation deploy two
+# binaries with distinct env (e.g. read-only DB role for the
+# verifier).
 # enable_executor: true

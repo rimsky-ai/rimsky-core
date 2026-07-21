@@ -25,6 +25,8 @@ func TestClassifyAgentError(t *testing.T) {
 		{"refused by the model", "request was refused by the model", "agent/refused"},
 		{"declined to respond", "the assistant declined to respond", "agent/refused"},
 		{"bare refusal word", "classified as refusal by upstream", "agent/refused"},
+		{"negated refusal", "no refusal detected", ""},
+		{"negated refusal not-a", "not a refusal", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

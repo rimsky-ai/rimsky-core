@@ -6,6 +6,7 @@ package claudeagent
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -47,6 +48,19 @@ func TestStreamParserIgnoresNonJSONAndOtherShapes(t *testing.T) {
 		`{"type":"result","subtype":"success"}` + "\n")
 	if len(evs) != 0 {
 		t.Fatalf("expected no events, got %+v", evs)
+	}
+}
+
+func TestStreamParserCapsUnboundedPendingLine(t *testing.T) {
+	p := NewCliStreamParser()
+	chunk := strings.Repeat("x", 1024*1024)
+	for i := 0; i < 16; i++ {
+		if evs := p.Push(chunk); len(evs) != 0 {
+			t.Fatalf("expected no events for a newline-less oversized chunk, got %+v", evs)
+		}
+	}
+	if got := p.buf.Len(); got > maxPendingStdoutLineBytes {
+		t.Fatalf("pending buffer = %d bytes, want capped at %d (an adversarial newline-less stream must not grow memory unbounded)", got, maxPendingStdoutLineBytes)
 	}
 }
 

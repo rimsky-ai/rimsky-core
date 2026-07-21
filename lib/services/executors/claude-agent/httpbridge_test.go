@@ -90,6 +90,22 @@ func TestHTTPBridgeExecuteAcksAndPostsCallback(t *testing.T) {
 	}
 }
 
+func TestHTTPBridgeExecuteRejectsOversizedBody(t *testing.T) {
+	base, _ := startTestBridge(t)
+	oversized := make([]byte, maxExecuteBodyBytes+1)
+	for i := range oversized {
+		oversized[i] = 'a'
+	}
+	resp, err := http.Post(base+"/execute", "application/json", bytes.NewReader(oversized))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("execute status = %d, want %d for a body over the size cap", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
 func TestHTTPBridgeObservabilityCapabilities(t *testing.T) {
 	base, _ := startTestBridge(t)
 	resp, err := http.Get(base + "/observability/v1/capabilities")

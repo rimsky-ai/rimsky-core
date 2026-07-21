@@ -364,6 +364,26 @@ func TestMcpServerFreshSessionAfterDelete(t *testing.T) {
 	}
 }
 
+func TestMcpServerReinitializeOverExistingSessionEvictsOldSession(t *testing.T) {
+	_, client := startTestServer(t)
+	oldSessionID := client.sessionID
+
+	body := `{"jsonrpc":"2.0","id":42,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`
+	resp, raw := client.post(body, oldSessionID)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("re-initialize status = %d body %s", resp.StatusCode, raw)
+	}
+	newSessionID := resp.Header.Get("Mcp-Session-Id")
+	if newSessionID == "" || newSessionID == oldSessionID {
+		t.Fatalf("expected a distinct new session id, got %q (old %q)", newSessionID, oldSessionID)
+	}
+
+	_, raw = client.post(`{"jsonrpc":"2.0","id":99,"method":"tools/list"}`, oldSessionID)
+	if !strings.Contains(string(raw), "Session not found") {
+		t.Fatalf("expected the old session to be evicted on re-initialize, got %s", raw)
+	}
+}
+
 func TestMcpServerRejectsNonInitializeWithoutSession(t *testing.T) {
 	_, client := startTestServer(t)
 	resp, raw := client.post(`{"jsonrpc":"2.0","id":5,"method":"tools/list"}`, "")

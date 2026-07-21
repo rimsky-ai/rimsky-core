@@ -155,6 +155,44 @@ func TestLedgerList_CursorSurvivesEvictionOfItsRecord(t *testing.T) {
 	}
 }
 
+func TestLedgerRecordOpen_ReopenDoesNotDuplicateOrderEntry(t *testing.T) {
+	l := NewClaimLedger(10)
+	l.RecordOpen("a", "/x", nil, nil)
+	l.RecordOpen("b", "/y", nil, nil)
+	l.RecordOpen("a", "/x-retry", nil, nil)
+
+	got, _ := l.List("", "", 10)
+	count := 0
+	for _, r := range got {
+		if r.ClaimID == "a" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("List returned claim %q %d times, want 1 (RecordOpen must not duplicate an already-tracked order entry)", "a", count)
+	}
+	if len(got) != 2 {
+		t.Fatalf("List = %+v, want exactly 2 distinct claims", got)
+	}
+}
+
+func TestLedgerRecordOpen_ReopenAfterRecordEventUnknownDoesNotDuplicateOrderEntry(t *testing.T) {
+	l := NewClaimLedger(10)
+	l.RecordEvent("a", "claim_commit_failed", "ERROR", nil)
+	l.RecordOpen("a", "/x", nil, nil)
+
+	got, _ := l.List("", "", 10)
+	count := 0
+	for _, r := range got {
+		if r.ClaimID == "a" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("List returned claim %q %d times, want 1 (a RecordEvent-created UNKNOWN placeholder followed by RecordOpen must not duplicate the order entry)", "a", count)
+	}
+}
+
 func TestLedgerEviction_EvictsClosedRecordsBeforeCap(t *testing.T) {
 	l := NewClaimLedger(3)
 	l.RecordOpen("closed-1", "/x", nil, nil)

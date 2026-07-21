@@ -31,13 +31,16 @@ func Unmarshal(b []byte) (*ListPartitionRequest, error) {
 	if len(b) == 0 {
 		return nil, fmt.Errorf("listarray: partition_request is empty; expected an object with a top-level \"list\" array")
 	}
+	dec := json.NewDecoder(bytes.NewReader(b))
 	var probe map[string]json.RawMessage
-	probeDec := json.NewDecoder(bytes.NewReader(b))
-	probeDec.DisallowUnknownFields()
-	if err := probeDec.Decode(&probe); err != nil {
+	if err := dec.Decode(&probe); err != nil {
 		return nil, fmt.Errorf("listarray: partition_request is not a JSON object: %w", err)
 	}
-	if _, ok := probe["list"]; !ok {
+	if dec.More() {
+		return nil, fmt.Errorf("listarray: partition_request contains trailing data after the JSON object")
+	}
+	listRaw, ok := probe["list"]
+	if !ok {
 		return nil, fmt.Errorf("listarray: partition_request must be an object with a \"list\" array; got %v top-level keys without \"list\"", len(probe))
 	}
 	for k := range probe {
@@ -45,10 +48,10 @@ func Unmarshal(b []byte) (*ListPartitionRequest, error) {
 			return nil, fmt.Errorf("listarray: partition_request has unknown top-level key %q; only \"list\" is permitted", k)
 		}
 	}
-	req := ListPartitionRequest{}
-	reqDec := json.NewDecoder(bytes.NewReader(b))
-	reqDec.DisallowUnknownFields()
-	if err := reqDec.Decode(&req); err != nil {
+	var req ListPartitionRequest
+	listDec := json.NewDecoder(bytes.NewReader(listRaw))
+	listDec.DisallowUnknownFields()
+	if err := listDec.Decode(&req.List); err != nil {
 		return nil, fmt.Errorf("listarray: failed to decode list array: %w", err)
 	}
 	if len(req.List) == 0 {

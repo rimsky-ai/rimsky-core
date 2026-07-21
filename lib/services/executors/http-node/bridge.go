@@ -25,12 +25,15 @@ func ServeBridge(srv *http.Server, lis net.Listener, id *peerauth.Identity) erro
 	return id.RunHTTP(srv, lis)
 }
 
+const maxExecuteBodyBytes = 10 * 1024 * 1024
+
 func MountBridge(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/v1/Execute", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxExecuteBodyBytes)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -47,13 +50,13 @@ func MountBridge(mux *http.ServeMux, s *Server) {
 				ErrorClass: "http/internal_error",
 			}}}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
 		b, mErr := protojson.Marshal(outcome)
 		if mErr != nil {
 			http.Error(w, mErr.Error(), http.StatusInternalServerError)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(b)
 	})
 }

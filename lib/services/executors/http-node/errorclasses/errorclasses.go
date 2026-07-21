@@ -12,6 +12,7 @@ func Declared() []string {
 		"http/server_error/*",
 		"http/expectation_mismatch",
 		"http/response_unparseable",
+		"http/response_truncated",
 		"http/attribute_invalid",
 		"http/internal_error",
 	}

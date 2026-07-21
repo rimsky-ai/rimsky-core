@@ -112,6 +112,15 @@ func TestUnmarshal_RejectsUnknownElementKeys(t *testing.T) {
 	}
 }
 
+func TestUnmarshal_RejectsTrailingDataAfterObject(t *testing.T) {
+	t.Parallel()
+	in := []byte(`{"list":[{"key":"a"}]}{"list":[{"key":"b"}]}`)
+	_, err := listarray.Unmarshal(in)
+	if err == nil {
+		t.Fatalf("Unmarshal: expected error for trailing data after the JSON object, got nil")
+	}
+}
+
 func TestToSubScopes_PassesThroughPayload(t *testing.T) {
 	t.Parallel()
 	in := []byte(`{"list":[{"key":"a","payload":{"v":1}},{"key":"b","payload":{"v":2}}]}`)

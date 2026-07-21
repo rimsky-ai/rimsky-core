@@ -16,6 +16,26 @@ var identRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
 var selectOnlyRegex = regexp.MustCompile(`(?i)^\s*SELECT\s`)
 
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+func quoteQualified(schema, table string) string {
+	return quoteIdent(schema) + "." + quoteIdent(table)
+}
+
+func numericConfigOrDefault(cfg map[string]any, key string, def float64) (float64, error) {
+	raw, present := cfg[key]
+	if !present || raw == nil {
+		return def, nil
+	}
+	v, ok := checkspec.Numeric(raw)
+	if !ok {
+		return 0, fmt.Errorf("config.%s must be numeric, got %v", key, raw)
+	}
+	return v, nil
+}
+
 type Compiled struct {
 	Kind      string
 	SQL       string
@@ -64,12 +84,15 @@ func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) 
 			return Compiled{}, fmt.Errorf("no_nulls: invalid column identifier %q", f)
 		}
 	}
-	threshold, _ := checkspec.NumericDefault(cfg["threshold"], 0)
+	threshold, err := numericConfigOrDefault(cfg, "threshold", 0)
+	if err != nil {
+		return Compiled{}, fmt.Errorf("no_nulls: %w", err)
+	}
 	terms := make([]string, len(fields))
 	for i, f := range fields {
-		terms[i] = fmt.Sprintf("count(*) FILTER (WHERE %s IS NULL)", f)
+		terms[i] = fmt.Sprintf("count(*) FILTER (WHERE %s IS NULL)", quoteIdent(f))
 	}
-	sql := fmt.Sprintf("SELECT %s FROM %s.%s", strings.Join(terms, " + "), schema, table)
+	sql := fmt.Sprintf("SELECT %s FROM %s", strings.Join(terms, " + "), quoteQualified(schema, table))
 	thresholdLocal := threshold
 	fieldsLocal := make([]any, len(fields))
 	for i, f := range fields {
@@ -114,7 +137,7 @@ func compileRowCountAbsolute(cfg map[string]any, schema, table string) (Compiled
 		}
 		maxVal = mv
 	}
-	sql := fmt.Sprintf("SELECT count(*) FROM %s.%s", schema, table)
+	sql := fmt.Sprintf("SELECT count(*) FROM %s", quoteQualified(schema, table))
 	return Compiled{
 		Kind: "row_count_absolute",
 		SQL:  sql,
@@ -156,9 +179,15 @@ func compileRowCountRatio(cfg map[string]any, schema, table string) (Compiled, e
 	if !ok || baseline <= 0 {
 		return Compiled{}, fmt.Errorf("row_count_ratio: config.baseline must be a positive number")
 	}
-	low, _ := checkspec.NumericDefault(cfg["low"], 0.5)
-	high, _ := checkspec.NumericDefault(cfg["high"], 2.0)
-	sql := fmt.Sprintf("SELECT count(*) FROM %s.%s", schema, table)
+	low, err := numericConfigOrDefault(cfg, "low", 0.5)
+	if err != nil {
+		return Compiled{}, fmt.Errorf("row_count_ratio: %w", err)
+	}
+	high, err := numericConfigOrDefault(cfg, "high", 2.0)
+	if err != nil {
+		return Compiled{}, fmt.Errorf("row_count_ratio: %w", err)
+	}
+	sql := fmt.Sprintf("SELECT count(*) FROM %s", quoteQualified(schema, table))
 	return Compiled{
 		Kind: "row_count_ratio",
 		SQL:  sql,
@@ -202,10 +231,14 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 			return Compiled{}, fmt.Errorf("pk_unique: invalid column identifier %q", f)
 		}
 	}
-	colList := strings.Join(fields, ", ")
+	quotedFields := make([]string, len(fields))
+	for i, f := range fields {
+		quotedFields[i] = quoteIdent(f)
+	}
+	colList := strings.Join(quotedFields, ", ")
 	sql := fmt.Sprintf(
-		"SELECT %s, count(*) FROM %s.%s GROUP BY %s HAVING count(*) > 1 LIMIT 1",
-		colList, schema, table, colList,
+		"SELECT %s, count(*) FROM %s GROUP BY %s HAVING count(*) > 1 LIMIT 1",
+		colList, quoteQualified(schema, table), colList,
 	)
 	fieldsLocal := make([]any, len(fields))
 	for i, f := range fields {
@@ -219,16 +252,20 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 				Kind:   "pk_unique",
 				Counts: map[string]any{"fields": fieldsLocal},
 			}
-			if len(scanned) == 0 {
-				res.Pass = true
+			if len(scanned) != 1 {
+				res.Message = fmt.Sprintf("pk_unique: scan produced %d values, want exactly 1 (a duplicate-exists bool)", len(scanned))
 				return res
 			}
-			any, ok := scanned[0].(bool)
-			if !ok || !any {
-				res.Pass = true
+			dup, ok := scanned[0].(bool)
+			if !ok {
+				res.Message = fmt.Sprintf("pk_unique: scan produced non-bool value %v", scanned[0])
 				return res
 			}
-			res.Message = fmt.Sprintf("pk_unique: duplicate tuples found over fields %v", fieldsLocal)
+			if dup {
+				res.Message = fmt.Sprintf("pk_unique: duplicate tuples found over fields %v", fieldsLocal)
+				return res
+			}
+			res.Pass = true
 			return res
 		},
 	}, nil

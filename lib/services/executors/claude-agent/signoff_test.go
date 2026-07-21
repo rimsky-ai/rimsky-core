@@ -212,6 +212,51 @@ func TestVerifyRequiredSignoffsSupportsRootSignature(t *testing.T) {
 	}
 }
 
+func TestVerifyRequiredSignoffsRejectsSignatureWhenPathIsAbsentFromDelta(t *testing.T) {
+	signer := makeTestSigner(t)
+	sig := signer.sign(t, "disp-1", nil)
+	delta := map[string]any{"other": "value"}
+	res := VerifyRequiredSignoffs(
+		[]RequiredSignoff{{PublicKey: signer.publicKeyPEM, Path: "endpoints"}},
+		delta, "disp-1", []string{sig},
+	)
+	want := []UnmetSignoff{{Path: "endpoints", Reason: UnmetSignoffReasonMissing}}
+	if res.OK || !reflect.DeepEqual(res.Unmet, want) {
+		t.Fatalf("a signature over null must not satisfy a required path absent from the delta (missing-attribute and approved-null are distinguishable states); got %+v", res)
+	}
+}
+
+func TestVerifyRequiredSignoffsAcceptsExplicitNullAtPresentPath(t *testing.T) {
+	signer := makeTestSigner(t)
+	sig := signer.sign(t, "disp-1", nil)
+	delta := map[string]any{"endpoints": nil}
+	res := VerifyRequiredSignoffs(
+		[]RequiredSignoff{{PublicKey: signer.publicKeyPEM, Path: "endpoints"}},
+		delta, "disp-1", []string{sig},
+	)
+	if !res.OK || len(res.Unmet) != 0 {
+		t.Fatalf("a signature over null must satisfy a required path that is present and explicitly null, got %+v", res)
+	}
+}
+
+func TestVerifyRequiredSignoffsAcceptsSameSignatureAcrossPathsWithEqualValues(t *testing.T) {
+	signer := makeTestSigner(t)
+	sig := signer.sign(t, "disp-1", "shared-value")
+	delta := map[string]any{"a": "shared-value", "b": "shared-value"}
+	res := VerifyRequiredSignoffs(
+		[]RequiredSignoff{
+			{PublicKey: signer.publicKeyPEM, Path: "a"},
+			{PublicKey: signer.publicKeyPEM, Path: "b"},
+		},
+		delta, "disp-1", []string{sig},
+	)
+	if !res.OK || len(res.Unmet) != 0 {
+		t.Fatalf("documented wire-compat posture: the signed message binds domain+dispatch_id+canonical "+
+			"value but not the path, so one signature over a shared value satisfies every requirement "+
+			"sharing that value; got %+v", res)
+	}
+}
+
 type wireCompatVector struct {
 	NodeRunID    string `json:"dispatch_id"`
 	ValueJSON    string `json:"value_json"`

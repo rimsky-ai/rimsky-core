@@ -723,3 +723,41 @@ func TestSplitScope_UnknownParentClaimRejected(t *testing.T) {
 		t.Fatalf("SplitScope: code = %v, want NotFound", st.Code())
 	}
 }
+
+func TestSplitScope_ClosedParentClaimRejectedAsFailedPrecondition(t *testing.T) {
+	srv, _, root := newServerWithStore(t)
+	if err := os.MkdirAll(filepath.Join(root, "parent"), 0o755); err != nil {
+		t.Fatalf("mkdir parent: %v", err)
+	}
+	openResp, err := srv.Open(context.Background(), &genv1.OpenRequest{
+		ClaimId:  "p1",
+		Selector: "parent",
+		Intent:   "rw",
+	})
+	if err != nil {
+		t.Fatalf("Open parent: %v", err)
+	}
+	if _, err := srv.Commit(context.Background(), &genv1.CommitRequest{
+		ClaimId:    "p1",
+		ClaimScope: openResp.GetAcquired().GetClaimScope(),
+		Address:    openResp.GetAcquired().GetAddress(),
+	}); err != nil {
+		t.Fatalf("Commit parent: %v", err)
+	}
+
+	req := &genv1.SplitScopeRequest{
+		ClaimHandleId:    "p1",
+		PartitionRequest: []byte(`{"list":[{"key":"a"}]}`),
+	}
+	_, err = srv.SplitScope(context.Background(), req)
+	if err == nil {
+		t.Fatal("SplitScope: expected FailedPrecondition for a committed (non-open) parent claim, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("SplitScope: expected gRPC status error, got %T: %v", err, err)
+	}
+	if st.Code() != codes.FailedPrecondition {
+		t.Fatalf("SplitScope: code = %v, want FailedPrecondition (matches the postgres producer's code for the same non-open-parent condition)", st.Code())
+	}
+}

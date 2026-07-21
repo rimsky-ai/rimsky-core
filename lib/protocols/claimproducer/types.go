@@ -127,4 +127,5 @@ const (
 	ProtocolDataProcessing      = "data_processing"
 	ProtocolValidation          = "validation"
 	ProtocolLifecycleSubscriber = "lifecycle_subscriber"
+	ProtocolExecutor            = "executor"
 )

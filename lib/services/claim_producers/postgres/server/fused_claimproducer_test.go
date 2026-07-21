@@ -53,4 +53,13 @@ func TestRun_FusedClaimProducer_CapabilitiesOnSharedGRPCServer(t *testing.T) {
 	if !resp.GetSupportsSplitScope() {
 		t.Fatal("Capabilities.supports_split_scope must be true for the postgres store")
 	}
+	found := false
+	for _, p := range resp.GetProtocols() {
+		if p == "executor" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Capabilities.protocols = %v, want it to include %q since Run was started with EnableExecutor:true", resp.GetProtocols(), "executor")
+	}
 }
