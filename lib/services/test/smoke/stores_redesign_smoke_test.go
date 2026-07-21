@@ -61,7 +61,8 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 		},
 	})
 
-	instanceID := smokeCreateInstance(t, ep, templateID, "stores-redesign-1")
+	const instanceKey = "stores-redesign-1"
+	instanceID := smokeCreateInstance(t, ep, templateID, instanceKey)
 
 	pool, err := pgxpool.New(ctx, ep.HostDSN)
 	if err != nil {
@@ -70,47 +71,24 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 	defer pool.Close()
 
 	const cycles = 5
-	const perCycle = 30 * time.Second
 
 	for n := 1; n <= cycles; n++ {
-		ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", perCycle)
-		requireCommittedDocsClaimFolder(ctx, t, pool, instanceID, n)
-		status, raw := ep.PostJSON(t,
-			fmt.Sprintf("/v1/instances/%s/pause", instanceID), nil)
-		if status != http.StatusOK {
-			t.Fatalf("pause %d: %d %s", n, status, string(raw))
-		}
-		status, raw = ep.PostJSON(t,
-			fmt.Sprintf("/v1/instances/%s/debug/override", instanceID),
-			map[string]any{
-				"action":    "invalidate_node",
-				"node_type": "claim-acquirer",
-			})
-		if status != http.StatusOK {
-			t.Fatalf("debug override %d: %d %s", n, status, string(raw))
-		}
-		status, raw = ep.PostJSON(t,
-			fmt.Sprintf("/v1/instances/%s/resume", instanceID), nil)
-		if status != http.StatusOK {
-			t.Fatalf("resume %d: %d %s", n, status, string(raw))
-		}
+		waitForCommittedDocsClaimFolders(ctx, t, ep, pool, instanceID, n)
+		ep.EmptyWakeAfterCreate(t, instanceID, fmt.Sprintf("smoke-cycle-%d", n), instanceKey)
 	}
 
-	ep.RequireNodeTerminalSucceeded(t, instanceID, "claim-acquirer", perCycle)
-	requireCommittedDocsClaimFolder(ctx, t, pool, instanceID, cycles+1)
-
-	folders := committedDocsClaimFolders(ctx, t, pool, instanceID)
+	folders := waitForCommittedDocsClaimFolders(ctx, t, ep, pool, instanceID, cycles+1)
 	if len(folders) != cycles+1 {
-		t.Fatalf("want %d committed claim_scope rows for producer %q across %d cycles, got %d: %v",
+		t.Fatalf("want exactly %d committed claim_scope rows for producer %q after the initial wake plus %d re-wakes, got %d: %v",
 			cycles+1, "docs", cycles, len(folders), folders)
 	}
 	distinct := map[string]bool{}
 	for _, f := range folders {
 		distinct[f] = true
 	}
-	if len(distinct) < 2 {
-		t.Fatalf("recycle pick policy picked the same folder every cycle (%v) — the ring never rotated across %d cycles seeded with 3 folders",
-			folders, cycles)
+	if len(distinct) != 3 {
+		t.Fatalf("recycle pick policy must rotate through all 3 seeded folders across %d sequential commits, got %v",
+			cycles+1, folders)
 	}
 }
 
@@ -148,12 +126,22 @@ func committedDocsClaimFolders(ctx context.Context, t *testing.T, pool *pgxpool.
 	return folders
 }
 
-func requireCommittedDocsClaimFolder(ctx context.Context, t *testing.T, pool *pgxpool.Pool, instanceID string, cycle int) {
+func waitForCommittedDocsClaimFolders(
+	ctx context.Context, t *testing.T, ep harness.RimskyEndpoint, pool *pgxpool.Pool,
+	instanceID string, want int,
+) []string {
 	t.Helper()
-	folders := committedDocsClaimFolders(ctx, t, pool, instanceID)
-	if len(folders) < cycle {
-		t.Fatalf("cycle %d: want at least %d committed claim_scope rows for producer %q, got %d: %v",
-			cycle, cycle, "docs", len(folders), folders)
+	for {
+		folders := committedDocsClaimFolders(ctx, t, pool, instanceID)
+		if len(folders) >= want {
+			return folders
+		}
+		status, obs, _ := ep.GetNodeObservability(t, instanceID, "claim-acquirer")
+		if status == http.StatusOK && obs.RunSummary.FailedCount > 0 {
+			t.Fatalf("waiting for %d committed claim_scope rows (have %d: %v): node claim-acquirer failed; run_summary=%+v",
+				want, len(folders), folders, obs.RunSummary)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

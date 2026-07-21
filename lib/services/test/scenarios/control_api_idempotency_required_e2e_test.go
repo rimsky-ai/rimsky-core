@@ -49,7 +49,7 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 			},
 		},
 	})
-	instanceID := createScenarioInstance(t, ep, templateID, "ck-idempotency-required-e2e")
+	instanceID := createScenarioInstanceNoWake(t, ep, templateID, "ck-idempotency-required-e2e")
 
 	messagesPath := "/v1/instances/" + instanceID + "/messages"
 

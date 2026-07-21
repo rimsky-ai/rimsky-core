@@ -26,18 +26,17 @@ func TestVerifierRegistrationValidation(t *testing.T) {
 		harness.WithExecutorProtocols("verifier-shape-checks", "validation"),
 	)
 
-	t.Run("missing_checks_rejected_at_registration", func(t *testing.T) {
+	t.Run("omitted_checks_rejected_at_registration", func(t *testing.T) {
 		status, raw := ep.PostJSON(t, "/v1/templates",
 			buildRegistrationValidationTemplate("registration-validation-missing-checks", nil))
 		if status != http.StatusBadRequest {
-			t.Fatalf("POST /templates without checks: got %d (want 400 — verifier validation never ran?): %s",
+			t.Fatalf("POST /templates without checks: got %d (want 400 — the executor's expected_attributes_schema demands a populated checks property): %s",
 				status, string(raw))
 		}
 		var resp struct {
 			ValidationErrors []struct {
-				ServiceName string `json:"service_name"`
-				Role        string `json:"role"`
-				Class       string `json:"class"`
+				Path string `json:"path"`
+				Msg  string `json:"msg"`
 			} `json:"validation_errors"`
 		}
 		if err := json.Unmarshal(raw, &resp); err != nil {
@@ -45,12 +44,53 @@ func TestVerifierRegistrationValidation(t *testing.T) {
 		}
 		found := false
 		for _, e := range resp.ValidationErrors {
-			if e.ServiceName == "verifier-shape-checks" && e.Role == "executor" && e.Class == "missing_checks" {
+			if strings.Contains(e.Path, "properties.checks") {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("expected a missing_checks finding from verifier-shape-checks (role=executor), got: %s",
+			t.Fatalf("expected a validation_errors entry at the unpopulated checks property, got: %s",
+				string(raw))
+		}
+	})
+
+	t.Run("unknown_check_kind_warned_by_verifier_pipeline", func(t *testing.T) {
+		status, raw := ep.PostJSON(t, "/v1/templates",
+			buildRegistrationValidationTemplate("registration-validation-unknown-check-kind", []any{
+				map[string]any{
+					"kind":     "not_a_registered_shape_check",
+					"severity": "error",
+					"config":   map[string]any{},
+				},
+			}))
+		if status != http.StatusCreated {
+			t.Fatalf("POST /templates with an unknown check kind: got %d (want 201 — unknown kinds are a "+
+				"warning-grade finding from the verifier's validator, not a static schema violation): %s",
+				status, string(raw))
+		}
+		var resp struct {
+			TemplateID         string `json:"template_id"`
+			ValidationWarnings []struct {
+				Path  string `json:"path"`
+				Msg   string `json:"msg"`
+				Class string `json:"class"`
+			} `json:"validation_warnings"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			t.Fatalf("decode 201 body: %v: %s", err, string(raw))
+		}
+		if resp.TemplateID == "" {
+			t.Fatalf("template_id empty: %s", string(raw))
+		}
+		found := false
+		for _, w := range resp.ValidationWarnings {
+			if w.Class == "unknown_check_kind" && strings.Contains(w.Msg, "not_a_registered_shape_check") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected an unknown_check_kind warning from the verifier's validation RPC (proving the "+
+				"registration pipeline called the service validator and projected its finding class), got: %s",
 				string(raw))
 		}
 	})

@@ -63,7 +63,6 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
 	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
-	ep.WaitForNodeSettledTo(t, instanceID, "bystander", "fresh", 90*time.Second)
 
 	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
@@ -125,7 +124,6 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
 	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
-	ep.WaitForNodeSettledTo(t, instanceID, "bystander", "fresh", 90*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")

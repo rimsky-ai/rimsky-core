@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 func (s *Store) AdminHandler() http.Handler {
@@ -100,8 +99,7 @@ func (s *Store) AdminHandler() http.Handler {
 			return
 		}
 		availSentinel := filepath.Join(PolicyStateDir(s.root, selector), "available", folder)
-		epoch := time.Unix(0, 0)
-		if err := os.Chtimes(availSentinel, epoch, epoch); err != nil {
+		if err := stampRingPosition(availSentinel, ringPositionHead); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				if folderInProgress(s.root, selector, folder) {
 					http.Error(w, "folder is in_progress", http.StatusConflict)

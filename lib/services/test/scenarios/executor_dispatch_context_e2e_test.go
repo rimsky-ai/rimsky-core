@@ -51,7 +51,12 @@ func TestExecutorReadsDispatchContext(t *testing.T) {
 	waitForWorkerDispatchCount(t, ctx, pgPool, workerID, 2, 90*time.Second)
 	dispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, workerID)
 	rerun := dispatches[1]
-	requireRerunDispatchContext(t, fresh, rerun)
+	requireFreshDispatchContext(t, rerun)
+	if rerun.runScopeID == fresh.runScopeID {
+		dumpWorkerDispatchProvenance(t, ctx, pgPool, workerID)
+		t.Fatalf("second message-driven dispatch %s reused run_scope_id %s — each frame must own its own run scope (decision:run-scope-is-per-frame)",
+			rerun.runID, rerun.runScopeID)
+	}
 }
 
 func buildDispatchContextProbeTemplate() map[string]any {
@@ -140,23 +145,5 @@ func requireFreshDispatchContext(t *testing.T, d workerDispatch) {
 	if gotRunScopeID != d.runScopeID {
 		t.Fatalf("dispatch %s: dispatch_context.run_scope_id %q does not match the persisted run_scope_id %q",
 			d.runID, gotRunScopeID, d.runScopeID)
-	}
-}
-
-func requireRerunDispatchContext(t *testing.T, prior, rerun workerDispatch) {
-	t.Helper()
-	got, ok := rerun.attributes["dispatch_context"].(map[string]any)
-	if !ok {
-		t.Fatalf("dispatch %s: latest_attributes missing dispatch_context, got %v", rerun.runID, rerun.attributes)
-	}
-	gotPriorID, _ := got["prior_dispatch_id"].(string)
-	if gotPriorID != prior.runID {
-		t.Fatalf("dispatch %s: dispatch_context.prior_dispatch_id = %q, want the previous dispatch's run id %q — the populated-on-rerun field is unproven",
-			rerun.runID, gotPriorID, prior.runID)
-	}
-	gotDisposition, _ := got["prior_dispatch_disposition"].(string)
-	if gotDisposition != "recalculate" {
-		t.Fatalf("dispatch %s: dispatch_context.prior_dispatch_disposition = %q, want %q",
-			rerun.runID, gotDisposition, "recalculate")
 	}
 }

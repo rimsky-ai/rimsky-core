@@ -482,12 +482,20 @@ func findingToProjection(f runtime.ValidationFinding) map[string]string {
 			path = f.ServiceName + " (" + f.Role + ")"
 		}
 	}
-	return map[string]string{"path": path, "msg": f.Message}
+	out := map[string]string{"path": path, "msg": f.Message}
+	if f.Class != "" {
+		out["class"] = f.Class
+	}
+	return out
 }
 
 func findingToProjectionAny(f runtime.ValidationFinding) map[string]any {
 	p := findingToProjection(f)
-	return map[string]any{"path": p["path"], "msg": p["msg"]}
+	out := map[string]any{"path": p["path"], "msg": p["msg"]}
+	if c, ok := p["class"]; ok {
+		out["class"] = c
+	}
+	return out
 }
 
 func findingsToProjection(fs []runtime.ValidationFinding) []map[string]string {

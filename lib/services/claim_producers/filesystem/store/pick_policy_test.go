@@ -313,6 +313,55 @@ func TestCommit_ReleaseToBack(t *testing.T) {
 	}
 }
 
+func TestCommit_ReleaseToBack_IndependentOfSentinelMtimes(t *testing.T) {
+	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
+	for _, f := range []string{"alpha", "beta", "gamma"} {
+		must(t, os.MkdirAll(filepath.Join(root, sub, f), 0o755))
+	}
+	o, _ := st.Open(context.Background(), "c-1", "@r")
+	if !o.Available {
+		t.Fatal("first pick should be Available")
+	}
+	var first struct{ Folder string }
+	must(t, json.Unmarshal(o.Result.Payload, &first))
+	must(t, st.Commit(context.Background(), "c-1", o.Result.ClaimScope, o.Result.Address, ""))
+
+	availDir := filepath.Join(PolicyStateDir(root, "@r"), "available")
+	entries, err := os.ReadDir(availDir)
+	must(t, err)
+	if len(entries) != 3 {
+		t.Fatalf("want 3 available sentinels after recycle, got %d", len(entries))
+	}
+	flat := time.Unix(1730000000, 0)
+	for _, e := range entries {
+		must(t, os.Chtimes(filepath.Join(availDir, e.Name()), flat, flat))
+	}
+
+	picked := make([]string, 0, 3)
+	for i := 2; i <= 4; i++ {
+		claimID := fmt.Sprintf("c-%d", i)
+		on, _ := st.Open(context.Background(), claimID, "@r")
+		if !on.Available {
+			t.Fatalf("pick %d should be Available", i)
+		}
+		var p struct{ Folder string }
+		must(t, json.Unmarshal(on.Result.Payload, &p))
+		picked = append(picked, p.Folder)
+		must(t, st.Commit(context.Background(), claimID, on.Result.ClaimScope, on.Result.Address, ""))
+	}
+	if picked[0] == first.Folder {
+		t.Errorf("recycled folder %q was re-picked first even though two never-picked folders were available; ring order must not depend on sentinel mtimes",
+			first.Folder)
+	}
+	seen := map[string]bool{first.Folder: true}
+	for _, p := range picked {
+		seen[p] = true
+	}
+	if len(seen) != 3 {
+		t.Errorf("4 picks over a 3-folder recycle ring must rotate through all folders; got first=%q then %v", first.Folder, picked)
+	}
+}
+
 func TestCommit_PopAndDelete_RemovesFolder(t *testing.T) {
 	st, root, sub := newRingStore(t,
 		action.Action{Kind: action.PopAndDelete},

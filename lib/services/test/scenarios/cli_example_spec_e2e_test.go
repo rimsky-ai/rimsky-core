@@ -72,15 +72,20 @@ func documentedRunInvocation(t *testing.T, baseURL, specRelPath string) []string
 	if err != nil {
 		t.Fatalf("read examples/README.md: %v", err)
 	}
-	m := readmeRunInvocationRe.FindStringSubmatch(string(raw))
-	if m == nil {
+	ms := readmeRunInvocationRe.FindAllStringSubmatch(string(raw), -1)
+	if len(ms) == 0 {
 		t.Fatalf("examples/README.md has no `rimsky run <file>` invocation line to prove")
 	}
-	documentedRelPath := filepath.FromSlash(m[1])
-	if documentedRelPath != filepath.FromSlash(specRelPath) {
-		t.Fatalf("examples/README.md documents `rimsky run %s`, but the test drives %s — keep the README and the proof in sync", m[1], specRelPath)
+	documented := make([]string, 0, len(ms))
+	for _, m := range ms {
+		if filepath.FromSlash(m[1]) == filepath.FromSlash(specRelPath) {
+			return []string{"--endpoint", baseURL, repoExampleSpecPath(t, specRelPath)}
+		}
+		documented = append(documented, m[1])
 	}
-	return []string{"--endpoint", baseURL, repoExampleSpecPath(t, specRelPath)}
+	t.Fatalf("examples/README.md documents `rimsky run` for %v, but not for %s — keep the README and the proof in sync",
+		documented, specRelPath)
+	return nil
 }
 
 func captureRunRun(t *testing.T, ctx context.Context, args []string) (string, int) {

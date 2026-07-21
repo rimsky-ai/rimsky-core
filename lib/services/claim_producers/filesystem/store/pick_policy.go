@@ -61,6 +61,33 @@ func ParseFromRight(name string) (folder, claimID string, claimedNanos int64, er
 
 const fsStoreStateDirName = ".fs-store"
 
+const ringPositionHead int64 = 0
+
+func stampRingPosition(sentinelPath string, position int64) error {
+	f, err := os.OpenFile(sentinelPath, os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	_, werr := f.WriteString(strconv.FormatInt(position, 10))
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
+}
+
+func ringPosition(sentinelPath string) int64 {
+	raw, err := os.ReadFile(sentinelPath)
+	if err != nil {
+		return ringPositionHead
+	}
+	pos, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		return ringPositionHead
+	}
+	return pos
+}
+
 func PolicyStateDir(storeRoot, selector string) string {
 	return filepath.Join(storeRoot, fsStoreStateDirName, trimAtPrefix(selector))
 }
@@ -132,7 +159,14 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 		f, err := os.OpenFile(filepath.Join(availDir, folder),
 			os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
-			_ = f.Close()
+			_, werr := f.WriteString(strconv.FormatInt(time.Now().UnixNano(), 10))
+			cerr := f.Close()
+			if werr != nil {
+				return fmt.Errorf("stamp available sentinel %s: %w", folder, werr)
+			}
+			if cerr != nil {
+				return fmt.Errorf("close available sentinel %s: %w", folder, cerr)
+			}
 			addedAny = true
 			changedAny = true
 			continue
@@ -239,17 +273,26 @@ func (s *Store) claimNextAvailable(availDir, inProgDir string, pp *PickPolicy, c
 	if err != nil {
 		return claimedFolder{}, false, fmt.Errorf("filesystem store: readdir available: %w", err)
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		ii, _ := entries[i].Info()
-		jj, _ := entries[j].Info()
-		if ii != nil && jj != nil && !ii.ModTime().Equal(jj.ModTime()) {
-			return ii.ModTime().Before(jj.ModTime())
+	type rankedSentinel struct {
+		name     string
+		position int64
+	}
+	ranked := make([]rankedSentinel, 0, len(entries))
+	for _, entry := range entries {
+		ranked = append(ranked, rankedSentinel{
+			name:     entry.Name(),
+			position: ringPosition(filepath.Join(availDir, entry.Name())),
+		})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].position != ranked[j].position {
+			return ranked[i].position < ranked[j].position
 		}
-		return entries[i].Name() < entries[j].Name()
+		return ranked[i].name < ranked[j].name
 	})
 
-	for _, entry := range entries {
-		folder := entry.Name()
+	for _, entry := range ranked {
+		folder := entry.name
 		src := filepath.Join(availDir, folder)
 		subPath := filepath.Join(pp.Root, folder)
 		absPath := filepath.Join(s.root, subPath)
@@ -557,9 +600,8 @@ func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, 
 		fsyncDir(filepath.Dir(folderAbs))
 		return nil
 	case action.Recycle:
-		now := time.Now()
-		if err := os.Chtimes(src, now, now); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("filesystem store: recycle chtimes: %w", err)
+		if err := stampRingPosition(src, time.Now().UnixNano()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("filesystem store: recycle stamp ring position: %w", err)
 		}
 		if err := os.Rename(src, filepath.Join(availDir, folder)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: recycle rename: %w", err)
