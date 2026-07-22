@@ -61,3 +61,4 @@ exempt:
   # extension (.go/.ts/.proto/.sql/.sh) lives there, so it needs no entry.
   - lib/protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
   - .claude/   # Claude Code session state, settings, and ephemeral worktrees; not source the project licenses
+  - tools/image-src-tag.sh  # materialized verbatim by the ok-workspaces plugin (Apache-2.0), which owns and overwrites it; not project-authored source
