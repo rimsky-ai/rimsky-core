@@ -69,6 +69,9 @@
   "enabledPlugins": {
     "code-simplifier@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
-    "plumbline@fallguy": true
+    "ok@ok-plugins": true,
+    "ok-planner@ok-plugins": true,
+    "ok-plumbline@ok-plugins": true,
+    "ok-workspaces@ok-plugins": true
   }
 }
