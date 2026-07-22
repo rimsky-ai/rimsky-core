@@ -74,12 +74,12 @@ func findRepoRoot(t *testing.T) string {
 	}
 	dir := filepath.Dir(thisFile)
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".plumbline.json")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, ".ok-plumbline", "config.json")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatalf("could not locate .plumbline.json walking up from %s", filepath.Dir(thisFile))
+			t.Fatalf("could not locate .ok-plumbline/config.json walking up from %s", filepath.Dir(thisFile))
 		}
 		dir = parent
 	}
@@ -87,7 +87,7 @@ func findRepoRoot(t *testing.T) string {
 
 func assertAllChecksActive(t *testing.T, repoRoot string) {
 	t.Helper()
-	cfgPath := filepath.Join(repoRoot, ".plumbline.json")
+	cfgPath := filepath.Join(repoRoot, ".ok-plumbline", "config.json")
 	raw, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", cfgPath, err)
@@ -102,10 +102,10 @@ func assertAllChecksActive(t *testing.T, repoRoot string) {
 	for _, name := range required {
 		v, present := cfg.Checks[name]
 		if !present {
-			t.Fatalf(".plumbline.json checks.%s missing; expected true", name)
+			t.Fatalf(".ok-plumbline/config.json checks.%s missing; expected true", name)
 		}
 		if !v {
-			t.Fatalf(".plumbline.json checks.%s = false; expected true", name)
+			t.Fatalf(".ok-plumbline/config.json checks.%s = false; expected true", name)
 		}
 	}
 }
