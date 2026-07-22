@@ -417,8 +417,9 @@ push-images: check-clean buildx-builder
 #   push-images    — buildx build + push with SBOM + provenance attestations
 #
 # test-all itself depends on core-images + service-images + test-images
-# (see its comment above): the services scenarios pull the :latest tags from
-# the LOCAL docker daemon, so images must be built from the current source
+# (see its comment above): the services scenarios resolve images by the
+# content-addressed :src-<tree-hash> tag from the LOCAL docker daemon, so
+# images must be built from the current source
 # before the suites run. Listing the image targets explicitly here as well keeps the chain's
 # ordering self-documenting; make deduplicates the prerequisites, so each
 # image set builds once per invocation and test-all always exercises the
