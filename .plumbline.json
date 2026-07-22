@@ -6,7 +6,9 @@
   ],
   "ignore": [
     "lib/protocols/proto/v1/gen/",
-    ".ok-planner/sketches/"
+    ".ok-planner/history/",
+    ".ok-planner/workbench/",
+    ".ok-planner/archive/"
   ],
   "checks": {
     "comment_hygiene": true,

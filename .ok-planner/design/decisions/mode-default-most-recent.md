@@ -33,4 +33,4 @@ Default to `idempotent-settled` — rejected because it pays the JCS comparison 
 
 No default; require explicit per-template config — rejected because it adds friction to template authoring with no upside. The vast majority of templates want `most-recent`; requiring explicit declaration for the common case is paperwork.
 
-Default to a hybrid "most-recent for attribute cascades, sequenced for message cascades" — rejected as the per-cascade-source-mode generalization (see `tension:per-cascade-source-mode`). One mode per node is the chosen surface; the generalization is undecided and tracked as a tension.
+Default to a hybrid "most-recent for attribute cascades, sequenced for message cascades" — rejected as the per-cascade-source-mode generalization (see `issue:per-cascade-source-mode`). One mode per node is the chosen surface; the generalization is undecided and tracked as an open issue.

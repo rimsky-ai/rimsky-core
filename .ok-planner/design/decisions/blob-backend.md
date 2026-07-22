@@ -15,4 +15,4 @@ A single backend choice that delivers both properties: small values stay in the 
 
 ## Alternatives
 
-Pure-inline backend (large-payload risk; explicitly errors on values that exceed the row-size limit). The memory blob backend (audit gap; tracked separately as `tension:memory-blob-audit-gap`).
+Pure-inline backend (large-payload risk; explicitly errors on values that exceed the row-size limit). The memory blob backend (audit gap; tracked separately as `issue:memory-blob-audit-gap`).

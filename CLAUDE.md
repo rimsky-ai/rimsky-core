@@ -12,7 +12,7 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 **Concept-to-code links** — `grep -rn '@concept:' .` in source.
 
-**Open / unresolved design questions** — `.ok-planner/design/tensions/`.
+**Open / unresolved design questions** — `.ok-planner/issues.jsonl` (append-only issue queue; an issue's state is the fold of its rows by id; drained at `/sprint`). The former `design/tensions/` directory is migrated: live tensions became issue rows, the files are archived under `.ok-planner/history/tensions/`.
 
 **Build commands** — `Makefile`. Standard targets: `make build-all`, `make test-all`, `make lint`, `make tidy`, `make proto-gen`. `make build-all` / `test-all` / `lint` now also cover the `lib/services` module. `make service-images` builds the bundled-service images (one per claim_producer / sensor / subscriber / executor under `lib/services/`). Scenario and storage tests under `test/scenarios/...` and `lib/foundation/persistence/...` use testcontainers-go and require a working Docker socket.
 
@@ -24,7 +24,7 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 **Recent changes** — `git log`. This repo keeps no CHANGELOG; design rationale lives in the concept catalog (above) and `.ok-planner/` history.
 
-**Project records, out of context by default** — `.ok-planner/{specs,plans,sketches,history}/`. Committed, versioned parts of the project, but **not the source of truth** (the source code and the whole `.ok-planner/design/` corpus — concepts, decisions, stories, tensions — are) and **not to be pulled into context unprompted**. `history/` (archived specs and plans) is a past moment and `sketches/` a speculative or in-progress future; reading either without a directing goal is context pollution when reasoning about the project as it stands. Read them only when a specific goal directs it (e.g. `/brainstorm` consulting a relevant sketch or prior plan). This is a context-discipline rule, **not** a commit rule — the files are committed and part of the project; some sketches are temporary planning input removed after use, which is also fine.
+**Project records, out of context by default** — `.ok-planner/{specs,history}/`. Committed, versioned parts of the project, but **not the source of truth** (the source code and the whole `.ok-planner/design/` corpus — concepts, decisions, stories — are) and **not to be pulled into context unprompted**. `history/` holds a same-named archive folder per artifact kind (`specs/`, plus migrated pre-4.0 kinds `plans/`, `sketches/`, `coverage/`, `tensions/`); everything under it is a past moment, preserved indefinitely, and reading it without a directing goal is context pollution when reasoning about the project as it stands. Read these only when a specific goal directs it. This is a context-discipline rule, **not** a commit rule — the files are committed and part of the project.
 
 ## Cross-cutting gotchas
 

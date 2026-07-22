@@ -11,7 +11,7 @@ When an agent is writing prose to a human in an interactive session — status u
 
 **Where this does NOT apply:**
 - Source code, docstrings, code comments.
-- Concept docs, tensions, specs, plans, sketches under `.ok-planner/`.
+- Concept docs, specs, the issue queue, and archived records under `.ok-planner/`.
 - `CLAUDE.md`, `README.md`, anything else in the repo.
 - Commit messages, PR descriptions.
 - Test output, build output, stack traces, tool diagnostics — those keep their existing shape.
@@ -47,10 +47,9 @@ Bare nouns like `Open`, `claimed_by`, or `rimsky_node_events` could be Go method
 | `cfg:` | `` `cfg:persistence.blob.backend` `` |
 | `env:` | `` `env:RIMSKY_CONFIG` `` |
 | `concept:` | `` `concept:claim-handle` `` |
-| `tension:` (open) | `` `tension:cascade-walks-overloaded` `` |
-| `tension:` (resolved) | `` `tension:_resolved/abandon-on-pass-duplicated-path` `` |
+| `issue:` (issue-queue id) | `` `issue:endpoint-env-var-collision` `` |
 | `invariant:` | `` `invariant:4` `` or `` `invariant:4-claimant-guarded-release` `` |
-| `spec:` / `plan:` / `sketch:` | `` `spec:2026-05-11-design-log-convergence` `` |
+| `spec:` | `` `spec:2026-05-11-design-log-convergence` `` |
 | `cmd:` | `` `cmd:make build-all` `` |
 
 Conventions:
