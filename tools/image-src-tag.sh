@@ -1,12 +1,14 @@
 #!/bin/sh
-# Copyright © 2026 Fall Guy Consulting.
-# Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-# license. See LICENSE.agpl and COPYRIGHT at the repo root.
+# ok-workspaces canonical src-tag script v0.2.0.
+# Plugin-owned: refreshed by /ok-workspaces:affirm; do not hand-edit.
+# Prints a content-addressed tag for the current working tree
+# (including uncommitted changes): src-<first 12 hex of a git
+# tree-object hash>. Same tree -> same tag, on every machine.
 
 set -eu
 root=$(git rev-parse --show-toplevel)
 index=$(git rev-parse --git-path index)
-tmp=$(mktemp "${TMPDIR:-/tmp}/rimsky-src-tag.XXXXXX")
+tmp=$(mktemp "${TMPDIR:-/tmp}/ok-workspaces-src-tag.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
 if [ -f "$index" ]; then cp "$index" "$tmp"; else rm -f "$tmp"; fi
 cd "$root"

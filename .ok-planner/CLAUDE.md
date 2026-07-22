@@ -1,6 +1,6 @@
 # .ok-planner — the planner's directory
 
-Materialized by ok-planner v4.2.0. Skill-owned
+Materialized by ok-planner v4.3.1. Skill-owned
 boilerplate: this file is overwritten wholesale by `/true-up`; do not
 hand-edit it (project guidance belongs in the project's root CLAUDE.md).
 
@@ -47,14 +47,17 @@ fold of its rows by id. While any issue is open, `/sprint` will not
 plan new work — draining the queue is the planning session's entry
 gate.
 
-## Project records (`specs/`, `history/`) — out of context by default
+## Project records (`specs/`, `sketches/`, `history/`) — out of context by default
 
 Committed, versioned parts of the project — but not the source of
-truth, and not to be pulled into context unprompted. `history/`
-holds a same-named archive folder per artifact kind (`specs/`, and
-on projects migrated from older layouts also `plans/`, `sketches/`,
-`coverage/`, `tensions/`): completed or retired artifacts move
-there and are preserved indefinitely.
+truth, and not to be pulled into context unprompted. `sketches/`
+holds design sketches from `/sketch` — pre-spec, speculative or
+in-progress future thinking; reading one without a directing goal
+is context pollution. `history/` holds a same-named archive folder
+per artifact kind (`specs/`, `sketches/`, and on projects migrated
+from older layouts also `plans/`, `coverage/`, `tensions/`):
+completed or retired artifacts move there and are preserved
+indefinitely.
 
 - **Do not consult these files to understand the project.** They
   reflect a moment in time. The codebase and `design/` are the
@@ -73,6 +76,11 @@ ok-planner skill directs it (e.g. `/sprint` writing a new spec to
 spec to `history/specs/`). Do exactly what was asked, then stop.
 
 ## Lifecycle summary
+
+`/sketch` captures a pre-spec idea in `sketches/` — single-pass,
+speculative, no authorization to build; when the idea is taken up
+for real it flows through `/sprint`, and the sketch moves to
+`history/sketches/`.
 
 `/sprint` drains the issue queue with the owner, then produces a
 sprint spec in `specs/`: final-form corpus deltas + work items + a

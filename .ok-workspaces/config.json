@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "stacks": [
+    "go",
+    "docker"
+  ],
+  "runtime": "docker-compose",
+  "worktrees": {
+    "dirPrefix": "../wt-",
+    "branchPrefix": "wt/"
+  },
+  "srcTag": {
+    "path": "tools/image-src-tag.sh"
+  },
+  "compose": {
+    "projectPrefix": "rimsky-core",
+    "files": []
+  }
+}
