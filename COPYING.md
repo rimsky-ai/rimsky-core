@@ -53,7 +53,7 @@ precisely so that path is open to everyone.
 
 ## What each license requires
 
-**Apache 2.0** (`lib/protocols/`, plus the `cold-read/` carve-out).
+**Apache 2.0** (`lib/protocols/`, plus the `examples/` carve-out).
 Permissive. You may use, modify, and redistribute under the Apache terms,
 including in closed-source products. Preserve the license and copyright
 notices and the `NOTICE` file; see `LICENSE.apache`.
