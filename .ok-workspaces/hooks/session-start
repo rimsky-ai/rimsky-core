@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Materialized by ok-workspaces v6.0.0. Plugin-owned:
+# Materialized by ok-workspaces v7.0.0. Plugin-owned:
 # overwritten wholesale by /ok-workspaces:true-up; do not hand-edit.
 #
 # The real SessionStart hook, running from the project's own estate so it
@@ -22,7 +22,7 @@ escape_for_json() {
 }
 
 escaped=$(escape_for_json "$skill_content")
-context="ok-workspaces v6.0.0 is materialized in this project. Skills are invoked only when the user types a slash command.\n\n${escaped}"
+context="ok-workspaces v7.0.0 is materialized in this project. Skills are invoked only when the user types a slash command.\n\n${escaped}"
 
 printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$context"
 

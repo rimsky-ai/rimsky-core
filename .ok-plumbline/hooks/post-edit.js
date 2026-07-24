@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: Apache-2.0
 //
-// Materialized by ok-plumbline v6.0.0. Plugin-owned:
+// Materialized by ok-plumbline v7.0.0. Plugin-owned:
 // overwritten wholesale by /ok-plumbline:true-up; do not hand-edit.
 //
 // The real PostToolUse hook. It lints the edited file with the project's own

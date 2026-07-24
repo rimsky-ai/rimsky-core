@@ -9,7 +9,7 @@ const path = require('path');
 // project at .ok-plumbline/bin/plumbline. The placeholder below is what the
 // un-vendored plugin-root copy reports — seeing it means you are running the
 // plugin's own copy rather than a project's pinned one.
-const VERSION = '6.0.0';
+const VERSION = '7.0.0';
 
 const DOCSTRING_OPT_IN_MARKER = '@plumbline:allow-docstrings';
 

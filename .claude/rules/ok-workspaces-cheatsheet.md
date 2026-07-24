@@ -1,6 +1,6 @@
 # ok-workspaces Cheatsheet
 
-Materialized by ok-workspaces v6.0.0 — plugin-owned; refreshed by
+Materialized by ok-workspaces v7.0.0 — plugin-owned; refreshed by
 `/ok-workspaces:true-up`; do not hand-edit. Profile:
 `.ok-workspaces/config.json` (stacks: go, docker;
 runtime: docker-compose).
