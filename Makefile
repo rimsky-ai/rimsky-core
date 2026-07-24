@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images test-images test-in-stack reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -162,14 +162,11 @@ VERSION ?= $(shell git describe --tags --match='v[0-9]*' --always --dirty 2>/dev
 cli:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky ./cmd/rimsky/
 
-cli-release:
-	@mkdir -p bin/release
-	@for os in linux darwin; do \
-	  for arch in amd64 arm64; do \
-	    GOOS=$$os GOARCH=$$arch go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky_$${os}_$${arch} ./cmd/rimsky/; \
-	  done; \
-	done; \
-	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky_windows_amd64.exe ./cmd/rimsky/
+cli-check:
+	goreleaser check
+
+cli-snapshot: cli-check
+	goreleaser release --snapshot --clean --skip=publish
 
 # Content-addressed image tag: a git tree-object hash of the working tree,
 # derived by tools/image-src-tag.sh (shared with the services test harness).
@@ -205,7 +202,9 @@ endef
 #   rimsky-conformance      — bundled protocol conformance runners; pick one
 #                             by container command (Dockerfile.conformance).
 # Each image is tagged $(VERSION) + latest + $(SRC_TAG). The CLI ships as a
-# binary (`make cli` / `make cli-release`), not an image.
+# binary, not an image: `make cli` for a local build, and goreleaser for
+# release archives (`make cli-check` / `make cli-snapshot` to verify;
+# `goreleaser release` runs in the release flow — see RELEASING.md).
 core-images:
 	$(call build-image,dockerfiles/Dockerfile.rimsky,rimsky)
 	$(call build-image,dockerfiles/Dockerfile.all-in-one,rimsky-all-in-one,--build-arg RIMSKY_BASE=rimsky:$(VERSION))

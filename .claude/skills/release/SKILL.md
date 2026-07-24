@@ -321,10 +321,16 @@ cleanup. No Hub push.
    make publish-protocols
    ```
    (lands on `@latest`).
-7. GitHub Release:
+7. GitHub Release (goreleaser owns creation; it uploads the CLI
+   binaries + checksums and uses the curated notes as the release body).
+   Run from the `vX.Y.Z` tagged commit created in sub-step 5, with `gh`
+   authenticated (goreleaser reads its token):
    ```
-   gh release create vX.Y.Z --notes-file releases/vX.Y.Z.md
+   goreleaser release --clean --release-notes=releases/vX.Y.Z.md
    ```
+   The archives are `rimsky_X.Y.Z_{linux,darwin}_{amd64,arm64}.tar.gz`
+   (no Windows — the CLI embeds Unix-only process control). Config lives
+   in `.goreleaser.yaml`; verify it any time with `make cli-snapshot`.
 8. Fast-forward `main` to the release. A formal release is the new
    stable line, so `main` should always point at the most recent
    release commit — but releases are cut from the current branch

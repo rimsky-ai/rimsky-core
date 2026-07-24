@@ -131,6 +131,39 @@ Hub constraint — namespaces disallow hyphens — and is intentional. The
 GitHub org (`rimsky-ai`) and the npm scope (`@rimsky-ai`) keep the hyphen;
 the image registry does not. Do not "correct" `rimskyai` to `rimsky-ai`.
 
+## CLI distribution
+
+The `rimsky` CLI ships as a prebuilt binary, not an image. goreleaser
+(`.goreleaser.yaml`) builds the release archives and creates the GitHub
+Release; it runs as sub-step 7 of the release flow, on the `vX.Y.Z`
+tagged commit, and uses the curated `releases/vX.Y.Z.md` as the release
+body (`goreleaser release --clean --release-notes=…`). Verify the config
+any time without publishing via `make cli-snapshot`.
+
+Supported install paths, in order:
+
+1. **Prebuilt archive** — download `rimsky_X.Y.Z_<os>_<arch>.tar.gz`
+   from the GitHub Release and extract the `rimsky` binary. Platforms:
+   `linux` and `darwin`, `amd64` and `arm64`.
+2. **Build from source** — `make cli` at the release tag (stamps the
+   version via `-ldflags`). A `go install`-style build also reports the
+   right version: the binary falls back to `runtime/debug.ReadBuildInfo`
+   when the ldflag is absent.
+
+Two platform/layout limits are deliberate, not oversights:
+
+- **No Windows build.** The CLI transitively embeds Unix-only process
+  control (`lib/services/executors/claude-agent` uses `syscall.Setpgid`/
+  `Kill`; `lib/services/claim_producers/filesystem/store` uses
+  `syscall.Stat_t`), so it does not cross-compile to Windows. The matrix
+  is Unix-only by construction.
+- **`go install github.com/rimsky-ai/rimsky-core/cmd/rimsky@vX.Y.Z` does
+  not work.** The root module depends on the `lib/*` sub-modules via
+  `replace … => ./lib/*`, and `go install pkg@version` ignores `replace`
+  directives — so it tries to fetch the unpublished `lib/*@v0.0.0` and
+  fails. Supporting `go install` would require publishing the sub-modules
+  with real versions. Until then, use path 1 or 2.
+
 ## Release-notes template
 
 The `/release` skill writes one Markdown file per formal release to

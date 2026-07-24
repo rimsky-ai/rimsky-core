@@ -24,6 +24,9 @@ vendor/
 lib/services/executors/*/node_modules/
 lib/services/executors/*/dist/
 
+# goreleaser output (CLI release archives + checksums)
+/dist/
+
 # Stray ad-hoc service binaries (built without -o at the lib/services
 # module root, e.g. `cd lib/services && go build ./sensors/sensor-cron`
 # leaves a binary at lib/services/sensor-cron). Anchored to lib/services/

@@ -21,7 +21,7 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "version", "--version", "-v":
-		fmt.Printf("rimsky %s\n", version)
+		fmt.Printf("rimsky %s\n", resolvedVersion())
 		return
 	case "help", "--help", "-h":
 		printRootUsage(os.Stdout)

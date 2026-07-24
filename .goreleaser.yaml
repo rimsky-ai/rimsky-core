@@ -1,0 +1,52 @@
+version: 2
+
+project_name: rimsky
+
+git:
+  ignore_tags:
+    - "lib/*"
+    - "examples/*"
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: rimsky
+    main: ./cmd/rimsky
+    binary: rimsky
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: rimsky
+    ids:
+      - rimsky
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE.agpl
+      - LICENSE.apache
+      - NOTICE
+      - COPYRIGHT
+      - COPYING.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: rimsky-ai
+    name: rimsky-core
