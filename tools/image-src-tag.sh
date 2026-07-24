@@ -1,6 +1,6 @@
 #!/bin/sh
-# ok-workspaces canonical src-tag script v0.2.0.
-# Plugin-owned: refreshed by /ok-workspaces:affirm; do not hand-edit.
+# ok-workspaces canonical src-tag script v6.0.0.
+# Plugin-owned: refreshed by /ok-workspaces:true-up; do not hand-edit.
 # Prints a content-addressed tag for the current working tree
 # (including uncommitted changes): src-<first 12 hex of a git
 # tree-object hash>. Same tree -> same tag, on every machine.

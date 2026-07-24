@@ -1,0 +1,3 @@
+# Plugin-owned; overwritten by /ok-workspaces:true-up.
+# Worktrees are checkouts, never content of this repo.
+worktrees/

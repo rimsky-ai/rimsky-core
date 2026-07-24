@@ -1,6 +1,6 @@
 # ok-workspaces Cheatsheet
 
-Materialized by ok-workspaces v0.2.0 — plugin-owned; refreshed by
+Materialized by ok-workspaces v6.0.0 — plugin-owned; refreshed by
 `/ok-workspaces:true-up`; do not hand-edit. Profile:
 `.ok-workspaces/config.json` (stacks: go, docker;
 runtime: docker-compose).
@@ -8,8 +8,8 @@ runtime: docker-compose).
 Three rules. Each one makes the next one safe — ship any subset and the
 isolation story has a hole.
 
-1. **One worktree per job.** Every unit of work gets its own sibling
-   checkout on its own branch: directory `../wt-<job>`, branch
+1. **One worktree per job.** Every unit of work gets its own checkout
+   on its own branch: directory `../wt-<job>`, branch
    `wt/<job>`. Never share a working tree between concurrent
    jobs; never do job work on the main checkout. Use
    `/ok-workspaces:open <job>` and `/ok-workspaces:close <job>`.
