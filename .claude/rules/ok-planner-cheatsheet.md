@@ -1,6 +1,6 @@
 # ok-planner Cheatsheet
 
-Materialized by ok-planner v7.0.0. Plugin-owned: overwritten
+Materialized by ok-planner v8.0.0. Plugin-owned: overwritten
 wholesale by `/true-up`; project-specific rules belong in your own files under
 `.claude/rules/`.
 
