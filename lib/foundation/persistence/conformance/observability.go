@@ -48,7 +48,7 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 			return err
 		}
 		_ = seedMainRunScopeForInstance(ctx, t, store, id, tx)
-		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID:           id,
 			TemplateHash: tmpl,
 			InstanceKey:  &key,

@@ -197,12 +197,13 @@ func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer,
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
-			InstanceId:      req.InstanceID,
-			TemplateHash:    req.TemplateHash,
-			InstanceKey:     req.InstanceKey,
-			Params:          req.Params,
-			ServiceBindings: req.ServiceBindings,
-			OwnerApiKeyId:   req.OwnerAPIKeyID,
+			InstanceId:            req.InstanceID,
+			TemplateHash:          req.TemplateHash,
+			InstanceKey:           req.InstanceKey,
+			Params:                req.Params,
+			ServiceBindings:       req.ServiceBindings,
+			OwnerApiKeyId:         req.OwnerAPIKeyID,
+			TargetRoutingIdentity: req.TargetRoutingIdentity,
 		})
 	case "on_instance_terminated":
 		var req instanceScopeBody
@@ -264,13 +265,14 @@ type templateScopeBody struct {
 }
 
 type instanceScopeBody struct {
-	TemplateHash       string `json:"template_hash"`
-	InstanceID         string `json:"instance_id"`
-	InstanceKey        string `json:"instance_key,omitempty"`
-	Params             []byte `json:"params,omitempty"`
-	TerminatedAtUnixMs int64  `json:"terminated_at_unix_ms,omitempty"`
-	ServiceBindings    []byte `json:"service_bindings,omitempty"`
-	OwnerAPIKeyID      string `json:"owner_api_key_id,omitempty"`
+	TemplateHash          string `json:"template_hash"`
+	InstanceID            string `json:"instance_id"`
+	InstanceKey           string `json:"instance_key,omitempty"`
+	Params                []byte `json:"params,omitempty"`
+	TerminatedAtUnixMs    int64  `json:"terminated_at_unix_ms,omitempty"`
+	ServiceBindings       []byte `json:"service_bindings,omitempty"`
+	OwnerAPIKeyID         string `json:"owner_api_key_id,omitempty"`
+	TargetRoutingIdentity string `json:"target_routing_identity,omitempty"`
 }
 
 type runScopeTerminalBody struct {

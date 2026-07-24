@@ -301,7 +301,7 @@ func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
 		"auth:rotate":             1,
 		"observability:read":      1,
 		composeOriginAction:       0,
-		"mcp:read":                2,
+		"mcp:read":                3,
 		"service:enroll":          1,
 	}
 	got := r.AllActions()

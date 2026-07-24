@@ -37,7 +37,7 @@ func testInstancesCreateConflictErrorsDistinguishIDFromKey(t *testing.T, d persi
 	firstID := shared.UUID(uuid.New())
 	sharedKey := "shared-key"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: firstID, TemplateHash: templateHash, InstanceKey: &sharedKey,
 		}, tx)
 		return err
@@ -47,7 +47,7 @@ func testInstancesCreateConflictErrorsDistinguishIDFromKey(t *testing.T, d persi
 
 	differentKey := "different-key"
 	err := inTx(ctx, store, func(tx persistence.Tx) error {
-		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: firstID, TemplateHash: templateHash, InstanceKey: &differentKey,
 		}, tx)
 		return err
@@ -61,7 +61,7 @@ func testInstancesCreateConflictErrorsDistinguishIDFromKey(t *testing.T, d persi
 
 	secondID := shared.UUID(uuid.New())
 	err = inTx(ctx, store, func(tx persistence.Tx) error {
-		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: secondID, TemplateHash: templateHash, InstanceKey: &sharedKey,
 		}, tx)
 		return err
@@ -92,7 +92,7 @@ func testInstancesListPaginationSurvivesCursorRowDeletion(t *testing.T, d persis
 	for i := range ids {
 		ids[i] = shared.UUID(uuid.New())
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+			_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 				ID: ids[i], TemplateHash: templateHash,
 			}, tx)
 			return err

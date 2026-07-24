@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
 type classification int
@@ -43,8 +43,7 @@ type licensingConfig struct {
 
 func loadLicensingYAML(root string) (*licensingConfig, error) {
 	path := filepath.Join(root, "licensing.yml")
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var doc struct {
@@ -52,8 +51,8 @@ func loadLicensingYAML(root string) (*licensingConfig, error) {
 		AGPL   []string `yaml:"agpl"`
 		Exempt []string `yaml:"exempt"`
 	}
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+	if err := configload.LoadFile(path, &doc); err != nil {
+		return nil, err
 	}
 	return &licensingConfig{
 		apachePrefixes: normalizePrefixes(doc.Apache),

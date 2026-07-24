@@ -254,6 +254,7 @@ func postCreateInstanceIdle(t *testing.T, controlBase, templateHash, instanceKey
 		"template":     templateHash,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
+		"target_agent": "scenario-default-agent",
 	})
 	require.NoError(t, err)
 	resp, err := http.Post(controlBase+"/v1/instances", "application/json", bytes.NewReader(body))

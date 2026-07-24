@@ -5,7 +5,7 @@
 # mixed-outcome shape STORY-one-shot-to-terminal's Proof field requires.
 name: template-success
 version: "1"
-frame_resolution_mode: serial_queue
+message_queue_mode: backlog
 nodes:
   - type: worker
     executor: stub

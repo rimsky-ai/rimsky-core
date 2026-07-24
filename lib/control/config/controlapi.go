@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ type ControlAPIConfig struct {
 	Logger                 shared.Logger
 	Host                   string
 	Port                   int
+	ControlAPIID           string
 	ClaimProducers         RemoteClaimProducersConfig
 	NamedLocks             locks.NamedLocksConfig
 	Executors              ExecutorsConfig
@@ -130,8 +132,25 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if persistQueue == nil {
 		return nil, fmt.Errorf("StartControlAPI: Driver.Queue() returned nil")
 	}
+	var (
+		mtlsCA       *pki.CA
+		stopIdentity = func() {}
+	)
+	if cfg.PeerAuth == peer.PeerAuthMTLS {
+		principal := cfg.ControlAPIID
+		if principal == "" {
+			principal = defaultControlAPIPrincipal()
+		}
+		_, ca, cancel, err := installPeerIdentity(context.Background(), persistStore, principal, cfg.Clock, cfg.Logger)
+		if err != nil {
+			return nil, fmt.Errorf("StartControlAPI: %w", err)
+		}
+		mtlsCA = ca
+		stopIdentity = cancel
+	}
 	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, cfg.LateBindServiceProxies)
 	if err != nil {
+		stopIdentity()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
 	if cfg.Bundled != nil {
@@ -142,15 +161,18 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
 	if err != nil {
+		stopIdentity()
 		registry.Close()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
 	if err := cfg.NamedLocks.Validate(); err != nil {
+		stopIdentity()
 		registry.Close()
 		lifecycleReg.Close()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
 	if err := cfg.Executors.Validate(); err != nil {
+		stopIdentity()
 		registry.Close()
 		lifecycleReg.Close()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
@@ -193,6 +215,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
 	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers, cfg.Validators, cfg.DataProcessors)
 	if err != nil {
+		stopIdentity()
 		cancelDiscovery()
 		registry.Close()
 		lifecycleReg.Close()
@@ -206,18 +229,8 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	_ = runtime.RegisterAuthMutationHook(authState.OnAuthMutation)
 	var enrollDeps *controlapi.EnrollDeps
-	if cfg.PeerAuth == peer.PeerAuthMTLS {
-		ca, err := ensureDeploymentCA(context.Background(), persistStore, cfg.Clock)
-		if err != nil {
-			cancelDiscovery()
-			registry.Close()
-			lifecycleReg.Close()
-			for _, c := range peerClosers {
-				c()
-			}
-			return nil, fmt.Errorf("StartControlAPI: %w", err)
-		}
-		enrollDeps = &controlapi.EnrollDeps{CA: ca, LeafTTL: pki.LeafTTL, Clock: cfg.Clock}
+	if mtlsCA != nil {
+		enrollDeps = &controlapi.EnrollDeps{CA: mtlsCA, LeafTTL: pki.LeafTTL, Clock: cfg.Clock}
 	}
 	deps := controlapi.AppDeps{
 		Persist:        persistStore,
@@ -270,6 +283,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
 	if err != nil {
+		stopIdentity()
 		cancelDiscovery()
 		registry.Close()
 		lifecycleReg.Close()
@@ -281,6 +295,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	srv := &http.Server{Handler: app}
 	terminator := controlapi.NewInstanceTerminator(deps, 0)
 	loopCtx, cancelLoops := context.WithCancel(context.Background())
+	closersWithIdentity := append([]func(){stopIdentity}, peerClosers...)
 	h := &controlAPIHandle{
 		srv:             srv,
 		addr:            listener.Addr().String(),
@@ -290,7 +305,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		terminator:      terminator,
 		cancelLoops:     cancelLoops,
 		cancelDiscovery: cancelDiscovery,
-		peerClosers:     peerClosers,
+		peerClosers:     closersWithIdentity,
 	}
 	h.goWG(func() { disc.RefreshLoop(discoveryCtx, cfg.ObservabilityRefreshInterval, obsLogger) })
 	h.goWG(func() {
@@ -324,6 +339,13 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			runtime.DefaultPublisherSubscriptionReconcileInterval)
 	})
 	return h, nil
+}
+
+func defaultControlAPIPrincipal() string {
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return fmt.Sprintf("control-api-%s-%d", hostname, os.Getpid())
+	}
+	return fmt.Sprintf("control-api-default-%d", os.Getpid())
 }
 
 // @concept: node

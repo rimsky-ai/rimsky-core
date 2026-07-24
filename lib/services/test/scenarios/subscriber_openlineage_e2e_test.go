@@ -450,6 +450,7 @@ func createOLInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, insta
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
+		"target_agent": "scenario-default-agent",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST /v1/instances: %d %s", status, string(raw))

@@ -220,7 +220,7 @@ func seedInstanceForRunScopeFanout(t *testing.T, f *fanOutFixture, suffix string
 		}, tx); err != nil {
 			return err
 		}
-		_, err := f.deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+		_, err := f.deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: shared.UUID(instanceID), TemplateHash: hash, InstanceKey: &ck,
 			Params: map[string]any{},
 		}, tx)

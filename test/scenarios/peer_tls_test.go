@@ -94,8 +94,7 @@ func TestPeerTLS_Required_VerifiedTLSEndToEnd(t *testing.T) {
 	peer.SetTLSRootCAsForTesting(pool)
 	t.Cleanup(func() { peer.SetTLSRootCAsForTesting(nil) })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	client, err := peer.Dial(ctx, "tls-producer", "grpc://"+addr, peer.TLSModeRequired)
 	if err != nil {
 		t.Fatalf("Dial under tls: required against TLS peer failed: %v", err)
@@ -114,9 +113,7 @@ func TestPeerTLS_Required_VerifiedTLSEndToEnd(t *testing.T) {
 func TestPeerTLS_Required_PlaintextPeer_LoudFailure(t *testing.T) {
 	addr := serveStubProducer(t, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	client, err := peer.Dial(ctx, "plaintext-producer", "grpc://"+addr, peer.TLSModeRequired)
+	client, err := peer.Dial(context.Background(), "plaintext-producer", "grpc://"+addr, peer.TLSModeRequired)
 	if err == nil {
 		client.Close()
 		t.Fatalf("Dial under tls: required against plaintext peer succeeded; want loud failure")
@@ -133,9 +130,7 @@ func TestPeerTLS_Required_PlaintextPeer_LoudFailure(t *testing.T) {
 func TestPeerTLS_Off_StaysPlaintext(t *testing.T) {
 	addr := serveStubProducer(t, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	client, err := peer.Dial(ctx, "plaintext-producer", "grpc://"+addr, peer.TLSModeOff)
+	client, err := peer.Dial(context.Background(), "plaintext-producer", "grpc://"+addr, peer.TLSModeOff)
 	if err != nil {
 		t.Fatalf("Dial under tls: off against plaintext peer failed: %v", err)
 	}

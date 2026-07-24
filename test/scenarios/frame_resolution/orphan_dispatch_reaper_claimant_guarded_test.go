@@ -80,7 +80,7 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 			return err
 		}
 		ck := "ck-orphan-" + instanceID.String()[:8]
-		_, err := h.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+		_, err := h.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 			InstanceKey:  &ck,

@@ -21,10 +21,10 @@ func TestOnInstanceCreatedPopulatesCache(t *testing.T) {
 	h := newLifecycleHandler(state, Config{ReapTimeout: time.Second})
 
 	_, err := h.OnInstanceCreated(context.Background(), &genv1.OnInstanceCreatedRequest{
-		InstanceId:      "inst-1",
-		OwnerApiKeyId:   "owner-1",
-		ServiceBindings: []byte(`{"codegen":{"path":"./codegen"},"fs":{"path":"./fs"}}`),
-		Params:          []byte(`{"cwd":"/work"}`),
+		InstanceId:            "inst-1",
+		TargetRoutingIdentity: "owner-1",
+		ServiceBindings:       []byte(`{"codegen":{"path":"./codegen"},"fs":{"path":"./fs"}}`),
+		Params:                []byte(`{"cwd":"/work"}`),
 	})
 	if err != nil {
 		t.Fatalf("OnInstanceCreated: %v", err)
@@ -33,8 +33,8 @@ func TestOnInstanceCreatedPopulatesCache(t *testing.T) {
 	if !ok {
 		t.Fatalf("instance not cached")
 	}
-	if entry.ownerAPIKeyID != "owner-1" {
-		t.Fatalf("owner mismatch: %q", entry.ownerAPIKeyID)
+	if entry.targetRoutingIdentity != "owner-1" {
+		t.Fatalf("routing identity mismatch: %q", entry.targetRoutingIdentity)
 	}
 	if entry.serviceBindings["codegen"].Path != "./codegen" {
 		t.Fatalf("binding parse failed: %+v", entry.serviceBindings)
@@ -127,9 +127,9 @@ func TestOnInstanceTerminatedEvictsCache(t *testing.T) {
 	h := newLifecycleHandler(state, Config{ReapTimeout: time.Second})
 
 	if _, err := h.OnInstanceCreated(context.Background(), &genv1.OnInstanceCreatedRequest{
-		InstanceId:      "inst-1",
-		OwnerApiKeyId:   "owner-1",
-		ServiceBindings: []byte(`{"codegen":{"path":"./codegen"}}`),
+		InstanceId:            "inst-1",
+		TargetRoutingIdentity: "owner-1",
+		ServiceBindings:       []byte(`{"codegen":{"path":"./codegen"}}`),
 	}); err != nil {
 		t.Fatalf("OnInstanceCreated: %v", err)
 	}

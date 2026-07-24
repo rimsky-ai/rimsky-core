@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/sillyname"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -58,8 +59,11 @@ func newProxyTestServer(t *testing.T, fetch instanceFetcher) *proxyTestServer {
 	return &proxyTestServer{state: state, hostConn: dial(), supConn: dial()}
 }
 
-func presentedKeyIsIdentity(_ context.Context, presentedAPIKey string) (string, error) {
-	return presentedAPIKey, nil
+func presentedKeyIsIdentity(_ context.Context, presentedAPIKey string) (registerIdentityVerdict, error) {
+	if presentedAPIKey == sillyname.AnonymousCredentialSentinel {
+		return registerIdentityVerdict{kind: registerIdentityAnonymous}, nil
+	}
+	return registerIdentityVerdict{kind: registerIdentityAPIKey, keyID: presentedAPIKey}, nil
 }
 
 type dispatchHandler func(protocol string, payload []byte) [][]byte

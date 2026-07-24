@@ -14,20 +14,29 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/sillyname"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 const proxyVersion = "v1"
+
+const anonymousSillyNameCollisionRetries = 32
 
 type agentServer struct {
 	genv1.UnimplementedHostAgentServer
 	state          *proxyState
 	forwards       *httpForwarder
 	verifyIdentity registerIdentityVerifier
+	generateName   func() string
 }
 
 func newAgentServer(state *proxyState, verifyIdentity registerIdentityVerifier) *agentServer {
-	return &agentServer{state: state, forwards: newHTTPForwarder(state), verifyIdentity: verifyIdentity}
+	return &agentServer{
+		state:          state,
+		forwards:       newHTTPForwarder(state),
+		verifyIdentity: verifyIdentity,
+		generateName:   sillyname.Generate,
+	}
 }
 
 func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
@@ -45,21 +54,28 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 
 	// @concept: host-agent-proxy
 	// @concept: api-key
-	apiKeyID, err := s.verifyIdentity(stream.Context(), reg.GetApiKey())
+	verdict, err := s.verifyIdentity(stream.Context(), reg.GetApiKey())
 	if err != nil {
 		slog.Warn("agent register rejected", "agent_label", reg.GetAgentLabel(), "error", err)
 		return err
 	}
-	conn, prior, displaced := s.state.registerAgent(apiKeyID, reg.GetAgentLabel(), reg.GetLocalCallbackBaseUrl())
+
+	conn, routingIdentity, prior, err := s.adoptRoutingIdentity(verdict, reg)
+	if err != nil {
+		slog.Warn("agent register rejected", "agent_label", reg.GetAgentLabel(), "routing_label", reg.GetRoutingLabel(), "error", err)
+		return err
+	}
+	displaced := prior != nil
 	if displaced {
 		prior.close()
 		prior.closeAllStreams()
-		slog.Info("agent connection displaced prior", "api_key_id", redact(apiKeyID), "agent_label", reg.GetAgentLabel())
+		slog.Info("agent connection displaced prior", "routing_identity", redact(routingIdentity), "agent_label", reg.GetAgentLabel())
 	}
 
 	if !conn.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_RegisterAck{RegisterAck: &genv1.RegisterAck{
-		ProxyVersion:   proxyVersion,
-		DisplacedPrior: displaced,
+		ProxyVersion:    proxyVersion,
+		DisplacedPrior:  displaced,
+		RoutingIdentity: routingIdentity,
 	}}}) {
 		conn.close()
 		return status.Error(codes.Unavailable, "connection closed before register ack")
@@ -87,16 +103,47 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 	readErr := s.readLoop(stream, conn)
 
 	conn.close()
-	dropped := s.state.dropAgent(apiKeyID, conn)
+	dropped := s.state.dropAgent(routingIdentity, conn)
 	conn.closeAllStreams()
 	<-writerDone
 	if len(dropped) > 0 {
-		slog.Info("agent disconnected; dropped spawns", "api_key_id", redact(apiKeyID), "spawn_count", len(dropped))
+		slog.Info("agent disconnected; dropped spawns", "routing_identity", redact(routingIdentity), "spawn_count", len(dropped))
 	}
 	if errors.Is(readErr, io.EOF) {
 		return nil
 	}
 	return readErr
+}
+
+// @concept: host-agent-proxy
+// @concept: anonymous-mode
+func (s *agentServer) adoptRoutingIdentity(verdict registerIdentityVerdict, reg *genv1.Register) (*agentConnection, string, *agentConnection, error) {
+	label := reg.GetAgentLabel()
+	callback := reg.GetLocalCallbackBaseUrl()
+	if verdict.kind == registerIdentityAPIKey {
+		conn, prior, _ := s.state.registerAgent(verdict.keyID, label, callback, registerDisplacePrior)
+		return conn, verdict.keyID, prior, nil
+	}
+	presentedLabel := reg.GetRoutingLabel()
+	if presentedLabel != "" {
+		if err := sillyname.Validate(presentedLabel); err != nil {
+			return nil, "", nil, status.Errorf(codes.InvalidArgument, "Register.routing_label rejected: %v", err)
+		}
+		conn, _, collided := s.state.registerAgent(presentedLabel, label, callback, registerRejectOnCollision)
+		if collided {
+			return nil, "", nil, status.Errorf(codes.AlreadyExists,
+				"Register.routing_label %q is already in use by another currently-connected anonymous agent; pick a different label or omit it to have one assigned", presentedLabel)
+		}
+		return conn, presentedLabel, nil, nil
+	}
+	for i := 0; i < anonymousSillyNameCollisionRetries; i++ {
+		candidate := s.generateName()
+		conn, _, collided := s.state.registerAgent(candidate, label, callback, registerRejectOnCollision)
+		if !collided {
+			return conn, candidate, nil, nil
+		}
+	}
+	return nil, "", nil, status.Errorf(codes.ResourceExhausted, "unable to assign a fresh anonymous silly-name after %d attempts; the proxy is saturated with connected anonymous agents", anonymousSillyNameCollisionRetries)
 }
 
 func (s *agentServer) readLoop(stream genv1.HostAgent_ConnectServer, conn *agentConnection) error {
@@ -119,9 +166,9 @@ func (s *agentServer) readLoop(stream genv1.HostAgent_ConnectServer, conn *agent
 		case *genv1.ClientFrame_HttpForward:
 			go s.forwards.handle(conn, body.HttpForward)
 		case *genv1.ClientFrame_Register:
-			slog.Warn("ignoring duplicate Register on live stream", "api_key_id", redact(conn.apiKeyID))
+			slog.Warn("ignoring duplicate Register on live stream", "routing_identity", redact(conn.routingIdentity))
 		default:
-			slog.Warn("unknown client frame body", "api_key_id", redact(conn.apiKeyID))
+			slog.Warn("unknown client frame body", "routing_identity", redact(conn.routingIdentity))
 		}
 	}
 }

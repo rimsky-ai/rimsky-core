@@ -19,6 +19,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
+type lockSpecSubstitutionError struct {
+	Site      string
+	Directive string
+	Cause     error
+}
+
+func (e *lockSpecSubstitutionError) Error() string {
+	return fmt.Sprintf("lock-spec substitution (%s=%q): %v", e.Site, e.Directive, e.Cause)
+}
+
+func (e *lockSpecSubstitutionError) Unwrap() error { return e.Cause }
+
 // @concept: advisory-lock
 func sortLockSpecs(specs []any) {
 	sort.SliceStable(specs, func(i, j int) bool {
@@ -93,14 +105,14 @@ func buildLockSpecs(
 	for _, l := range def.Locks {
 		nameSub, err := attributes.Substitute(l.Name, resolveCtx)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, &lockSpecSubstitutionError{Site: substitutionSiteLockName, Directive: l.Name, Cause: err}
 		}
 		out = append(out, locks.NamedLockSpec{Name: nameSub, TemplateName: l.Name})
 	}
 	for _, sref := range def.ClaimProducers {
 		selectorSub, err := attributes.Substitute(sref.Selector, resolveCtx)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, &lockSpecSubstitutionError{Site: substitutionSiteScope, Directive: sref.Selector, Cause: err}
 		}
 		out = append(out, claimproducer.ClaimSpec{
 			ProducerName: sref.Name,

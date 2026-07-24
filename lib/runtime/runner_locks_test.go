@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -51,5 +52,49 @@ func TestBuildLockSpecs_PopulatesTemplateAndInstanceScopeFromInstance(t *testing
 		t.Fatalf("ClaimSpec.InstanceID = %q, want non-empty %q "+
 			"(runner_locks.go must populate the OpenRequest scope envelope's instance_id from the instance)",
 			cs.InstanceID, inst.ID.String())
+	}
+}
+
+// @decision: substitution-failure-routes-with-substitution
+func TestBuildLockSpecs_LockNameSubstitutionFailureCarriesLockNameSite(t *testing.T) {
+	ctx := context.Background()
+	def := &node.TemplateNodeDef{
+		Type:  "acquirer",
+		Locks: []node.NodeLockRef{{Name: "{{deps.missing.field}}"}},
+	}
+
+	_, _, err := buildLockSpecs(ctx, RunArgs{}, nil, def, nil, nil, shared.UUID{}, shared.UUID{}, shared.UUID{}, nil)
+	var subErr *lockSpecSubstitutionError
+	if !errors.As(err, &subErr) {
+		t.Fatalf("expected *lockSpecSubstitutionError; got %T: %v", err, err)
+	}
+	if subErr.Site != substitutionSiteLockName {
+		t.Fatalf("Site = %q, want %q", subErr.Site, substitutionSiteLockName)
+	}
+	if subErr.Directive != "{{deps.missing.field}}" {
+		t.Fatalf("Directive = %q, want the raw lock-name directive", subErr.Directive)
+	}
+}
+
+// @decision: substitution-failure-routes-with-substitution
+func TestBuildLockSpecs_SelectorSubstitutionFailureCarriesScopeSite(t *testing.T) {
+	ctx := context.Background()
+	def := &node.TemplateNodeDef{
+		Type: "acquirer",
+		ClaimProducers: []node.NodeClaimProducerRef{
+			{Name: "some-store", Selector: "/x/{{deps.missing.field}}", Intent: "rw"},
+		},
+	}
+
+	_, _, err := buildLockSpecs(ctx, RunArgs{}, nil, def, nil, nil, shared.UUID{}, shared.UUID{}, shared.UUID{}, nil)
+	var subErr *lockSpecSubstitutionError
+	if !errors.As(err, &subErr) {
+		t.Fatalf("expected *lockSpecSubstitutionError; got %T: %v", err, err)
+	}
+	if subErr.Site != substitutionSiteScope {
+		t.Fatalf("Site = %q, want %q", subErr.Site, substitutionSiteScope)
+	}
+	if subErr.Directive != "/x/{{deps.missing.field}}" {
+		t.Fatalf("Directive = %q, want the raw selector directive", subErr.Directive)
 	}
 }

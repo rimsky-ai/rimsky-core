@@ -16,7 +16,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
 type syntheticRimskyYAML struct {
@@ -127,24 +129,25 @@ func LoadSiblingBlocks(path string) (*SiblingBlocks, error) {
 	if path == "" {
 		return nil, nil
 	}
-	raw, err := os.ReadFile(path)
+	cfg, err := config.LoadRimskyConfigYAML(path)
 	if err != nil {
-		return nil, fmt.Errorf("read sibling rimsky.yml %q: %w", path, err)
+		return nil, fmt.Errorf("load sibling rimsky.yml: %w", err)
 	}
-	expanded := os.ExpandEnv(string(raw))
-	var wrapper struct {
-		Publishers map[string]syntheticPublisherEntry `yaml:"publishers"`
-		NamedLocks map[string]locks.NamedLockConfig   `yaml:"named_locks"`
-	}
-	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
-		return nil, fmt.Errorf("parse sibling rimsky.yml %q: %w", path, err)
-	}
-	if len(wrapper.Publishers) == 0 && len(wrapper.NamedLocks) == 0 {
+	if len(cfg.Publishers.Publishers) == 0 && len(cfg.NamedLocks.Locks) == 0 {
 		return nil, nil
 	}
+	pubs := make(map[string]syntheticPublisherEntry, len(cfg.Publishers.Publishers))
+	for name, entry := range cfg.Publishers.Publishers {
+		pubs[name] = syntheticPublisherEntry{
+			Endpoint:              entry.Endpoint,
+			TLS:                   entry.TLS,
+			Protocols:             entry.Protocols,
+			ObservabilityEndpoint: entry.ObservabilityEndpoint,
+		}
+	}
 	return &SiblingBlocks{
-		Publishers: wrapper.Publishers,
-		NamedLocks: wrapper.NamedLocks,
+		Publishers: pubs,
+		NamedLocks: cfg.NamedLocks.Locks,
 	}, nil
 }
 
@@ -195,7 +198,7 @@ type supervisorYAMLProbeCallback struct {
 // @decision: network-binding
 func WriteSyntheticSupervisorYAMLWithCallbackPort(runDir string, callbackPort int) error {
 	var probe supervisorYAMLProbe
-	if err := yaml.Unmarshal([]byte(syntheticSupervisorYAML), &probe); err != nil {
+	if err := configload.DecodeStrict("<baked supervisor.yml>", []byte(syntheticSupervisorYAML), &probe); err != nil {
 		return fmt.Errorf("synthetic supervisor.yml: parse baked default: %w", err)
 	}
 	probe.Callback.Port = callbackPort

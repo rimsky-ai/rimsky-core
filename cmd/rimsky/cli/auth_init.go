@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
 func RunAuthInit(ctx context.Context, args []string) int {
@@ -26,7 +28,7 @@ func RunAuthInit(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	if status, err := fetchAuthStatus(ctx, endpoint, key); err == nil && status.Mode == "authenticated" {
+	if status, err := fetchAuthStatus(ctx, endpoint, key); err == nil && status.Mode == auth.StatusModeAuthenticated {
 		fmt.Fprintln(os.Stderr, "rimsky auth init: deployment is already authenticated (use 'rimsky auth create-key' instead)")
 		return 1
 	}

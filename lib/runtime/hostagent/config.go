@@ -26,6 +26,9 @@ type Config struct {
 	TLSCAPath          string
 	// @story: host-agent-control-plane
 	StatusFile string
+	// @concept: anonymous-mode
+	RoutingLabel string
+	IdentityFile string
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -53,6 +56,8 @@ func LoadConfigFromEnv() (Config, error) {
 		TLSEnabled:         envBool("RIMSKY_AGENT_TLS"),
 		TLSCAPath:          os.Getenv("RIMSKY_AGENT_TLS_CA"),
 		StatusFile:         os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
+		RoutingLabel:       os.Getenv("RIMSKY_AGENT_ROUTING_LABEL"),
+		IdentityFile:       os.Getenv("RIMSKY_AGENT_IDENTITY_FILE"),
 	}, nil
 }
 

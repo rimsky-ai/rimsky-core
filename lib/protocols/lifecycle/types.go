@@ -33,6 +33,8 @@ type OnInstanceCreatedRequest struct {
 	ServiceBindings json.RawMessage
 
 	OwnerAPIKeyID string
+
+	TargetRoutingIdentity string
 }
 
 type OnInstanceTerminatedRequest struct {

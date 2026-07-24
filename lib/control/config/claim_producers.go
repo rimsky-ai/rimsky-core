@@ -11,19 +11,18 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
@@ -255,32 +254,19 @@ func ParseUnreachableValidatorPolicy(raw string) (string, error) {
 	}
 }
 
-var bracedEnvRefPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-
-func expandBracedEnvRefs(raw string) string {
-	return bracedEnvRefPattern.ReplaceAllStringFunc(raw, func(ref string) string {
-		name := ref[2 : len(ref)-1]
-		return os.Getenv(name)
-	})
-}
-
 func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return RimskyConfig{}, fmt.Errorf("rimsky config file not found at %q", path)
 		}
 		return RimskyConfig{}, fmt.Errorf("read rimsky config %q: %w", path, err)
 	}
-	expanded := expandBracedEnvRefs(string(raw))
 	type yamlClaimProducerEntry struct {
-		Endpoint                     string   `yaml:"endpoint"`
-		TLS                          string   `yaml:"tls"`
-		Protocols                    []string `yaml:"protocols"`
-		WriteSemanticsAllowed        []string `yaml:"write_semantics_allowed"`
-		LegacyWriteSemantics         string   `yaml:"write_semantics"`
-		LegacyWriteSemanticsEnvelope []string `yaml:"write_semantics_envelope"`
-		ObservabilityEndpoint        string   `yaml:"observability_endpoint"`
+		Endpoint              string   `yaml:"endpoint"`
+		TLS                   string   `yaml:"tls"`
+		Protocols             []string `yaml:"protocols"`
+		WriteSemanticsAllowed []string `yaml:"write_semantics_allowed"`
+		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
 	}
 	type yamlExecutorEntry struct {
 		Transport             string   `yaml:"transport"`
@@ -332,8 +318,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			} `yaml:"sqlite"`
 			Blob *yamlBlob `yaml:"blob"`
 		} `yaml:"persistence"`
-		ClaimProducers   map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
-		RetiredStoresKey map[string]yamlClaimProducerEntry `yaml:"stores"`
+		ClaimProducers map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
 		// @concept: named-lock
 		NamedLocks                 map[string]locks.NamedLockConfig  `yaml:"named_locks"`
 		Executors                  map[string]yamlExecutorEntry      `yaml:"executors"`
@@ -345,30 +330,11 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		LateBindServiceProxies     map[string]string                 `yaml:"late_bind_service_proxies"`
 		PeerAuth                   string                            `yaml:"peer_auth"`
 		UnreachableValidatorPolicy string                            `yaml:"unreachable_validator_policy"`
-		RetiredTemplatesKey        map[string]any                    `yaml:"templates"`
-		RetiredMaxParkKey          map[string]any                    `yaml:"max_park_duration"`
 	}
-	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
-		return RimskyConfig{}, fmt.Errorf("parse rimsky config %q: %w", path, err)
-	}
-	if len(wrapper.RetiredStoresKey) > 0 {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `stores`", path)
-	}
-	if len(wrapper.RetiredTemplatesKey) > 0 {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `templates`", path)
-	}
-	if len(wrapper.RetiredMaxParkKey) > 0 {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `max_park_duration`", path)
+	if err := configload.LoadFile(path, &wrapper); err != nil {
+		return RimskyConfig{}, err
 	}
 	rawProducers := wrapper.ClaimProducers
-	for name, e := range rawProducers {
-		if e.LegacyWriteSemantics != "" {
-			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: unknown key `write_semantics`", path, name)
-		}
-		if len(e.LegacyWriteSemanticsEnvelope) > 0 {
-			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: unknown key `write_semantics_envelope`", path, name)
-		}
-	}
 	stores := RemoteClaimProducersConfig{ClaimProducers: make(map[string]ClaimProducerEntry, len(rawProducers))}
 	for name, e := range rawProducers {
 		envelope, err := parseAllowed(name, e.WriteSemanticsAllowed)

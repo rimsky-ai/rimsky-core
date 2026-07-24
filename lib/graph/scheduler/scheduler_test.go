@@ -58,7 +58,7 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		}, tx); err != nil {
 			return err
 		}
-		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
+		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck,
 			Params: map[string]any{},
 		}, tx)

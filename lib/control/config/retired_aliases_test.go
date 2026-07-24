@@ -121,12 +121,12 @@ func TestLoadRimskyConfigYAML_RejectsRetiredKeys(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.wantToken) {
 				t.Fatalf("error does not name the retired key %q: %v", tc.wantToken, err)
 			}
-			if !strings.Contains(strings.ToLower(err.Error()), "unknown") {
+			lowerErr := strings.ToLower(err.Error())
+			if !strings.Contains(lowerErr, "not found in type") && !strings.Contains(lowerErr, "unknown") {
 				t.Fatalf("rejection must use the generic unknown-key shape: %v", err)
 			}
-			lower := strings.ToLower(err.Error())
 			for _, word := range forbiddenRedirectWords {
-				if strings.Contains(lower, word) {
+				if strings.Contains(lowerErr, word) {
 					t.Fatalf("pure erasure: rejection must not direct the caller toward a replacement setting (found %q): %v", word, err)
 				}
 			}

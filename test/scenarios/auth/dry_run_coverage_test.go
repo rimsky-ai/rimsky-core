@@ -606,7 +606,7 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 			return err
 		}
 		ck := "dryrun-asset-key"
-		if _, err := f.db.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := f.db.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID:           instanceID,
 			TemplateHash: tplHash,
 			InstanceKey:  &ck,

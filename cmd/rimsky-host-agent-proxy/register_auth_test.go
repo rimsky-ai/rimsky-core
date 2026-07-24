@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/sillyname"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -46,12 +47,12 @@ func TestControlAPIVerifierMapsWhoamiOutcomes(t *testing.T) {
 	verify := newControlAPIRegisterIdentityVerifier(srv.Client(), srv.URL)
 	ctx := context.Background()
 
-	identity, err := verify(ctx, testOwnerPlaintext)
+	verdict, err := verify(ctx, testOwnerPlaintext)
 	if err != nil {
 		t.Fatalf("valid key rejected: %v", err)
 	}
-	if identity != testOwnerKeyID {
-		t.Fatalf("routing identity: got %q want %q", identity, testOwnerKeyID)
+	if verdict.kind != registerIdentityAPIKey || verdict.keyID != testOwnerKeyID {
+		t.Fatalf("verdict: got %+v want {kind=api_key, keyID=%s}", verdict, testOwnerKeyID)
 	}
 
 	if _, err := verify(ctx, testOwnerKeyID); status.Code(err) != codes.Unauthenticated {
@@ -60,7 +61,7 @@ func TestControlAPIVerifierMapsWhoamiOutcomes(t *testing.T) {
 	if _, err := verify(ctx, "rk_wrong-secret"); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("unknown key must be Unauthenticated, got %v", err)
 	}
-	if _, err := verify(ctx, anonymousRoutingIdentity); status.Code(err) != codes.Unauthenticated {
+	if _, err := verify(ctx, sillyname.AnonymousCredentialSentinel); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("anonymous register in authenticated mode must be Unauthenticated, got %v", err)
 	}
 }
@@ -77,12 +78,15 @@ func TestControlAPIVerifierAnonymousModeMirrorsControlAPI(t *testing.T) {
 	t.Cleanup(srv.Close)
 	verify := newControlAPIRegisterIdentityVerifier(srv.Client(), srv.URL)
 
-	identity, err := verify(context.Background(), anonymousRoutingIdentity)
+	verdict, err := verify(context.Background(), sillyname.AnonymousCredentialSentinel)
 	if err != nil {
 		t.Fatalf("anonymous register in anonymous mode rejected: %v", err)
 	}
-	if identity != anonymousRoutingIdentity {
-		t.Fatalf("routing identity: got %q want %q", identity, anonymousRoutingIdentity)
+	if verdict.kind != registerIdentityAnonymous {
+		t.Fatalf("verdict: got %+v want registerIdentityAnonymous", verdict)
+	}
+	if verdict.keyID != "" {
+		t.Fatalf("verdict.keyID for anonymous must be empty, got %q", verdict.keyID)
 	}
 }
 
@@ -119,7 +123,7 @@ func TestRegisterUnverifiedKeyIsRejectedAndCannotDisplace(t *testing.T) {
 		t.Fatalf("verified agent should be registered under its key id")
 	}
 
-	for _, presented := range []string{testOwnerKeyID, "rk_wrong-secret", anonymousRoutingIdentity} {
+	for _, presented := range []string{testOwnerKeyID, "rk_wrong-secret"} {
 		attacker, connErr := client.Connect(ctx)
 		if connErr != nil {
 			t.Fatalf("open attacker stream: %v", connErr)
@@ -137,13 +141,75 @@ func TestRegisterUnverifiedKeyIsRejectedAndCannotDisplace(t *testing.T) {
 	if got, ok := state.lookupAgent(testOwnerKeyID); !ok || got != legitConn {
 		t.Fatalf("legit agent connection must survive rejected register attempts")
 	}
-	if _, ok := state.lookupAgent(anonymousRoutingIdentity); ok {
-		t.Fatalf("rejected anonymous register must not create a routing entry")
-	}
 
 	mustSend(t, legit, &genv1.ClientFrame{Body: &genv1.ClientFrame_Heartbeat{Heartbeat: &genv1.HostAgentHeartbeat{SentAtUnixMs: 7}}})
 	frame, err := legit.Recv()
 	if err != nil || frame.GetHeartbeatAck() == nil {
 		t.Fatalf("legit agent stream must stay live after rejected registers: err=%v frame=%T", err, frame.GetBody())
+	}
+}
+
+func TestAdoptRoutingIdentityRejectsSameLabelCollision(t *testing.T) {
+	state := newProxyState()
+	srv := newAgentServer(state, presentedKeyIsIdentity)
+
+	label := "sparkling-wombat"
+	reg := &genv1.Register{
+		ApiKey:               sillyname.AnonymousCredentialSentinel,
+		AgentLabel:           "alpha",
+		RoutingLabel:         label,
+		LocalCallbackBaseUrl: "http://127.0.0.1:5001",
+	}
+	first, routingID, prior, err := srv.adoptRoutingIdentity(registerIdentityVerdict{kind: registerIdentityAnonymous}, reg)
+	if err != nil {
+		t.Fatalf("first adopt: unexpected err: %v", err)
+	}
+	if first == nil || routingID != label || prior != nil {
+		t.Fatalf("first adopt: got first=%v routingID=%q prior=%v", first, routingID, prior)
+	}
+
+	reg2 := &genv1.Register{
+		ApiKey:       sillyname.AnonymousCredentialSentinel,
+		AgentLabel:   "beta",
+		RoutingLabel: label,
+	}
+	second, _, _, err := srv.adoptRoutingIdentity(registerIdentityVerdict{kind: registerIdentityAnonymous}, reg2)
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("second adopt with same routing_label must be AlreadyExists; got err=%v", err)
+	}
+	if second != nil {
+		t.Fatalf("second adopt must not return a connection; got %v", second)
+	}
+	if got, ok := state.lookupAgent(label); !ok || got != first {
+		t.Fatalf("first anonymous agent must still be registered after the rejected collision")
+	}
+}
+
+func TestAdoptRoutingIdentityGeneratedNameCollisionRetries(t *testing.T) {
+	state := newProxyState()
+	srv := newAgentServer(state, presentedKeyIsIdentity)
+	names := []string{"clashy-otter", "clashy-otter", "unique-otter"}
+	var idx int
+	srv.generateName = func() string {
+		name := names[idx]
+		if idx < len(names)-1 {
+			idx++
+		}
+		return name
+	}
+
+	first, routingID, _, err := srv.adoptRoutingIdentity(registerIdentityVerdict{kind: registerIdentityAnonymous}, &genv1.Register{
+		ApiKey:     sillyname.AnonymousCredentialSentinel,
+		AgentLabel: "alpha",
+	})
+	if err != nil || first == nil || routingID != "clashy-otter" {
+		t.Fatalf("first generated adopt: err=%v first=%v routingID=%q", err, first, routingID)
+	}
+	second, routingID2, _, err := srv.adoptRoutingIdentity(registerIdentityVerdict{kind: registerIdentityAnonymous}, &genv1.Register{
+		ApiKey:     sillyname.AnonymousCredentialSentinel,
+		AgentLabel: "beta",
+	})
+	if err != nil || second == nil || routingID2 != "unique-otter" {
+		t.Fatalf("second generated adopt must skip the collision and land on the unique name; err=%v second=%v routingID=%q", err, second, routingID2)
 	}
 }

@@ -388,6 +388,7 @@ func postInstanceRawExpectCreated(t *testing.T, h *scenario.Harness, templateHas
 	body, err := json.Marshal(map[string]any{
 		"template":     templateHash,
 		"instance_key": instanceKey,
+		"target_agent": "scenario-default-agent",
 	})
 	require.NoError(t, err)
 	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", strings.NewReader(string(body)))

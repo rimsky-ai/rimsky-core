@@ -16,6 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/scheduler"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type SchedulerConfig struct {
@@ -36,6 +37,7 @@ type SchedulerConfig struct {
 	Metrics                 runtime.MetricsHook
 	Retention               runtime.RetentionConfig
 	LifecyclePeersForSpec   func(tplSpec node.TemplateSpec) []string
+	PeerAuth                string
 }
 
 type SchedulerHandle interface {
@@ -53,23 +55,35 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 	if persistStore == nil {
 		return nil, fmt.Errorf("StartScheduler: Database.Tables() returned nil — driver did not initialize the Tables accessor")
 	}
+	stopIdentity := func() {}
+	if cfg.PeerAuth == peer.PeerAuthMTLS {
+		_, _, cancel, err := installPeerIdentity(context.Background(), persistStore, cfg.SupervisorID, cfg.Clock, cfg.Logger)
+		if err != nil {
+			return nil, fmt.Errorf("StartScheduler: %w", err)
+		}
+		stopIdentity = cancel
+	}
 	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, nil)
 	if err != nil {
+		stopIdentity()
 		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}
 	persistQueue := cfg.Driver.Queue()
 	if persistQueue == nil {
+		stopIdentity()
 		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: Driver.Queue() returned nil")
 	}
 	// @concept: advisory-lock
 	advisoryLocker := cfg.Driver.AdvisoryLocker()
 	if advisoryLocker == nil {
+		stopIdentity()
 		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: Driver.AdvisoryLocker() returned nil")
 	}
 	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
 	if err != nil {
+		stopIdentity()
 		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: dial lifecycle subscribers: %w", err)
 	}
@@ -104,6 +118,7 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		registry:      registry,
 		lifecycleSubs: lifecycleSubs,
 		sweepCancel:   sweepCancel,
+		stopIdentity:  stopIdentity,
 	}, nil
 }
 
@@ -134,12 +149,16 @@ type schedulerHandleWithRegistry struct {
 	registry      *locks.Registry
 	lifecycleSubs *lifecycle.Registry
 	sweepCancel   context.CancelFunc
+	stopIdentity  func()
 }
 
 func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
 	err := h.inner.Shutdown(ctx)
 	if h.sweepCancel != nil {
 		h.sweepCancel()
+	}
+	if h.stopIdentity != nil {
+		h.stopIdentity()
 	}
 	if h.registry != nil {
 		h.registry.Close()

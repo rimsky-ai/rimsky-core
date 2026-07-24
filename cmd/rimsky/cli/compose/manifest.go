@@ -13,10 +13,9 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
 type Manifest struct {
@@ -58,13 +57,12 @@ type InstanceRef struct {
 }
 
 func LoadManifest(path string) (*Manifest, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
 	var m Manifest
-	if err := yaml.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+	if err := configload.LoadFile(path, &m); err != nil {
+		return nil, err
 	}
 	if err := m.Validate(); err != nil {
 		return nil, err

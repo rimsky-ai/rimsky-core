@@ -40,26 +40,27 @@ type Fake struct {
 }
 
 type FakeCall struct {
-	Verb               string
-	ClaimID            claimproducer.ClaimID
-	Selector           string
-	Intent             claimproducer.Intent
-	Alias              string
-	Lifetime           string
-	Scope              []byte
-	Address            []byte
-	TemplateID         string
-	TemplateHash       string
-	InstanceID         string
-	InstanceKey        string
-	Params             []byte
-	RunScopeID         string
-	LeaseToken         string
-	TerminalReason     string
-	TerminatedAtUnixMs int64
-	ServiceBindings    []byte
-	OwnerAPIKeyID      string
-	Sequence           int
+	Verb                  string
+	ClaimID               claimproducer.ClaimID
+	Selector              string
+	Intent                claimproducer.Intent
+	Alias                 string
+	Lifetime              string
+	Scope                 []byte
+	Address               []byte
+	TemplateID            string
+	TemplateHash          string
+	InstanceID            string
+	InstanceKey           string
+	Params                []byte
+	RunScopeID            string
+	LeaseToken            string
+	TerminalReason        string
+	TerminatedAtUnixMs    int64
+	ServiceBindings       []byte
+	OwnerAPIKeyID         string
+	TargetRoutingIdentity string
+	Sequence              int
 }
 
 func NewFake(name string, caps claimproducer.Capabilities) *Fake {
@@ -214,13 +215,14 @@ func (f *Fake) OnTemplateDeregistered(_ context.Context, req lifecycle.OnTemplat
 
 func (f *Fake) OnInstanceCreated(_ context.Context, req lifecycle.OnInstanceCreatedRequest) error {
 	return f.recordLifecycleCall(FakeCall{
-		Verb:            "on_instance_created",
-		TemplateHash:    req.TemplateHash,
-		InstanceID:      req.InstanceID,
-		InstanceKey:     req.InstanceKey,
-		Params:          cloneBytes(req.Params),
-		ServiceBindings: cloneBytes(req.ServiceBindings),
-		OwnerAPIKeyID:   req.OwnerAPIKeyID,
+		Verb:                  "on_instance_created",
+		TemplateHash:          req.TemplateHash,
+		InstanceID:            req.InstanceID,
+		InstanceKey:           req.InstanceKey,
+		Params:                cloneBytes(req.Params),
+		ServiceBindings:       cloneBytes(req.ServiceBindings),
+		OwnerAPIKeyID:         req.OwnerAPIKeyID,
+		TargetRoutingIdentity: req.TargetRoutingIdentity,
 	})
 }
 

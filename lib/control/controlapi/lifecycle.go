@@ -77,11 +77,12 @@ type TemplatePayload struct {
 }
 
 type InstancePayload struct {
-	InstanceKey        string
-	Params             json.RawMessage
-	TerminatedAtUnixMs int64
-	ServiceBindings    json.RawMessage
-	OwnerAPIKeyID      *shared.UUID
+	InstanceKey           string
+	Params                json.RawMessage
+	TerminatedAtUnixMs    int64
+	ServiceBindings       json.RawMessage
+	OwnerAPIKeyID         *shared.UUID
+	TargetRoutingIdentity string
 }
 
 func FanOutTemplateEvent(
@@ -546,12 +547,13 @@ func dispatchInstanceEvent(ctx context.Context, s lifecycle.Subscriber, event Li
 	switch event {
 	case EventInstanceCreated:
 		return s.OnInstanceCreated(ctx, lifecycle.OnInstanceCreatedRequest{
-			InstanceID:      instanceID,
-			TemplateHash:    templateID,
-			InstanceKey:     payload.InstanceKey,
-			Params:          payload.Params,
-			ServiceBindings: payload.ServiceBindings,
-			OwnerAPIKeyID:   uuidString(payload.OwnerAPIKeyID),
+			InstanceID:            instanceID,
+			TemplateHash:          templateID,
+			InstanceKey:           payload.InstanceKey,
+			Params:                payload.Params,
+			ServiceBindings:       payload.ServiceBindings,
+			OwnerAPIKeyID:         uuidString(payload.OwnerAPIKeyID),
+			TargetRoutingIdentity: payload.TargetRoutingIdentity,
 		})
 	case EventInstanceTerminated:
 		return s.OnInstanceTerminated(ctx, lifecycle.OnInstanceTerminatedRequest{

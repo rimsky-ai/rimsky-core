@@ -34,8 +34,8 @@ func TestPendingMessageNotPickedForTerminatedInstance(t *testing.T) {
 		t.Fatalf("seed template: %v", err)
 	}
 	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, terminated_at)
-		 VALUES (?, ?, datetime('now'))`,
+		`INSERT INTO rimsky_instances (id, template_hash, terminated_at, target_routing_identity)
+		 VALUES (?, ?, datetime('now'), 'test-agent')`,
 		instanceID.String(), templateID,
 	); err != nil {
 		t.Fatalf("seed terminated instance: %v", err)

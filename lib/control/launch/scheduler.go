@@ -123,6 +123,7 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		Metrics:                 observability.MetricsHookOf(mreg),
 		Retention:               rimskyCfg.Retention,
 		LifecyclePeersForSpec:   peersForSpec,
+		PeerAuth:                rimskyCfg.PeerAuth,
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())

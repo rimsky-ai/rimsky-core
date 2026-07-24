@@ -127,6 +127,7 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		status, out := postJSON(t, h, "/v1/instances", map[string]any{
 			"template":     tplID,
 			"instance_key": "ck-ok-" + uuid.NewString(),
+			"target_agent": "scenario-default-agent",
 		})
 		require.Equal(t, http.StatusCreated, status,
 			"a schema-compliant static default (count:5 ≥ minimum:0) must instantiate cleanly; body: %v", out)

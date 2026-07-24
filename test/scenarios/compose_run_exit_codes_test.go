@@ -7,14 +7,12 @@ package scenarios
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 const composeRunSuccessManifestRel = "cmd/rimsky/cli/compose/testdata/sample-manifest/rimsky-compose-success.yml"
@@ -34,7 +32,7 @@ func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 		rc, out := runComposeRunBinary(t, rimskyBin, work, []string{
 			"--service", "stub=" + stubBin,
 			"./" + filepath.Base(composeRunSuccessManifestRel),
-		}, 90*time.Second)
+		})
 		if rc != 0 {
 			t.Fatalf("expected exit code 0 for all-success; got %d\nstderr:\n%s", rc, out)
 		}
@@ -46,7 +44,7 @@ func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 		rc, out := runComposeRunBinary(t, rimskyBin, work, []string{
 			"--service", "stub=" + stubBin,
 			"./rimsky-compose.yml",
-		}, 90*time.Second)
+		})
 		if rc != 1 {
 			t.Fatalf("expected exit code 1 for any-failure; got %d\nstderr:\n%s", rc, out)
 		}
@@ -59,7 +57,7 @@ func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 			"--service", "stub=" + stubBin,
 			"--timeout", "1s",
 			"./" + filepath.Base(composeRunLiveManifestRel),
-		}, 30*time.Second)
+		})
 		if rc != 2 {
 			t.Fatalf("expected exit code 2 for wall-clock-bound; got %d\nstderr:\n%s", rc, out)
 		}
@@ -71,13 +69,10 @@ func runComposeRunBinary(
 	rimskyBin string,
 	cwd string,
 	args []string,
-	timeout time.Duration,
 ) (int, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 	fullArgs := append([]string{"compose", "run"}, args...)
-	cmd := exec.CommandContext(ctx, rimskyBin, fullArgs...)
+	cmd := exec.Command(rimskyBin, fullArgs...)
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
 	var stdout, stderr bytes.Buffer

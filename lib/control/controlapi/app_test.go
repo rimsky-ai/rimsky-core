@@ -107,8 +107,25 @@ func (silentFrameLogger) Debug(string, ...any) {}
 func (silentFrameLogger) Info(string, ...any)  {}
 func (silentFrameLogger) Warn(string, ...any)  {}
 
+// @concept: anonymous-mode
+func injectDefaultTargetAgentIfInstanceCreate(method, path string, body any) any {
+	if method != http.MethodPost || path != "/v1/instances" {
+		return body
+	}
+	m, ok := body.(map[string]any)
+	if !ok {
+		return body
+	}
+	if _, present := m["target_agent"]; present {
+		return body
+	}
+	m["target_agent"] = "test-http-agent"
+	return m
+}
+
 func doHTTPRequest(t *testing.T, baseURL, method, path string, body any, headers map[string]string) (int, map[string]any) {
 	t.Helper()
+	body = injectDefaultTargetAgentIfInstanceCreate(method, path, body)
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

@@ -7,7 +7,7 @@
 # rather than batched at the end.
 name: template-slow
 version: "1"
-frame_resolution_mode: serial_queue
+message_queue_mode: backlog
 nodes:
   - type: worker
     executor: stub

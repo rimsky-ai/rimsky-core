@@ -80,7 +80,7 @@ func (h *claimProducerHandler) Open(ctx context.Context, req *genv1.OpenRequest)
 		return nil, claimProducerStatus(&resolveError{class: errClassExecutorCrashed, msg: "unmarshal open response: " + err.Error()})
 	}
 
-	h.state.recordClaimRoute(req.GetClaimId(), res.agent.apiKeyID, res.spawnID)
+	h.state.recordClaimRoute(req.GetClaimId(), res.agent.routingIdentity, res.spawnID)
 	return &resp, nil
 }
 
@@ -149,7 +149,7 @@ func (h *claimProducerHandler) routeByClaim(claimID string) (*agentConnection, s
 	if !ok {
 		return nil, "", &resolveError{class: errClassBindingNotFound, msg: "no claim route for claim " + claimID}
 	}
-	agent, ok := h.state.lookupAgent(route.apiKeyID)
+	agent, ok := h.state.lookupAgent(route.routingIdentity)
 	if !ok {
 		return nil, "", &resolveError{class: errClassHostAgentDisconnected, msg: "agent gone for claim " + claimID}
 	}

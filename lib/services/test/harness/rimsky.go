@@ -74,6 +74,7 @@ type configBuilder struct {
 	extraEnv        map[string]string
 	sqlite          bool
 	bundledFS       *bundledFSCfg
+	peerAuthMTLS    bool
 }
 
 type bundledFSCfg struct {
@@ -193,6 +194,17 @@ func WithHostPortAccess(ports ...int) Option {
 func WithBundledFilesystemClaimProducer(hostDir, configYAML string) Option {
 	return func(cb *configBuilder) {
 		cb.bundledFS = &bundledFSCfg{hostDir: hostDir, configYAML: configYAML}
+	}
+}
+
+// @concept: peer-auth
+func WithPeerAuthMTLS(caEncryptionKeyBase64 string) Option {
+	return func(cb *configBuilder) {
+		cb.peerAuthMTLS = true
+		if cb.extraEnv == nil {
+			cb.extraEnv = map[string]string{}
+		}
+		cb.extraEnv["RIMSKY_CA_ENCRYPTION_KEY"] = caEncryptionKeyBase64
 	}
 }
 
@@ -559,6 +571,7 @@ func (e RimskyEndpoint) CreateInstance(t testing.TB, templateID, instanceKey, wa
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
+		"target_agent": "scenario-default-agent",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST /instances: %d %s", status, string(raw))
@@ -735,6 +748,9 @@ func writeQuotedList(b *strings.Builder, first string, rest []string) {
 }
 
 func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
+	if cb.peerAuthMTLS {
+		b.WriteString("peer_auth: mtls\n")
+	}
 	if len(cb.claimProducers) == 0 {
 		b.WriteString("claim_producers: {}\n")
 	} else {

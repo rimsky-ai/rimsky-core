@@ -28,8 +28,8 @@ type proxyState struct {
 }
 
 type claimRoute struct {
-	apiKeyID string
-	spawnID  string
+	routingIdentity string
+	spawnID         string
 }
 
 func newProxyState() *proxyState {
@@ -43,7 +43,7 @@ func newProxyState() *proxyState {
 }
 
 type agentConnection struct {
-	apiKeyID             string
+	routingIdentity      string
 	agentLabel           string
 	localCallbackBaseURL string
 
@@ -57,9 +57,9 @@ type agentConnection struct {
 	pendingStreams map[string]chan *genv1.DispatchFrame
 }
 
-func newAgentConnection(apiKeyID, label, localCallbackBaseURL string) *agentConnection {
+func newAgentConnection(routingIdentity, label, localCallbackBaseURL string) *agentConnection {
 	return &agentConnection{
-		apiKeyID:             apiKeyID,
+		routingIdentity:      routingIdentity,
 		agentLabel:           label,
 		localCallbackBaseURL: localCallbackBaseURL,
 		sendCh:               make(chan *genv1.ServerFrame, 64),
@@ -177,12 +177,12 @@ func (a *agentConnection) closeAllStreams() {
 }
 
 type spawnState struct {
-	spawnID          string
-	agentAPIKeyID    string
-	scopeID          string
-	bindingName      string
-	capabilities     map[string][]byte
-	originalCallback string
+	spawnID              string
+	agentRoutingIdentity string
+	scopeID              string
+	bindingName          string
+	capabilities         map[string][]byte
+	originalCallback     string
 }
 
 type runScopeBindingKey struct {
@@ -191,10 +191,10 @@ type runScopeBindingKey struct {
 }
 
 type instanceCacheEntry struct {
-	serviceBindings map[string]bindingSpec
-	ownerAPIKeyID   string
-	params          map[string]any
-	lastUpdated     time.Time
+	serviceBindings       map[string]bindingSpec
+	targetRoutingIdentity string
+	params                map[string]any
+	lastUpdated           time.Time
 }
 
 type bindingSpec struct {
@@ -205,23 +205,35 @@ type bindingSpec struct {
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 }
 
-func (s *proxyState) registerAgent(apiKeyID, label, localCallbackBaseURL string) (conn *agentConnection, prior *agentConnection, displacedPrior bool) {
+// @concept: host-agent-proxy
+type registrationMode int
+
+const (
+	registerDisplacePrior registrationMode = iota
+	registerRejectOnCollision
+)
+
+// @concept: host-agent-proxy
+// @concept: anonymous-mode
+func (s *proxyState) registerAgent(routingIdentity, label, localCallbackBaseURL string, mode registrationMode) (conn *agentConnection, prior *agentConnection, collided bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	prior = s.agents[apiKeyID]
-	displacedPrior = prior != nil
-	conn = newAgentConnection(apiKeyID, label, localCallbackBaseURL)
-	s.agents[apiKeyID] = conn
-	if displacedPrior {
-		s.dropSpawnsForAPIKeyLocked(apiKeyID)
+	prior = s.agents[routingIdentity]
+	if prior != nil && mode == registerRejectOnCollision {
+		return nil, prior, true
 	}
-	return conn, prior, displacedPrior
+	conn = newAgentConnection(routingIdentity, label, localCallbackBaseURL)
+	s.agents[routingIdentity] = conn
+	if prior != nil {
+		s.dropSpawnsForRoutingIdentityLocked(routingIdentity)
+	}
+	return conn, prior, false
 }
 
-func (s *proxyState) dropSpawnsForAPIKeyLocked(apiKeyID string) {
+func (s *proxyState) dropSpawnsForRoutingIdentityLocked(routingIdentity string) {
 	var dropped []string
 	for spawnID, sp := range s.spawns {
-		if sp.agentAPIKeyID == apiKeyID {
+		if sp.agentRoutingIdentity == routingIdentity {
 			dropped = append(dropped, spawnID)
 			delete(s.spawns, spawnID)
 			delete(s.runScopeBindings, runScopeBindingKey{scopeID: sp.scopeID, bindingName: sp.bindingName})
@@ -230,15 +242,15 @@ func (s *proxyState) dropSpawnsForAPIKeyLocked(apiKeyID string) {
 	s.purgeClaimRoutesLocked(dropped)
 }
 
-func (s *proxyState) dropAgent(apiKeyID string, conn *agentConnection) []string {
+func (s *proxyState) dropAgent(routingIdentity string, conn *agentConnection) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.agents[apiKeyID]; ok && cur == conn {
-		delete(s.agents, apiKeyID)
+	if cur, ok := s.agents[routingIdentity]; ok && cur == conn {
+		delete(s.agents, routingIdentity)
 	}
 	var dropped []string
 	for spawnID, sp := range s.spawns {
-		if sp.agentAPIKeyID == apiKeyID {
+		if sp.agentRoutingIdentity == routingIdentity {
 			dropped = append(dropped, spawnID)
 			delete(s.spawns, spawnID)
 			delete(s.runScopeBindings, runScopeBindingKey{scopeID: sp.scopeID, bindingName: sp.bindingName})
@@ -263,23 +275,23 @@ func (s *proxyState) purgeClaimRoutesLocked(droppedSpawns []string) {
 	}
 }
 
-func (s *proxyState) lookupAgent(apiKeyID string) (*agentConnection, bool) {
+func (s *proxyState) lookupAgent(routingIdentity string) (*agentConnection, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	conn, ok := s.agents[apiKeyID]
+	conn, ok := s.agents[routingIdentity]
 	return conn, ok
 }
 
-func (s *proxyState) recordSpawn(spawnID, agentAPIKeyID, scopeID, bindingName string, capabilities map[string][]byte, originalCallback string) {
+func (s *proxyState) recordSpawn(spawnID, agentRoutingIdentity, scopeID, bindingName string, capabilities map[string][]byte, originalCallback string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.spawns[spawnID] = &spawnState{
-		spawnID:          spawnID,
-		agentAPIKeyID:    agentAPIKeyID,
-		scopeID:          scopeID,
-		bindingName:      bindingName,
-		capabilities:     capabilities,
-		originalCallback: originalCallback,
+		spawnID:              spawnID,
+		agentRoutingIdentity: agentRoutingIdentity,
+		scopeID:              scopeID,
+		bindingName:          bindingName,
+		capabilities:         capabilities,
+		originalCallback:     originalCallback,
 	}
 	s.runScopeBindings[runScopeBindingKey{scopeID: scopeID, bindingName: bindingName}] = spawnID
 }
@@ -327,14 +339,14 @@ func (s *proxyState) dropSpawn(spawnID string) {
 	s.purgeClaimRoutesLocked([]string{spawnID})
 }
 
-func (s *proxyState) cacheInstance(instanceID string, serviceBindings map[string]bindingSpec, ownerAPIKeyID string, params map[string]any) {
+func (s *proxyState) cacheInstance(instanceID string, serviceBindings map[string]bindingSpec, targetRoutingIdentity string, params map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.instances[instanceID] = &instanceCacheEntry{
-		serviceBindings: serviceBindings,
-		ownerAPIKeyID:   ownerAPIKeyID,
-		params:          params,
-		lastUpdated:     time.Now(),
+		serviceBindings:       serviceBindings,
+		targetRoutingIdentity: targetRoutingIdentity,
+		params:                params,
+		lastUpdated:           time.Now(),
 	}
 }
 
@@ -351,13 +363,13 @@ func (s *proxyState) dropInstance(instanceID string) {
 	delete(s.instances, instanceID)
 }
 
-func (s *proxyState) recordClaimRoute(claimID, apiKeyID, spawnID string) {
+func (s *proxyState) recordClaimRoute(claimID, routingIdentity, spawnID string) {
 	if claimID == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.claimRoutes[claimID] = claimRoute{apiKeyID: apiKeyID, spawnID: spawnID}
+	s.claimRoutes[claimID] = claimRoute{routingIdentity: routingIdentity, spawnID: spawnID}
 }
 
 func (s *proxyState) lookupClaimRoute(claimID string) (claimRoute, bool) {

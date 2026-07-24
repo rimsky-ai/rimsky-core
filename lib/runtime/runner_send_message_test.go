@@ -75,7 +75,7 @@ func seedSendInstance(t *testing.T, ctx context.Context, d persistence.Database)
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 		}, tx); err != nil {
@@ -122,7 +122,7 @@ func seedSendInstanceNoBodySchema(t *testing.T, ctx context.Context, d persisten
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 		}, tx); err != nil {

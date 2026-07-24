@@ -115,6 +115,215 @@ func TestStartSupervisor_MTLSWiresIdentityBeforeOutboundDial(t *testing.T) {
 	t.Cleanup(func() { _ = handle.Shutdown(context.Background()) })
 }
 
+func TestStartScheduler_MTLSWiresIdentityBeforeOutboundDial(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	t.Setenv(pki.EnvCAEncryptionKey, base64.StdEncoding.EncodeToString(key))
+	t.Cleanup(func() { peer.SetClientIdentity(nil); peer.SetTLSRootCAs(nil) })
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
+	db, err := persistence.Open(ctx, persistence.Config{Driver: "sqlite", SQLite: &persistence.SQLiteConfig{Path: dbPath}})
+	if err != nil {
+		t.Fatalf("persistence.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	ca, err := ensureDeploymentCA(ctx, db.Tables(), shared.SystemClock{})
+	if err != nil {
+		t.Fatalf("ensureDeploymentCA: %v", err)
+	}
+
+	endpoint := startMTLSClaimProducer(t, ca)
+
+	handle, err := StartScheduler(SchedulerConfig{
+		Driver:       db,
+		Clock:        shared.SystemClock{},
+		Logger:       shared.SilentLogger{},
+		TickInterval: 250 * time.Millisecond,
+		SupervisorID: "scheduler-ordering",
+		PeerAuth:     peer.PeerAuthMTLS,
+		ClaimProducers: RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
+			"items-store": {
+				Endpoint:     endpoint,
+				TLS:          peer.TLSModeRequired,
+				Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("StartScheduler under mtls must dial the remote claim producer with a client cert already loaded (identity wired pre-dial); got: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Shutdown(context.Background()) })
+}
+
+func TestStartControlAPI_MTLSWiresIdentityBeforeOutboundDial(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	t.Setenv(pki.EnvCAEncryptionKey, base64.StdEncoding.EncodeToString(key))
+	t.Cleanup(func() { peer.SetClientIdentity(nil); peer.SetTLSRootCAs(nil) })
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
+	db, err := persistence.Open(ctx, persistence.Config{Driver: "sqlite", SQLite: &persistence.SQLiteConfig{Path: dbPath}})
+	if err != nil {
+		t.Fatalf("persistence.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	ca, err := ensureDeploymentCA(ctx, db.Tables(), shared.SystemClock{})
+	if err != nil {
+		t.Fatalf("ensureDeploymentCA: %v", err)
+	}
+
+	endpoint := startMTLSClaimProducer(t, ca)
+
+	handle, err := StartControlAPI(ControlAPIConfig{
+		Driver:       db,
+		Clock:        shared.SystemClock{},
+		Logger:       shared.SilentLogger{},
+		Host:         "127.0.0.1",
+		Port:         0,
+		ControlAPIID: "control-api-ordering",
+		PeerAuth:     peer.PeerAuthMTLS,
+		ClaimProducers: RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
+			"items-store": {
+				Endpoint:     endpoint,
+				TLS:          peer.TLSModeRequired,
+				Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("StartControlAPI under mtls must dial the remote claim producer with a client cert already loaded (identity wired pre-dial); got: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Shutdown(context.Background()) })
+}
+
+// @concept: peer-auth
+func TestPeerAuthMTLS_SplitRoleWiring_EachRoleInstallsOwnIdentity(t *testing.T) {
+	roles := []struct {
+		name  string
+		start func(t *testing.T, endpoint string, db persistence.Database) (interface{ Shutdown(context.Context) error }, error)
+	}{
+		{
+			name: "supervisor",
+			start: func(t *testing.T, endpoint string, db persistence.Database) (interface{ Shutdown(context.Context) error }, error) {
+				return StartSupervisor(SupervisorConfig{
+					SupervisorID: "split-role-supervisor",
+					Driver:       db,
+					Clock:        shared.SystemClock{},
+					Logger:       shared.SilentLogger{},
+					Resolver:     executor.NewStaticResolver(nil),
+					CallbackHost: "127.0.0.1",
+					CallbackPort: 0,
+					PeerAuth:     peer.PeerAuthMTLS,
+					ClaimProducers: RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
+						"items-store": {
+							Endpoint:     endpoint,
+							TLS:          peer.TLSModeRequired,
+							Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+						},
+					}},
+				})
+			},
+		},
+		{
+			name: "scheduler",
+			start: func(t *testing.T, endpoint string, db persistence.Database) (interface{ Shutdown(context.Context) error }, error) {
+				return StartScheduler(SchedulerConfig{
+					Driver:       db,
+					Clock:        shared.SystemClock{},
+					Logger:       shared.SilentLogger{},
+					TickInterval: 250 * time.Millisecond,
+					SupervisorID: "split-role-scheduler",
+					PeerAuth:     peer.PeerAuthMTLS,
+					ClaimProducers: RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
+						"items-store": {
+							Endpoint:     endpoint,
+							TLS:          peer.TLSModeRequired,
+							Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+						},
+					}},
+				})
+			},
+		},
+		{
+			name: "control-api",
+			start: func(t *testing.T, endpoint string, db persistence.Database) (interface{ Shutdown(context.Context) error }, error) {
+				return StartControlAPI(ControlAPIConfig{
+					Driver:       db,
+					Clock:        shared.SystemClock{},
+					Logger:       shared.SilentLogger{},
+					Host:         "127.0.0.1",
+					Port:         0,
+					ControlAPIID: "split-role-control-api",
+					PeerAuth:     peer.PeerAuthMTLS,
+					ClaimProducers: RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
+						"items-store": {
+							Endpoint:     endpoint,
+							TLS:          peer.TLSModeRequired,
+							Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
+						},
+					}},
+				})
+			},
+		},
+	}
+
+	for _, role := range roles {
+		role := role
+		t.Run(role.name, func(t *testing.T) {
+			key := make([]byte, 32)
+			for i := range key {
+				key[i] = byte(i + 7)
+			}
+			t.Setenv(pki.EnvCAEncryptionKey, base64.StdEncoding.EncodeToString(key))
+
+			peer.SetClientIdentity(nil)
+			peer.SetTLSRootCAs(nil)
+			t.Cleanup(func() {
+				peer.SetClientIdentity(nil)
+				peer.SetTLSRootCAs(nil)
+			})
+
+			ctx := context.Background()
+			dbPath := filepath.Join(t.TempDir(), "rimsky.db")
+			db, err := persistence.Open(ctx, persistence.Config{Driver: "sqlite", SQLite: &persistence.SQLiteConfig{Path: dbPath}})
+			if err != nil {
+				t.Fatalf("persistence.Open: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			if err := db.Migrate(ctx, shared.SilentLogger{}); err != nil {
+				t.Fatalf("Migrate: %v", err)
+			}
+
+			ca, err := ensureDeploymentCA(ctx, db.Tables(), shared.SystemClock{})
+			if err != nil {
+				t.Fatalf("ensureDeploymentCA: %v", err)
+			}
+
+			endpoint := startMTLSClaimProducer(t, ca)
+
+			handle, err := role.start(t, endpoint, db)
+			if err != nil {
+				t.Fatalf("role %s under mtls must install its own outbound identity in isolation — split-role wiring means no role freeloads on a sibling's global set-up. Start failed: %v", role.name, err)
+			}
+			t.Cleanup(func() { _ = handle.Shutdown(context.Background()) })
+		})
+	}
+}
+
 func TestStartSupervisor_UnreachablePeerFailsStartupFast(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")

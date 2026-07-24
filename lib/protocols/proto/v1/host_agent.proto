@@ -42,19 +42,31 @@ message ServerFrame {
 
 message Register {
   string api_key   = 1;
-  string agent_label = 2;       // e.g., "hostname-pid"; for multi-agent disambiguation
+  string agent_label = 2;       // e.g., "hostname-pid"; informational disambiguation
   string agent_version = 3;
   // Base URL the agent's local HTTP listener serves for spawned processes.
   // The proxy uses this to rewrite callback_url and other rimsky-side URLs
   // before tunneling them into the spawned process.
   string local_callback_base_url = 4;
+  // routing_label is the agent's requested routing identity for anonymous
+  // registrations. Ignored when api_key names a real key (the proxy adopts
+  // the key id). For anonymous agents the proxy accepts a non-empty
+  // routing_label iff it does not collide with another currently-connected
+  // anonymous agent; an empty routing_label causes the proxy to generate a
+  // fresh silly-name. The adopted identity is returned in RegisterAck.
+  string routing_label = 5;
 }
 
 message RegisterAck {
   string proxy_version = 1;
-  // If a prior agent for this api_key was connected, this ack carries
+  // If a prior agent for this routing_identity was connected, this ack carries
   // a notice that the prior connection has been displaced.
   bool displaced_prior = 2;
+  // routing_identity is the identity the proxy adopted for this connection —
+  // the api-key id for authenticated agents, or the assigned silly-name for
+  // anonymous agents. The agent persists this so a reconnect can re-present
+  // it and preserve routing continuity for previously-created instances.
+  string routing_identity = 3;
 }
 
 // HostAgentHeartbeat / HostAgentHeartbeatAck are the agent-liveness frames

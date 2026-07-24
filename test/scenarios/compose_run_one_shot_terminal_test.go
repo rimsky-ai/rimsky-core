@@ -10,7 +10,6 @@ package scenarios
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -39,10 +37,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	work := t.TempDir()
 	copyComposeSampleManifest(t, work)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, rimskyBin,
+	cmd := exec.Command(rimskyBin,
 		"compose", "run",
 		"--service", fmt.Sprintf("stub=%s", stubBin),
 		"./rimsky-compose.yml",
@@ -114,7 +109,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	defer db.Close()
 
 	var instanceCount int
-	if qerr := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rimsky_instances`).Scan(&instanceCount); qerr != nil {
+	if qerr := db.QueryRow(`SELECT COUNT(*) FROM rimsky_instances`).Scan(&instanceCount); qerr != nil {
 		t.Fatalf("count rimsky_instances: %v", qerr)
 	}
 	if instanceCount != 2 {
@@ -122,7 +117,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 
 	var terminatedCount int
-	if qerr := db.QueryRowContext(ctx,
+	if qerr := db.QueryRow(
 		`SELECT COUNT(*) FROM rimsky_instances WHERE terminated_at IS NOT NULL`).Scan(&terminatedCount); qerr != nil {
 		t.Fatalf("count terminated instances: %v", qerr)
 	}
@@ -131,13 +126,13 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 
 	var completedCount, failedCount int
-	if qerr := db.QueryRowContext(ctx,
+	if qerr := db.QueryRow(
 		`SELECT COUNT(*) FROM rimsky_node_runs nr
 		   JOIN rimsky_nodes n ON n.id = nr.node_id
 		  WHERE n.node_type = 'worker' AND nr.state = 'fresh'`).Scan(&completedCount); qerr != nil {
 		t.Fatalf("count completed worker node-runs: %v", qerr)
 	}
-	if qerr := db.QueryRowContext(ctx,
+	if qerr := db.QueryRow(
 		`SELECT COUNT(*) FROM rimsky_node_runs nr
 		   JOIN rimsky_nodes n ON n.id = nr.node_id
 		  WHERE n.node_type = 'worker' AND nr.state = 'failed'`).Scan(&failedCount); qerr != nil {
@@ -151,7 +146,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 
 	var workerNodeCount int
-	if qerr := db.QueryRowContext(ctx,
+	if qerr := db.QueryRow(
 		`SELECT COUNT(*) FROM rimsky_nodes WHERE node_type = 'worker'`).Scan(&workerNodeCount); qerr != nil {
 		t.Fatalf("count worker nodes: %v", qerr)
 	}
@@ -160,7 +155,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 
 	var failEventCount int
-	if qerr := db.QueryRowContext(ctx, `
+	if qerr := db.QueryRow(`
 		SELECT COUNT(*) FROM rimsky_events e
 		  JOIN rimsky_nodes n ON n.id = e.node_id
 		  JOIN rimsky_instances i ON i.id = n.instance_id
@@ -176,7 +171,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 
 	var failPayload string
-	if qerr := db.QueryRowContext(ctx, `
+	if qerr := db.QueryRow(`
 		SELECT e.payload FROM rimsky_events e
 		  JOIN rimsky_nodes n ON n.id = e.node_id
 		  JOIN rimsky_instances i ON i.id = n.instance_id
@@ -193,7 +188,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 
 	var outcomeAttrData string
-	if qerr := db.QueryRowContext(ctx, `
+	if qerr := db.QueryRow(`
 		SELECT a.data FROM rimsky_node_attributes a
 		  JOIN rimsky_nodes n ON n.id = a.node_id
 		  JOIN rimsky_instances i ON i.id = n.instance_id
@@ -208,7 +203,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 
 	var composeWakeCount int
-	if qerr := db.QueryRowContext(ctx,
+	if qerr := db.QueryRow(
 		`SELECT COUNT(*) FROM rimsky_message_idempotencies WHERE idempotency_key LIKE 'compose-wake-%'`).Scan(&composeWakeCount); qerr != nil {
 		t.Fatalf("count compose-wake idempotency rows: %v", qerr)
 	}
@@ -221,7 +216,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	}
 
 	var composeWakeMessageCount int
-	if qerr := db.QueryRowContext(ctx, `
+	if qerr := db.QueryRow(`
 		SELECT COUNT(*) FROM rimsky_messages m
 		 JOIN rimsky_message_idempotencies idm ON idm.message_id = m.id
 		 WHERE idm.idempotency_key LIKE 'compose-wake-%'
@@ -253,10 +248,7 @@ func TestComposeRunOneShotTerminal_QueryableWithStockSqlite3CLI(t *testing.T) {
 	work := t.TempDir()
 	copyComposeSampleManifest(t, work)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, rimskyBin,
+	cmd := exec.Command(rimskyBin,
 		"compose", "run",
 		"--service", fmt.Sprintf("stub=%s", stubBin),
 		"./rimsky-compose.yml",
@@ -284,7 +276,7 @@ func TestComposeRunOneShotTerminal_QueryableWithStockSqlite3CLI(t *testing.T) {
 	}
 	dbPath := filepath.Join(runDir, "state.db")
 
-	out, sErr := exec.CommandContext(ctx, sqlite3Path, dbPath,
+	out, sErr := exec.Command(sqlite3Path, dbPath,
 		"SELECT COUNT(*) FROM rimsky_instances;").CombinedOutput()
 	if sErr != nil {
 		t.Fatalf("stock sqlite3 CLI could not query state.db (not a valid stock-sqlite3-readable file): %v\noutput:\n%s", sErr, out)
@@ -293,7 +285,7 @@ func TestComposeRunOneShotTerminal_QueryableWithStockSqlite3CLI(t *testing.T) {
 		t.Fatalf("stock sqlite3 CLI reported %q instances, want 2; output:\n%s", strings.TrimSpace(string(out)), out)
 	}
 
-	out, sErr = exec.CommandContext(ctx, sqlite3Path, dbPath,
+	out, sErr = exec.Command(sqlite3Path, dbPath,
 		"SELECT COUNT(*) FROM rimsky_events;").CombinedOutput()
 	if sErr != nil {
 		t.Fatalf("stock sqlite3 CLI could not query rimsky_events in state.db: %v\noutput:\n%s", sErr, out)

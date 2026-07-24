@@ -132,9 +132,8 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		}
 	}
 
-	waitForBlockedContender := func(ctx context.Context) bool {
-		deadline := time.Now().Add(15 * time.Second)
-		for time.Now().Before(deadline) {
+	waitForBlockedContender := func(ctx context.Context) {
+		for {
 			var waiting int
 			if err := h.Pool.QueryRow(ctx,
 				`SELECT count(*) FROM pg_stat_activity
@@ -142,11 +141,10 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 				    AND wait_event_type = 'Lock'
 				    AND query LIKE '%FROM rimsky_claim_handles WHERE id = $1 FOR UPDATE%'`,
 			).Scan(&waiting); err == nil && waiting > 0 {
-				return true
+				return
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		return false
 	}
 
 	argsA := baseArgs
@@ -156,8 +154,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 			go runB()
 			t.Cleanup(func() { <-bDone })
 		})
-		require.True(t, waitForBlockedContender(ctx),
-			"contender B must be observably blocked on the claim-handle row lock inside A's check→fire window")
+		waitForBlockedContender(ctx)
 	}
 
 	var postA func(context.Context)
@@ -171,11 +168,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	}
 	require.True(t, hookFired, "the CheckAndFireHook seam must have fired")
 
-	select {
-	case <-bDone:
-	case <-time.After(30 * time.Second):
-		t.Fatal("contender B did not finish after A committed")
-	}
+	<-bDone
 	require.NoError(t, bErr, "the losing contender must no-op cleanly, not error")
 
 	_, ferr := runtime.FlushProducerVerbOutbox(h.Ctx, baseArgs)

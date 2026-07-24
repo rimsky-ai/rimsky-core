@@ -48,7 +48,7 @@ func seedWaitSetParentsPG(
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: instanceID, TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err

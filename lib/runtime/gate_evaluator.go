@@ -140,7 +140,7 @@ func routeSubstitutionFailureAtGate(
 		Kind:       eventKind,
 		Payload: map[string]any{
 			"directive": directive,
-			"site":      "attribute",
+			"site":      substitutionSiteAttribute,
 			"field":     "",
 			"reason":    subErr.Error(),
 		},

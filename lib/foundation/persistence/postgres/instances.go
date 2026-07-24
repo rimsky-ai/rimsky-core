@@ -24,7 +24,7 @@ var errInstanceIDRequired = errors.New("instances.create: ID is required (zero U
 
 var errInstanceIDConflict = errors.New("instances.create: instance id already exists")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, paused, service_bindings, created_by_api_key_id, message_queue_mode`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, paused, service_bindings, created_by_api_key_id, target_routing_identity, message_queue_mode`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	ex := s.q(tx)
@@ -55,10 +55,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		messageQueueMode = "backlog"
 	}
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, paused, service_bindings, created_by_api_key_id, message_queue_mode)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, paused, service_bindings, created_by_api_key_id, target_routing_identity, message_queue_mode)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING `+instanceCols,
-		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, in.Paused, serviceBindings, in.CreatedByAPIKeyID, messageQueueMode,
+		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, in.Paused, serviceBindings, in.CreatedByAPIKeyID, in.TargetRoutingIdentity, messageQueueMode,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -316,19 +316,20 @@ type scannable interface {
 
 func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 	var (
-		id                  foundationshared.UUID
-		templateHash        string
-		instanceKey         *string
-		params              []byte
-		overrides           []byte
-		createdAt           time.Time
-		terminatedAt        *time.Time
-		paused              bool
-		serviceBindingsByte []byte
-		createdByAPIKeyID   *foundationshared.UUID
-		messageQueueMode    string
+		id                    foundationshared.UUID
+		templateHash          string
+		instanceKey           *string
+		params                []byte
+		overrides             []byte
+		createdAt             time.Time
+		terminatedAt          *time.Time
+		paused                bool
+		serviceBindingsByte   []byte
+		createdByAPIKeyID     *foundationshared.UUID
+		targetRoutingIdentity string
+		messageQueueMode      string
 	)
-	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &createdAt, &terminatedAt, &paused, &serviceBindingsByte, &createdByAPIKeyID, &messageQueueMode); err != nil {
+	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &createdAt, &terminatedAt, &paused, &serviceBindingsByte, &createdByAPIKeyID, &targetRoutingIdentity, &messageQueueMode); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	m := map[string]any{}
@@ -348,17 +349,18 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		serviceBindings = json.RawMessage(serviceBindingsByte)
 	}
 	return persistence.InstanceRow{
-		ID:                 id,
-		TemplateHash:       templateHash,
-		InstanceKey:        instanceKey,
-		Params:             m,
-		AttributeOverrides: ov,
-		CreatedAt:          createdAt,
-		TerminatedAt:       terminatedAt,
-		Paused:             paused,
-		ServiceBindings:    serviceBindings,
-		CreatedByAPIKeyID:  createdByAPIKeyID,
-		MessageQueueMode:   messageQueueMode,
+		ID:                    id,
+		TemplateHash:          templateHash,
+		InstanceKey:           instanceKey,
+		Params:                m,
+		AttributeOverrides:    ov,
+		CreatedAt:             createdAt,
+		TerminatedAt:          terminatedAt,
+		Paused:                paused,
+		ServiceBindings:       serviceBindings,
+		CreatedByAPIKeyID:     createdByAPIKeyID,
+		TargetRoutingIdentity: targetRoutingIdentity,
+		MessageQueueMode:      messageQueueMode,
 	}, nil
 }
 

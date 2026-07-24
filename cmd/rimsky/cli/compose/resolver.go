@@ -5,22 +5,19 @@
 package compose
 
 import (
-	"fmt"
 	"os"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/template/canonical"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
 func ResolveTemplate(path string) (hash string, spec node.TemplateSpec, err error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return "", node.TemplateSpec{}, err
 	}
-	if err := yaml.Unmarshal(raw, &spec); err != nil {
-		return "", node.TemplateSpec{}, fmt.Errorf("parse %s: %w", path, err)
+	if err := configload.LoadFile(path, &spec); err != nil {
+		return "", node.TemplateSpec{}, err
 	}
 	node.ApplyFrameResolutionDefaults(&spec)
 	hash, err = canonical.CanonicalSpecHash(spec)

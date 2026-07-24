@@ -147,18 +147,15 @@ func TestOpenInstanceNotFound(t *testing.T) {
 	}
 }
 
-func TestOpenOwnerEmpty(t *testing.T) {
+func TestOpenTargetRoutingIdentityEmptySurfacesBindingError(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	cacheReadyInstance(ts, "inst-1", "", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 	client := genv1.NewClaimProducerClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
 	defer cancel()
 	_, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "c", ProducerName: "fs-claims", InstanceId: "inst-1"})
-	if got := errorReason(err); got != errClassHostAgentNotConnected {
-		t.Fatalf("expected reason %s, got %q", errClassHostAgentNotConnected, got)
-	}
-	if status.Code(err) != codes.Internal {
-		t.Fatalf("expected Internal for host_agent_not_connected, got %v", status.Code(err))
+	if got := errorReason(err); got != errClassBindingNotFound {
+		t.Fatalf("empty target_routing_identity must surface as %s (a malformed instance cannot route work), got %q", errClassBindingNotFound, got)
 	}
 }
 

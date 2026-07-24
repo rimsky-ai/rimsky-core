@@ -25,14 +25,12 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-const senderSubjectAnonymous = "anonymous"
-
 func operatorSenderSubject(ident auth.Identity) string {
 	if ident.KeyID != nil {
 		return ident.KeyID.String()
 	}
 	if ident.Kind == auth.IdentityAnonymous {
-		return senderSubjectAnonymous
+		return auth.AnonymousKeyName
 	}
 	return ""
 }
@@ -42,7 +40,7 @@ func dedupSenderKind(senderKind string, ident auth.Identity) string {
 		return runtime.SenderKindPublisher
 	}
 	if ident.Kind == auth.IdentityAnonymous {
-		return "anonymous"
+		return string(auth.IdentityAnonymous)
 	}
 	return runtime.SenderKindOperator
 }

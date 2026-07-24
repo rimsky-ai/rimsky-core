@@ -14,8 +14,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-func cacheReadyInstance(ts *proxyTestServer, instanceID, owner string, bindings map[string]bindingSpec) {
-	ts.state.cacheInstance(instanceID, bindings, owner, map[string]any{"cwd": "."})
+func cacheReadyInstance(ts *proxyTestServer, instanceID, routingIdentity string, bindings map[string]bindingSpec) {
+	ts.state.cacheInstance(instanceID, bindings, routingIdentity, map[string]any{"cwd": "."})
 }
 
 func executorScript(t *testing.T) dispatchHandler {
@@ -252,9 +252,9 @@ func TestExecuteSupervisorCancelSendsCancelFrame(t *testing.T) {
 
 func TestExecuteFetcherFallbackPopulatesCache(t *testing.T) {
 	entry := &instanceCacheEntry{
-		serviceBindings: map[string]bindingSpec{"codegen": {Path: "./c"}},
-		ownerAPIKeyID:   "owner-1",
-		params:          map[string]any{"cwd": "."},
+		serviceBindings:       map[string]bindingSpec{"codegen": {Path: "./c"}},
+		targetRoutingIdentity: "owner-1",
+		params:                map[string]any{"cwd": "."},
 	}
 	ts := newProxyTestServer(t, staticFetcher("inst-1", entry))
 	connectFakeAgent(t, ts, "owner-1", "", executorScript(t))

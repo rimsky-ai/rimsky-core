@@ -7,7 +7,9 @@ package runtime
 import (
 	"context"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 const acquireUnavailableSyntheticClass = "acquire/unavailable"
@@ -115,6 +117,30 @@ func handleAcquireFanOutSubstitutionFailed(ctx context.Context, args RunArgs, ac
 		"node_type":     acq.NodeType,
 	}
 	return runAcquireErrorPolicy(ctx, args, &acq, fanOutSubstitutionFailedSyntheticClass, fanOutSubstitutionFailedSyntheticClass, payload, "handleAcquireFanOutSubstitutionFailed")
+}
+
+// @concept: error-policy
+// @decision: substitution-failure-routes-with-substitution
+func handleAcquireLockSpecSubstitutionFailed(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) *policyDecision {
+	if acq.NodeDef == nil {
+		return nil
+	}
+	if !reclaimDispatchRowShortTx(ctx, args, cand, "handleAcquireLockSpecSubstitutionFailed") {
+		return nil
+	}
+	emitAttributeFailureEvent(ctx, args, acq.NodeID, acq.InstanceID,
+		events.KindTemplateResolutionFailed(), acq.LockSpecSubstitutionDirective,
+		acq.LockSpecSubstitutionSite, "", acq.LockSpecSubstitutionErr)
+	payload := map[string]any{
+		"source":      "acquire_lock_spec_substitution_failed",
+		"site":        acq.LockSpecSubstitutionSite,
+		"directive":   acq.LockSpecSubstitutionDirective,
+		"error":       acq.LockSpecSubstitutionErr,
+		"dispatch_id": cand.NodeRunID.String(),
+		"node_id":     cand.NodeID.String(),
+		"node_type":   acq.NodeType,
+	}
+	return runAcquireErrorPolicy(ctx, args, &acq, spec.ErrorClassTemplateResolutionFailed, spec.ErrorClassTemplateResolutionFailed, payload, "handleAcquireLockSpecSubstitutionFailed")
 }
 
 func runAcquireErrorPolicy(

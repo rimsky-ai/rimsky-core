@@ -65,9 +65,16 @@ message OnInstanceCreatedRequest {
   bytes service_bindings = 5;
 
   // owner_api_key_id is the api-key whose authenticated request created the
-  // instance (empty string for anonymous-mode-created instances). Consumed
-  // by the host-agent-proxy to route dispatches to the right user's agent.
+  // instance (empty string for anonymous-mode-created instances). Retained
+  // as an audit signal on the fan-out payload; routing consumes
+  // target_routing_identity instead.
   string owner_api_key_id = 6;
+  // target_routing_identity is the routing identity a host-agent-proxy must
+  // resolve to dispatch this instance's late-bound work: an api-key id for
+  // ordinary owner-created instances, or an anonymous agent's silly-name
+  // for anonymous-mode instances. Populated at instance-creation time on
+  // every instance; never empty.
+  string target_routing_identity = 7;
 }
 
 message OnInstanceTerminatedRequest {

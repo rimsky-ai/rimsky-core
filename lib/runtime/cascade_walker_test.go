@@ -70,7 +70,7 @@ func TestEnsureCascadePending_PerSenderNodeRule(t *testing.T) {
 	)
 	require.NoError(t, err)
 	_, err = stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
+		`INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES (?, ?, 'test-agent')`,
 		instanceID.String(), templateHash,
 	)
 	require.NoError(t, err)

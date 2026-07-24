@@ -205,7 +205,11 @@ func TestLoadSiblingBlocks_PublishersAndNamedLocksFromSibling(t *testing.T) {
 		t.Fatalf("EnsureRunDir: %v", err)
 	}
 	siblingPath := filepath.Join(tmp, "rimsky.yml")
-	sibling := []byte(`publishers:
+	sibling := []byte(`persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/sibling.db
+publishers:
   ticker:
     endpoint: 127.0.0.1:9301
     tls: off

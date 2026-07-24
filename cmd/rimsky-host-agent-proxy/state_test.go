@@ -15,14 +15,14 @@ import (
 func TestRegisterAgentDisplacesPrior(t *testing.T) {
 	s := newProxyState()
 
-	first, prior, displaced := s.registerAgent("key-1", "host-a", "http://127.0.0.1:5001")
-	if displaced || prior != nil {
-		t.Fatalf("first register should not displace: displaced=%v prior=%v", displaced, prior)
+	first, prior, collided := s.registerAgent("key-1", "host-a", "http://127.0.0.1:5001", registerDisplacePrior)
+	if collided || prior != nil {
+		t.Fatalf("first register should not collide: collided=%v prior=%v", collided, prior)
 	}
 
-	second, prior2, displaced2 := s.registerAgent("key-1", "host-b", "http://127.0.0.1:5002")
-	if !displaced2 {
-		t.Fatalf("second register for same key should report displaced")
+	second, prior2, collided2 := s.registerAgent("key-1", "host-b", "http://127.0.0.1:5002", registerDisplacePrior)
+	if collided2 {
+		t.Fatalf("displace-mode register must never signal collision; got collided2=true")
 	}
 	if prior2 != first {
 		t.Fatalf("displaced prior should be the first connection")
@@ -32,16 +32,39 @@ func TestRegisterAgentDisplacesPrior(t *testing.T) {
 	}
 }
 
+func TestRegisterAgentRejectOnCollisionKeepsPrior(t *testing.T) {
+	s := newProxyState()
+
+	first, _, collided := s.registerAgent("sparkling-wombat", "alpha", "", registerRejectOnCollision)
+	if collided || first == nil {
+		t.Fatalf("first register must succeed: collided=%v first=%v", collided, first)
+	}
+
+	second, prior, collided2 := s.registerAgent("sparkling-wombat", "beta", "", registerRejectOnCollision)
+	if !collided2 {
+		t.Fatalf("second register with same routing identity must report collision under reject mode")
+	}
+	if second != nil {
+		t.Fatalf("reject-mode collision must not return a new connection; got %v", second)
+	}
+	if prior != first {
+		t.Fatalf("reject-mode collision must surface the prior connection")
+	}
+	if got, ok := s.lookupAgent("sparkling-wombat"); !ok || got != first {
+		t.Fatalf("prior connection must still be the registered agent after a rejected collision")
+	}
+}
+
 func TestRegisterAgentDropsPriorSpawnsOnDisplacement(t *testing.T) {
 	s := newProxyState()
-	s.registerAgent("key-1", "host-a", "")
+	s.registerAgent("key-1", "host-a", "", registerDisplacePrior)
 	s.recordSpawn("spawn-1", "key-1", "inst-1", "codegen", nil, "")
 	s.recordClaimRoute("claim-1", "key-1", "spawn-1")
 	if _, ok := s.lookupSpawn("spawn-1"); !ok {
 		t.Fatalf("precondition: spawn should be recorded")
 	}
 
-	s.registerAgent("key-1", "host-b", "")
+	s.registerAgent("key-1", "host-b", "", registerDisplacePrior)
 
 	if _, ok := s.lookupSpawn("spawn-1"); ok {
 		t.Fatalf("displacement should drop the prior connection's spawn")
@@ -56,8 +79,8 @@ func TestRegisterAgentDropsPriorSpawnsOnDisplacement(t *testing.T) {
 
 func TestDropAgentOnlyEvictsCurrent(t *testing.T) {
 	s := newProxyState()
-	first, _, _ := s.registerAgent("key-1", "a", "")
-	second, _, _ := s.registerAgent("key-1", "b", "")
+	first, _, _ := s.registerAgent("key-1", "a", "", registerDisplacePrior)
+	second, _, _ := s.registerAgent("key-1", "b", "", registerDisplacePrior)
 
 	s.dropAgent("key-1", first)
 	if got, ok := s.lookupAgent("key-1"); !ok || got != second {
@@ -118,8 +141,8 @@ func TestInstanceCacheHitMiss(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected cache hit after cacheInstance")
 	}
-	if entry.ownerAPIKeyID != "owner-1" {
-		t.Fatalf("owner mismatch: %q", entry.ownerAPIKeyID)
+	if entry.targetRoutingIdentity != "owner-1" {
+		t.Fatalf("routing identity mismatch: %q", entry.targetRoutingIdentity)
 	}
 	if entry.serviceBindings["codegen"].Path != "./bin" {
 		t.Fatalf("binding path mismatch")
@@ -177,7 +200,7 @@ func TestClaimRouteLifecycle(t *testing.T) {
 	s.recordClaimRoute("claim-1", "key-1", "spawn-1")
 
 	route, ok := s.lookupClaimRoute("claim-1")
-	if !ok || route.spawnID != "spawn-1" || route.apiKeyID != "key-1" {
+	if !ok || route.spawnID != "spawn-1" || route.routingIdentity != "key-1" {
 		t.Fatalf("claim route lookup miss: ok=%v route=%+v", ok, route)
 	}
 
@@ -197,7 +220,7 @@ func TestConcurrentAccessSafety(t *testing.T) {
 			defer wg.Done()
 			key := fmt.Sprintf("key-%d", i%5)
 			scope := fmt.Sprintf("inst-%d", i%5)
-			conn, _, _ := s.registerAgent(key, "label", "")
+			conn, _, _ := s.registerAgent(key, "label", "", registerDisplacePrior)
 			s.recordSpawn(fmt.Sprintf("spawn-%d", i), key, scope, "codegen", nil, "")
 			s.cacheInstance(scope, map[string]bindingSpec{"codegen": {Path: "./b"}}, key, nil)
 			s.recordClaimRoute(fmt.Sprintf("claim-%d", i), key, fmt.Sprintf("spawn-%d", i))

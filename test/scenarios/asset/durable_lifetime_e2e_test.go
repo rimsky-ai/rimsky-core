@@ -49,7 +49,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
+		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: instID, TemplateHash: tmpl.ID,
 			InstanceKey: &ck, Params: map[string]any{},
 		}, tx)

@@ -72,9 +72,10 @@ func TestLookupInstanceBindings_ReturnsServiceBindings(t *testing.T) {
 			return err
 		}
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:              instID,
-			TemplateHash:    templateHash,
-			ServiceBindings: bindingsJSON,
+			ID:                    instID,
+			TemplateHash:          templateHash,
+			ServiceBindings:       bindingsJSON,
+			TargetRoutingIdentity: "test-bindings-agent",
 		}, tx)
 		return err
 	}); err != nil {

@@ -29,15 +29,14 @@ const proxyExecutorName = "codegen-proxy"
 
 const lateBindServiceName = "codegen"
 
-const anonRoutingIdentity = hostagent.AnonymousRoutingIdentity
-
 type hostAgentFixture struct {
-	h           *scenario.Harness
-	proxyAddr   string
-	stubBinary  string
-	adminKey    string
-	cancelAgent context.CancelFunc
-	agentDone   chan struct{}
+	h                     *scenario.Harness
+	proxyAddr             string
+	stubBinary            string
+	adminKey              string
+	targetRoutingIdentity string
+	cancelAgent           context.CancelFunc
+	agentDone             chan struct{}
 }
 
 func repoRoot(t *testing.T) string {
@@ -89,7 +88,12 @@ func waitDialable(addr string) {
 	}
 }
 
-func startAgent(t *testing.T, proxyAddr, apiKeyPlaintext string) (context.CancelFunc, chan struct{}, string) {
+type agentStartOptions struct {
+	APIKey       string
+	RoutingLabel string
+}
+
+func startAgent(t *testing.T, proxyAddr string, opts agentStartOptions) (context.CancelFunc, chan struct{}, string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -98,8 +102,10 @@ func startAgent(t *testing.T, proxyAddr, apiKeyPlaintext string) (context.Cancel
 		t.Fatalf("LoadConfigFromEnv: %v", err)
 	}
 	cfg.RimskyURL = proxyAddr
-	cfg.APIKey = apiKeyPlaintext
+	cfg.APIKey = opts.APIKey
 	cfg.AgentLabel = "scenario-agent"
+	cfg.RoutingLabel = opts.RoutingLabel
+	cfg.IdentityFile = filepath.Join(t.TempDir(), "identity.json")
 	cfg.StatusFile = filepath.Join(t.TempDir(), "agent-status.json")
 	go func() {
 		defer close(done)
@@ -150,12 +156,12 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		ClaimProducers:         opts.stores,
 	})
 
-	var adminKey, agentAPIKey string
-	if opts.anonymous {
-		agentAPIKey = anonRoutingIdentity
-	} else {
+	var adminKey, agentAPIKey, routingLabel string
+	if !opts.anonymous {
 		adminKey, _ = h.MintAdminKey("scenario-admin")
 		agentAPIKey = adminKey
+	} else {
+		routingLabel = "scenario-badger"
 	}
 
 	controlURL, controlToken := h.ControlBase, adminKey
@@ -172,9 +178,12 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		stubBinary: stub,
 		adminKey:   adminKey,
 	}
+	if opts.anonymous {
+		fx.targetRoutingIdentity = routingLabel
+	}
 	if opts.withAgent {
 		var statusFile string
-		fx.cancelAgent, fx.agentDone, statusFile = startAgent(t, proxyAddr, agentAPIKey)
+		fx.cancelAgent, fx.agentDone, statusFile = startAgent(t, proxyAddr, agentStartOptions{APIKey: agentAPIKey, RoutingLabel: routingLabel})
 		t.Cleanup(func() {
 			fx.cancelAgent()
 			<-fx.agentDone
@@ -234,7 +243,7 @@ func (fx *hostAgentFixture) createLateBindInstance(t *testing.T, templateHash, i
 	bindings := map[string]any{
 		lateBindServiceName: map[string]any{"path": binaryPath},
 	}
-	return fx.h.CreateInstanceWithServiceBindings(templateHash, instanceKey, fx.adminKey, map[string]any{}, bindings)
+	return fx.h.CreateInstanceWithServiceBindingsAndTarget(templateHash, instanceKey, fx.adminKey, map[string]any{}, bindings, fx.targetRoutingIdentity)
 }
 
 func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared.UUID, kinds ...string) string {

@@ -18,6 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
 func runWithCommon(name string, args []string, registerExtra func(fs *flag.FlagSet)) (*flag.FlagSet, *CommonFlags, string, int) {
@@ -56,13 +57,12 @@ func reportError(err error) int {
 
 // @concept: rimsky
 func ReadSpecFile(path string) (node.TemplateSpec, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return node.TemplateSpec{}, err
 	}
 	var generic any
-	if err := yaml.Unmarshal(raw, &generic); err != nil {
-		return node.TemplateSpec{}, fmt.Errorf("parse %s: %w", path, err)
+	if err := configload.LoadFile(path, &generic); err != nil {
+		return node.TemplateSpec{}, err
 	}
 	baseDir := filepath.Dir(path)
 	resolved, err := resolveSourceFileRefs(generic, baseDir)
@@ -74,8 +74,8 @@ func ReadSpecFile(path string) (node.TemplateSpec, error) {
 		return node.TemplateSpec{}, fmt.Errorf("marshal resolved %s: %w", path, err)
 	}
 	var spec node.TemplateSpec
-	if err := yaml.Unmarshal(resolvedBytes, &spec); err != nil {
-		return node.TemplateSpec{}, fmt.Errorf("parse %s: %w", path, err)
+	if err := configload.DecodeStrict(path, resolvedBytes, &spec); err != nil {
+		return node.TemplateSpec{}, err
 	}
 	return spec, nil
 }

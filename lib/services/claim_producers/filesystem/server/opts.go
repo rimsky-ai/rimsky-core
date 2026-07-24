@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/store"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
@@ -150,33 +148,9 @@ func LoadOptsFromEnv() (Opts, error) {
 }
 
 func loadYAML(path string) (yamlConfig, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return yamlConfig{}, fmt.Errorf("read config %q: %w", path, err)
-	}
-	expanded, err := expandConfigEnv(string(raw))
-	if err != nil {
-		return yamlConfig{}, fmt.Errorf("expand config %q: %w", path, err)
-	}
 	var cfg yamlConfig
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
-		return yamlConfig{}, fmt.Errorf("parse config %q: %w", path, err)
+	if err := configload.LoadFile(path, &cfg); err != nil {
+		return yamlConfig{}, err
 	}
 	return cfg, nil
-}
-
-func expandConfigEnv(raw string) (string, error) {
-	var missing []string
-	expanded := os.Expand(raw, func(name string) string {
-		v, ok := os.LookupEnv(name)
-		if !ok {
-			missing = append(missing, name)
-			return ""
-		}
-		return v
-	})
-	if len(missing) > 0 {
-		return "", fmt.Errorf("references undefined environment variable(s): %s (a literal '$' followed by an identifier is parsed as a reference; if this was a literal dollar sign, remove the ambiguity)", strings.Join(missing, ", "))
-	}
-	return expanded, nil
 }

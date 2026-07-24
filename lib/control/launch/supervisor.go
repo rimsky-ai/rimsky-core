@@ -13,14 +13,13 @@ import (
 	"strconv"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 )
 
@@ -314,14 +313,9 @@ func mergeBundledExecutorAliases(resolver *executor.StaticResolver, configured m
 }
 
 func loadSupervisorYAML(path string) (supervisorYAMLConfig, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return supervisorYAMLConfig{}, fmt.Errorf("read config %q: %w", path, err)
-	}
-	expanded := os.ExpandEnv(string(raw))
 	var cfg supervisorYAMLConfig
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
-		return supervisorYAMLConfig{}, fmt.Errorf("parse config %q: %w", path, err)
+	if err := configload.LoadFile(path, &cfg); err != nil {
+		return supervisorYAMLConfig{}, err
 	}
 	return cfg, nil
 }

@@ -16,6 +16,11 @@ const (
 
 const AnonymousKeyName = "anonymous"
 
+const (
+	StatusModeAnonymous     = "anonymous"
+	StatusModeAuthenticated = "authenticated"
+)
+
 // @concept: api-key
 // @concept: anonymous-mode
 type Identity struct {

@@ -14,10 +14,10 @@ import (
 
 func TestControlAPIFetcherHitsV1InstancesRoute(t *testing.T) {
 	const (
-		instanceID    = "inst-abc"
-		token         = "test-token"
-		bindingName   = "verifier"
-		ownerAPIKeyID = "key-1"
+		instanceID      = "inst-abc"
+		token           = "test-token"
+		bindingName     = "verifier"
+		routingIdentity = "key-1"
 	)
 
 	var gotPath, gotAuth string
@@ -32,8 +32,8 @@ func TestControlAPIFetcherHitsV1InstancesRoute(t *testing.T) {
 			ServiceBindings: map[string]bindingSpec{
 				bindingName: {Path: "/usr/local/bin/verifier"},
 			},
-			OwnerAPIKeyID: ownerAPIKeyID,
-			Params:        json.RawMessage(`{"cwd":"/work"}`),
+			TargetRoutingIdentity: routingIdentity,
+			Params:                json.RawMessage(`{"cwd":"/work"}`),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(body)
@@ -58,8 +58,8 @@ func TestControlAPIFetcherHitsV1InstancesRoute(t *testing.T) {
 	if entry == nil {
 		t.Fatalf("fetcher returned nil entry despite found=true")
 	}
-	if entry.ownerAPIKeyID != ownerAPIKeyID {
-		t.Fatalf("entry.ownerAPIKeyID = %q, want %q", entry.ownerAPIKeyID, ownerAPIKeyID)
+	if entry.targetRoutingIdentity != routingIdentity {
+		t.Fatalf("entry.targetRoutingIdentity = %q, want %q", entry.targetRoutingIdentity, routingIdentity)
 	}
 	if _, ok := entry.serviceBindings[bindingName]; !ok {
 		t.Fatalf("entry.serviceBindings missing %q binding; got %v", bindingName, entry.serviceBindings)

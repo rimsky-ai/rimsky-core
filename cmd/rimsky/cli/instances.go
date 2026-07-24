@@ -14,9 +14,30 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// @concept: anonymous-mode
+func ResolveTargetAgent(explicit, apiKey string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if apiKey != "" {
+		return ""
+	}
+	path, err := hostagent.DefaultIdentityFile()
+	if err != nil {
+		return ""
+	}
+	id, err := hostagent.EnsureIdentity(path)
+	if err != nil {
+		return ""
+	}
+	return id.RoutingIdentity
+}
 
 func LooksLikeUUID(s string) bool { return uuidPattern.MatchString(s) }
 
@@ -42,17 +63,18 @@ func parseParams(s string) (map[string]any, error) {
 }
 
 func RunInstanceCreate(ctx context.Context, args []string) int {
-	var params, instanceKey string
+	var params, instanceKey, agent string
 	fs, common, endpoint, code := runWithCommon("instance create", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&params, "params", "", "JSON object or @file path")
 		fs.StringVar(&instanceKey, "instance-key", "", "instance_key for the new row")
+		fs.StringVar(&agent, "agent", "", "anonymous target host-agent's routing label (silly-name); overrides the local identity file")
 	})
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky instance create <template-ref> [--params ...] [--instance-key ...]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance create <template-ref> [--params ...] [--instance-key ...] [--agent <silly-name>]")
 		return 2
 	}
 	pp, err := parseParams(params)
@@ -65,8 +87,10 @@ func RunInstanceCreate(ctx context.Context, args []string) int {
 		k := instanceKey
 		body.InstanceKey = &k
 	}
+	apiKey := common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY"))
+	body.TargetAgent = ResolveTargetAgent(agent, apiKey)
 	c := NewClient(endpoint)
-	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
+	c.SetAPIKey(apiKey)
 	inst, err := c.CreateInstance(ctx, body)
 	if err != nil {
 		return reportError(err)

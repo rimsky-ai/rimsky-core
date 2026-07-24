@@ -172,7 +172,7 @@ func pcCreateInstance(ctx context.Context, t *testing.T, b persistence.Tables, t
 		}, tx); err != nil {
 			return err
 		}
-		row, err := b.Instances().Create(ctx, persistence.InstanceCreateInput{
+		row, err := b.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: instID, TemplateHash: templateHash, InstanceKey: &ckCopy, Params: map[string]any{},
 		}, tx)
 		if err != nil {

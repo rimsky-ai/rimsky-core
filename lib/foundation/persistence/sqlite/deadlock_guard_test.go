@@ -48,7 +48,7 @@ func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Datab
 	}
 	defer func() { _ = stx.Rollback() }()
 	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
+		`INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES (?, ?, 'test-agent')`,
 		instanceID.String(), templateID,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)

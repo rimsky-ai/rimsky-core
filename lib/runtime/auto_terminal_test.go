@@ -125,7 +125,7 @@ func seedInstanceWithMainScope(ctx context.Context, t *testing.T, sb persistence
 	}, tx); err != nil {
 		t.Fatalf("seedInstanceWithMainScope: RunScopes.Create: %v", err)
 	}
-	row, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{
+	row, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 		ID: instID, TemplateHash: templateHash, InstanceKey: ck,
 		Params: map[string]any{},
 	}, tx)

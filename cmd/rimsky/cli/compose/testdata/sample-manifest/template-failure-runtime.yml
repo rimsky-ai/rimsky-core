@@ -17,7 +17,7 @@
 # registers cleanly and fails at dispatch time.
 name: template-failure-runtime
 version: "1"
-frame_resolution_mode: serial_queue
+message_queue_mode: backlog
 nodes:
   - type: worker
     executor: stub

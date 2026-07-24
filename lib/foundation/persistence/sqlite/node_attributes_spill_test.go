@@ -360,7 +360,7 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	}
 	defer func() { _ = stx.Rollback() }()
 	if _, err = stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
+		`INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES (?, ?, 'test-agent')`,
 		instanceID, templateID,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)

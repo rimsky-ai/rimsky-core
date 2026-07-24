@@ -142,7 +142,7 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 			return err
 		}
 		ck := "ck-" + uuid.NewString()
-		_, err := h.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+		_, err := h.persist.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID:           instID,
 			TemplateHash: tplHash,
 			InstanceKey:  &ck,

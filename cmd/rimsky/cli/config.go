@@ -12,6 +12,8 @@ import (
 	"regexp"
 
 	"gopkg.in/yaml.v3"
+
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
 type Config struct {
@@ -37,16 +39,15 @@ func DefaultConfigPath() (string, error) {
 }
 
 func LoadConfig(path string) (*Config, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &Config{Contexts: map[string]Context{}}, nil
 		}
 		return nil, err
 	}
 	var cfg Config
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+	if err := configload.LoadFile(path, &cfg); err != nil {
+		return nil, err
 	}
 	if cfg.Contexts == nil {
 		cfg.Contexts = map[string]Context{}

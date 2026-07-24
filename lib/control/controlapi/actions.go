@@ -420,9 +420,9 @@ var v1Actions = []ActionEntry{
 		Description: "Capability marker for the privileged compose-CLI: grants the bearer the right to create reserved-prefix `compose:<project>:<...>` tags and instance keys. No route maps to this action; it is consulted server-side when a request stamps the X-Rimsky-Compose-Origin header."},
 
 	{Action: "mcp:read", IsWrite: false,
-		Routes:      []Route{{Method: "POST", Path: "/v1/mcp"}, {Method: "GET", Path: "/v1/mcp"}},
+		Routes:      []Route{{Method: "POST", Path: "/v1/mcp"}, {Method: "GET", Path: "/v1/mcp"}, {Method: "DELETE", Path: "/v1/mcp"}},
 		MCPTools:    nil,
-		Description: "Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call."},
+		Description: "Invoke the MCP JSON-RPC dispatch surface (POST), open the server-to-client stream (GET), and close a session (DELETE); per-tool actions still gate tools/call."},
 
 	{Action: "service:enroll", IsWrite: false,
 		Routes:      []Route{{Method: "POST", Path: "/v1/enroll"}},

@@ -25,6 +25,10 @@ type InstanceRow struct {
 	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
 	CreatedByAPIKeyID *shared.UUID    `json:"created_by_api_key_id,omitempty"`
 	// @concept: instance
+	// @concept: host-agent-proxy
+	// @concept: anonymous-mode
+	TargetRoutingIdentity string `json:"target_routing_identity"`
+	// @concept: instance
 	MessageQueueMode string `json:"message_queue_mode"`
 }
 
@@ -53,6 +57,10 @@ type InstanceCreateInput struct {
 	Paused            bool
 	ServiceBindings   json.RawMessage
 	CreatedByAPIKeyID *shared.UUID
+	// @concept: instance
+	// @concept: host-agent-proxy
+	// @concept: anonymous-mode
+	TargetRoutingIdentity string
 	// @concept: instance
 	MessageQueueMode string
 }

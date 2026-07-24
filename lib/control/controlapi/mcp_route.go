@@ -44,6 +44,7 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 	gated := deps.AuthState.gateByAction("mcp:read", server.ServeHTTP)
 	r.Post("/mcp", gated)
 	r.Get("/mcp", gated)
+	r.Delete("/mcp", gated)
 }
 
 func builtinSchemas() map[string][]byte {

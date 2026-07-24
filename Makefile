@@ -185,7 +185,7 @@ endef
 
 # Test-only images are never published, so no $(VERSION) tag.
 define build-test-image
-docker build -f $(1) $(IMAGE_LABELS) -t $(2):latest -t $(2):$(SRC_TAG) .
+docker build -f $(1) $(IMAGE_LABELS) $(3) -t $(2):latest -t $(2):$(SRC_TAG) .
 endef
 
 # Distributed images, built from this tree (Dockerfiles live in dockerfiles/).
@@ -239,9 +239,9 @@ service-images:
 # dangling <none> layer stack each run; hundreds of those accumulate and
 # wedge the daemon. Build context stays the repo root for the same reason
 # as service-images: the Go builds need go.work + the workspace modules.
-test-images:
+test-images: service-images
 	$(call build-test-image,lib/services/test/stubexecutor/Dockerfile.stubexecutor,rimsky-test/stubexecutor)
-	$(call build-test-image,lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent,rimsky-test/claude-agent-fake)
+	$(call build-test-image,lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent,rimsky-test/claude-agent-fake,--build-arg BASE_TAG=$(SRC_TAG))
 	$(call build-test-image,lib/services/test/overlapproducer/Dockerfile.overlapproducer,rimsky-test/overlapproducer)
 	$(call build-test-image,examples/claimproducer/Dockerfile.example,rimsky-example/claim-producer)
 	$(call build-test-image,examples/validation/Dockerfile.example,rimsky-example/validation)

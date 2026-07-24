@@ -83,7 +83,7 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: instanceID, TemplateHash: templateHash, InstanceKey: &ck,
 			Params: map[string]any{},
 		}, tx); err != nil {
@@ -320,7 +320,7 @@ func TestInstanceTerminator_MultiStorePartialFailureInSameTick(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: instanceID, TemplateHash: templateHash, InstanceKey: &ck,
 			Params: map[string]any{},
 		}, tx); err != nil {

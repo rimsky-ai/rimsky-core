@@ -226,6 +226,7 @@ func createExampleInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, 
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
+		"target_agent": "example-default-agent",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST /instances: %d %s", status, string(raw))

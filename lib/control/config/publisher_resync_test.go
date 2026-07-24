@@ -118,8 +118,9 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 			return err
 		}
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:           instanceID,
-			TemplateHash: templateHash,
+			ID:                    instanceID,
+			TemplateHash:          templateHash,
+			TargetRoutingIdentity: "test-resync-agent",
 		}, tx); err != nil {
 			return err
 		}

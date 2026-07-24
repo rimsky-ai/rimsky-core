@@ -482,14 +482,21 @@ func (*ServerFrame_HttpResponse) isServerFrame_Body() {}
 type Register struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	ApiKey       string                 `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
-	AgentLabel   string                 `protobuf:"bytes,2,opt,name=agent_label,json=agentLabel,proto3" json:"agent_label,omitempty"` // e.g., "hostname-pid"; for multi-agent disambiguation
+	AgentLabel   string                 `protobuf:"bytes,2,opt,name=agent_label,json=agentLabel,proto3" json:"agent_label,omitempty"` // e.g., "hostname-pid"; informational disambiguation
 	AgentVersion string                 `protobuf:"bytes,3,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	// Base URL the agent's local HTTP listener serves for spawned processes.
 	// The proxy uses this to rewrite callback_url and other rimsky-side URLs
 	// before tunneling them into the spawned process.
 	LocalCallbackBaseUrl string `protobuf:"bytes,4,opt,name=local_callback_base_url,json=localCallbackBaseUrl,proto3" json:"local_callback_base_url,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// routing_label is the agent's requested routing identity for anonymous
+	// registrations. Ignored when api_key names a real key (the proxy adopts
+	// the key id). For anonymous agents the proxy accepts a non-empty
+	// routing_label iff it does not collide with another currently-connected
+	// anonymous agent; an empty routing_label causes the proxy to generate a
+	// fresh silly-name. The adopted identity is returned in RegisterAck.
+	RoutingLabel  string `protobuf:"bytes,5,opt,name=routing_label,json=routingLabel,proto3" json:"routing_label,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Register) Reset() {
@@ -550,14 +557,26 @@ func (x *Register) GetLocalCallbackBaseUrl() string {
 	return ""
 }
 
+func (x *Register) GetRoutingLabel() string {
+	if x != nil {
+		return x.RoutingLabel
+	}
+	return ""
+}
+
 type RegisterAck struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	ProxyVersion string                 `protobuf:"bytes,1,opt,name=proxy_version,json=proxyVersion,proto3" json:"proxy_version,omitempty"`
-	// If a prior agent for this api_key was connected, this ack carries
+	// If a prior agent for this routing_identity was connected, this ack carries
 	// a notice that the prior connection has been displaced.
 	DisplacedPrior bool `protobuf:"varint,2,opt,name=displaced_prior,json=displacedPrior,proto3" json:"displaced_prior,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// routing_identity is the identity the proxy adopted for this connection —
+	// the api-key id for authenticated agents, or the assigned silly-name for
+	// anonymous agents. The agent persists this so a reconnect can re-present
+	// it and preserve routing continuity for previously-created instances.
+	RoutingIdentity string `protobuf:"bytes,3,opt,name=routing_identity,json=routingIdentity,proto3" json:"routing_identity,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *RegisterAck) Reset() {
@@ -602,6 +621,13 @@ func (x *RegisterAck) GetDisplacedPrior() bool {
 		return x.DisplacedPrior
 	}
 	return false
+}
+
+func (x *RegisterAck) GetRoutingIdentity() string {
+	if x != nil {
+		return x.RoutingIdentity
+	}
+	return ""
 }
 
 // HostAgentHeartbeat / HostAgentHeartbeatAck are the agent-liveness frames
@@ -1379,16 +1405,18 @@ const file_host_agent_proto_rawDesc = "" +
 	"\x04reap\x18\x04 \x01(\v2\x0f.rimsky.v1.ReapH\x00R\x04reap\x12A\n" +
 	"\x0edispatch_frame\x18\x05 \x01(\v2\x18.rimsky.v1.DispatchFrameH\x00R\rdispatchFrame\x12C\n" +
 	"\rhttp_response\x18\x06 \x01(\v2\x1c.rimsky.v1.LocalHttpResponseH\x00R\fhttpResponseB\x06\n" +
-	"\x04body\"\xa0\x01\n" +
+	"\x04body\"\xc5\x01\n" +
 	"\bRegister\x12\x17\n" +
 	"\aapi_key\x18\x01 \x01(\tR\x06apiKey\x12\x1f\n" +
 	"\vagent_label\x18\x02 \x01(\tR\n" +
 	"agentLabel\x12#\n" +
 	"\ragent_version\x18\x03 \x01(\tR\fagentVersion\x125\n" +
-	"\x17local_callback_base_url\x18\x04 \x01(\tR\x14localCallbackBaseUrl\"[\n" +
+	"\x17local_callback_base_url\x18\x04 \x01(\tR\x14localCallbackBaseUrl\x12#\n" +
+	"\rrouting_label\x18\x05 \x01(\tR\froutingLabel\"\x86\x01\n" +
 	"\vRegisterAck\x12#\n" +
 	"\rproxy_version\x18\x01 \x01(\tR\fproxyVersion\x12'\n" +
-	"\x0fdisplaced_prior\x18\x02 \x01(\bR\x0edisplacedPrior\";\n" +
+	"\x0fdisplaced_prior\x18\x02 \x01(\bR\x0edisplacedPrior\x12)\n" +
+	"\x10routing_identity\x18\x03 \x01(\tR\x0froutingIdentity\";\n" +
 	"\x12HostAgentHeartbeat\x12%\n" +
 	"\x0fsent_at_unix_ms\x18\x01 \x01(\x03R\fsentAtUnixMs\"F\n" +
 	"\x15HostAgentHeartbeatAck\x12-\n" +

@@ -84,6 +84,7 @@ func TestAttributeOverridesMatchOverlayRejection_OrdinalAndUnknownKeys(t *testin
 				"template":     tid,
 				"instance_key": "ck-bm-rej-" + tt.name,
 				"params":       map[string]any{},
+				"target_agent": "scenario-default-agent",
 				"attribute_overrides": map[string]any{
 					"by_match": []any{
 						map[string]any{

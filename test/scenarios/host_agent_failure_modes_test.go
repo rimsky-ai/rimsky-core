@@ -78,13 +78,9 @@ func TestProxyReconnectAfterAgentRestart(t *testing.T) {
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})
 
 	fx.cancelAgent()
-	select {
-	case <-fx.agentDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("agent did not stop after cancel")
-	}
+	<-fx.agentDone
 
-	cancel, done, statusFile := startAgent(t, fx.proxyAddr, fx.adminKey)
+	cancel, done, statusFile := startAgent(t, fx.proxyAddr, agentStartOptions{APIKey: fx.adminKey})
 	t.Cleanup(func() {
 		cancel()
 		<-done

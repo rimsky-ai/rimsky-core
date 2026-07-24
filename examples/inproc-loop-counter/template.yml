@@ -1,6 +1,6 @@
 name: inproc-loop-counter-demo
 version: 1.0.0
-frame_resolution_mode: coalesce
+message_queue_mode: coalesce
 nodes:
   - type: counter
     kind: loop_counter

@@ -6,6 +6,7 @@ package claudeagent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -71,5 +72,37 @@ func TestParseCliConfig_RejectsNonStringMcpServerArgsEntry(t *testing.T) {
 	_, err := ParseCliConfig(v)
 	if err == nil {
 		t.Fatal("expected rejection of a non-string entry in an mcp server's args")
+	}
+}
+
+func TestParseCliConfig_RejectsUnregisteredModuleTransport(t *testing.T) {
+	v := mustParseCliConfig(t, `{"mcp_servers": [{"transport":"module","name":"x","module":"not-a-registered-module"}]}`)
+	_, err := ParseCliConfig(v)
+	if err == nil {
+		t.Fatal("expected rejection of a transport:module server whose specifier is not registered in this binary")
+	}
+	if !strings.Contains(err.Error(), "not-a-registered-module") {
+		t.Fatalf("expected error to name the unregistered specifier, got %q", err.Error())
+	}
+}
+
+func TestParseCliConfig_RejectsUnregisteredHTTPLoopbackTransport(t *testing.T) {
+	v := mustParseCliConfig(t, `{"mcp_servers": [{"transport":"http-loopback","name":"x","module":"also-unregistered"}]}`)
+	_, err := ParseCliConfig(v)
+	if err == nil {
+		t.Fatal("expected rejection of a transport:http-loopback server whose specifier is not registered in this binary")
+	}
+	if !strings.Contains(err.Error(), "also-unregistered") {
+		t.Fatalf("expected error to name the unregistered specifier, got %q", err.Error())
+	}
+}
+
+func TestParseCliConfig_AcceptsRegisteredModuleTransport(t *testing.T) {
+	registerTestModule(t, "test-parse-registered", func() *ModuleMcpServer {
+		return &ModuleMcpServer{Name: "registered-server"}
+	})
+	v := mustParseCliConfig(t, `{"mcp_servers": [{"transport":"module","name":"x","module":"test-parse-registered"}]}`)
+	if _, err := ParseCliConfig(v); err != nil {
+		t.Fatalf("expected a registered module specifier to parse cleanly, got %v", err)
 	}
 }

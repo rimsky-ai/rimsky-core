@@ -8,7 +8,8 @@
     "lib/protocols/proto/v1/gen/",
     ".ok-planner/history/",
     ".ok-planner/workbench/",
-    ".ok-planner/archive/"
+    ".ok-planner/archive/",
+    ".ok-plumbline/"
   ],
   "checks": {
     "comment_hygiene": true,

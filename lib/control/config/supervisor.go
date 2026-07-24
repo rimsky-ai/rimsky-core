@@ -93,22 +93,8 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		stopIdentity   = func() {}
 	)
 	if cfg.PeerAuth == peer.PeerAuthMTLS {
-		clock := cfg.Clock
-		if clock == nil {
-			clock = shared.SystemClock{}
-		}
-		logger := cfg.Logger
-		if logger == nil {
-			logger = shared.SilentLogger{}
-		}
-		ca, err := ensureDeploymentCA(context.Background(), persistStore, clock)
+		holder, ca, cancel, err := installPeerIdentity(context.Background(), persistStore, cfg.SupervisorID, cfg.Clock, cfg.Logger)
 		if err != nil {
-			return nil, fmt.Errorf("StartSupervisor: %w", err)
-		}
-		idCtx, cancel := context.WithCancel(context.Background())
-		holder, err := setupOutboundIdentity(idCtx, ca, cfg.SupervisorID, clock, logger)
-		if err != nil {
-			cancel()
 			return nil, fmt.Errorf("StartSupervisor: %w", err)
 		}
 		serverIdentity = holder

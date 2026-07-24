@@ -188,16 +188,21 @@ tunnel race is irrelevant for them.
 
 ### Prerequisites
 
-The harness pulls `rimsky-all-in-one:latest` from the local Docker
-daemon (nothing is fetched from a registry). Build the image first:
+The harness resolves every rimsky image from the LOCAL Docker daemon
+(nothing is fetched from a registry). It reads `RIMSKY_IMAGE_TAG` from
+the environment when set; otherwise it computes the current source
+tree's `src-<tree-hash>` tag via `tools/image-src-tag.sh`. There is no
+`:latest` fallback, so the images must have been built from the same
+tree the test is running against — build them first:
 
 ```sh
-make core-images
+make core-images test-images
 ```
 
-The example producer's image is built ON DEMAND from `Dockerfile.example`
-via `testcontainers.FromDockerfile` — no `make` target is required for
-it. The stub executor's image is similarly built on demand.
+`make test-images` covers both the example producer image
+(`rimsky-example/claim-producer`) and the stub executor image
+(`rimsky-test/stubexecutor`); the harness resolves them by the same
+`src-<tree-hash>` tag.
 
 Then run the cross-stack proof:
 

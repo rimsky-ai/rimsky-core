@@ -189,9 +189,10 @@ func waitForStubObservedCount(h *scenario.Harness, nodeType string, want int) {
 func createInstanceWithPause(t *testing.T, h *scenario.Harness, templateHash, consumerKey string, params map[string]any) shared.UUID {
 	t.Helper()
 	bodyMap := map[string]any{
-		"template": templateHash,
-		"params":   params,
-		"paused":   true,
+		"template":     templateHash,
+		"params":       params,
+		"paused":       true,
+		"target_agent": "scenario-default-agent",
 	}
 	if consumerKey != "" {
 		bodyMap["instance_key"] = consumerKey

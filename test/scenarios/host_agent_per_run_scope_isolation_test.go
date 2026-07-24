@@ -262,8 +262,6 @@ func TestHostAgentPerRunScopeReapIsolation(t *testing.T) {
 func dispatchReapIsolationChild(t *testing.T, client genv1.ExecutorClient, instanceID, runScopeID string) {
 	t.Helper()
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "x-rimsky-service-name", lateBindServiceName)
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
 	_, err := client.Execute(ctx, &genv1.ExecuteRequest{
 		InstanceId: instanceID,
 		RunScopeId: runScopeID,

@@ -94,9 +94,13 @@ context fields are populated, and verifies the synchronous-failure
 property by injecting a subscriber error on `OnTemplateRegistered`
 and asserting the POST surfaces as 5xx.
 
-Build requirement: `make core-images` must have produced
-`rimsky-all-in-one:latest` locally. Without it, the test fails hard
-at bring-up with the missing-image error.
+Build requirement: `make core-images` must have produced a
+`rimsky-all-in-one` image tagged from the current source tree. The
+harness reads `RIMSKY_IMAGE_TAG` when set; otherwise it resolves the
+image by the tree's `src-<tree-hash>` tag (computed via
+`tools/image-src-tag.sh`). There is no `:latest` fallback — without
+an image built from this tree, bring-up fails hard with a
+missing-image error naming the exact `<image>:src-<hash>`.
 
 Run:
 

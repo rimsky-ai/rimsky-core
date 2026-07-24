@@ -28,11 +28,11 @@ func newLifecycleHandler(state *proxyState, cfg Config) *lifecycleHandler {
 func (h *lifecycleHandler) OnInstanceCreated(_ context.Context, req *genv1.OnInstanceCreatedRequest) (*genv1.LifecycleAck, error) {
 	bindings := parseServiceBindings(req.GetServiceBindings())
 	params := parseParams(req.GetParams())
-	h.state.cacheInstance(req.GetInstanceId(), bindings, req.GetOwnerApiKeyId(), params)
+	h.state.cacheInstance(req.GetInstanceId(), bindings, req.GetTargetRoutingIdentity(), params)
 	slog.Debug("cached instance bindings",
 		"instance_id", req.GetInstanceId(),
 		"binding_count", len(bindings),
-		"owner_present", req.GetOwnerApiKeyId() != "")
+		"target_routing_identity_present", req.GetTargetRoutingIdentity() != "")
 	return &genv1.LifecycleAck{}, nil
 }
 
@@ -57,7 +57,7 @@ func (h *lifecycleHandler) OnRunScopeTerminal(_ context.Context, req *genv1.OnRu
 }
 
 func (h *lifecycleHandler) reap(sp spawnState) {
-	agent, ok := h.state.lookupAgent(sp.agentAPIKeyID)
+	agent, ok := h.state.lookupAgent(sp.agentRoutingIdentity)
 	if !ok {
 		return
 	}

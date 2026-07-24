@@ -37,7 +37,7 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID:           pausedInstanceID,
 			TemplateHash: activeFix.TemplateHash,
 			Paused:       true,

@@ -155,7 +155,7 @@ func seedForceCancelScenario(
 		}, tx); err != nil {
 			return err
 		}
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
+		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: instID, TemplateHash: tmpl.ID, InstanceKey: &ik, Params: map[string]any{},
 		}, tx)
 		if err != nil {

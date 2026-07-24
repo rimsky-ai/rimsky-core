@@ -160,7 +160,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
-	body := cli.CreateInstanceRequest{Template: hash, Params: rf.Params}
+	body := cli.CreateInstanceRequest{Template: hash, Params: rf.Params, TargetAgent: cli.ResolveTargetAgent("", "")}
 	if rf.Key != "" {
 		key := rf.Key
 		body.InstanceKey = &key

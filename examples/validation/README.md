@@ -88,11 +88,15 @@ shapes:
 
 ## Running the cross-stack proof
 
-The cross-stack proof boots a real rimsky stack, so it requires
-Docker and a locally-built `rimsky-all-in-one:latest` image:
+The cross-stack proof boots a real rimsky stack, so it requires Docker
+and a locally-built `rimsky-all-in-one` image tagged from the current
+source tree. The harness reads `RIMSKY_IMAGE_TAG` when set; otherwise
+it computes the tree's `src-<tree-hash>` tag via `tools/image-src-tag.sh`.
+There is no `:latest` fallback — the image must have been built from
+the same tree the test is running against:
 
 ```sh
-make core-images                   # produces rimsky-all-in-one:latest
+make core-images test-images       # builds rimsky-all-in-one + the example image, tagged :src-<hash>
 go test ./examples/validation -run TestE2E -count=1
 ```
 

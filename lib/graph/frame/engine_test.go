@@ -45,7 +45,7 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 			return err
 		}
 		ck := "ck-" + instanceID.String()[:8]
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 			InstanceKey:  &ck,

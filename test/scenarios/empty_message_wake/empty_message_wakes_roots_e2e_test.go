@@ -193,6 +193,7 @@ func postCreateInstance(t *testing.T, h *scenario.Harness, templateHash, instanc
 		"template":     templateHash,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
+		"target_agent": "scenario-default-agent",
 	})
 	require.NoError(t, err)
 	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytes.NewReader(body))

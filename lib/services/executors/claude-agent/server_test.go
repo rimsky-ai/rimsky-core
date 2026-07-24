@@ -381,6 +381,9 @@ func TestSessionTokenScratchRoundTrip(t *testing.T) {
 }
 
 func TestParseCliConfigNewShape(t *testing.T) {
+	registerTestModule(t, "witness", func() *ModuleMcpServer {
+		return &ModuleMcpServer{Name: "witness"}
+	})
 	raw := `{
 		"bare": true,
 		"permission_mode": "acceptEdits",

@@ -129,6 +129,7 @@ func createPausedInstanceLatestAttr(t *testing.T, h *scenario.Harness, templateH
 		"params":       map[string]any{},
 		"instance_key": consumerKey,
 		"paused":       true,
+		"target_agent": "scenario-default-agent",
 	})
 	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)

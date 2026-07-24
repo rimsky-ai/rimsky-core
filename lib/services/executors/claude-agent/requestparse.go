@@ -314,6 +314,11 @@ func parseMcpServers(v any) ([]McpServerInput, error) {
 			if entry.Module == "" {
 				return nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers[%d] (%s) requires a non-empty module specifier", i, transport)}
 			}
+			if _, ok := lookupMcpModule(entry.Module); !ok {
+				return nil, &CliConfigError{Message: fmt.Sprintf(
+					"cli.mcp_servers[%d] (%s) module %q is not a registered MCP module in this binary (register it via claudeagent.RegisterMcpModule before serving)",
+					i, transport, entry.Module)}
+			}
 		default:
 			return nil, unknownMcpTransportError(fmt.Sprintf("cli.mcp_servers[%d]", i), transport)
 		}

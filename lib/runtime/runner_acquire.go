@@ -93,6 +93,11 @@ type acquisition struct {
 
 	// @concept: fan-out
 	FanOutSubstitutionErr string
+
+	// @decision: substitution-failure-routes-with-substitution
+	LockSpecSubstitutionSite      string
+	LockSpecSubstitutionDirective string
+	LockSpecSubstitutionErr       string
 }
 
 type openResult int
@@ -113,6 +118,8 @@ var errAcquireRestampLost = fmt.Errorf("supervisor: acquire lost sub-claim resta
 var errAcquireNilFrameID = fmt.Errorf("supervisor: acquire bailed on candidate with null frame_id (sentinel)")
 
 var errAcquireFanOutSubstitutionFailed = fmt.Errorf("supervisor: acquire bailed on fan-out partition_request substitution failure (sentinel)")
+
+var errAcquireLockSpecSubstitutionFailed = fmt.Errorf("supervisor: acquire bailed on lock-spec substitution failure (sentinel)")
 
 const defaultSelectCandidatesLimit = 8
 
@@ -277,6 +284,20 @@ func acquireOneCandidateWithRetry(
 			}
 			return acquisition{}, false, nil
 		}
+		if err == errAcquireLockSpecSubstitutionFailed {
+			decision := handleAcquireLockSpecSubstitutionFailed(ctx, args, acq, cand)
+			if decision != nil && decision.IsRetry() {
+				if delay := time.Duration(decision.DelayMs) * time.Millisecond; delay > 0 {
+					select {
+					case <-ctx.Done():
+						return acquisition{}, false, ctx.Err()
+					case <-time.After(delay):
+					}
+				}
+				continue
+			}
+			return acquisition{}, false, nil
+		}
 		if err != nil {
 			return acquisition{}, false, err
 		}
@@ -349,6 +370,10 @@ func tryAcquireWithTx(
 	}
 	if err == errAcquireFanOutSubstitutionFailed {
 		return acq, false, errAcquireFanOutSubstitutionFailed
+	}
+	if err == errAcquireLockSpecSubstitutionFailed {
+		abandonPartialLocks(ctx, args, acq.PartialLocks)
+		return acq, false, errAcquireLockSpecSubstitutionFailed
 	}
 	if err != nil && err != errTryAcquireRollback {
 		abandonPartialLocks(ctx, args, acq.PartialLocks)
@@ -423,11 +448,36 @@ func tryAcquire(
 		return out, false, errAcquireNilFrameID
 	}
 	// @decision: walker-rule-per-sender-node
+	// @decision: substitution-failure-routes-with-substitution
 	specs, heldClaims, err := buildLockSpecs(ctx, args, nd, nodeDef, tmpl, inst, cand.NodeRunID, cand.FrameID, runScopeID, tx)
 	if err != nil {
-		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
-			"node_id", cand.NodeID.String(), "error", err.Error())
-		return acquisition{}, false, nil
+		var subErr *lockSpecSubstitutionError
+		if errors.As(err, &subErr) {
+			out := acquisition{
+				NodeRunID:                     cand.NodeRunID,
+				NodeID:                        cand.NodeID,
+				InstanceID:                    nd.InstanceID,
+				NodeType:                      nd.NodeType,
+				Executor:                      nd.Executor,
+				GraphName:                     graphName,
+				RunScopeID:                    runScopeID,
+				PriorNodeRunID:                cand.PriorNodeRunID,
+				PriorDispatchDisposition:      cand.PriorDispatchDisposition,
+				FrameID:                       cand.FrameID,
+				NodeDef:                       nodeDef,
+				TemplateAttributeDefaults:     templateAttributeDefaults,
+				LockSpecSubstitutionSite:      subErr.Site,
+				LockSpecSubstitutionDirective: subErr.Directive,
+				LockSpecSubstitutionErr:       subErr.Cause.Error(),
+			}
+			if inst != nil {
+				out.InstanceParams = inst.Params
+				out.InstanceAttributeOverrides = inst.AttributeOverrides
+				out.TemplateHash = inst.TemplateHash
+			}
+			return out, false, errAcquireLockSpecSubstitutionFailed
+		}
+		return acquisition{}, false, err
 	}
 	sortLockSpecs(specs)
 

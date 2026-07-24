@@ -8,10 +8,15 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
+	"fmt"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
@@ -98,6 +103,84 @@ func TestOutboundIdentity_MTLSPinsDeploymentRootCAs(t *testing.T) {
 	}
 	if _, err := serverLeaf(t, impostor, "server-1").Verify(verifyOpts); err == nil {
 		t.Fatal("a cert outside the deployment CA must NOT verify against the pinned pool (system-pool trust was the widened MITM surface)")
+	}
+}
+
+func TestInstallPeerIdentity_ConcurrentInstallersShareOneRenewingIdentity(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	t.Setenv(pki.EnvCAEncryptionKey, base64.StdEncoding.EncodeToString(key))
+	t.Cleanup(func() { peer.SetClientIdentity(nil); peer.SetTLSRootCAs(nil) })
+
+	ctx := context.Background()
+	db, err := persistence.Open(ctx, persistence.Config{Driver: "sqlite", SQLite: &persistence.SQLiteConfig{Path: filepath.Join(t.TempDir(), "rimsky.db")}})
+	if err != nil {
+		t.Fatalf("persistence.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	const installers = 4
+	var (
+		wg       sync.WaitGroup
+		holders  [installers]*peer.IdentityHolder
+		releases [installers]func()
+		errs     [installers]error
+	)
+	start := make(chan struct{})
+	for i := 0; i < installers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			holders[i], _, releases[i], errs[i] = installPeerIdentity(ctx, db.Tables(), fmt.Sprintf("role-%d", i), shared.SystemClock{}, shared.SilentLogger{})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := 0; i < installers; i++ {
+		if errs[i] != nil {
+			t.Fatalf("installer %d: %v", i, errs[i])
+		}
+		if holders[i] != holders[0] {
+			t.Fatalf("installer %d got a distinct holder; concurrent installers must share the single process identity", i)
+		}
+	}
+	if !clientCertPresented(t) {
+		t.Fatal("the shared process identity must be installed as the outbound client identity")
+	}
+
+	for i := 0; i < installers-1; i++ {
+		releases[i]()
+	}
+
+	processIdentity.mu.Lock()
+	holder, cancel, refs := processIdentity.holder, processIdentity.cancel, processIdentity.refCount
+	processIdentity.mu.Unlock()
+	if holder != holders[0] {
+		t.Fatal("releasing non-final refs must not tear down the installed identity")
+	}
+	if cancel == nil {
+		t.Fatal("the surviving ref's renewal loop must still be running after the other installers release")
+	}
+	if refs != 1 {
+		t.Fatalf("refCount = %d after releasing all but one ref, want 1", refs)
+	}
+	if !clientCertPresented(t) {
+		t.Fatal("outbound mTLS must keep presenting the shared identity while a ref survives")
+	}
+
+	releases[installers-1]()
+	processIdentity.mu.Lock()
+	holder, cancel = processIdentity.holder, processIdentity.cancel
+	processIdentity.mu.Unlock()
+	if holder != nil || cancel != nil {
+		t.Fatal("the final release must tear down the process identity")
 	}
 }
 

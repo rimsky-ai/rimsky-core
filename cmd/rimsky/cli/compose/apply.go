@@ -134,6 +134,7 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 			Template:    step.TemplateTag,
 			InstanceKey: &key,
 			Params:      step.Params,
+			TargetAgent: cli.ResolveTargetAgent("", ""),
 		}
 		resp, err := c.CreateInstance(ctx, body)
 		if err != nil {

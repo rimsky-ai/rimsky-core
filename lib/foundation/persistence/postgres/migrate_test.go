@@ -105,8 +105,8 @@ func TestMigrationTagsColumn(t *testing.T) {
 		t.Fatalf("defer constraints: %v", err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key)
-		 VALUES ($1, 'tpl-1', 'ck-1')`, instUUID); err != nil {
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, target_routing_identity)
+		 VALUES ($1, 'tpl-1', 'ck-1', 'migration-test-agent')`, instUUID); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
 	if _, err := tx.Exec(ctx,

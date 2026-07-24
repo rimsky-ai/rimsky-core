@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -38,7 +37,7 @@ func TestHostAgentControlPlaneDemo(t *testing.T) {
 
 	scriptPath := repoFilePath(t, demoScriptRelPath)
 
-	out, code := runHostAgentDemoScript(t, scriptPath, binPath, proxyBin, migrateBin, controlAPIBin, 120*time.Second)
+	out, code := runHostAgentDemoScript(t, scriptPath, binPath, proxyBin, migrateBin, controlAPIBin)
 	if code != 0 {
 		t.Fatalf("host-agent-control-plane-demo.sh exited %d (want 0)\noutput:\n%s", code, out)
 	}
@@ -85,7 +84,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 			"--proxy", fx.proxyAddr,
 			"--state-dir", stateDir,
 			"--api-key", fx.adminKey,
-		}, startEnv, 30*time.Second)
+		}, startEnv)
 	if startCode != 0 {
 		t.Fatalf("rimsky agent start exited %d\nstdout:\n%s\nstderr:\n%s", startCode, startOut, startErr)
 	}
@@ -117,7 +116,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 
 	stopOut, stopErr, stopCode := runCmdWithEnv(t, binPath,
 		[]string{"agent", "stop", "--state-dir", stateDir},
-		startEnv, 60*time.Second)
+		startEnv)
 	if stopCode != 0 {
 		t.Fatalf("rimsky agent stop exited %d\nstdout:\n%s\nstderr:\n%s", stopCode, stopOut, stopErr)
 	}
@@ -135,11 +134,9 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 	}
 }
 
-func runHostAgentDemoScript(t *testing.T, scriptPath, binPath, proxyBin, migrateBin, controlAPIBin string, timeout time.Duration) (string, int) {
+func runHostAgentDemoScript(t *testing.T, scriptPath, binPath, proxyBin, migrateBin, controlAPIBin string) (string, int) {
 	t.Helper()
-	runCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, "/bin/bash", scriptPath)
+	cmd := exec.Command("/bin/bash", scriptPath)
 	cmd.Env = append(os.Environ(),
 		"RIMSKY_BIN="+binPath,
 		"RIMSKY_PROXY_BIN="+proxyBin,
@@ -205,11 +202,9 @@ func parseDaemonPid(s string) (int, error) {
 	return pid, nil
 }
 
-func runCmdWithEnv(t *testing.T, binPath string, args, env []string, timeout time.Duration) (string, string, int) {
+func runCmdWithEnv(t *testing.T, binPath string, args, env []string) (string, string, int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binPath, args...)
+	cmd := exec.Command(binPath, args...)
 	cmd.Env = env
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out

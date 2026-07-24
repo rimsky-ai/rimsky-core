@@ -3,15 +3,27 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: message-schema
+// @concept: control-api
 
 package controlapi
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestMCPDELETE_ReachesMountedHandlerNot405(t *testing.T) {
+	h := newMCPParityHarness(t)
+	bearer := h.mintKey(t, "mcp-delete-caller", `[{"action":"*"}]`)
+	sid := h.ensureMCPSession(t, bearer)
+
+	status, _, _ := h.httpWithHeaders(t, http.MethodDelete, "/v1/mcp", bearer, sid, nil)
+	require.NotEqual(t, http.StatusMethodNotAllowed, status,
+		"DELETE /v1/mcp must reach the mounted MCP handler — a 405 means the router lost the DELETE binding, exactly the falsifier that motivated wiring it explicitly")
+}
 
 func TestBuiltinSchemas_MessageSendDescriptorAdvertisesTypeNoRetiredKindOrTarget(t *testing.T) {
 	raw, ok := builtinSchemas()["message_send"]

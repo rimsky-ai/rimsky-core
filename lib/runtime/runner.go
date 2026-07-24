@@ -291,6 +291,12 @@ func validateRunArgs(args RunArgs) error {
 	return nil
 }
 
+const (
+	substitutionSiteAttribute = "attribute"
+	substitutionSiteLockName  = "lock_name"
+	substitutionSiteScope     = "scope"
+)
+
 func emitAttributeFailureEvent(
 	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, kind events.Kind, directive, site, field, reason string,
 ) {
@@ -320,7 +326,7 @@ func applyAttributeFailure(
 ) error {
 	class, eventKind := classifyAttributeFailure(err)
 	emitAttributeFailureEvent(ctx, args, acq.NodeID, acq.InstanceID,
-		eventKind, extractDirective(err), "attribute", "", err.Error())
+		eventKind, extractDirective(err), substitutionSiteAttribute, "", err.Error())
 	var postCommit postCommitFn
 	if txErr := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		pc, perr := applyErrorPolicy(ctx, args, acq, class,

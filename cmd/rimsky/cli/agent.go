@@ -65,6 +65,8 @@ func runAgentStart(args []string) int {
 	tlsCA := fs.String("tls-ca", "", "path to the pinned deployment CA root PEM used to verify the proxy server cert (overrides $RIMSKY_AGENT_TLS_CA)")
 	stateDir := fs.String("state-dir", "", "directory for pid and status files (default ~/.rimsky)")
 	foreground := fs.Bool("foreground", false, "run in foreground (don't daemonize)")
+	label := fs.String("label", "", "anonymous routing label (silly-name) the agent asks the proxy to adopt; only meaningful in anonymous mode (no --api-key)")
+	identityFile := fs.String("identity-file", "", "path to the anonymous identity JSON file the agent reads/writes (default $XDG_CONFIG_HOME/rimsky/host-agent/identity.json)")
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -92,6 +94,12 @@ func runAgentStart(args []string) int {
 	}
 	if *tlsCA != "" {
 		cfg.TLSCAPath = *tlsCA
+	}
+	if *label != "" {
+		cfg.RoutingLabel = *label
+	}
+	if *identityFile != "" {
+		cfg.IdentityFile = *identityFile
 	}
 
 	dir, err := resolveStateDir(*stateDir)

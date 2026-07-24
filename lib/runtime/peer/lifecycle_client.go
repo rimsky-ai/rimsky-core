@@ -68,12 +68,13 @@ func (c *LifecycleClient) OnTemplateDeregistered(ctx context.Context, req lifecy
 
 func (c *LifecycleClient) OnInstanceCreated(ctx context.Context, req lifecycle.OnInstanceCreatedRequest) error {
 	_, err := c.rpc.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
-		InstanceId:      req.InstanceID,
-		TemplateHash:    req.TemplateHash,
-		InstanceKey:     req.InstanceKey,
-		Params:          req.Params,
-		ServiceBindings: req.ServiceBindings,
-		OwnerApiKeyId:   req.OwnerAPIKeyID,
+		InstanceId:            req.InstanceID,
+		TemplateHash:          req.TemplateHash,
+		InstanceKey:           req.InstanceKey,
+		Params:                req.Params,
+		ServiceBindings:       req.ServiceBindings,
+		OwnerApiKeyId:         req.OwnerAPIKeyID,
+		TargetRoutingIdentity: req.TargetRoutingIdentity,
 	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnInstanceCreated: %w", c.name, err)

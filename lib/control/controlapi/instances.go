@@ -22,10 +22,26 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/sillyname"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
+
+// @concept: host-agent-proxy
+// @concept: anonymous-mode
+func resolveTargetRoutingIdentity(ident auth.Identity, requestedTargetAgent string) (string, error) {
+	if ident.KeyID != nil {
+		return ident.KeyID.String(), nil
+	}
+	if requestedTargetAgent == "" {
+		return "", fmt.Errorf("target_agent required for anonymous-mode instance creation")
+	}
+	if err := sillyname.Validate(requestedTargetAgent); err != nil {
+		return "", fmt.Errorf("target_agent: %w", err)
+	}
+	return requestedTargetAgent, nil
+}
 
 // @concept: node
 func resolveNodeTags(rawTags []string, paramsBytes json.RawMessage) ([]string, error) {
@@ -58,6 +74,9 @@ type createInstanceRequest struct {
 	ServiceBindings    json.RawMessage `json:"service_bindings,omitempty"`
 	// @concept: instance
 	MessageQueueMode string `json:"message_queue_mode,omitempty"`
+	// @concept: host-agent-proxy
+	// @concept: anonymous-mode
+	TargetAgent string `json:"target_agent,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -79,6 +98,7 @@ type instanceItem struct {
 	TerminatedAt                  *time.Time                 `json:"terminated_at,omitempty"`
 	ServiceBindings               json.RawMessage            `json:"service_bindings,omitempty"`
 	CreatedByAPIKeyID             string                     `json:"created_by_api_key_id,omitempty"`
+	TargetRoutingIdentity         string                     `json:"target_routing_identity,omitempty"`
 	Subscriptions                 []instanceSubscriptionItem `json:"subscriptions,omitempty"`
 	// @concept: instance
 	MessageQueueMode string `json:"message_queue_mode"`
@@ -96,14 +116,15 @@ type instanceSubscriptionItem struct {
 
 func toInstanceItem(r persistence.InstanceRow, redact []string, matchCounts []int64) instanceItem {
 	out := instanceItem{
-		ID:               r.ID.String(),
-		TemplateHash:     r.TemplateHash,
-		InstanceKey:      r.InstanceKey,
-		Params:           ApplyParamsRedact(r.Params, redact),
-		Paused:           r.Paused,
-		CreatedAt:        r.CreatedAt,
-		TerminatedAt:     r.TerminatedAt,
-		MessageQueueMode: r.MessageQueueMode,
+		ID:                    r.ID.String(),
+		TemplateHash:          r.TemplateHash,
+		InstanceKey:           r.InstanceKey,
+		Params:                ApplyParamsRedact(r.Params, redact),
+		Paused:                r.Paused,
+		CreatedAt:             r.CreatedAt,
+		TerminatedAt:          r.TerminatedAt,
+		TargetRoutingIdentity: r.TargetRoutingIdentity,
+		MessageQueueMode:      r.MessageQueueMode,
 	}
 	if len(r.AttributeOverrides) > 0 {
 		out.AttributeOverrides = r.AttributeOverrides
@@ -256,6 +277,11 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			badRequest(w, fmt.Sprintf("message_queue_mode = %q; want one of backlog | coalesce", body.MessageQueueMode))
 			return
 		}
+		targetRoutingIdentity, terr := resolveTargetRoutingIdentity(ident, body.TargetAgent)
+		if terr != nil {
+			badRequest(w, terr.Error())
+			return
+		}
 		hash, err := resolveTagOrHash(req.Context(), deps, body.Template)
 		if err != nil {
 			writeError(w, err)
@@ -272,13 +298,14 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 
 		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		var (
-			tplSpec           nodepkg.TemplateSpec
-			respOut           createInstanceResponse
-			existedKey        bool
-			existingOverrides map[string]any
-			existingParams    map[string]any
-			fanOutBindings    json.RawMessage
-			fanOutOwner       *foundationshared.UUID
+			tplSpec                     nodepkg.TemplateSpec
+			respOut                     createInstanceResponse
+			existedKey                  bool
+			existingOverrides           map[string]any
+			existingParams              map[string]any
+			fanOutBindings              json.RawMessage
+			fanOutOwner                 *foundationshared.UUID
+			fanOutTargetRoutingIdentity string
 		)
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
@@ -314,6 +341,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					existingParams = existing.Params
 					fanOutBindings = existing.ServiceBindings
 					fanOutOwner = existing.CreatedByAPIKeyID
+					fanOutTargetRoutingIdentity = existing.TargetRoutingIdentity
 					respOut = createInstanceResponse{
 						InstanceID:   existing.ID.String(),
 						TemplateHash: existing.TemplateHash,
@@ -324,13 +352,14 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				}
 			}
 			provisioned, err := provisionInstanceTx(ctx, deps, row, provisionArgs{
-				InstanceKey:        body.InstanceKey,
-				Params:             params,
-				AttributeOverrides: body.AttributeOverrides,
-				Paused:             body.Paused,
-				ServiceBindings:    body.ServiceBindings,
-				CreatedByAPIKeyID:  ident.KeyID,
-				MessageQueueMode:   body.MessageQueueMode,
+				InstanceKey:           body.InstanceKey,
+				Params:                params,
+				AttributeOverrides:    body.AttributeOverrides,
+				Paused:                body.Paused,
+				ServiceBindings:       body.ServiceBindings,
+				CreatedByAPIKeyID:     ident.KeyID,
+				TargetRoutingIdentity: targetRoutingIdentity,
+				MessageQueueMode:      body.MessageQueueMode,
 			}, tx)
 			if err != nil {
 				return err
@@ -358,6 +387,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			}
 			fanOutBindings = body.ServiceBindings
 			fanOutOwner = ident.KeyID
+			fanOutTargetRoutingIdentity = targetRoutingIdentity
 			respOut = provisioned
 			return nil
 		})
@@ -409,10 +439,11 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
 			EventInstanceCreated, hash, respOut.InstanceID, tplSpec,
 			InstancePayload{
-				InstanceKey:     instanceKey,
-				Params:          paramsBytes,
-				ServiceBindings: fanOutBindings,
-				OwnerAPIKeyID:   fanOutOwner,
+				InstanceKey:           instanceKey,
+				Params:                paramsBytes,
+				ServiceBindings:       fanOutBindings,
+				OwnerAPIKeyID:         fanOutOwner,
+				TargetRoutingIdentity: fanOutTargetRoutingIdentity,
 			}, nil); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error":   "instance lifecycle fan-out failed",
@@ -900,12 +931,13 @@ func terminateRunArgs(deps AppDeps) runtime.RunArgs {
 }
 
 type provisionArgs struct {
-	InstanceKey        *string
-	Params             map[string]any
-	AttributeOverrides map[string]any
-	Paused             bool
-	ServiceBindings    json.RawMessage
-	CreatedByAPIKeyID  *foundationshared.UUID
+	InstanceKey           *string
+	Params                map[string]any
+	AttributeOverrides    map[string]any
+	Paused                bool
+	ServiceBindings       json.RawMessage
+	CreatedByAPIKeyID     *foundationshared.UUID
+	TargetRoutingIdentity string
 	// @concept: instance
 	MessageQueueMode string
 }
@@ -923,15 +955,16 @@ func provisionInstanceTx(
 		queueMode = args.MessageQueueMode
 	}
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:                 instanceID,
-		TemplateHash:       tpl.ID,
-		InstanceKey:        args.InstanceKey,
-		Params:             args.Params,
-		AttributeOverrides: args.AttributeOverrides,
-		Paused:             args.Paused,
-		ServiceBindings:    args.ServiceBindings,
-		CreatedByAPIKeyID:  args.CreatedByAPIKeyID,
-		MessageQueueMode:   queueMode,
+		ID:                    instanceID,
+		TemplateHash:          tpl.ID,
+		InstanceKey:           args.InstanceKey,
+		Params:                args.Params,
+		AttributeOverrides:    args.AttributeOverrides,
+		Paused:                args.Paused,
+		ServiceBindings:       args.ServiceBindings,
+		CreatedByAPIKeyID:     args.CreatedByAPIKeyID,
+		TargetRoutingIdentity: args.TargetRoutingIdentity,
+		MessageQueueMode:      queueMode,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err

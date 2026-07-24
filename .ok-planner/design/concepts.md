@@ -11,7 +11,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `atomic-staging` — Producer-side stage-then-swap pattern: writers stage data into a side area; on `Commit` the producer atomically swaps the staging into the canonical view; on `Abandon` the staging is dropped.
 - `attribute` — Attributes are the typed inputs, outputs, and configuration of a node, declared by a JSON Schema in the template's `attributes:` block.
 - `auto-terminal` (aliases: held-claim resolution) — The mechanism that fires the producer's Commit or Abandon verb exactly once at the end of a held claim's holding-subgraph.
-- `blob-backend` — The blob-backend interface is the abstraction that backs spilled byte streams from one surface: attribute values.
+- `blob-backend` — The blob-backend interface is the abstraction that backs spilled byte streams from two surfaces: attribute values and scratch.
 - `breakpoint` — A breakpoint is a runtime-installed pause-point on a live `concept:instance`, identified by UUID and bound to a `(matcher, checkpoint, signal_type?, mode, overflow_policy, ttl_seconds?)` tuple.
 - `cancel-siblings` — A boolean field on the `strict` aggregation policy that turns on proactive sibling cancellation: when one sub-claim resolves to an aggregate-abandon under a parent whose policy is strict with cancel-siblings on, the runtime walks the parent's other in-flight sub-claims and force-Abandons each via recursive claim-handle terminal-resolution calls.
 - `cascade` (aliases: reactive-cascade) — Cascade is the engine that turns one node-state transition into the set of downstream node-state transitions.
@@ -37,8 +37,8 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `fan-out` — Fan-out is an invocation pattern over `concept:child-execution`: a node-level decision to partition a held claim into sub-claims and dispatch one child execution per partition under the aggregate settlement mode, with an author-chosen aggregation policy from the four-value family `strict | threshold | best_effort | first`.
 - `frame` (aliases: cascade-frame) — A frame is one cascade resolution.
 - `graph` — A graph is rimsky's unit of node connectivity.
-- `host-agent` — A long-running daemon on a user's dev machine, bundled into the rimsky CLI binary and invoked as the agent subcommand.
-- `host-agent-proxy` — A rimsky-stack `concept:service` implementing the multi-protocol composition pattern (per `concept:service` invariants: distinct handler types per protocol, separately registered on one gRPC server).
+- `host-agent` — A long-running daemon on a user's dev machine. Dials the host-agent-proxy to serve dev-machine spawn / dispatch / reap requests and relay child callbacks.
+- `host-agent-proxy` — A rimsky-stack `concept:service` implementing the multi-protocol composition pattern (per `concept:service` invariants: distinct handler types per protocol, separately registered on one server).
 - `inertness` (aliases: inert bytes) — A uniform discipline applied across two overlapping lists.
 - `instance` — An instance is one live deployment of a template, identified by a rimsky-generated UUID.
 - `lifecycle-subscriber` — A service that implements the gRPC lifecycle-subscriber protocol — seven event callbacks: template registered, deployed, undeployed, and deregistered, plus instance created and terminated, plus run-scope terminal (carrying the run-scope id and a terminal reason).
@@ -62,7 +62,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, type) triple.
 - `replica` — A replica is one running pod/process of a rimsky-platform binary, behind a deployment-tier load-balancing layer.
 - `rimsky` (aliases: rimsky-cli) — Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus two embedded one-shot orchestration modes (ephemeral-run for a single template, compose one-shot for a manifest) that self-host the runtime stack to drive to terminal without standing up rimsky infrastructure.
-- `rimsky-yml` (aliases: unified config) — A single YAML file at a well-known default path (overridable by a config-path environment variable) read by all three runtime processes plus the migrate step.
+- `rimsky-yml` (aliases: unified config) — A single YAML file at a well-known default path read by every runtime process plus the migrate step.
 - `role-template` (aliases: bundled role) — A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time.
 - `run-scope` — RunScope is the first-class execution context for one graph instantiation (root / sub-graph / fanout_partition).
 - `sensor` — A sensor is a class of `concept:publisher` implementation that observes external state.

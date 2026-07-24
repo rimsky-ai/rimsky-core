@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
+	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
 type aliasFile struct {
@@ -26,12 +26,8 @@ func LoadServiceAliases() map[string]string {
 }
 
 func loadAliasFile(path string, into map[string]string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
 	var f aliasFile
-	if err := yaml.Unmarshal(data, &f); err != nil {
+	if err := configload.LoadFile(path, &f); err != nil {
 		return
 	}
 	for k, v := range f.Aliases {

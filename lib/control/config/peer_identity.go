@@ -7,14 +7,78 @@ package config
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 const identityRenewalCheckInterval = time.Minute
+
+// @concept: peer-auth
+type processIdentityHolder struct {
+	mu       sync.Mutex
+	holder   *peer.IdentityHolder
+	ca       *pki.CA
+	cancel   context.CancelFunc
+	refCount int
+}
+
+var processIdentity processIdentityHolder
+
+func (p *processIdentityHolder) release() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.refCount--
+	if p.refCount > 0 {
+		return
+	}
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.holder = nil
+	p.ca = nil
+	p.cancel = nil
+	p.refCount = 0
+}
+
+// @concept: peer-auth
+func installPeerIdentity(ctx context.Context, tables persistence.Tables, principal string, clock shared.Clock, logger shared.Logger) (*peer.IdentityHolder, *pki.CA, func(), error) {
+	if clock == nil {
+		clock = shared.SystemClock{}
+	}
+	if logger == nil {
+		logger = shared.SilentLogger{}
+	}
+	var release = func() { processIdentity.release() }
+
+	processIdentity.mu.Lock()
+	defer processIdentity.mu.Unlock()
+	if processIdentity.holder != nil {
+		processIdentity.refCount++
+		return processIdentity.holder, processIdentity.ca, release, nil
+	}
+
+	ca, err := ensureDeploymentCA(ctx, tables, clock)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	idCtx, cancel := context.WithCancel(context.Background())
+	holder, err := setupOutboundIdentity(idCtx, ca, principal, clock, logger)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, err
+	}
+
+	processIdentity.holder = holder
+	processIdentity.ca = ca
+	processIdentity.cancel = cancel
+	processIdentity.refCount = 1
+	return holder, ca, release, nil
+}
 
 func setupOutboundIdentity(ctx context.Context, ca *pki.CA, principal string, clock shared.Clock, logger shared.Logger) (*peer.IdentityHolder, error) {
 	holder := peer.NewIdentityHolder()

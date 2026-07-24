@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
 func RunAuthStatus(ctx context.Context, args []string) int {
@@ -38,9 +40,9 @@ func RunAuthStatus(ctx context.Context, args []string) int {
 		return 1
 	}
 	switch resp.Mode {
-	case "anonymous":
+	case auth.StatusModeAnonymous:
 		fmt.Fprintf(os.Stdout, "Mode: anonymous (%d keys provisioned)\n", resp.ActiveKeyCount)
-	case "authenticated":
+	case auth.StatusModeAuthenticated:
 		fmt.Fprintf(os.Stdout, "Mode: authenticated (%d keys total, %d admin)\n", resp.ActiveKeyCount, resp.AdminCount)
 	default:
 		fmt.Fprintf(os.Stdout, "Mode: %s (active=%d, admin=%d)\n", resp.Mode, resp.ActiveKeyCount, resp.AdminCount)

@@ -238,11 +238,18 @@ type OnInstanceCreatedRequest struct {
 	// Consumed by the host-agent-proxy to populate its binding cache.
 	ServiceBindings []byte `protobuf:"bytes,5,opt,name=service_bindings,json=serviceBindings,proto3" json:"service_bindings,omitempty"`
 	// owner_api_key_id is the api-key whose authenticated request created the
-	// instance (empty string for anonymous-mode-created instances). Consumed
-	// by the host-agent-proxy to route dispatches to the right user's agent.
+	// instance (empty string for anonymous-mode-created instances). Retained
+	// as an audit signal on the fan-out payload; routing consumes
+	// target_routing_identity instead.
 	OwnerApiKeyId string `protobuf:"bytes,6,opt,name=owner_api_key_id,json=ownerApiKeyId,proto3" json:"owner_api_key_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// target_routing_identity is the routing identity a host-agent-proxy must
+	// resolve to dispatch this instance's late-bound work: an api-key id for
+	// ordinary owner-created instances, or an anonymous agent's silly-name
+	// for anonymous-mode instances. Populated at instance-creation time on
+	// every instance; never empty.
+	TargetRoutingIdentity string `protobuf:"bytes,7,opt,name=target_routing_identity,json=targetRoutingIdentity,proto3" json:"target_routing_identity,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *OnInstanceCreatedRequest) Reset() {
@@ -313,6 +320,13 @@ func (x *OnInstanceCreatedRequest) GetServiceBindings() []byte {
 func (x *OnInstanceCreatedRequest) GetOwnerApiKeyId() string {
 	if x != nil {
 		return x.OwnerApiKeyId
+	}
+	return ""
+}
+
+func (x *OnInstanceCreatedRequest) GetTargetRoutingIdentity() string {
+	if x != nil {
+		return x.TargetRoutingIdentity
 	}
 	return ""
 }
@@ -493,7 +507,7 @@ const file_lifecycle_proto_rawDesc = "" +
 	"\x1bOnTemplateUndeployedRequest\x12#\n" +
 	"\rtemplate_hash\x18\x01 \x01(\tR\ftemplateHash\"D\n" +
 	"\x1dOnTemplateDeregisteredRequest\x12#\n" +
-	"\rtemplate_hash\x18\x01 \x01(\tR\ftemplateHash\"\xef\x01\n" +
+	"\rtemplate_hash\x18\x01 \x01(\tR\ftemplateHash\"\xa7\x02\n" +
 	"\x18OnInstanceCreatedRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12#\n" +
@@ -501,7 +515,8 @@ const file_lifecycle_proto_rawDesc = "" +
 	"\finstance_key\x18\x03 \x01(\tR\vinstanceKey\x12\x16\n" +
 	"\x06params\x18\x04 \x01(\fR\x06params\x12)\n" +
 	"\x10service_bindings\x18\x05 \x01(\fR\x0fserviceBindings\x12'\n" +
-	"\x10owner_api_key_id\x18\x06 \x01(\tR\rownerApiKeyId\"\x96\x01\n" +
+	"\x10owner_api_key_id\x18\x06 \x01(\tR\rownerApiKeyId\x126\n" +
+	"\x17target_routing_identity\x18\a \x01(\tR\x15targetRoutingIdentity\"\x96\x01\n" +
 	"\x1bOnInstanceTerminatedRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12#\n" +

@@ -19,7 +19,6 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
@@ -33,15 +32,6 @@ const (
 )
 
 const serviceNameHeader = peer.ServiceNameMetadataKey
-
-const anonymousRoutingIdentity = hostagent.AnonymousRoutingIdentity
-
-func resolveOwnerRoutingKey(ownerAPIKeyID string) string {
-	if ownerAPIKeyID == "" {
-		return anonymousRoutingIdentity
-	}
-	return ownerAPIKeyID
-}
 
 type resolveError struct {
 	class string
@@ -95,14 +85,16 @@ func resolveAndSpawn(
 		if !found {
 			return nil, &resolveError{class: errClassBindingNotFound, msg: fmt.Sprintf("instance %q not found", instanceID)}
 		}
-		state.cacheInstance(instanceID, fetched.serviceBindings, fetched.ownerAPIKeyID, fetched.params)
+		state.cacheInstance(instanceID, fetched.serviceBindings, fetched.targetRoutingIdentity, fetched.params)
 		entry = fetched
 	}
 
-	routingKey := resolveOwnerRoutingKey(entry.ownerAPIKeyID)
-	agent, ok := state.lookupAgent(routingKey)
+	if entry.targetRoutingIdentity == "" {
+		return nil, &resolveError{class: errClassBindingNotFound, msg: fmt.Sprintf("instance %q has no target_routing_identity stamped", instanceID)}
+	}
+	agent, ok := state.lookupAgent(entry.targetRoutingIdentity)
 	if !ok {
-		return nil, &resolveError{class: errClassHostAgentNotConnected, msg: fmt.Sprintf("no agent connected for owner %q", routingKey)}
+		return nil, &resolveError{class: errClassHostAgentNotConnected, msg: fmt.Sprintf("no agent connected under routing identity %q", entry.targetRoutingIdentity)}
 	}
 
 	binding, ok := entry.serviceBindings[name]
@@ -127,7 +119,7 @@ func resolveAndSpawn(
 		if rerr != nil {
 			return nil, rerr
 		}
-		state.recordSpawn(spawnID, agent.apiKeyID, scopeID, name, capabilities, originalCallback)
+		state.recordSpawn(spawnID, agent.routingIdentity, scopeID, name, capabilities, originalCallback)
 		return spawnID, nil
 	})
 	if err != nil {
@@ -255,20 +247,16 @@ func newControlAPIFetcher(client *http.Client, baseURL, token string) instanceFe
 }
 
 type instanceJSON struct {
-	ServiceBindings map[string]bindingSpec `json:"service_bindings"`
-	CreatedByAPIKey string                 `json:"created_by_api_key_id"`
-	OwnerAPIKeyID   string                 `json:"owner_api_key_id"`
-	Params          json.RawMessage        `json:"params"`
+	ServiceBindings       map[string]bindingSpec `json:"service_bindings"`
+	CreatedByAPIKey       string                 `json:"created_by_api_key_id"`
+	TargetRoutingIdentity string                 `json:"target_routing_identity"`
+	Params                json.RawMessage        `json:"params"`
 }
 
 func parseInstanceResponse(body []byte) (*instanceCacheEntry, bool, error) {
 	var ij instanceJSON
 	if err := json.Unmarshal(body, &ij); err != nil {
 		return nil, false, err
-	}
-	owner := ij.OwnerAPIKeyID
-	if owner == "" {
-		owner = ij.CreatedByAPIKey
 	}
 	params := map[string]any{}
 	if len(ij.Params) > 0 {
@@ -279,9 +267,9 @@ func parseInstanceResponse(body []byte) (*instanceCacheEntry, bool, error) {
 		bindings = map[string]bindingSpec{}
 	}
 	return &instanceCacheEntry{
-		serviceBindings: bindings,
-		ownerAPIKeyID:   owner,
-		params:          params,
+		serviceBindings:       bindings,
+		targetRoutingIdentity: ij.TargetRoutingIdentity,
+		params:                params,
 	}, true, nil
 }
 

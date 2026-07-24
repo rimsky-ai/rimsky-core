@@ -436,9 +436,9 @@ func handleAuthStatus(deps AppDeps) http.HandlerFunc {
 				}
 			}
 		}
-		mode := "authenticated"
+		mode := auth.StatusModeAuthenticated
 		if active == 0 {
-			mode = "anonymous"
+			mode = auth.StatusModeAnonymous
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"mode":             mode,

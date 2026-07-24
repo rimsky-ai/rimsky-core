@@ -23,7 +23,7 @@ var errInstanceIDRequired = errors.New("instances.create: ID is required (zero U
 
 var errInstanceIDConflict = errors.New("instances.create: instance id already exists")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, paused, service_bindings, created_by_api_key_id, message_queue_mode`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, paused, service_bindings, created_by_api_key_id, target_routing_identity, message_queue_mode`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	if in.Params == nil {
@@ -61,10 +61,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		messageQueueMode = "backlog"
 	}
 	row := s.q(tx).QueryRowContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, created_at, paused, service_bindings, created_by_api_key_id, message_queue_mode)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, created_at, paused, service_bindings, created_by_api_key_id, target_routing_identity, message_queue_mode)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING `+instanceCols,
-		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), nowUTC(), pausedArg, serviceBindingsArg, createdByAPIKeyArg, messageQueueMode,
+		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), nowUTC(), pausedArg, serviceBindingsArg, createdByAPIKeyArg, in.TargetRoutingIdentity, messageQueueMode,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -317,19 +317,20 @@ func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, lim
 
 func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 	var (
-		idStr                string
-		templateHash         string
-		instanceKey          sql.NullString
-		paramsStr            string
-		overridesStr         string
-		createdAtStr         string
-		terminatedAtStr      sql.NullString
-		pausedInt            int64
-		serviceBindingsStr   sql.NullString
-		createdByAPIKeyIDStr sql.NullString
-		messageQueueMode     string
+		idStr                 string
+		templateHash          string
+		instanceKey           sql.NullString
+		paramsStr             string
+		overridesStr          string
+		createdAtStr          string
+		terminatedAtStr       sql.NullString
+		pausedInt             int64
+		serviceBindingsStr    sql.NullString
+		createdByAPIKeyIDStr  sql.NullString
+		targetRoutingIdentity string
+		messageQueueMode      string
 	)
-	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &createdAtStr, &terminatedAtStr, &pausedInt, &serviceBindingsStr, &createdByAPIKeyIDStr, &messageQueueMode); err != nil {
+	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &createdAtStr, &terminatedAtStr, &pausedInt, &serviceBindingsStr, &createdByAPIKeyIDStr, &targetRoutingIdentity, &messageQueueMode); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -353,13 +354,14 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		return persistence.InstanceRow{}, err
 	}
 	out := persistence.InstanceRow{
-		ID:                 id,
-		TemplateHash:       templateHash,
-		Params:             m,
-		AttributeOverrides: overrides,
-		CreatedAt:          createdAt,
-		Paused:             pausedInt != 0,
-		MessageQueueMode:   messageQueueMode,
+		ID:                    id,
+		TemplateHash:          templateHash,
+		Params:                m,
+		AttributeOverrides:    overrides,
+		CreatedAt:             createdAt,
+		Paused:                pausedInt != 0,
+		TargetRoutingIdentity: targetRoutingIdentity,
+		MessageQueueMode:      messageQueueMode,
 	}
 	if instanceKey.Valid {
 		k := instanceKey.String

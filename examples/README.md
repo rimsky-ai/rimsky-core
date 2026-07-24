@@ -78,8 +78,11 @@ invocation drives the full dev loop and exits 0 once the instance
 terminates. The driver test under
 `lib/services/test/scenarios/onboarding_demo_e2e_test.go` runs the
 script as a subprocess against a testcontainers-managed stack with the
-bundled `rimsky-executor-verifier-shape-checks:latest` image wired in,
-and is the load-bearing gate that the walkthrough actually works.
+bundled `rimsky-executor-verifier-shape-checks` image wired in — the
+harness resolves the image tag via `tools/image-src-tag.sh` (the same
+content-addressed `src-<tree-hash>` derivation the Makefile uses), not
+`:latest` — and is the load-bearing gate that the walkthrough actually
+works.
 
 For a bare-metal local stack, declare the verifier executor in
 `rimsky.yml` (the all-in-one image ships with an empty executors block;

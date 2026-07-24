@@ -175,8 +175,12 @@ end-to-end against the assembled product:
 
 ### Prerequisites
 
-The harness pulls `rimsky-all-in-one:latest` from the local Docker
-daemon (nothing is fetched from a registry). Build the image first:
+The harness resolves every rimsky image from the LOCAL Docker daemon
+(nothing is fetched from a registry). It reads `RIMSKY_IMAGE_TAG` from
+the environment when set; otherwise it computes the current source
+tree's `src-<tree-hash>` tag via `tools/image-src-tag.sh`. There is no
+`:latest` fallback, so the image must have been built from the same
+tree the test is running against — build it first:
 
 ```sh
 make core-images

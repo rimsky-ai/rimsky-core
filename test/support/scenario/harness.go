@@ -79,9 +79,15 @@ type HarnessOpts struct {
 	ExtraInprocHandlers map[string]executor.InProcessHandler
 
 	Deadline time.Duration
+
+	// @concept: peer-auth
+	PeerAuth string
 }
 
 const defaultHarnessDeadline = 90 * time.Second
+
+// @concept: anonymous-mode
+const defaultHarnessTargetAgent = "scenario-default-agent"
 
 func Start(t testing.TB, opts HarnessOpts) *Harness {
 	t.Helper()
@@ -185,6 +191,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			NamedLocks:            opts.NamedLocks,
 			SupervisorID:          "scenario-scheduler",
 			LifecyclePeersForSpec: peersForSpec,
+			PeerAuth:              opts.PeerAuth,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start scheduler: %v", err)
@@ -241,6 +248,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			LateBindServiceProxies:      opts.LateBindServiceProxies,
 			LifecyclePeersForSpec:       peersForSpec,
 			ExtraInprocHandlers:         opts.ExtraInprocHandlers,
+			PeerAuth:                    opts.PeerAuth,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start supervisor: %v", err)
@@ -259,11 +267,13 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		Logger:                 shared.SilentLogger{},
 		Host:                   "127.0.0.1",
 		Port:                   0,
+		ControlAPIID:           "scenario-control-api",
 		ClaimProducers:         opts.ClaimProducers,
 		Publishers:             opts.Publishers,
 		NamedLocks:             opts.NamedLocks,
 		Executors:              executorsCfg,
 		LateBindServiceProxies: opts.LateBindServiceProxies,
+		PeerAuth:               opts.PeerAuth,
 	})
 	if err != nil {
 		t.Fatalf("scenario: start controlapi: %v", err)
@@ -394,8 +404,9 @@ func (h *Harness) CreateInstanceWithOverrides(
 ) shared.UUID {
 	h.T.Helper()
 	bodyMap := map[string]any{
-		"template": templateHash,
-		"params":   params,
+		"template":     templateHash,
+		"params":       params,
+		"target_agent": defaultHarnessTargetAgent,
 	}
 	if consumerKey != "" {
 		bodyMap["instance_key"] = consumerKey
@@ -491,7 +502,19 @@ func (h *Harness) CreateInstanceWithServiceBindings(
 	params map[string]any,
 	serviceBindings map[string]any,
 ) shared.UUID {
+	return h.CreateInstanceWithServiceBindingsAndTarget(templateHash, consumerKey, bearerKey, params, serviceBindings, "")
+}
+
+func (h *Harness) CreateInstanceWithServiceBindingsAndTarget(
+	templateHash, consumerKey, bearerKey string,
+	params map[string]any,
+	serviceBindings map[string]any,
+	targetAgent string,
+) shared.UUID {
 	h.T.Helper()
+	if targetAgent == "" {
+		targetAgent = defaultHarnessTargetAgent
+	}
 	bodyMap := map[string]any{
 		"template": templateHash,
 		"params":   params,
@@ -501,6 +524,9 @@ func (h *Harness) CreateInstanceWithServiceBindings(
 	}
 	if len(serviceBindings) > 0 {
 		bodyMap["service_bindings"] = serviceBindings
+	}
+	if targetAgent != "" {
+		bodyMap["target_agent"] = targetAgent
 	}
 	body, err := json.Marshal(bodyMap)
 	if err != nil {

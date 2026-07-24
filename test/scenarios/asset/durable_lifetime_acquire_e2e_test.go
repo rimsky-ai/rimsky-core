@@ -74,7 +74,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
 			ID: instID, TemplateHash: tmpl.ID,
 			InstanceKey: &ck, Params: map[string]any{},
 		}, tx); err != nil {

@@ -72,9 +72,9 @@ func startRealProxyServer(t *testing.T, owner, bindingName, bindingPath string) 
 
 	fetch := func(_ context.Context, _ string) (*instanceCacheEntry, bool, error) {
 		return &instanceCacheEntry{
-			serviceBindings: map[string]bindingSpec{bindingName: {Path: bindingPath}},
-			ownerAPIKeyID:   owner,
-			params:          map[string]any{"cwd": "."},
+			serviceBindings:       map[string]bindingSpec{bindingName: {Path: bindingPath}},
+			targetRoutingIdentity: owner,
+			params:                map[string]any{"cwd": "."},
 		}, true, nil
 	}
 	cfg := Config{SpawnReadyTimeout: 10 * time.Second, ReapTimeout: 5 * time.Second}

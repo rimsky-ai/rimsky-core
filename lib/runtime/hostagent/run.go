@@ -24,13 +24,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/sillyname"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 const agentVersion = "v1"
-
-// @concept: host-agent-proxy
-const AnonymousRoutingIdentity = "anonymous"
 
 const reconnectMinBackoff = 250 * time.Millisecond
 
@@ -118,8 +116,23 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.RimskyURL == "" {
 		return errors.New("hostagent: RIMSKY_URL is required")
 	}
-	if cfg.APIKey == "" {
-		cfg.APIKey = AnonymousRoutingIdentity
+	anonymous := cfg.APIKey == ""
+	if anonymous {
+		cfg.APIKey = sillyname.AnonymousCredentialSentinel
+		if cfg.IdentityFile == "" {
+			path, ferr := DefaultIdentityFile()
+			if ferr != nil {
+				return ferr
+			}
+			cfg.IdentityFile = path
+		}
+		if cfg.RoutingLabel == "" {
+			id, lerr := LoadIdentity(cfg.IdentityFile)
+			if lerr != nil {
+				return lerr
+			}
+			cfg.RoutingLabel = id.RoutingIdentity
+		}
 	}
 
 	trust, err := newLocalTrust(time.Now())
@@ -324,6 +337,7 @@ func connectOnce(ctx context.Context, cfg Config, trust *localTrust, enrollBaseU
 		AgentLabel:           cfg.AgentLabel,
 		AgentVersion:         agentVersion,
 		LocalCallbackBaseUrl: callbackBaseURL,
+		RoutingLabel:         cfg.RoutingLabel,
 	}}}) {
 		_ = conn.Close()
 		return nil, errors.New("send Register failed")
@@ -340,10 +354,15 @@ func connectOnce(ctx context.Context, cfg Config, trust *localTrust, enrollBaseU
 		return nil, fmt.Errorf("expected RegisterAck, got %T", first.GetBody())
 	}
 	if ack.GetDisplacedPrior() {
-		slog.Warn("hostagent: proxy displaced a prior connection for this api-key")
+		slog.Warn("hostagent: proxy displaced a prior connection for this identity")
+	}
+	if cfg.APIKey == sillyname.AnonymousCredentialSentinel && ack.GetRoutingIdentity() != "" && cfg.IdentityFile != "" {
+		if err := SaveIdentity(cfg.IdentityFile, PersistedIdentity{RoutingIdentity: ack.GetRoutingIdentity()}); err != nil {
+			slog.Warn("hostagent: persist identity failed", "path", cfg.IdentityFile, "error", err)
+		}
 	}
 	a.proxyConn = conn
-	slog.Info("hostagent connected", "proxy_version", ack.GetProxyVersion())
+	slog.Info("hostagent connected", "proxy_version", ack.GetProxyVersion(), "routing_identity", ack.GetRoutingIdentity())
 	return a, nil
 }
 

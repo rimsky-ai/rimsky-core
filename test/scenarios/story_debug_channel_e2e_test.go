@@ -253,6 +253,7 @@ func createInstanceWithPaused(t *testing.T, controlBase, templateHash, instanceK
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
 		"paused":       true,
+		"target_agent": "scenario-default-agent",
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
