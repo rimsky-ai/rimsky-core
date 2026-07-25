@@ -156,14 +156,14 @@ func TestTryAcquire_TransientConflictBailAbandonsAlreadyOpenedLocks(t *testing.T
 	reg.Add(producerConflict, fakeConflict)
 
 	args := RunArgs{
-		Persist:        tables,
-		Queue:          queue,
-		AdvisoryLocker: d.AdvisoryLocker(),
-		ClaimHandles:   tables.ClaimHandles(),
-		StoreRegistry:  reg,
-		Clock:          shared.SystemClock{},
-		Logger:         shared.SilentLogger{},
-		SupervisorID:   supMe,
+		Persist:               tables,
+		Queue:                 queue,
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		ClaimHandles:          tables.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          supMe,
 	}
 
 	acq, ok, err := tryAcquireWithTx(ctx, args, cand, 5*time.Second)

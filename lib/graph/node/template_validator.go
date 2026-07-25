@@ -58,7 +58,7 @@ type RegistryHooks struct {
 
 	//	@concept: signal
 	//	@concept: error-policy
-	StoreDeclaredErrorClasses func(name string) ([]string, bool)
+	ClaimProducerDeclaredErrorClasses func(name string) ([]string, bool)
 
 	ExecutorExpectedAttributesSchema func(name string) ([]byte, bool)
 
@@ -301,9 +301,9 @@ func validateErrorTypes(n TemplateNodeDef, base string, hooks RegistryHooks, res
 		}
 	}
 	var producerClasses []string
-	if hooks.StoreDeclaredErrorClasses != nil {
-		for _, storeName := range RequiredClaimProducers(n) {
-			if classes, ok := hooks.StoreDeclaredErrorClasses(storeName); ok {
+	if hooks.ClaimProducerDeclaredErrorClasses != nil {
+		for _, producerName := range RequiredClaimProducers(n) {
+			if classes, ok := hooks.ClaimProducerDeclaredErrorClasses(producerName); ok {
 				producerClasses = append(producerClasses, classes...)
 				vocabularyKnown = true
 			}
@@ -490,9 +490,9 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 						matched = matched || errorClassMatchesDeclared(leaf, classes)
 					}
 				}
-				if hooks.StoreDeclaredErrorClasses != nil {
-					for _, storeName := range RequiredClaimProducers(sender) {
-						if classes, ok := hooks.StoreDeclaredErrorClasses(storeName); ok {
+				if hooks.ClaimProducerDeclaredErrorClasses != nil {
+					for _, producerName := range RequiredClaimProducers(sender) {
+						if classes, ok := hooks.ClaimProducerDeclaredErrorClasses(producerName); ok {
 							vocabularyKnown = true
 							matched = matched || errorClassMatchesDeclared(leaf, classes)
 						}

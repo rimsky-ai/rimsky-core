@@ -161,7 +161,7 @@ func TestHandler_ListClaimProducers_DeclaredOnly(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if len(body.ClaimProducers) != 1 || body.ClaimProducers[0]["name"] != "topics-ring" {
-		t.Fatalf("stores = %+v", body.ClaimProducers)
+		t.Fatalf("producers = %+v", body.ClaimProducers)
 	}
 }
 

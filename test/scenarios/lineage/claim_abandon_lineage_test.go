@@ -39,12 +39,12 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 	})
 	reg.Add("abandon-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-AB",
-		Clock:         shared.SystemClock{},
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-AB",
+		Clock:                 shared.SystemClock{},
 	}
 
 	hint := runtime.ClaimLineageHint{

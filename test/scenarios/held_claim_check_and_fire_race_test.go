@@ -104,13 +104,13 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	registry.Add("held-store", client)
 
 	baseArgs := runtime.RunArgs{
-		Persist:       h.Persist,
-		Queue:         h.Queue,
-		ClaimHandles:  h.Persist.ClaimHandles(),
-		StoreRegistry: registry,
-		Clock:         shared.SystemClock{},
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  supervisorID,
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		ClaimProducerRegistry: registry,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          supervisorID,
 	}
 
 	var (

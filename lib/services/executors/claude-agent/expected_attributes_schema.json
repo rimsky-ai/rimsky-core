@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
-    "cwd_from_store": { "type": "string", "default": "" },
+    "cwd_from_claim_producer": { "type": "string", "default": "" },
     "cwd": { "type": "string", "default": "" },
     "model": { "type": "string", "default": "claude-sonnet-4-5" },
     "system_prompt": { "type": "string" },

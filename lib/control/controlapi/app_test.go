@@ -30,11 +30,11 @@ import (
 )
 
 type harness struct {
-	srv     *httptest.Server
-	driver  persistence.Database
-	persist persistence.Tables
-	stores  *locks.Registry
-	logger  *shared.CapturingLogger
+	srv       *httptest.Server
+	driver    persistence.Database
+	persist   persistence.Tables
+	producers *locks.Registry
+	logger    *shared.CapturingLogger
 }
 
 func newAppHarness(t *testing.T, configure func(*AppDeps)) (*harness, func()) {
@@ -83,7 +83,7 @@ func newAppHarness(t *testing.T, configure func(*AppDeps)) (*harness, func()) {
 	app := NewApp(deps)
 	srv := httptest.NewServer(app)
 
-	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
+	h := &harness{srv: srv, driver: d, persist: d.Tables(), producers: reg, logger: capLog}
 	return h, func() {
 		srv.Close()
 	}
@@ -347,7 +347,7 @@ func TestTemplateDeploy_NewShape_ClaimProducersAndLocks(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	body := templateWithClaimProducersAndLocks("stores-lc-" + uuid.NewString())
+	body := templateWithClaimProducersAndLocks("producers-lc-" + uuid.NewString())
 	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
 	require.NotEmpty(t, out["template_id"])

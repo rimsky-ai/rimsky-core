@@ -36,8 +36,8 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 	backend := d.Tables()
 
 	const (
-		storeName = "content"
-		nodeType  = "acquirer"
+		producerName = "content"
+		nodeType     = "acquirer"
 	)
 
 	tmplSpec := node.TemplateSpec{
@@ -48,7 +48,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 				Executor: "stub",
 				ClaimProducers: []node.NodeClaimProducerRef{
 					{
-						Name:     storeName,
+						Name:     producerName,
 						Selector: "/durable/root",
 						Intent:   "rw",
 						Alias:    "asset",
@@ -95,7 +95,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 	_ = seedRunForNodeAsset(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	stubStore := storetest.NewFake(storeName, claimproducer.Capabilities{
+	stubStore := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 		Protocols:             []string{claimproducer.ProtocolDataProcessing},
@@ -112,7 +112,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		}
 		return claimproducer.SplitClaimScopeResponse{SubClaimScopes: descs}, nil
 	}
-	reg.Add(storeName, stubStore)
+	reg.Add(producerName, stubStore)
 
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
@@ -122,12 +122,12 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		Queue:                  d.Queue(),
 		ClaimHandles:           backend.ClaimHandles(),
 		AdvisoryLocker:         d.AdvisoryLocker(),
-		StoreRegistry:          reg,
+		ClaimProducerRegistry:  reg,
 		Clock:                  shared.SystemClock{},
 		Logger:                 shared.SilentLogger{},
 		SupervisorID:           "sup-D5",
 		AcceptedExecutors:      []string{"stub"},
-		AcceptedClaimProducers: []string{storeName},
+		AcceptedClaimProducers: []string{producerName},
 		Pool:                   pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: "127.0.0.1:1"},

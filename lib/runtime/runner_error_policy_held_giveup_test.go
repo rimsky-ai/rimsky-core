@@ -51,7 +51,7 @@ func TestApplyErrorPolicy_GiveUpWithActiveClaimDefersThroughHeldToAbandoned(t *t
 	})
 	reg := locks.NewRegistry()
 	reg.Add(producerName, store)
-	args.StoreRegistry = reg
+	args.ClaimProducerRegistry = reg
 	acq.Locks = []AcquiredLock{{
 		Alias:         "data",
 		Spec:          claimproducer.ClaimSpec{ProducerName: producerName, Alias: "data", Intent: "rw"},

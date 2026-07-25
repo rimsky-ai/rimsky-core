@@ -98,7 +98,7 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		MaxRuntimeDefault:       cfg.MaxRuntimeDefault,
 		ClaimHandles:            persistStore.ClaimHandles(),
 		SupervisorID:            cfg.SupervisorID,
-		StoreRegistry:           registry,
+		ClaimProducerRegistry:   registry,
 		LifecycleSubs:           lifecycleSubs,
 		LifecyclePeersForSpec:   cfg.LifecyclePeersForSpec,
 		BlobBackend:             cfg.Blob,

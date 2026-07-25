@@ -97,7 +97,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 		Queue:                  h.Queue,
 		ClaimHandles:           h.Persist.ClaimHandles(),
 		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-		StoreRegistry:          registry,
+		ClaimProducerRegistry:  registry,
 		Clock:                  shared.SystemClock{},
 		Logger:                 shared.SilentLogger{},
 		SupervisorID:           "scenario-runner",

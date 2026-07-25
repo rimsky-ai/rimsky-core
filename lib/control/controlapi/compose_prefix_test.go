@@ -94,7 +94,7 @@ func newAuthedComposeHarness(t *testing.T, permissions string) (*harness, string
 	srv := httptest.NewServer(app)
 	t.Cleanup(srv.Close)
 
-	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
+	h := &harness{srv: srv, driver: d, persist: d.Tables(), producers: reg, logger: capLog}
 	return h, plaintext
 }
 

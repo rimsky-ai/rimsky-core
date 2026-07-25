@@ -103,14 +103,14 @@ func TestAcquireClaim_EmptyOpenClaimScopeFallsBackToSeededSelector(t *testing.T)
 	reg.Add(producer, fake)
 
 	args := RunArgs{
-		Persist:        tables,
-		Queue:          d.Queue(),
-		AdvisoryLocker: d.AdvisoryLocker(),
-		ClaimHandles:   tables.ClaimHandles(),
-		StoreRegistry:  reg,
-		Clock:          shared.SystemClock{},
-		Logger:         shared.SilentLogger{},
-		SupervisorID:   supMe,
+		Persist:               tables,
+		Queue:                 d.Queue(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		ClaimHandles:          tables.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          supMe,
 	}
 	spec := claimproducer.ClaimSpec{ProducerName: producer, Selector: "/empty-scope-selector", Intent: "rw", Alias: "data"}
 	cand := persistence.Candidate{NodeRunID: runID, NodeID: nodeID, NodeType: "worker"}

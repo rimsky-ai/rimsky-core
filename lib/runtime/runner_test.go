@@ -29,18 +29,18 @@ func TestRunNode_NoCandidate(t *testing.T) {
 	t.Cleanup(func() { _ = clientPool.Close() })
 
 	args := runtime.RunArgs{
-		Persist:           d.Tables(),
-		Queue:             d.Queue(),
-		AdvisoryLocker:    d.AdvisoryLocker(),
-		ClaimHandles:      d.Tables().ClaimHandles(),
-		StoreRegistry:     reg,
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		SupervisorID:      "test-supervisor",
-		AcceptedExecutors: []string{"stub"},
-		Pool:              clientPool,
-		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
-		LivenessInterval:  100 * time.Millisecond,
+		Persist:               d.Tables(),
+		Queue:                 d.Queue(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		ClaimHandles:          d.Tables().ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "test-supervisor",
+		AcceptedExecutors:     []string{"stub"},
+		Pool:                  clientPool,
+		Resolver:              executor.NewStaticResolver(map[string]executor.Endpoint{}),
+		LivenessInterval:      100 * time.Millisecond,
 	}
 
 	res, err := runtime.RunNode(ctx, args, nil)

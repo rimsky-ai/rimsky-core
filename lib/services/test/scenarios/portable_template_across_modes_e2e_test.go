@@ -73,7 +73,7 @@ func buildPortableTemplateBody() map[string]any {
 					"type":     "worker",
 					"executor": "http-node",
 					"claim_producers": []map[string]any{
-						{"name": "store-filesystem", "selector": "@docs", "intent": "rw"},
+						{"name": "claim-producer-filesystem", "selector": "@docs", "intent": "rw"},
 					},
 					"attributes": map[string]any{
 						"schema": map[string]any{
@@ -126,8 +126,8 @@ func runPortableTemplateContainerized(t *testing.T, templateBytes []byte) portab
 
 	netName := harness.SharedNetworkName(ctx, t)
 	httpNodeEndpoint := harness.StartHttpNodeStubOnNetwork(ctx, t, netName, "http-node")
-	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
-		harness.FilesystemStoreSpec{
+	fs := harness.StartFilesystemClaimProducer(ctx, t, netName, "claim-producer-filesystem",
+		harness.FilesystemClaimProducerSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
 				"@docs": {
 					Root:                     "docs",
@@ -146,7 +146,7 @@ func runPortableTemplateContainerized(t *testing.T, templateBytes []byte) portab
 		harness.WithSQLite(),
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("http-node", httpNodeEndpoint),
-		harness.WithClaimProducer("store-filesystem", fs.InternalEndpoint),
+		harness.WithClaimProducer("claim-producer-filesystem", fs.InternalEndpoint),
 	)
 
 	return dispatchAndReadTerminal(t, ep, templateBytes, "ck-portable-template-containerized")

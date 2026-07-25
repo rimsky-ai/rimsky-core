@@ -679,11 +679,11 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		if deps.ClaimProducers != nil {
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 				_, rErr := runtime.ReleaseCommittedDurableClaims(ctx, runtime.RunArgs{
-					Persist:       deps.Persist,
-					ClaimHandles:  deps.Persist.ClaimHandles(),
-					StoreRegistry: deps.ClaimProducers,
-					Clock:         deps.Clock,
-					Logger:        deps.Logger,
+					Persist:               deps.Persist,
+					ClaimHandles:          deps.Persist.ClaimHandles(),
+					ClaimProducerRegistry: deps.ClaimProducers,
+					Clock:                 deps.Clock,
+					Logger:                deps.Logger,
 				}, inst.ID, deps.Logger, tx)
 				return rErr
 			}); err != nil && deps.Logger != nil {
@@ -918,15 +918,15 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 // @concept: terminal-resolution
 func terminateRunArgs(deps AppDeps) runtime.RunArgs {
 	return runtime.RunArgs{
-		Persist:        deps.Persist,
-		Queue:          deps.Queue,
-		AdvisoryLocker: deps.AdvisoryLocker,
-		ClaimHandles:   deps.Persist.ClaimHandles(),
-		StoreRegistry:  deps.ClaimProducers,
-		DataProcessors: deps.DataProcessors,
-		Clock:          deps.Clock,
-		Logger:         deps.Logger,
-		SupervisorID:   "control-api-terminate",
+		Persist:               deps.Persist,
+		Queue:                 deps.Queue,
+		AdvisoryLocker:        deps.AdvisoryLocker,
+		ClaimHandles:          deps.Persist.ClaimHandles(),
+		ClaimProducerRegistry: deps.ClaimProducers,
+		DataProcessors:        deps.DataProcessors,
+		Clock:                 deps.Clock,
+		Logger:                deps.Logger,
+		SupervisorID:          "control-api-terminate",
 	}
 }
 

@@ -32,19 +32,19 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 
 	supID := "test-sv-startshutdown"
 	h, err := runtime.Start(runtime.Config{
-		SupervisorID:      supID,
-		Persist:           d.Tables(),
-		Queue:             d.Queue(),
-		AdvisoryLocker:    d.AdvisoryLocker(),
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		Concurrency:       1,
-		LivenessInterval:  200 * time.Millisecond,
-		ClaimPollInterval: 200 * time.Millisecond,
-		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
-		StoreRegistry:     reg,
-		CallbackHost:      "127.0.0.1",
-		CallbackPort:      0,
+		SupervisorID:          supID,
+		Persist:               d.Tables(),
+		Queue:                 d.Queue(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		Concurrency:           1,
+		LivenessInterval:      200 * time.Millisecond,
+		ClaimPollInterval:     200 * time.Millisecond,
+		Resolver:              executor.NewStaticResolver(map[string]executor.Endpoint{}),
+		ClaimProducerRegistry: reg,
+		CallbackHost:          "127.0.0.1",
+		CallbackPort:          0,
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, h.CallbackAddr())
@@ -87,19 +87,19 @@ func TestSupervisor_ShutdownJoinsProducerVerbDispatcherBeforeReturning(t *testin
 			require.NoError(t, db.Migrate(ctx, shared.SilentLogger{}))
 
 			h, err := runtime.Start(runtime.Config{
-				SupervisorID:      fmt.Sprintf("test-sv-sync-shutdown-%d", i),
-				Persist:           db.Tables(),
-				Queue:             db.Queue(),
-				AdvisoryLocker:    db.AdvisoryLocker(),
-				Clock:             shared.SystemClock{},
-				Logger:            shared.SilentLogger{},
-				Concurrency:       1,
-				LivenessInterval:  200 * time.Millisecond,
-				ClaimPollInterval: 5 * time.Millisecond,
-				Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
-				StoreRegistry:     locks.NewRegistry(),
-				CallbackHost:      "127.0.0.1",
-				CallbackPort:      0,
+				SupervisorID:          fmt.Sprintf("test-sv-sync-shutdown-%d", i),
+				Persist:               db.Tables(),
+				Queue:                 db.Queue(),
+				AdvisoryLocker:        db.AdvisoryLocker(),
+				Clock:                 shared.SystemClock{},
+				Logger:                shared.SilentLogger{},
+				Concurrency:           1,
+				LivenessInterval:      200 * time.Millisecond,
+				ClaimPollInterval:     5 * time.Millisecond,
+				Resolver:              executor.NewStaticResolver(map[string]executor.Endpoint{}),
+				ClaimProducerRegistry: locks.NewRegistry(),
+				CallbackHost:          "127.0.0.1",
+				CallbackPort:          0,
 			})
 			require.NoError(t, err)
 
@@ -126,19 +126,19 @@ func TestSupervisor_ConcurrentShutdownDoesNotPanic(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	h, err := runtime.Start(runtime.Config{
-		SupervisorID:      "test-sv-concurrent-shutdown",
-		Persist:           db.Tables(),
-		Queue:             db.Queue(),
-		AdvisoryLocker:    db.AdvisoryLocker(),
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		Concurrency:       1,
-		LivenessInterval:  200 * time.Millisecond,
-		ClaimPollInterval: 5 * time.Millisecond,
-		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
-		StoreRegistry:     locks.NewRegistry(),
-		CallbackHost:      "127.0.0.1",
-		CallbackPort:      0,
+		SupervisorID:          "test-sv-concurrent-shutdown",
+		Persist:               db.Tables(),
+		Queue:                 db.Queue(),
+		AdvisoryLocker:        db.AdvisoryLocker(),
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		Concurrency:           1,
+		LivenessInterval:      200 * time.Millisecond,
+		ClaimPollInterval:     5 * time.Millisecond,
+		Resolver:              executor.NewStaticResolver(map[string]executor.Endpoint{}),
+		ClaimProducerRegistry: locks.NewRegistry(),
+		CallbackHost:          "127.0.0.1",
+		CallbackPort:          0,
 	})
 	require.NoError(t, err)
 
@@ -168,19 +168,19 @@ func TestSupervisor_StartFailsFastOnWildcardBindWithoutAdvertise(t *testing.T) {
 	d := pgdbtest.OpenDriver(ctx, t)
 
 	_, err := runtime.Start(runtime.Config{
-		SupervisorID:      "test-sv-wildcard-advertise",
-		Persist:           d.Tables(),
-		Queue:             d.Queue(),
-		AdvisoryLocker:    d.AdvisoryLocker(),
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		Concurrency:       1,
-		LivenessInterval:  200 * time.Millisecond,
-		ClaimPollInterval: 200 * time.Millisecond,
-		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
-		StoreRegistry:     locks.NewRegistry(),
-		CallbackHost:      "0.0.0.0",
-		CallbackPort:      0,
+		SupervisorID:          "test-sv-wildcard-advertise",
+		Persist:               d.Tables(),
+		Queue:                 d.Queue(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		Concurrency:           1,
+		LivenessInterval:      200 * time.Millisecond,
+		ClaimPollInterval:     200 * time.Millisecond,
+		Resolver:              executor.NewStaticResolver(map[string]executor.Endpoint{}),
+		ClaimProducerRegistry: locks.NewRegistry(),
+		CallbackHost:          "0.0.0.0",
+		CallbackPort:          0,
 	})
 	require.Error(t, err,
 		"a wildcard callback bind without an advertise host must refuse startup rather than stamping http://0.0.0.0 into callback URLs")
@@ -196,7 +196,7 @@ func TestSupervisor_StartFailsFastOnWildcardBindWithoutAdvertise(t *testing.T) {
 	require.Nil(t, rec, "a supervisor refused at startup must not register itself")
 }
 
-func TestSupervisor_StartRequiresStoreRegistry(t *testing.T) {
+func TestSupervisor_StartRequiresClaimProducerRegistry(t *testing.T) {
 	t.Parallel()
 	_, err := runtime.Start(runtime.Config{
 		SupervisorID: "test",

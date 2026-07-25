@@ -101,7 +101,7 @@ func (s *ExecutorServer) Execute(ctx context.Context, req *genv1.ExecuteRequest)
 	logger.Info("execute.received",
 		"instance_id", req.GetInstanceId(),
 		"model", stringOrEmpty(attributes["model"]),
-		"cwd_from_store", stringOrEmpty(attributes["cwd_from_store"]),
+		"cwd_from_claim_producer", stringOrEmpty(attributes["cwd_from_claim_producer"]),
 		"claim_producers", claimProducerNames(req.GetClaimProducers()))
 
 	inputs := dispatchInputs{
@@ -178,7 +178,7 @@ func (s *ExecutorServer) runAndCallback(
 		AttributesSchema:             inputs.AttributesSchema,
 		Attributes:                   inputs.Attributes,
 		ClaimProducers:               inputs.ClaimProducers,
-		CwdFromStore:                 stringOrEmpty(inputs.Attributes["cwd_from_store"]),
+		CwdFromClaimProducer:         stringOrEmpty(inputs.Attributes["cwd_from_claim_producer"]),
 		CwdOverride:                  stringOrEmpty(inputs.Attributes["cwd"]),
 		CliConfig:                    cliConfig,
 		McpAllowlist:                 s.cfg.Opts.McpAllowlist,

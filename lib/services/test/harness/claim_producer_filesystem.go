@@ -19,9 +19,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const storeFilesystemImage = "rimsky-claim-producer-filesystem"
+const claimProducerFilesystemImage = "rimsky-claim-producer-filesystem"
 
-type FilesystemStoreSpec struct {
+type FilesystemClaimProducerSpec struct {
 	PickPolicies         map[string]FilesystemPickPolicy `yaml:"pick_policies"`
 	SweepIntervalSeconds int                             `yaml:"sweep_interval_seconds"`
 	SeedFolders          [][]string
@@ -37,13 +37,13 @@ type FilesystemPickPolicy struct {
 	SyncStrategy             string `yaml:"sync_strategy,omitempty"`
 }
 
-type FilesystemStoreEndpoint struct {
+type FilesystemClaimProducerEndpoint struct {
 	InternalEndpoint string
 	HostDir          string
 	HostHTTPBridge   string
 }
 
-func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias string, spec FilesystemStoreSpec) FilesystemStoreEndpoint {
+func StartFilesystemClaimProducer(ctx context.Context, t testing.TB, networkName, alias string, spec FilesystemClaimProducerSpec) FilesystemClaimProducerEndpoint {
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
@@ -67,10 +67,10 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 		exposedPorts = append(exposedPorts, "9110/tcp")
 	}
 
-	c, err := runWithRetry(ctx, ImageRef(storeFilesystemImage),
+	c, err := runWithRetry(ctx, ImageRef(claimProducerFilesystemImage),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
-			"STORE_FILESYSTEM_CONFIG": "/etc/store/config.yml",
+			"RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG": "/etc/store/config.yml",
 		}),
 		testcontainers.WithExposedPorts(exposedPorts...),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
@@ -86,7 +86,7 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 		),
 	)
 	if err != nil {
-		t.Fatalf("harness: start store-filesystem: %v", err)
+		t.Fatalf("harness: start claim-producer-filesystem: %v", err)
 	}
 	t.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -98,23 +98,23 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 	if spec.AdvertiseHTTPBridge {
 		hostIP, err := c.Host(ctx)
 		if err != nil {
-			t.Fatalf("harness: store-filesystem host: %v", err)
+			t.Fatalf("harness: claim-producer-filesystem host: %v", err)
 		}
 		mapped, err := c.MappedPort(ctx, "9110")
 		if err != nil {
-			t.Fatalf("harness: store-filesystem mapped http port: %v", err)
+			t.Fatalf("harness: claim-producer-filesystem mapped http port: %v", err)
 		}
 		hostHTTPBridge = fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
 	}
 
-	return FilesystemStoreEndpoint{
+	return FilesystemClaimProducerEndpoint{
 		InternalEndpoint: fmt.Sprintf("grpc://%s:9100", uniqueAlias),
 		HostDir:          hostDir,
 		HostHTTPBridge:   hostHTTPBridge,
 	}
 }
 
-func (e FilesystemStoreEndpoint) SeedFolder(t testing.TB, parts ...string) {
+func (e FilesystemClaimProducerEndpoint) SeedFolder(t testing.TB, parts ...string) {
 	t.Helper()
 	all := append([]string{e.HostDir}, parts...)
 	dir := filepath.Join(all...)
@@ -123,7 +123,7 @@ func (e FilesystemStoreEndpoint) SeedFolder(t testing.TB, parts ...string) {
 	}
 }
 
-func renderFilesystemConfig(spec FilesystemStoreSpec, httpBridgeURL string) string {
+func renderFilesystemConfig(spec FilesystemClaimProducerSpec, httpBridgeURL string) string {
 	var b strings.Builder
 	b.WriteString("root: /workspace\n")
 	b.WriteString("host: 0.0.0.0\n")

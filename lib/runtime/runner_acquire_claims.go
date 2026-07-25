@@ -26,9 +26,9 @@ func acquireClaim(
 	ctx context.Context, args RunArgs, instanceID shared.UUID, spec claimproducer.ClaimSpec, cand persistence.Candidate, livenessInterval time.Duration, heldSubgraphs []node.HoldingSubgraph, acquired []AcquiredLock, tx persistence.Tx,
 ) (AcquiredLock, openResult, error) {
 	acquireStart := args.Clock.Now()
-	s, ok := args.StoreRegistry.GetWithContext(ctx, spec.ProducerName, instanceID.String())
+	s, ok := args.ClaimProducerRegistry.GetWithContext(ctx, spec.ProducerName, instanceID.String())
 	if !ok {
-		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: unknown store %q", spec.ProducerName)
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: unknown claim producer %q", spec.ProducerName)
 	}
 	scopeInitial, err := json.Marshal(spec.Selector)
 	if err != nil {

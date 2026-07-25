@@ -110,7 +110,7 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 	})
 	srv := httptest.NewServer(app)
 
-	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
+	h := &harness{srv: srv, driver: d, persist: d.Tables(), producers: reg, logger: capLog}
 	ah := &assetHarness{harness: h, dp: dp, content: contentFake}
 	return ah, func() { srv.Close() }
 }

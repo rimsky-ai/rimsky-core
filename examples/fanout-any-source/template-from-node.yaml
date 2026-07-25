@@ -40,7 +40,7 @@ nodes:
       node's `items` attribute. Subscribes to prefilter so the
       substitution-ref coverage check is satisfied.
     claim_producers:
-      - name: fs-store
+      - name: claim-producer-filesystem
         selector: "@seed-queue"
         intent: rw
         alias: fs_queue

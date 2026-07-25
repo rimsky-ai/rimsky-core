@@ -88,7 +88,7 @@ func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
 		genv1.RegisterValidationServer(s, stubValidationService{})
 	})
 
-	stores := RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
+	producers := RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
 		"producer-peer": {
 			Endpoint:  "grpc://" + cpEndpoint,
 			Protocols: []string{ProtocolClaimProducer, claimproducer.ProtocolValidation},
@@ -110,7 +110,7 @@ func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_, validators, _, closers, err := DialPublisherAndValidationRegistries(ctx, stores, execs, publishers, RemoteValidatorsConfig{}, RemoteDataProcessorsConfig{})
+	_, validators, _, closers, err := DialPublisherAndValidationRegistries(ctx, producers, execs, publishers, RemoteValidatorsConfig{}, RemoteDataProcessorsConfig{})
 	if err != nil {
 		t.Fatalf("DialPublisherAndValidationRegistries: %v", err)
 	}

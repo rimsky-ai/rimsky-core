@@ -18,13 +18,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-func TestClaimProducersRedesignSmoke(t *testing.T) {
+func TestClaimProducersSmoke(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	netName := harness.SharedNetworkName(ctx, t)
 
-	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
-		harness.FilesystemStoreSpec{
+	fs := harness.StartFilesystemClaimProducer(ctx, t, netName, "claim-producer-filesystem",
+		harness.FilesystemClaimProducerSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
 				"@docs-ring": {
 					Root:                     "docs",
@@ -47,7 +47,7 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 
 	templateID := smokeDeployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":    "stores-redesign-smoke",
+			"name":    "claim-producers-smoke",
 			"version": "1",
 			"nodes": []map[string]any{
 				{
@@ -61,7 +61,7 @@ func TestClaimProducersRedesignSmoke(t *testing.T) {
 		},
 	})
 
-	const instanceKey = "stores-redesign-1"
+	const instanceKey = "claim-producers-smoke-1"
 	instanceID := smokeCreateInstance(t, ep, templateID, instanceKey)
 
 	pool, err := pgxpool.New(ctx, ep.HostDSN)

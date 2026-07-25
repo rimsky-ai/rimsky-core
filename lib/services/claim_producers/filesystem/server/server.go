@@ -517,7 +517,7 @@ func classedStatus(err error) error {
 	st := status.New(codes.Internal, ce.Error())
 	withInfo, derr := st.WithDetails(&errdetails.ErrorInfo{
 		Reason: ce.Class,
-		Domain: "rimsky.store-filesystem",
+		Domain: "rimsky.claim-producer-filesystem",
 	})
 	if derr != nil {
 		return st.Err()

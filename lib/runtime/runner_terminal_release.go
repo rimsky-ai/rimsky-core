@@ -79,7 +79,7 @@ func resolveLinkedSubClaimsInTx(
 		if row.ProducerName != nil {
 			producerName = *row.ProducerName
 		}
-		producer, ok := args.StoreRegistry.Get(producerName)
+		producer, ok := args.ClaimProducerRegistry.Get(producerName)
 		if !ok {
 			return nil, fmt.Errorf("resolveLinkedSubClaims: unknown producer %q for sub-claim %s", producerName, row.ID)
 		}

@@ -66,8 +66,8 @@ func TestSubscriberOpenlineage(t *testing.T) {
 	receiverHostPort := hostPortOf(t, marquez.URL)
 
 	netName := harness.SharedNetworkName(ctx, t)
-	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
-		harness.FilesystemStoreSpec{
+	fs := harness.StartFilesystemClaimProducer(ctx, t, netName, "claim-producer-filesystem",
+		harness.FilesystemClaimProducerSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
 				"@docs-ring": {
 					Root:                     "docs",

@@ -74,11 +74,11 @@ func TestSettleFromFanoutChild_ChildOwnAttributesNeverAggregateOntoParentBag(t *
 	store.CommitResult = claimproducer.CommitResult{ProducerMetadata: []byte("producer-metadata-marker")}
 	reg.Add("no-aggregate-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-no-agg",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-no-agg",
 	}
 	args = withSyncVerbFlush(args)
 

@@ -159,7 +159,7 @@ linters-settings:
       # real assembled product and drive real CLI entrypoints (cmd/rimsky/cli)
       # in-process against it. That test scaffolding is exempt from the
       # isolation rule (the negated `**/test/**` globs below) — the boundary
-      # exists to keep the SHIPPED bundled-service packages (stores/, sensors/,
+      # exists to keep the SHIPPED bundled-service packages (claim_producers/, sensors/,
       # subscribers/, executors/) isolated, not the harness/scenario tree.
       consumption-side-isolation:
         list-mode: lax

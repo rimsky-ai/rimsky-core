@@ -186,7 +186,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		MaxQuietPeriodDefault:       cfg.MaxQuietPeriodDefault,
 		MaxRuntimeDefault:           cfg.MaxRuntimeDefault,
 		Resolver:                    cfg.Resolver,
-		StoreRegistry:               registry,
+		ClaimProducerRegistry:       registry,
 		NamedLocks:                  cfg.NamedLocks,
 		CallbackHost:                cfg.CallbackHost,
 		CallbackPort:                cfg.CallbackPort,

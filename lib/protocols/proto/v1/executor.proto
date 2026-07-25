@@ -72,7 +72,7 @@ message ExecuteRequest {
   string cancel_token = 9;
 
   // Reserved (was: bool resumed = 10). Under stores-redesign-v2 resume
-  // is universal — the store detects resumed-vs-fresh internally
+  // is universal — the claim producer detects resumed-vs-fresh internally
   // by lookup against its own state, keyed by the lock-holder identity.
   // The supervisor no longer threads a resumed flag through the wire.
   reserved 10;

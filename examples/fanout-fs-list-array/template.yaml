@@ -18,7 +18,7 @@
 # Stack prerequisites (operator-side):
 #   - rimsky stack reachable at RIMSKY_ENDPOINT
 #   - bundled `rimsky-claim-producer-filesystem` registered as claim producer
-#     `fs-store` in rimsky.yml advertising supports_split_scope=true
+#     `claim-producer-filesystem` in rimsky.yml advertising supports_split_scope=true
 #     and a pick policy `@seed-queue` over a seed root containing one
 #     pre-seeded folder (see seed/queue/example-job/.gitkeep)
 #   - bundled `attribute_passthrough` inproc executor available
@@ -52,7 +52,7 @@ nodes:
       shape and emits one SubScopeDescriptor per element; rimsky
       acquires one sub-claim and dispatches one child per element.
     claim_producers:
-      - name: fs-store
+      - name: claim-producer-filesystem
         selector: "@seed-queue"
         intent: rw
         alias: fs_queue

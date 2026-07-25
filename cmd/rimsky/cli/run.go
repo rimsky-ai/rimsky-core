@@ -158,7 +158,8 @@ func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf 
 	}
 
 	c := NewClient(endpoint)
-	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
+	apiKey := common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY"))
+	c.SetAPIKey(apiKey)
 
 	var hash string
 	if rf.TemplateName != "" {
@@ -191,6 +192,7 @@ func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf 
 	}
 
 	body := CreateInstanceRequest{Template: hash, Params: rf.Params}
+	body.TargetAgent = ResolveTargetAgent("", apiKey)
 	if rf.Key != "" {
 		key := rf.Key
 		body.InstanceKey = &key

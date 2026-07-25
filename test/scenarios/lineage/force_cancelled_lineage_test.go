@@ -40,12 +40,12 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	})
 	reg.Add("cancel-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-FC",
-		Clock:         shared.SystemClock{},
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-FC",
+		Clock:                 shared.SystemClock{},
 	}
 
 	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentNodeRunID, parentNodeID, frameID,

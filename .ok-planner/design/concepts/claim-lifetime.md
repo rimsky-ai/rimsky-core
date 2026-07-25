@@ -11,7 +11,7 @@ aliases: []
 A per-claim property selecting subgraph or durable lifetime. Governs auto-terminal behavior:
 
 - **subgraph** (default) — auto-terminal fires Commit (all-success) or Abandon (any-failed) at holding-subgraph completion; the claim handle row is **promoted** to a committed (or abandoned) state and preserved for forensics. The retention sweep reaps the row after the configured trailing window elapses.
-- **durable** — auto-terminal still fires Commit (or Abandon); on success, the claim handle row is promoted to a committed state and is **exempt from the retention sweep** (asset surface). The handle is available for future dispatches to co-hold and for asset-presentation queries. Released only by explicit operator action (the asset-delete endpoint) or instance termination (`ReleaseCommittedDurableClaims`, which releases every committed-durable handle of the instance, held or not); Release goes through the absence-guarded resolved-row delete path (no promotion → already non-active when Release fires).
+- **durable** — auto-terminal still fires Commit (or Abandon); on success, the claim handle row is promoted to a committed state and is **exempt from the retention sweep** (asset surface). The handle is available for future dispatches to co-hold and for asset-presentation queries. Released only by explicit operator action (the asset-delete endpoint) or instance termination, which releases every committed-durable claim handle of the instance, held or not; Release goes through the absence-guarded resolved-row delete path (no promotion → already non-active when Release fires).
 
 ## Boundaries
 

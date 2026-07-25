@@ -31,7 +31,7 @@ type Config struct {
 	ClaimHandles            persistence.ClaimHandleTable
 	SupervisorID            string
 	ParkedSweepInterval     time.Duration
-	StoreRegistry           *locks.Registry
+	ClaimProducerRegistry   *locks.Registry
 	LifecycleSubs           *lifecycle.Registry
 	LifecyclePeersForSpec   func(tplSpec node.TemplateSpec) []string
 	BlobBackend             persistence.BlobBackend

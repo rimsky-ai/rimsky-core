@@ -253,8 +253,8 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				peer.Capabilities.ExpectedAttributesSchema,
 				true
 		},
-		StoreDeclaredErrorClasses: func(storeName string) ([]string, bool) {
-			peer, ok := disc.GetClaimProducer(storeName)
+		ClaimProducerDeclaredErrorClasses: func(producerName string) ([]string, bool) {
+			peer, ok := disc.GetClaimProducer(producerName)
 			if !ok || peer.Capabilities == nil {
 				return nil, false
 			}

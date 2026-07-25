@@ -18,7 +18,7 @@ COPY . .
 RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./claim_producers/filesystem/cmd
 
 FROM gcr.io/distroless/static:nonroot
-COPY --from=builder /out/app /usr/local/bin/store-filesystem
+COPY --from=builder /out/app /usr/local/bin/claim-producer-filesystem
 USER nonroot
 EXPOSE 9100 9110
-ENTRYPOINT ["/usr/local/bin/store-filesystem"]
+ENTRYPOINT ["/usr/local/bin/claim-producer-filesystem"]

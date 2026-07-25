@@ -66,7 +66,7 @@ func CheckAndFireResolution(
 	if row.ProducerName != nil {
 		producerName = *row.ProducerName
 	}
-	producer, ok := args.StoreRegistry.Get(producerName)
+	producer, ok := args.ClaimProducerRegistry.Get(producerName)
 	if !ok {
 		return nil, fmt.Errorf("CheckAndFireResolution: unknown producer %q", producerName)
 	}

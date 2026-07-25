@@ -39,12 +39,12 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 	})
 	reg.Add("postmortem-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-PM",
-		Clock:         shared.SystemClock{},
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-PM",
+		Clock:                 shared.SystemClock{},
 	}
 
 	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentNodeRunID, parentNodeID, frameID,

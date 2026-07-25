@@ -63,7 +63,7 @@ func AcquireSubClaims(
 		return nil, fmt.Errorf("AcquireSubClaims: ParentIntent must be set (got empty); "+
 			"caller must thread the parent claim's intent (producer=%q)", in.ProducerName)
 	}
-	producer, ok := args.StoreRegistry.GetWithContext(ctx, in.ProducerName, in.InstanceID.String())
+	producer, ok := args.ClaimProducerRegistry.GetWithContext(ctx, in.ProducerName, in.InstanceID.String())
 	if !ok {
 		return nil, fmt.Errorf("AcquireSubClaims: unknown producer %q", in.ProducerName)
 	}

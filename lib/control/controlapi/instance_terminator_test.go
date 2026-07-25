@@ -55,7 +55,7 @@ func newTerminatorFixture(t *testing.T) *terminatorFixture {
 	}
 }
 
-func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string, withTemplate bool) (templateHash string, instanceID uuid.UUID) {
+func seedTerminatedInstance(t *testing.T, f *terminatorFixture, producerName string, withTemplate bool) (templateHash string, instanceID uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -64,7 +64,7 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 		Name: "term-test", Version: "v1",
 		Nodes: []node.TemplateNodeDef{{
 			Type:           "n1",
-			ClaimProducers: []node.NodeClaimProducerRef{{Name: storeName, Selector: "x", Intent: "r"}},
+			ClaimProducers: []node.NodeClaimProducerRef{{Name: producerName, Selector: "x", Intent: "r"}},
 		}},
 	}
 	instanceID = uuid.New()
@@ -106,7 +106,7 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 			return err
 		}
 		return f.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			ClaimProducerName: storeName,
+			ClaimProducerName: producerName,
 			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
 			ScopeID:           instanceID.String(),
 			State:             persistence.LifecycleIdempotencyStateCreated,

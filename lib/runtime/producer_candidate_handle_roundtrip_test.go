@@ -60,7 +60,7 @@ func TestCheckAndFireResolution_ProducerCandidateHandleRoundTripsFromDBToDataPro
 	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
-	storeName := "workspace"
+	producerName := "workspace"
 	intent := "rw"
 	claimHandleID := shared.UUID(uuid.New())
 	persistedCandidateHandle := []byte("db-persisted-candidate-handle-6f21a8")
@@ -69,7 +69,7 @@ func TestCheckAndFireResolution_ProducerCandidateHandleRoundTripsFromDBToDataPro
 		insertBytes := append([]byte(nil), persistedCandidateHandle...)
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"scope"`), Address: []byte(`"addr"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"scope"`), Address: []byte(`"addr"`),
 			Intent:                  &intent,
 			HolderSupervisorID:      "sup-A",
 			HolderNodeID:            acqNode.ID,
@@ -90,12 +90,12 @@ func TestCheckAndFireResolution_ProducerCandidateHandleRoundTripsFromDBToDataPro
 	}))
 
 	args := runtime.RunArgs{
-		Persist:        backend,
-		ClaimHandles:   backend.ClaimHandles(),
-		StoreRegistry:  reg,
-		DataProcessors: dpReg,
-		Logger:         shared.SilentLogger{},
-		SupervisorID:   "sup-A",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		DataProcessors:        dpReg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-A",
 	}
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)

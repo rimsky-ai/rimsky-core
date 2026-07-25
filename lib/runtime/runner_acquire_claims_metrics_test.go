@@ -114,15 +114,15 @@ func TestAcquireClaim_ProducerCallErrorOnOpenRecordsErroredMetrics(t *testing.T)
 
 	spy := &acquisitionMetricsSpy{}
 	args := RunArgs{
-		Persist:        tables,
-		Queue:          d.Queue(),
-		AdvisoryLocker: d.AdvisoryLocker(),
-		ClaimHandles:   tables.ClaimHandles(),
-		StoreRegistry:  reg,
-		Clock:          shared.SystemClock{},
-		Logger:         shared.SilentLogger{},
-		SupervisorID:   supMe,
-		Metrics:        spy,
+		Persist:               tables,
+		Queue:                 d.Queue(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		ClaimHandles:          tables.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          supMe,
+		Metrics:               spy,
 	}
 	spec := claimproducer.ClaimSpec{ProducerName: producer, Selector: "/errored-open-selector", Intent: "rw", Alias: "data"}
 	cand := persistence.Candidate{NodeRunID: runID, NodeID: nodeID, NodeType: "worker"}

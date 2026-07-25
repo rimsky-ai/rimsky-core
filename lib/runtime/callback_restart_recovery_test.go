@@ -33,11 +33,11 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "cbk-store"
+	const producerName = "cbk-store"
 	const supID = "sup-CBK"
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -48,16 +48,16 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	clk := newTickClock(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC))
 	seedArgs := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  supID,
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          supID,
 	}
 
 	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
@@ -95,12 +95,12 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope"`)
 	intent := "rw"
-	producerName := storeName
+	producerNameRef := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     parentScope,
 			Address:            json.RawMessage(`"parent-addr"`),
 			Intent:             &intent,
@@ -115,7 +115,7 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, seedArgs, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			NodeRunID:           leafNodeRunID,
 			HolderNodeID:        leafNode.ID,
 			HolderSupervisorID:  supID,
@@ -146,15 +146,15 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 	}))
 
 	cb := &runtime.CallbackServer{
-		Registry:       runtime.NewCallbackRegistry(),
-		Persist:        backend,
-		Queue:          d.Queue(),
-		AdvisoryLocker: d.AdvisoryLocker(),
-		ClaimHandles:   backend.ClaimHandles(),
-		StoreRegistry:  reg,
-		Clock:          clk,
-		Logger:         shared.SilentLogger{},
-		SupervisorID:   supID,
+		Registry:              runtime.NewCallbackRegistry(),
+		Persist:               backend,
+		Queue:                 d.Queue(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Clock:                 clk,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          supID,
 	}
 	cb.ProducerVerbKick = func() {
 		_, _ = runtime.FlushProducerVerbOutbox(context.Background(), seedArgs)
@@ -203,7 +203,7 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 
 	require.NotNil(t, subRow)
 	require.Equal(t, spec.ClaimHandleStateCommitted, subRow.State,
-		"resolveLinkedSubClaimsInTx must commit the parented sub-claim through the reconstructed StoreRegistry")
+		"resolveLinkedSubClaimsInTx must commit the parented sub-claim through the reconstructed ClaimProducerRegistry")
 	require.NotNil(t, parentRow)
 	require.Equal(t, spec.ClaimHandleStateCommitted, parentRow.State,
 		"the sub-claim's settlement must aggregate up and commit the parent claim")

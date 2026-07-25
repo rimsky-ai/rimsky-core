@@ -63,7 +63,7 @@ echo "messages-as-nodes: valid template deployed"
 
 INSTANCE_KEY="man-$( date +%s )-$$"
 INSTANCE_OUT="$( curl -sS -X POST -H 'Content-Type: application/json' \
-    --data "{\"template\": \"${VALID_TID}\", \"instance_key\": \"${INSTANCE_KEY}\"}" \
+    --data "{\"template\": \"${VALID_TID}\", \"instance_key\": \"${INSTANCE_KEY}\", \"target_agent\": \"demo-agent\"}" \
     "${RIMSKY_ENDPOINT}/v1/instances" )"
 INSTANCE_ID="$( echo "${INSTANCE_OUT}" | jq -r '.instance_id' )"
 if [ -z "${INSTANCE_ID}" ] || [ "${INSTANCE_ID}" = "null" ]; then

@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package stores
+package claimproducers
 
 import (
 	"testing"
@@ -71,7 +71,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 		Queue:                  h.Queue,
 		ClaimHandles:           h.Persist.ClaimHandles(),
 		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-		StoreRegistry:          reg,
+		ClaimProducerRegistry:  reg,
 		Clock:                  shared.SystemClock{},
 		Logger:                 shared.SilentLogger{},
 		SupervisorID:           "scenario-runner-scope",

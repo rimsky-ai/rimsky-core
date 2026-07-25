@@ -13,7 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/runner"
 )
 
-const serviceName = "store-filesystem"
+const serviceName = "claim-producer-filesystem"
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))

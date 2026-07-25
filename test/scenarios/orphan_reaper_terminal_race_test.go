@@ -86,13 +86,13 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 		chID:     chID,
 		owner:    owner,
 		args: runtime.RunArgs{
-			Persist:       h.Persist,
-			Queue:         h.Queue,
-			ClaimHandles:  h.Persist.ClaimHandles(),
-			StoreRegistry: registry,
-			Clock:         shared.SystemClock{},
-			Logger:        shared.SilentLogger{},
-			SupervisorID:  owner,
+			Persist:               h.Persist,
+			Queue:                 h.Queue,
+			ClaimHandles:          h.Persist.ClaimHandles(),
+			ClaimProducerRegistry: registry,
+			Clock:                 shared.SystemClock{},
+			Logger:                shared.SilentLogger{},
+			SupervisorID:          owner,
 		},
 	}
 }

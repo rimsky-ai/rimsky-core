@@ -19,23 +19,23 @@ import (
 )
 
 type fakeProber struct {
-	mu                 sync.Mutex
-	executorErr        error
-	storeErr           error
-	executorCaps       *ObservabilityCapabilities
-	storeCaps          *ObservabilityCapabilities
-	storeClasses       []string
-	storeClassErr      error
-	probeAttempts      atomic.Int64
-	executorTLSModes   []string
-	storeTLSModes      []string
-	storeClassTLSModes []string
+	mu                    sync.Mutex
+	executorErr           error
+	producerErr           error
+	executorCaps          *ObservabilityCapabilities
+	producerCaps          *ObservabilityCapabilities
+	producerClasses       []string
+	producerClassErr      error
+	probeAttempts         atomic.Int64
+	executorTLSModes      []string
+	producerTLSModes      []string
+	producerClassTLSModes []string
 }
 
 func newFakeProber() *fakeProber {
 	f := &fakeProber{
 		executorCaps: &ObservabilityCapabilities{SupportsTraceGet: true, RetentionAfterTerminalSeconds: 60},
-		storeCaps:    &ObservabilityCapabilities{SupportsClaimGet: true, RetentionAfterTerminalSeconds: 60},
+		producerCaps: &ObservabilityCapabilities{SupportsClaimGet: true, RetentionAfterTerminalSeconds: 60},
 	}
 	return f
 }
@@ -61,21 +61,21 @@ func (f *fakeProber) ProbeClaimProducer(_ context.Context, _, _, tlsMode string)
 	f.probeAttempts.Add(1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.storeTLSModes = append(f.storeTLSModes, tlsMode)
-	if f.storeErr != nil {
-		return nil, f.storeErr
+	f.producerTLSModes = append(f.producerTLSModes, tlsMode)
+	if f.producerErr != nil {
+		return nil, f.producerErr
 	}
-	return f.storeCaps, nil
+	return f.producerCaps, nil
 }
 
 func (f *fakeProber) ProbeClaimProducerDeclaredErrorClasses(_ context.Context, _, _, tlsMode string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.storeClassTLSModes = append(f.storeClassTLSModes, tlsMode)
-	if f.storeClassErr != nil {
-		return nil, f.storeClassErr
+	f.producerClassTLSModes = append(f.producerClassTLSModes, tlsMode)
+	if f.producerClassErr != nil {
+		return nil, f.producerClassErr
 	}
-	return f.storeClasses, nil
+	return f.producerClasses, nil
 }
 
 func TestRunHandshake_ReachableExecutor(t *testing.T) {
@@ -97,9 +97,9 @@ func TestRunHandshake_ReachableExecutor(t *testing.T) {
 	}
 }
 
-func TestRunHandshake_StoreDeclaredErrorClasses(t *testing.T) {
+func TestRunHandshake_ClaimProducerDeclaredErrorClasses(t *testing.T) {
 	prober := newFakeProber()
-	prober.storeClasses = []string{"pg/claim_unavailable", "pg/swap_failed"}
+	prober.producerClasses = []string{"pg/claim_unavailable", "pg/swap_failed"}
 	disc := RunHandshake(context.Background(), prober,
 		nil,
 		[]PeerSpec{{Name: "items-store", Endpoint: "items-store:9090"}},
@@ -120,10 +120,10 @@ func TestRunHandshake_StoreDeclaredErrorClasses(t *testing.T) {
 	}
 }
 
-func TestRunHandshake_StoreDeclaredErrorClasses_ObsUnreachable(t *testing.T) {
+func TestRunHandshake_ClaimProducerDeclaredErrorClasses_ObsUnreachable(t *testing.T) {
 	prober := newFakeProber()
-	prober.storeErr = errors.New("obs endpoint unreachable")
-	prober.storeClasses = []string{"pg/claim_unavailable"}
+	prober.producerErr = errors.New("obs endpoint unreachable")
+	prober.producerClasses = []string{"pg/claim_unavailable"}
 	disc := RunHandshake(context.Background(), prober,
 		nil,
 		[]PeerSpec{{Name: "items-store", Endpoint: "items-store:9090"}},
@@ -276,20 +276,20 @@ func TestRunHandshake_ThreadsTLSMode(t *testing.T) {
 			t.Fatalf("executor probe received tlsMode %q, want required", m)
 		}
 	}
-	if len(prober.storeTLSModes) == 0 {
-		t.Fatalf("store probe never called")
+	if len(prober.producerTLSModes) == 0 {
+		t.Fatalf("claim-producer probe never called")
 	}
-	for _, m := range prober.storeTLSModes {
+	for _, m := range prober.producerTLSModes {
 		if m != "required" {
-			t.Fatalf("store probe received tlsMode %q, want required", m)
+			t.Fatalf("claim-producer probe received tlsMode %q, want required", m)
 		}
 	}
-	if len(prober.storeClassTLSModes) == 0 {
-		t.Fatalf("store declared-error-classes probe never called")
+	if len(prober.producerClassTLSModes) == 0 {
+		t.Fatalf("claim-producer declared-error-classes probe never called")
 	}
-	for _, m := range prober.storeClassTLSModes {
+	for _, m := range prober.producerClassTLSModes {
 		if m != "required" {
-			t.Fatalf("store declared-error-classes probe received tlsMode %q, want required", m)
+			t.Fatalf("claim-producer declared-error-classes probe received tlsMode %q, want required", m)
 		}
 	}
 }

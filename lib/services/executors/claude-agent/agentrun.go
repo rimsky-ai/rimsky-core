@@ -85,7 +85,7 @@ type AgentRunOptions struct {
 	AttributesSchema             map[string]any
 	Attributes                   map[string]any
 	ClaimProducers               map[string]any
-	CwdFromStore                 string
+	CwdFromClaimProducer         string
 	CwdOverride                  string
 	CliConfig                    *CliConfig
 	McpAllowlist                 Allowlist
@@ -240,7 +240,7 @@ func runAgentReal(opts AgentRunOptions) AgentOutcome {
 		toolUseTimeoutMs = *cliConfig.ToolUseTimeoutMs
 	}
 
-	cwd, cwdErr := resolveCwd(opts.ClaimProducers, opts.CwdFromStore, opts.CwdOverride)
+	cwd, cwdErr := resolveCwd(opts.ClaimProducers, opts.CwdFromClaimProducer, opts.CwdOverride)
 	if cwdErr != "" {
 		return erroredOutcome("agent/attribute_invalid", map[string]any{"error": cwdErr})
 	}
@@ -1000,21 +1000,21 @@ func autoAllow(name string, allowedTools []string) []string {
 	return []string{"mcp__" + name}
 }
 
-func resolveCwd(claimProducers map[string]any, cwdFromStore string, cwdOverride string) (cwd string, errMessage string) {
-	if cwdFromStore != "" {
-		handleEntry, ok := claimProducers[cwdFromStore].(map[string]any)
+func resolveCwd(claimProducers map[string]any, cwdFromClaimProducer string, cwdOverride string) (cwd string, errMessage string) {
+	if cwdFromClaimProducer != "" {
+		handleEntry, ok := claimProducers[cwdFromClaimProducer].(map[string]any)
 		if !ok {
-			return "", fmt.Sprintf("cwd_from_store: no claim_producer handle named %q in ExecuteRequest.claim_producers", cwdFromStore)
+			return "", fmt.Sprintf("cwd_from_claim_producer: no claim_producer handle named %q in ExecuteRequest.claim_producers", cwdFromClaimProducer)
 		}
 		handle, ok := handleEntry["handle"].(map[string]any)
 		if !ok {
-			return "", fmt.Sprintf("cwd_from_store: store %q has no handle struct", cwdFromStore)
+			return "", fmt.Sprintf("cwd_from_claim_producer: claim producer %q has no handle struct", cwdFromClaimProducer)
 		}
 		address, ok := handle["address"].(string)
 		if !ok || address == "" {
-			return "", fmt.Sprintf("cwd_from_store: store %q address is not a non-empty string (got %T)", cwdFromStore, handle["address"])
+			return "", fmt.Sprintf("cwd_from_claim_producer: claim producer %q address is not a non-empty string (got %T)", cwdFromClaimProducer, handle["address"])
 		}
-		return validateDirectory(address, fmt.Sprintf("cwd_from_store(%s)", cwdFromStore))
+		return validateDirectory(address, fmt.Sprintf("cwd_from_claim_producer(%s)", cwdFromClaimProducer))
 	}
 	if cwdOverride != "" {
 		return validateDirectory(cwdOverride, "cwd")

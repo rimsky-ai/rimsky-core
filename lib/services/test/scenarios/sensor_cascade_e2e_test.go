@@ -280,6 +280,7 @@ func createSensorCascadeInstance(t *testing.T, ep harness.RimskyEndpoint, templa
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
+		"target_agent": "scenario-default-agent",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST /instances: %d %s", status, string(raw))

@@ -133,7 +133,7 @@ func waitAgentConnected(t *testing.T, statusFile string) {
 type fixtureOpts struct {
 	withAgent  bool
 	blindProxy bool
-	stores     config.RemoteClaimProducersConfig
+	producers  config.RemoteClaimProducersConfig
 	anonymous  bool
 }
 
@@ -153,7 +153,7 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		},
 		LateBindServiceProxies: map[string]string{"executor": proxyExecutorName},
 		ExecutorProtocols:      map[string][]string{proxyExecutorName: execProtocols},
-		ClaimProducers:         opts.stores,
+		ClaimProducers:         opts.producers,
 	})
 
 	var adminKey, agentAPIKey, routingLabel string

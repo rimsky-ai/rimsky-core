@@ -212,7 +212,7 @@ func TestValidateErrorTypes_AcceptsProducerDeclaredClass(t *testing.T) {
 		ExecutorDeclared:             func(string) bool { return true },
 		StoreDeclared:                func(string) bool { return true },
 		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
-		StoreDeclaredErrorClasses: func(name string) ([]string, bool) {
+		ClaimProducerDeclaredErrorClasses: func(name string) ([]string, bool) {
 			if name == "items-store" {
 				return []string{"pg/claim_unavailable", "pg/swap_failed"}, true
 			}
@@ -241,7 +241,7 @@ func TestValidateErrorTypes_ProducerClassUnreachableFromNode(t *testing.T) {
 	hooks := RegistryHooks{
 		ExecutorDeclared:             func(string) bool { return true },
 		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
-		StoreDeclaredErrorClasses: func(string) ([]string, bool) {
+		ClaimProducerDeclaredErrorClasses: func(string) ([]string, bool) {
 			return []string{"pg/claim_unavailable"}, true
 		},
 	}

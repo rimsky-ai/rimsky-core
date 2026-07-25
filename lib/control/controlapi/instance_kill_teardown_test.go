@@ -248,7 +248,7 @@ func TestTerminateInstance_ClosesNestedScopeTreeChildrenFirst(t *testing.T) {
 		require.NotNil(t, closed, "terminate must close run scope %s (nested scopes included)", scopeID)
 	}
 
-	contentFake, ok := h.stores.Get("content")
+	contentFake, ok := h.producers.Get("content")
 	require.True(t, ok)
 	fake := contentFake.(*storetest.Fake)
 	seqByScope := map[string]int{}
@@ -332,15 +332,15 @@ func TestTerminateInstance_AbandonsActiveClaimThroughProducer(t *testing.T) {
 	require.Equal(t, spec.ClaimHandleStateAbandoned, handle.State)
 
 	_, ferr := runtime.FlushProducerVerbOutbox(ctx, runtime.RunArgs{
-		Persist:       h.persist,
-		ClaimHandles:  h.persist.ClaimHandles(),
-		StoreRegistry: h.stores,
-		Logger:        shared.SilentLogger{},
-		Clock:         shared.SystemClock{},
+		Persist:               h.persist,
+		ClaimHandles:          h.persist.ClaimHandles(),
+		ClaimProducerRegistry: h.producers,
+		Logger:                shared.SilentLogger{},
+		Clock:                 shared.SystemClock{},
 	})
 	require.NoError(t, ferr)
 
-	contentFake, ok := h.stores.Get("content")
+	contentFake, ok := h.producers.Get("content")
 	require.True(t, ok)
 	fake := contentFake.(*storetest.Fake)
 	abandoned := false

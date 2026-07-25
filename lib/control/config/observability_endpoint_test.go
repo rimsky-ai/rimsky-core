@@ -60,14 +60,14 @@ persistence:
     path: /tmp/rimsky.db
 claim_producers:
   topics-ring:
-    endpoint: store-postgres:9101
-    observability_endpoint: store-postgres:9102
+    endpoint: claim-producer-postgres:9101
+    observability_endpoint: claim-producer-postgres:9102
     write_semantics_allowed: [sync]
 `
 	cfg := mustLoadCfg(t, yamlBody)
 	s := cfg.ClaimProducers.ClaimProducers["topics-ring"]
-	if s.ObservabilityEndpoint != "store-postgres:9102" {
-		t.Fatalf("ObservabilityEndpoint = %q, want store-postgres:9102", s.ObservabilityEndpoint)
+	if s.ObservabilityEndpoint != "claim-producer-postgres:9102" {
+		t.Fatalf("ObservabilityEndpoint = %q, want claim-producer-postgres:9102", s.ObservabilityEndpoint)
 	}
 }
 

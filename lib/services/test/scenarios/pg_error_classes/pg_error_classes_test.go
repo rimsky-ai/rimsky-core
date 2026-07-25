@@ -34,15 +34,15 @@ func testClaimUnavailableDelivered(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.SharedNetworkName(ctx, t)
-	substrate := harness.StartPostgresOnNetwork(ctx, t, netName, "store-pg")
+	substrate := harness.StartPostgresOnNetwork(ctx, t, netName, "substrate-pg")
 	pool := dialSubstrate(ctx, t, substrate.HostDSN)
 
 	createItemsTable(t, pool, queueItemsTable)
 
-	storeEndpoint := harness.StartPostgresStore(ctx, t, netName, "store-postgres", harness.PostgresStoreSpec{
+	producerEndpoint := harness.StartPostgresClaimProducer(ctx, t, netName, "claim-producer-postgres", harness.PostgresClaimProducerSpec{
 		Connection:     substrate.InternalDSN,
 		WriteSemantics: "sync",
-		PickPolicies: map[string]harness.PostgresStorePickPolicy{
+		PickPolicies: map[string]harness.PostgresPickPolicy{
 			queueSelector: {
 				ItemsTable:               queueItemsTable,
 				OnCommit:                 "pop",
@@ -56,7 +56,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
-		harness.WithClaimProducer("queue-store", storeEndpoint, "sync"),
+		harness.WithClaimProducer("queue-store", producerEndpoint, "sync"),
 		harness.WithExecutor("stub", execEndpoint),
 	)
 
@@ -105,12 +105,12 @@ func testNotReplaceableDelivered(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.SharedNetworkName(ctx, t)
-	substrate := harness.StartPostgresOnNetwork(ctx, t, netName, "store-pg")
+	substrate := harness.StartPostgresOnNetwork(ctx, t, netName, "substrate-pg")
 	pool := dialSubstrate(ctx, t, substrate.HostDSN)
 
 	seedSwapCollision(t, pool, canonicalSchema)
 
-	storeEndpoint := harness.StartPostgresStore(ctx, t, netName, "store-postgres", harness.PostgresStoreSpec{
+	producerEndpoint := harness.StartPostgresClaimProducer(ctx, t, netName, "claim-producer-postgres", harness.PostgresClaimProducerSpec{
 		Connection:     substrate.InternalDSN,
 		WriteSemantics: "staged_async",
 		EnableExecutor: true,
@@ -120,7 +120,7 @@ func testNotReplaceableDelivered(t *testing.T) {
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
-		harness.WithClaimProducer("staged-store", storeEndpoint, "staged_async"),
+		harness.WithClaimProducer("staged-store", producerEndpoint, "staged_async"),
 		harness.WithExecutor("stub", execEndpoint),
 	)
 

@@ -211,7 +211,7 @@ core-images:
 	$(call build-image,dockerfiles/Dockerfile.go-base,rimsky-host-agent-proxy,--build-arg BINARY=rimsky-host-agent-proxy)
 	$(call build-image,dockerfiles/Dockerfile.conformance,rimsky-conformance)
 
-# Bundled-service images: the consumption-side services (stores, sensors,
+# Bundled-service images: the consumption-side services (claim producers, sensors,
 # subscribers, executors) shipped by rimsky as images. Each Dockerfile lives
 # co-located with its service under lib/services/; the build context is the
 # repo root so the build can reach lib/protocols + lib/services + go.work
@@ -245,6 +245,7 @@ test-images: service-images
 	$(call build-test-image,lib/services/test/overlapproducer/Dockerfile.overlapproducer,rimsky-test/overlapproducer)
 	$(call build-test-image,examples/claimproducer/Dockerfile.example,rimsky-example/claim-producer)
 	$(call build-test-image,examples/validation/Dockerfile.example,rimsky-example/validation)
+	$(call build-test-image,examples/park-resume/Dockerfile.example,rimsky-example/park-ratelimiter)
 	$(call build-test-image,lib/services/test/testrunner/Dockerfile.test-runner,rimsky-test/test-runner)
 
 # In-stack execution path per the ratified image-freshness mechanism: the

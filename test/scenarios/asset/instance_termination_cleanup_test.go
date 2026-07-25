@@ -61,11 +61,11 @@ func TestInstanceTerminationCleanup_PreservesFailedReleaseForRetry(t *testing.T)
 	}))
 
 	reg := locks.NewRegistry()
-	storeName := "workspace"
-	stubStore := storetest.NewFake(storeName, claimproducer.Capabilities{
+	producerName := "workspace"
+	stubStore := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
-	reg.Add(storeName, stubStore)
+	reg.Add(producerName, stubStore)
 
 	intent := "rw"
 	okClaimID := shared.UUID(uuid.New())
@@ -74,7 +74,7 @@ func TestInstanceTerminationCleanup_PreservesFailedReleaseForRetry(t *testing.T)
 		for _, id := range []shared.UUID{okClaimID, failClaimID} {
 			if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 				ID: id, LockKind: persistence.LockKindScope,
-				ProducerName: &storeName, ClaimScopeData: []byte(`"durable-` + id.String() + `"`), Address: []byte(`"durable-addr"`),
+				ProducerName: &producerName, ClaimScopeData: []byte(`"durable-` + id.String() + `"`), Address: []byte(`"durable-addr"`),
 				Intent:             &intent,
 				HolderSupervisorID: "sup-cleanup", HolderNodeID: acqNode.ID,
 				ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -101,12 +101,12 @@ func TestInstanceTerminationCleanup_PreservesFailedReleaseForRetry(t *testing.T)
 
 	clock := shared.NewControllableClock(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-cleanup",
-		Clock:         clock,
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-cleanup",
+		Clock:                 clock,
 	}
 	var report runtime.CommittedDurableReleaseReport
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -209,18 +209,18 @@ func TestInstanceTerminationCleanup_DeleteResolvedFailureAbortsWithoutOrphaningT
 	}))
 
 	reg := locks.NewRegistry()
-	storeName := "workspace"
-	stubStore := storetest.NewFake(storeName, claimproducer.Capabilities{
+	producerName := "workspace"
+	stubStore := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
-	reg.Add(storeName, stubStore)
+	reg.Add(producerName, stubStore)
 
 	intent := "rw"
 	claimID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"durable-` + claimID.String() + `"`), Address: []byte(`"durable-addr"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"durable-` + claimID.String() + `"`), Address: []byte(`"durable-addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-cleanup-delfail", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -241,12 +241,12 @@ func TestInstanceTerminationCleanup_DeleteResolvedFailureAbortsWithoutOrphaningT
 
 	clock := shared.NewControllableClock(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  failingHandles,
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-cleanup-delfail",
-		Clock:         clock,
+		Persist:               backend,
+		ClaimHandles:          failingHandles,
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-cleanup-delfail",
+		Clock:                 clock,
 	}
 	txErr := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := runtime.ReleaseCommittedDurableClaims(ctx, args, instID, shared.SilentLogger{}, tx)

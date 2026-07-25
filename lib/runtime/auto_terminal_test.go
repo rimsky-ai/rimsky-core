@@ -199,13 +199,13 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	inhRunID := seedRunForNode(ctx, t, backend, d.Queue(), inhNode.ID, frameID)
 
-	storeName := "workspace"
+	producerName := "workspace"
 	intent := "rw"
 	claimHandleID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-A", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -234,11 +234,11 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	}))
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-A",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-A",
 	}
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
@@ -338,13 +338,13 @@ func TestCheckAndFireResolution_TransientInstancesLookupErrorPropagates(t *testi
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	inhRunID := seedRunForNode(ctx, t, backend, d.Queue(), inhNode.ID, frameID)
 
-	storeName := "workspace-inst-err"
+	producerName := "workspace-inst-err"
 	intent := "rw"
 	claimHandleID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-IE", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -374,11 +374,11 @@ func TestCheckAndFireResolution_TransientInstancesLookupErrorPropagates(t *testi
 
 	injectedErr := errors.New("simulated transient instances-lookup failure")
 	args := runtime.RunArgs{
-		Persist:       errInstancesTables{Tables: backend, err: injectedErr},
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-IE",
+		Persist:               errInstancesTables{Tables: backend, err: injectedErr},
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-IE",
 	}
 	args = withSyncVerbFlush(args)
 	err := backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -439,13 +439,13 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
-	storeName := "workspace"
+	producerName := "workspace"
 	intent := "rw"
 	claimHandleID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"durable"`), Address: []byte(`"durable-addr"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"durable"`), Address: []byte(`"durable-addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-D", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -466,11 +466,11 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	}))
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-D",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-D",
 	}
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
@@ -663,11 +663,11 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 	})
 	reg.Add("be-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-BE",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-BE",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -721,11 +721,11 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 	})
 	reg.Add("th-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-TH",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-TH",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -780,11 +780,11 @@ func TestResolveParentClaimChain_Threshold_AbandonsAtExactMax(t *testing.T) {
 	})
 	reg.Add("th-exact-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-TH-EXACT",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-TH-EXACT",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -840,11 +840,11 @@ func TestResolveParentClaimChain_ThresholdFullCount_SurvivingSiblingsKeepRunning
 	})
 	reg.Add("thfc-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-THFC",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-THFC",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -919,11 +919,11 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 	})
 	reg.Add("st-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-ST",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-ST",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -985,11 +985,11 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 	})
 	reg.Add("hp-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-HP",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-HP",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -1076,11 +1076,11 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	})
 	reg.Add("cq-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-CQ",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-CQ",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -1178,13 +1178,13 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	inhRunID := seedRunForNode(ctx, t, backend, d.Queue(), inhNode.ID, frameID)
 
-	storeName := "workspace"
+	producerName := "workspace"
 	intent := "rw"
 	claimHandleID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-G", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -1212,11 +1212,11 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	}))
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-G",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-G",
 	}
 	args = withSyncVerbFlush(args)
 	var postG func(context.Context)
@@ -1291,11 +1291,11 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 	})
 	reg.Add("be-dur-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-BD",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-BD",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -1361,11 +1361,11 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 	})
 	reg.Add("cs-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-CS",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-CS",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -1448,11 +1448,11 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	})
 	reg.Add("cs-dur-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-CD",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-CD",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -1526,14 +1526,14 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	storeName := "held-subgraph-store"
+	producerName := "held-subgraph-store"
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "held-subgraph-defers", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			{
 				Type: "acquirer", Executor: "stub",
 				ClaimProducers: []node.NodeClaimProducerRef{
-					{Name: storeName, Selector: "/region", Intent: "rw", Alias: "schema"},
+					{Name: producerName, Selector: "/region", Intent: "rw", Alias: "schema"},
 				},
 			},
 			{
@@ -1579,10 +1579,10 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 	}))
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
@@ -1594,7 +1594,7 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"/region"`), Address: []byte(`"/region-addr"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"/region"`), Address: []byte(`"/region-addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-HS", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -1623,12 +1623,12 @@ func TestCheckAndFireResolution_HeldSubgraph_DefersUntilAllExpectedMembersJoin(t
 	}))
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		Queue:         d.Queue(),
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-HS",
+		Persist:               backend,
+		Queue:                 d.Queue(),
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-HS",
 	}
 	args = withSyncVerbFlush(args)
 	var postA func(context.Context)
@@ -1699,14 +1699,14 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	storeName := "held-subgraph-poison-store"
+	producerName := "held-subgraph-poison-store"
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "held-subgraph-any-failed-bypasses-gate", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			{
 				Type: "acquirer", Executor: "stub",
 				ClaimProducers: []node.NodeClaimProducerRef{
-					{Name: storeName, Selector: "/region", Intent: "rw", Alias: "schema"},
+					{Name: producerName, Selector: "/region", Intent: "rw", Alias: "schema"},
 				},
 			},
 			{
@@ -1748,10 +1748,10 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 	}))
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
@@ -1762,7 +1762,7 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"/region"`), Address: []byte(`"/region-addr"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"/region"`), Address: []byte(`"/region-addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-AF", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -1791,12 +1791,12 @@ func TestCheckAndFireResolution_HeldSubgraph_AnyFailedBypassesExpectedMemberGate
 	}))
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		Queue:         d.Queue(),
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-AF",
+		Persist:               backend,
+		Queue:                 d.Queue(),
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-AF",
 	}
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
@@ -1862,11 +1862,11 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 	})
 	reg.Add("cs-rec-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-CR",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-CR",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -1966,11 +1966,11 @@ func TestSettleFromFanoutChild_MalformedAggregationPolicy_SafeFallback(t *testin
 	})
 	reg.Add("malformed-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-MP",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-MP",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -2086,11 +2086,11 @@ func TestCancelInFlightSiblings_DifferentSupervisorSkipped(t *testing.T) {
 	})
 	reg.Add("cs-ms-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-MS-A",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-MS-A",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -2206,11 +2206,11 @@ func TestCancelDescendantClaims_DifferentSupervisorSkipped(t *testing.T) {
 	})
 	reg.Add("dc-ms-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-DC-A",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-DC-A",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -2349,12 +2349,12 @@ func TestCancelDescendantClaims_MultiLevelRecursion_SkipsCommittedChild(t *testi
 	})
 	reg.Add("dc-ml-store", store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-DL",
-		Clock:         shared.SystemClock{},
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-DL",
+		Clock:                 shared.SystemClock{},
 	}
 	args = withSyncVerbFlush(args)
 
@@ -2512,13 +2512,13 @@ func TestCheckAndFireResolution_ProducerVerbDeliveryFailure_DecisionHoldsAndRetr
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 	coholderRunID := seedRunForNode(ctx, t, backend, d.Queue(), coholderNode.ID, frameID)
 
-	storeName := "verb-err-store"
+	producerName := "verb-err-store"
 	intent := "rw"
 	claimID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-VE", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -2547,12 +2547,12 @@ func TestCheckAndFireResolution_ProducerVerbDeliveryFailure_DecisionHoldsAndRetr
 	}))
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-VE",
-		Clock:         shared.SystemClock{},
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-VE",
+		Clock:                 shared.SystemClock{},
 	}
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)
@@ -2680,13 +2680,13 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 			cascade.NodeStateHeld, cascade.ReasonHandlerHeld, nil, tx)
 	}))
 
-	storeName := "passive-holder-store"
+	producerName := "passive-holder-store"
 	intent := "rw"
 	claimID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
+			ProducerName: &producerName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-PHD", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -2715,12 +2715,12 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 	}))
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-PHD",
-		Clock:         shared.SystemClock{},
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-PHD",
+		Clock:                 shared.SystemClock{},
 	}
 	args = withSyncVerbFlush(args)
 	var post func(context.Context)

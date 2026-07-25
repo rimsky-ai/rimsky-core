@@ -174,8 +174,8 @@ func resolveKilledClaimTerminal(
 	}
 	var producer locks.ClaimProducer
 	producerOK := false
-	if args.StoreRegistry != nil {
-		producer, producerOK = args.StoreRegistry.Get(producerName)
+	if args.ClaimProducerRegistry != nil {
+		producer, producerOK = args.ClaimProducerRegistry.Get(producerName)
 	}
 	if producerOK {
 		pc, err := ResolveClaimHandleTerminal(ctx, args, TerminalDecision{

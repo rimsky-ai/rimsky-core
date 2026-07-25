@@ -241,20 +241,20 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck, peerPrincipal string) bo
 	}
 	acq := dctx.Acquired
 	return dctx.RegisterAsync(asyncAck, AsyncContext{
-		NodeID:             acq.NodeID,
-		InstanceID:         acq.InstanceID,
-		NodeRunID:          acq.NodeRunID,
-		SupervisorID:       dctx.Args.SupervisorID,
-		StoreRegistry:      dctx.Args.StoreRegistry,
-		FrameID:            acq.FrameID,
-		AcquiredLocks:      acq.Locks,
-		NodeType:           acq.NodeType,
-		Executor:           acq.Executor,
-		NodeDef:            acq.NodeDef,
-		GraphName:          acq.GraphName,
-		ResolvedAttributes: dctx.Attributes,
-		AttributesSchema:   dctx.AttributesSchema,
-		AsyncAckPrincipal:  peerPrincipal,
+		NodeID:                acq.NodeID,
+		InstanceID:            acq.InstanceID,
+		NodeRunID:             acq.NodeRunID,
+		SupervisorID:          dctx.Args.SupervisorID,
+		ClaimProducerRegistry: dctx.Args.ClaimProducerRegistry,
+		FrameID:               acq.FrameID,
+		AcquiredLocks:         acq.Locks,
+		NodeType:              acq.NodeType,
+		Executor:              acq.Executor,
+		NodeDef:               acq.NodeDef,
+		GraphName:             acq.GraphName,
+		ResolvedAttributes:    dctx.Attributes,
+		AttributesSchema:      dctx.AttributesSchema,
+		AsyncAckPrincipal:     peerPrincipal,
 	})
 }
 

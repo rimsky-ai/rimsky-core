@@ -25,8 +25,8 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 
 	netName := harness.SharedNetworkName(ctx, t)
 
-	fs := harness.StartFilesystemStore(ctx, t, netName, "store-fs",
-		harness.FilesystemStoreSpec{
+	fs := harness.StartFilesystemClaimProducer(ctx, t, netName, "producer-fs",
+		harness.FilesystemClaimProducerSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
 				"@docs": {
 					Root:                     "docs",

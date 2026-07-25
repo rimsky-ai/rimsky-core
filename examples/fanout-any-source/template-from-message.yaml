@@ -4,7 +4,7 @@
 # partition_request reads from a typed-message body
 # (`{{messages.backfill_trigger.items}}`). Operator posts a
 # backfill_trigger message carrying the list; fan-out dispatches one
-# child per item. Same store, same value-delivering component as the
+# child per item. Same claim producer, same value-delivering component as the
 # from-node template — only the substitution source differs.
 name: fanout-any-source-from-message
 version: "1"
@@ -30,7 +30,7 @@ nodes:
       message's `items` array. Subscribes to the message type so the
       substitution-ref coverage check is satisfied.
     claim_producers:
-      - name: fs-store
+      - name: claim-producer-filesystem
         selector: "@seed-queue"
         intent: rw
         alias: fs_queue

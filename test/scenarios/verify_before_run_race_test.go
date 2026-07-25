@@ -56,16 +56,16 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	t.Cleanup(func() { _ = pool.Close() })
 
 	args := runtime.RunArgs{
-		Persist:           h.Persist,
-		Queue:             h.Queue,
-		ClaimHandles:      h.Persist.ClaimHandles(),
-		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
-		StoreRegistry:     locks.NewRegistry(),
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		SupervisorID:      "scenario-runner",
-		AcceptedExecutors: []string{"stub"},
-		Pool:              pool,
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+		ClaimProducerRegistry: locks.NewRegistry(),
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "scenario-runner",
+		AcceptedExecutors:     []string{"stub"},
+		Pool:                  pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),

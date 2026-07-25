@@ -202,7 +202,7 @@ func TestHandlerStatusErrorYieldsErrorClassFromDetails(t *testing.T) {
 	st := status.New(codes.Internal, "root gone")
 	withInfo, err := st.WithDetails(&errdetails.ErrorInfo{
 		Reason: "fs/root_unavailable",
-		Domain: "rimsky.store-filesystem",
+		Domain: "rimsky.claim-producer-filesystem",
 	})
 	if err != nil {
 		t.Fatalf("WithDetails: %v", err)

@@ -125,16 +125,16 @@ func TestLoadOptsFromEnv_ExplicitPortsWinOverDefaults(t *testing.T) {
 func TestLoadOptsFromEnv_UndefinedEnvVarInConfigFailsStartup(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
-	writeOptsConfig(t, cfgPath, "connection: \"postgres://user:${STORE_POSTGRES_TEST_UNDEFINED_VAR}@db/rimsky\"\n")
+	writeOptsConfig(t, cfgPath, "connection: \"postgres://user:${RIMSKY_CLAIM_PRODUCER_POSTGRES_TEST_UNDEFINED_VAR}@db/rimsky\"\n")
 
 	t.Setenv(ConfigEnv, cfgPath)
-	os.Unsetenv("STORE_POSTGRES_TEST_UNDEFINED_VAR")
+	os.Unsetenv("RIMSKY_CLAIM_PRODUCER_POSTGRES_TEST_UNDEFINED_VAR")
 
 	_, err := LoadOptsFromEnv()
 	if err == nil {
 		t.Fatal("LoadOptsFromEnv: expected an error for an undefined ${VAR} reference, got nil")
 	}
-	if !strings.Contains(err.Error(), "STORE_POSTGRES_TEST_UNDEFINED_VAR") {
+	if !strings.Contains(err.Error(), "RIMSKY_CLAIM_PRODUCER_POSTGRES_TEST_UNDEFINED_VAR") {
 		t.Fatalf("LoadOptsFromEnv error = %q, want it to name the undefined variable", err.Error())
 	}
 }

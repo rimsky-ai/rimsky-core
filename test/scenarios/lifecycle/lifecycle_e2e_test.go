@@ -84,11 +84,11 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 		"template-scope lifecycle row must be deleted by deregister fan-out")
 }
 
-func getLifecycleRow(t *testing.T, h *scenario.Harness, storeName string, kind persistence.LifecycleIdempotencyScopeKind, scopeID string) *persistence.LifecycleIdempotencyRow {
+func getLifecycleRow(t *testing.T, h *scenario.Harness, producerName string, kind persistence.LifecycleIdempotencyScopeKind, scopeID string) *persistence.LifecycleIdempotencyRow {
 	t.Helper()
 	var row *persistence.LifecycleIdempotencyRow
 	require.NoError(t, h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.Persist.LifecycleIdempotency().Get(ctx, storeName, kind, scopeID, tx)
+		r, err := h.Persist.LifecycleIdempotency().Get(ctx, producerName, kind, scopeID, tx)
 		row = r
 		return err
 	}))

@@ -136,7 +136,7 @@ echo "subscription-mounting-demo: template ${TEMPLATE_ID} registered + deployed"
 echo "subscription-mounting-demo: [3/6] creating the instance — the create must return 201 immediately, paused publisher notwithstanding"
 CREATE_START="$( python3 -c 'import time; print(time.time())' )"
 CREATE_OUT="$( curl -sS -X POST -H 'Content-Type: application/json' \
-    -d "{\"template\": \"${TEMPLATE_ID}\", \"instance_key\": \"sub-mount-demo-${RUN_ID}\", \"params\": {}}" \
+    -d "{\"template\": \"${TEMPLATE_ID}\", \"instance_key\": \"sub-mount-demo-${RUN_ID}\", \"target_agent\": \"demo-agent\", \"params\": {}}" \
     -w '\n%{http_code}' "${BASE}/v1/instances" )"
 CREATE_END="$( python3 -c 'import time; print(time.time())' )"
 CREATE_CODE="$( printf '%s' "${CREATE_OUT}" | tail -n1 )"

@@ -70,9 +70,9 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 	tables := d.Tables()
 	q := d.Queue()
 
-	const storeName = "subclaim-events-store"
+	const producerName = "subclaim-events-producer"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -83,7 +83,7 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	templateHash := "sha256-" + uuid.NewString()
 	instanceID := shared.UUID(uuid.New())
@@ -166,12 +166,12 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope"`)
 	intent := "rw"
-	producerName := storeName
+	producerNameRef := producerName
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return tables.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     parentScope,
 			Intent:             &intent,
 			HolderSupervisorID: "sup-subclaim-events",
@@ -184,19 +184,19 @@ func TestAcquireSubClaims_EventsCarryInstanceAndNodeAttribution(t *testing.T) {
 	}
 
 	args := RunArgs{
-		Persist:        tables,
-		ClaimHandles:   tables.ClaimHandles(),
-		StoreRegistry:  reg,
-		DataProcessors: singleClientRegistry{c: noopDataProcessingClient{name: storeName}},
-		Logger:         shared.SilentLogger{},
-		Clock:          shared.SystemClock{},
-		SupervisorID:   "sup-subclaim-events",
+		Persist:               tables,
+		ClaimHandles:          tables.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		DataProcessors:        singleClientRegistry{c: noopDataProcessingClient{name: producerName}},
+		Logger:                shared.SilentLogger{},
+		Clock:                 shared.SystemClock{},
+		SupervisorID:          "sup-subclaim-events",
 	}
 
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := AcquireSubClaims(ctx, args, AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNodeID,
 			HolderSupervisorID:  "sup-subclaim-events",

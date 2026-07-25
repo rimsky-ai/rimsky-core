@@ -71,7 +71,7 @@ func (r *Registry) GetWithContext(ctx context.Context, name string, instanceID s
 	}
 	bindings, ok, err := r.lookupInstanceBindings(ctx, instanceID)
 	if err != nil {
-		slog.Warn("producer registry: instance-bindings lookup failed; classifying as unknown store",
+		slog.Warn("producer registry: instance-bindings lookup failed; classifying as unknown claim producer",
 			"instance_id", instanceID,
 			"producer_name", name,
 			"error", err.Error())

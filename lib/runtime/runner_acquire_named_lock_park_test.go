@@ -131,15 +131,15 @@ func TestAcquireOneLock_ParkedHolderBlocksContenderWithoutPreemption(t *testing.
 	}
 
 	args := RunArgs{
-		Persist:        tables,
-		Queue:          d.Queue(),
-		AdvisoryLocker: d.AdvisoryLocker(),
-		ClaimHandles:   tables.ClaimHandles(),
-		StoreRegistry:  locks.NewRegistry(),
-		NamedLocks:     locks.NamedLocksConfig{Locks: map[string]locks.NamedLockConfig{lockName: {Limit: 1}}},
-		Clock:          shared.SystemClock{},
-		Logger:         shared.SilentLogger{},
-		SupervisorID:   "sup-contender",
+		Persist:               tables,
+		Queue:                 d.Queue(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		ClaimHandles:          tables.ClaimHandles(),
+		ClaimProducerRegistry: locks.NewRegistry(),
+		NamedLocks:            locks.NamedLocksConfig{Locks: map[string]locks.NamedLockConfig{lockName: {Limit: 1}}},
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-contender",
 	}
 	spec := locks.NamedLockSpec{Name: lockName}
 	cand := persistence.Candidate{NodeRunID: contenderRunID, NodeID: contenderNodeID, NodeType: "contender"}

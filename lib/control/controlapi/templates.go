@@ -126,12 +126,12 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			return caps.SupportsSplitScope
 		}
 	}
-	if deps.StoreDeclaredErrorClasses != nil {
-		hooks.StoreDeclaredErrorClasses = func(name string) ([]string, bool) {
+	if deps.ClaimProducerDeclaredErrorClasses != nil {
+		hooks.ClaimProducerDeclaredErrorClasses = func(name string) ([]string, bool) {
 			if isLateBind(name) {
 				return nil, false
 			}
-			return deps.StoreDeclaredErrorClasses(name)
+			return deps.ClaimProducerDeclaredErrorClasses(name)
 		}
 	}
 	hooks.NamedLockDeclared = func(name string) bool {

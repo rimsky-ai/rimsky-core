@@ -27,8 +27,8 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.SharedNetworkName(ctx, t)
-	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
-		harness.FilesystemStoreSpec{
+	fs := harness.StartFilesystemClaimProducer(ctx, t, netName, "claim-producer-filesystem",
+		harness.FilesystemClaimProducerSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
 				"@docs-ring": {
 					Root:                     "docs",
@@ -144,8 +144,8 @@ func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 	ctx := context.Background()
 
 	netName := harness.SharedNetworkName(ctx, t)
-	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
-		harness.FilesystemStoreSpec{
+	fs := harness.StartFilesystemClaimProducer(ctx, t, netName, "claim-producer-filesystem",
+		harness.FilesystemClaimProducerSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
 				"@docs-ring": {
 					Root:                     "docs",
@@ -234,6 +234,7 @@ func postInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, key strin
 		"template":     templateID,
 		"instance_key": key,
 		"params":       map[string]any{},
+		"target_agent": "scenario-default-agent",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST /instances: %d %s", status, string(raw))

@@ -1,9 +1,9 @@
 # fanout-fs-expand-folder template — STORY-fs-fanout-expand-folder proof.
 #
 # A template author declares a fan-out node whose parent claim is one
-# folder picked from the bundled filesystem store and whose
+# folder picked from the bundled filesystem claim producer and whose
 # partition_request says "expand the folder's contents into one
-# sub-claim per matching file." The filesystem store's SplitScope
+# sub-claim per matching file." The filesystem claim producer's SplitScope
 # decodes the `{"expand_folder": {...}}` shape, walks the parent
 # folder, and emits one SubScopeDescriptor per matching child path with
 # Address = absolute file path.
@@ -16,7 +16,7 @@
 # Stack prerequisites (operator-side):
 #   - rimsky stack reachable at RIMSKY_ENDPOINT
 #   - bundled `rimsky-claim-producer-filesystem` registered as claim producer
-#     `fs-store` advertising supports_split_scope=true with pick policy
+#     `claim-producer-filesystem` advertising supports_split_scope=true with pick policy
 #     `@folder-queue` rooted at the seed/queue/ directory shipped with
 #     this example. The seeded folder `example-folder/` contains
 #     `a.json`, `b.json`, `c.json`.
@@ -25,8 +25,8 @@ name: fanout-fs-expand-folder
 version: "1"
 description: |
   STORY-fs-fanout-expand-folder proof: the parent fan-out node holds a
-  filesystem-store folder claim; partition_request shape is
-  `{"expand_folder": {"filter": "*.json"}}`. The store walks the
+  filesystem claim-producer folder claim; partition_request shape is
+  `{"expand_folder": {"filter": "*.json"}}`. The producer walks the
   picked folder and emits one sub-scope per matching file; rimsky
   dispatches one child per file with claim.<alias>.address bound to
   the file's absolute path.
@@ -43,12 +43,12 @@ nodes:
   - type: process_files
     kind: attribute_passthrough
     description: |
-      Fan-out parent: holds one filesystem-store folder claim under the
-      `@folder-queue` pick policy. partition_request asks the store to
-      expand the folder's `*.json` files. Each child sees its file's
+      Fan-out parent: holds one filesystem claim-producer folder claim
+      under the `@folder-queue` pick policy. partition_request asks the
+      producer to expand the folder's `*.json` files. Each child sees its file's
       absolute path through {{claim.folder.address}}.
     claim_producers:
-      - name: fs-store
+      - name: claim-producer-filesystem
         selector: "@folder-queue"
         intent: rw
         alias: folder

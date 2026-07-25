@@ -87,7 +87,7 @@ type CallbackServer struct {
 	Queue                       persistence.Queue
 	AdvisoryLocker              persistence.AdvisoryLocker
 	ClaimHandles                persistence.ClaimHandleTable
-	StoreRegistry               *locks.Registry
+	ClaimProducerRegistry       *locks.Registry
 	Clock                       shared.Clock
 	Logger                      shared.Logger
 	SupervisorID                string
@@ -330,7 +330,7 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 	if row.ClaimedBy != nil {
 		supervisorID = *row.ClaimedBy
 	}
-	args := c.runArgs(supervisorID, c.StoreRegistry)
+	args := c.runArgs(supervisorID, c.ClaimProducerRegistry)
 	acq := acquisition{
 		NodeRunID: row.ID,
 		NodeID:    row.NodeID,
@@ -353,20 +353,20 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 		expectedPrincipal = *row.AsyncAckPrincipal
 	}
 	return &AsyncContext{
-		NodeID:             acq.NodeID,
-		InstanceID:         acq.InstanceID,
-		NodeRunID:          acq.NodeRunID,
-		SupervisorID:       supervisorID,
-		StoreRegistry:      c.StoreRegistry,
-		FrameID:            acq.FrameID,
-		AcquiredLocks:      acq.Locks,
-		NodeType:           acq.NodeType,
-		Executor:           acq.Executor,
-		NodeDef:            acq.NodeDef,
-		GraphName:          acq.GraphName,
-		ResolvedAttributes: resolvedAttrs,
-		AttributesSchema:   schema,
-		AsyncAckPrincipal:  expectedPrincipal,
+		NodeID:                acq.NodeID,
+		InstanceID:            acq.InstanceID,
+		NodeRunID:             acq.NodeRunID,
+		SupervisorID:          supervisorID,
+		ClaimProducerRegistry: c.ClaimProducerRegistry,
+		FrameID:               acq.FrameID,
+		AcquiredLocks:         acq.Locks,
+		NodeType:              acq.NodeType,
+		Executor:              acq.Executor,
+		NodeDef:               acq.NodeDef,
+		GraphName:             acq.GraphName,
+		ResolvedAttributes:    resolvedAttrs,
+		AttributesSchema:      schema,
+		AsyncAckPrincipal:     expectedPrincipal,
 	}, nil
 }
 
@@ -464,8 +464,8 @@ func reconstructAcquiredLocks(
 				producerName = *row.ProducerName
 			}
 			var producer locks.ClaimProducer
-			if args.StoreRegistry != nil {
-				if p, ok := args.StoreRegistry.Get(producerName); ok {
+			if args.ClaimProducerRegistry != nil {
+				if p, ok := args.ClaimProducerRegistry.Get(producerName); ok {
 					producer = p
 				}
 			}
@@ -508,13 +508,13 @@ func recoverResolvedAttributes(ctx context.Context, args RunArgs, acq *acquisiti
 	return merged, schema, nil
 }
 
-func (c *CallbackServer) runArgs(supervisorID string, storeRegistry *locks.Registry) RunArgs {
+func (c *CallbackServer) runArgs(supervisorID string, claimProducerRegistry *locks.Registry) RunArgs {
 	return RunArgs{
 		Persist:                     c.Persist,
 		Queue:                       c.Queue,
 		AdvisoryLocker:              c.AdvisoryLocker,
 		ClaimHandles:                c.ClaimHandles,
-		StoreRegistry:               storeRegistry,
+		ClaimProducerRegistry:       claimProducerRegistry,
 		Clock:                       c.Clock,
 		Logger:                      c.Logger,
 		SupervisorID:                supervisorID,
@@ -614,7 +614,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 }
 
 func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) (ackOutcomeRecord, error) {
-	args := c.runArgs(ac.SupervisorID, ac.StoreRegistry)
+	args := c.runArgs(ac.SupervisorID, ac.ClaimProducerRegistry)
 	acq := &acquisition{
 		NodeRunID:      ac.NodeRunID,
 		NodeID:         ac.NodeID,

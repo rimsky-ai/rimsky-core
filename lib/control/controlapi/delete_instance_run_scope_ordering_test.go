@@ -60,7 +60,7 @@ func TestDeleteInstance_OnRunScopeTerminalFiresBeforeOnInstanceTerminated(t *tes
 	status, out = h.httpJSON(t, "DELETE", "/v1/instances/"+instID.String(), nil)
 	require.Equal(t, http.StatusOK, status, out)
 
-	cp, ok := h.stores.Get("topics-ring")
+	cp, ok := h.producers.Get("topics-ring")
 	require.True(t, ok)
 	fake, ok := cp.(*storetest.Fake)
 	require.True(t, ok)

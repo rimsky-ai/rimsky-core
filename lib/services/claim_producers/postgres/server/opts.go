@@ -19,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
 
-const ConfigEnv = "STORE_POSTGRES_CONFIG"
+const ConfigEnv = "RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG"
 
 const (
 	defaultGRPCPort = 9101

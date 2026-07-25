@@ -48,7 +48,7 @@ func cancelClaimHandleWalk(
 		if row.ProducerName != nil {
 			producerName = *row.ProducerName
 		}
-		producer, ok := args.StoreRegistry.Get(producerName)
+		producer, ok := args.ClaimProducerRegistry.Get(producerName)
 		if !ok {
 			return nil, fmt.Errorf("cancelClaimHandleWalk: unknown producer %q for claim handle %s",
 				producerName, row.ID)

@@ -85,8 +85,8 @@ func (d *fakeDiscovery) AdvertiseClaimProducer(name string, caps claimproducer.C
 
 func clearBundledEnv(t *testing.T) {
 	for _, name := range []string{
-		"STORE_FILESYSTEM_CONFIG",
-		"STORE_POSTGRES_CONFIG",
+		"RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG",
+		"RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG",
 		"ANTHROPIC_API_KEY",
 		"CLAUDE_CODE_OAUTH_TOKEN",
 		"RIMSKY_EXECUTOR_STUB_MODE",
@@ -160,7 +160,7 @@ func TestRegisterAllConfiguredFilesystemProducer(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	t.Setenv("STORE_FILESYSTEM_CONFIG", cfgPath)
+	t.Setenv("RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG", cfgPath)
 
 	execReg := &fakeExecReg{}
 	cpReg := &fakeCPReg{}
@@ -198,7 +198,7 @@ func TestRegisterAllFilesystemExplicitSyncStrategyRejectedInBundledMode(t *testi
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	t.Setenv("STORE_FILESYSTEM_CONFIG", cfgPath)
+	t.Setenv("RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG", cfgPath)
 
 	err := RegisterAll(context.Background(), &fakeExecReg{}, &fakeCPReg{}, &fakeAliasSink{}, &fakeDiscovery{}, Opts{})
 	if err == nil {
@@ -215,7 +215,7 @@ func TestRegisterAllInvalidFilesystemConfigAbortsNamingProducer(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte("root: ''\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	t.Setenv("STORE_FILESYSTEM_CONFIG", cfgPath)
+	t.Setenv("RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG", cfgPath)
 	err := RegisterAll(context.Background(), &fakeExecReg{}, &fakeCPReg{}, &fakeAliasSink{}, &fakeDiscovery{}, Opts{})
 	if err == nil || !strings.Contains(err.Error(), ProducerNameFilesystem) {
 		t.Fatalf("got %v, want error naming %q", err, ProducerNameFilesystem)

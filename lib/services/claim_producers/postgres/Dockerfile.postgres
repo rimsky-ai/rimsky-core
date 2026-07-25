@@ -18,7 +18,7 @@ COPY . .
 RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./claim_producers/postgres/cmd
 
 FROM gcr.io/distroless/static:nonroot
-COPY --from=builder /out/app /usr/local/bin/store-postgres
+COPY --from=builder /out/app /usr/local/bin/claim-producer-postgres
 USER nonroot
 EXPOSE 9101 9111 9121
-ENTRYPOINT ["/usr/local/bin/store-postgres"]
+ENTRYPOINT ["/usr/local/bin/claim-producer-postgres"]

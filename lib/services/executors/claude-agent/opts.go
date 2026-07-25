@@ -61,7 +61,6 @@ type Opts struct {
 	Host                       string
 	GrpcPort                   int
 	HTTPPort                   int
-	CallbackHost               string
 	SilenceTimeoutMsDefault    int
 	ToolUseTimeoutMsDefault    int
 	ClaudeBinary               string
@@ -102,7 +101,6 @@ func LoadOptsFromEnv() (Opts, error) {
 		Host:                    envOr("RIMSKY_EXECUTOR_HOST", "0.0.0.0"),
 		GrpcPort:                grpcPort,
 		HTTPPort:                httpPort,
-		CallbackHost:            envOr("RIMSKY_EXECUTOR_CALLBACK_HOST", "127.0.0.1"),
 		SilenceTimeoutMsDefault: silenceMs,
 		ToolUseTimeoutMsDefault: toolUseMs,
 		ClaudeBinary:            os.Getenv("RIMSKY_EXECUTOR_CLAUDE_BINARY"),

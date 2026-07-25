@@ -28,7 +28,7 @@ nodes:
       Fan-out parent declaring intent=r. Sub-claims inherit intent=r
       verbatim in the persisted claim-handle row.
     claim_producers:
-      - name: pg-store
+      - name: claim-producer-postgres
         selector: "@items-queue-r"
         intent: r
         alias: data

@@ -32,7 +32,7 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	netName := harness.SharedNetworkName(ctx, t)
 
 	popAndMoveCommitted := "{pop_and_move: " + fsCommittedSubdir + "}"
-	store := harness.StartFilesystemStore(ctx, t, netName, "store-fs", harness.FilesystemStoreSpec{
+	producer := harness.StartFilesystemClaimProducer(ctx, t, netName, "producer-fs", harness.FilesystemClaimProducerSpec{
 		PickPolicies: map[string]harness.FilesystemPickPolicy{
 			fsCommitSelector: {
 				Root:                     fsCommitSource,
@@ -61,7 +61,7 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
-		harness.WithClaimProducer("content", store.InternalEndpoint, "sync"),
+		harness.WithClaimProducer("content", producer.InternalEndpoint, "sync"),
 		harness.WithExecutor("ok", okEndpoint),
 		harness.WithExecutor("err", errEndpoint),
 	)
@@ -72,8 +72,8 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	ep.WaitForNodeSettledTo(t, commitInstanceID, "acquirer", "fresh", 120*time.Second)
 	ep.WaitForNodeSettledTo(t, commitInstanceID, "verifier", "fresh", 120*time.Second)
 
-	committedDst := filepath.Join(store.HostDir, fsCommittedSubdir, fsCommitFolder)
-	sourceSrc := filepath.Join(store.HostDir, fsCommitSource, fsCommitFolder)
+	committedDst := filepath.Join(producer.HostDir, fsCommittedSubdir, fsCommitFolder)
+	sourceSrc := filepath.Join(producer.HostDir, fsCommitSource, fsCommitFolder)
 	requireEventuallyMoved(t, committedDst, sourceSrc, 30*time.Second)
 
 	abandonTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-abandon", fsAbandonSelector, "err")
@@ -82,8 +82,8 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	ep.WaitForNodeSettledTo(t, abandonInstanceID, "verifier", "failed", 120*time.Second)
 	ep.WaitForNodeSettledTo(t, abandonInstanceID, "acquirer", "failed", 120*time.Second)
 
-	abandonCommittedDst := filepath.Join(store.HostDir, fsCommittedSubdir, fsAbandonFolder)
-	abandonSource := filepath.Join(store.HostDir, fsAbandonSource, fsAbandonFolder)
+	abandonCommittedDst := filepath.Join(producer.HostDir, fsCommittedSubdir, fsAbandonFolder)
+	abandonSource := filepath.Join(producer.HostDir, fsAbandonSource, fsAbandonFolder)
 	requireNotMovedIntoCommitted(t, abandonCommittedDst, abandonSource, 20*time.Second)
 }
 

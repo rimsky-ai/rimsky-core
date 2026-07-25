@@ -805,6 +805,21 @@ func (h *Harness) WaitForDispatchCount(nodeID shared.UUID, want int) {
 	}
 }
 
+func (h *Harness) WaitForLeafRunLineageCount(nodeID shared.UUID, want int) {
+	h.T.Helper()
+	for {
+		var count int
+		_ = h.Pool.QueryRow(h.Ctx, `
+			SELECT count(*) FROM rimsky_lineage
+			WHERE record_kind = 'leaf_run' AND record->>'node_id' = $1
+		`, nodeID.String()).Scan(&count)
+		if count >= want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // @concept: node-run
 func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID) {
 	h.T.Helper()
@@ -1038,11 +1053,11 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		nd["subscribes"] = subs
 	}
 	if len(n.ClaimProducers) > 0 {
-		stores := make([]map[string]any, 0, len(n.ClaimProducers))
+		producers := make([]map[string]any, 0, len(n.ClaimProducers))
 		for _, s := range n.ClaimProducers {
-			stores = append(stores, claimProducerRefToJSON(s))
+			producers = append(producers, claimProducerRefToJSON(s))
 		}
-		nd["claim_producers"] = stores
+		nd["claim_producers"] = producers
 	}
 	if len(n.Locks) > 0 {
 		locks := make([]map[string]any, 0, len(n.Locks))

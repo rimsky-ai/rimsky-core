@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-package stores
+package claimproducers
 
 import (
 	"context"
@@ -17,8 +17,8 @@ func TestFSPickVsScopeConcurrency(t *testing.T) {
 	ctx := context.Background()
 	netName := harness.SharedNetworkName(ctx, t)
 
-	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
-		harness.FilesystemStoreSpec{
+	fs := harness.StartFilesystemClaimProducer(ctx, t, netName, "claim-producer-filesystem",
+		harness.FilesystemClaimProducerSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
 				"@r": {
 					Root:                     "docs",

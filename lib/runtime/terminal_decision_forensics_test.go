@@ -78,12 +78,12 @@ func TestResolveClaimHandleTerminal_LineageRecordsTerminatingSupervisorAfterProm
 	})
 	reg.Add(producerName, store)
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         shared.SystemClock{},
-		SupervisorID:  terminatingSupervisor,
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 shared.SystemClock{},
+		SupervisorID:          terminatingSupervisor,
 	}
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

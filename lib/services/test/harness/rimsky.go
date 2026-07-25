@@ -421,7 +421,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 		"RIMSKY_OBSERVABILITY_REFRESH_INTERVAL":     "5s",
 	}
 	if cb.bundledFS != nil {
-		env["STORE_FILESYSTEM_CONFIG"] = "/etc/rimsky/store-filesystem.yml"
+		env["RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG"] = "/etc/rimsky/claim-producer-filesystem.yml"
 	}
 	for k, v := range cb.extraEnv {
 		env[k] = v
@@ -443,7 +443,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 		rimskyOpts = append(rimskyOpts,
 			testcontainers.WithFiles(testcontainers.ContainerFile{
 				Reader:            strings.NewReader(cb.bundledFS.configYAML),
-				ContainerFilePath: "/etc/rimsky/store-filesystem.yml",
+				ContainerFilePath: "/etc/rimsky/claim-producer-filesystem.yml",
 				FileMode:          0o644,
 			}),
 			testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {

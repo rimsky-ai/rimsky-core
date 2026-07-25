@@ -39,7 +39,7 @@ type Config struct {
 	MaxQuietPeriodDefault  time.Duration
 	MaxRuntimeDefault      time.Duration
 	Resolver               executor.Resolver
-	StoreRegistry          *locks.Registry
+	ClaimProducerRegistry  *locks.Registry
 	NamedLocks             locks.NamedLocksConfig
 	CallbackHost           string
 	CallbackPort           int
@@ -125,8 +125,8 @@ func Start(cfg Config) (*Handle, error) {
 	if cfg.AdvisoryLocker == nil {
 		return nil, errors.New("supervisor.Start: AdvisoryLocker is required")
 	}
-	if cfg.StoreRegistry == nil {
-		return nil, errors.New("supervisor.Start: StoreRegistry is required")
+	if cfg.ClaimProducerRegistry == nil {
+		return nil, errors.New("supervisor.Start: ClaimProducerRegistry is required")
 	}
 
 	claimHandles := cfg.Persist.ClaimHandles()
@@ -135,7 +135,7 @@ func Start(cfg Config) (*Handle, error) {
 	if p, ok := cfg.Persist.(producerVerbOutboxProvider); ok {
 		verbDispatcher = NewProducerVerbDispatcher(
 			p.ProducerVerbOutbox(), cfg.Persist,
-			cfg.StoreRegistry, cfg.Clock, cfg.Logger)
+			cfg.ClaimProducerRegistry, cfg.Clock, cfg.Logger)
 	}
 
 	callbackReg := NewCallbackRegistry()
@@ -165,7 +165,7 @@ func Start(cfg Config) (*Handle, error) {
 		Queue:                       cfg.Queue,
 		AdvisoryLocker:              cfg.AdvisoryLocker,
 		ClaimHandles:                claimHandles,
-		StoreRegistry:               cfg.StoreRegistry,
+		ClaimProducerRegistry:       cfg.ClaimProducerRegistry,
 		Clock:                       cfg.Clock,
 		Logger:                      cfg.Logger,
 		SupervisorID:                cfg.SupervisorID,
@@ -222,7 +222,7 @@ func Start(cfg Config) (*Handle, error) {
 		return nil, err
 	}
 	accepted := cfg.Resolver.AcceptedNames()
-	acceptedClaimProducers := storeRegistryNames(cfg.StoreRegistry)
+	acceptedClaimProducers := claimProducerRegistryNames(cfg.ClaimProducerRegistry)
 	if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		return cfg.Persist.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{
 			ID:                     cfg.SupervisorID,
@@ -276,7 +276,7 @@ func seedInprocExecutorAlias(r executor.Resolver, alias string, ep executor.Endp
 	}
 }
 
-func storeRegistryNames(reg *locks.Registry) []string {
+func claimProducerRegistryNames(reg *locks.Registry) []string {
 	producers := reg.Producers()
 	if len(producers) == 0 {
 		return nil
@@ -377,7 +377,7 @@ func runLoop(
 				AcceptedClaimProducers:      acceptedClaimProducers,
 				Pool:                        pool,
 				Resolver:                    cfg.Resolver,
-				StoreRegistry:               cfg.StoreRegistry,
+				ClaimProducerRegistry:       cfg.ClaimProducerRegistry,
 				NamedLocks:                  cfg.NamedLocks,
 				CallbackURL:                 h.advertisedURL,
 				LivenessInterval:            cfg.LivenessInterval,

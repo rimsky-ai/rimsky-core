@@ -69,18 +69,18 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	}))
 
 	reg := locks.NewRegistry()
-	storeName := "workspace"
-	stubStore := storetest.NewFake(storeName, claimproducer.Capabilities{
+	producerName := "workspace"
+	stubStore := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
-	reg.Add(storeName, stubStore)
+	reg.Add(producerName, stubStore)
 
 	frameID := seedFrameAsset(ctx, t, backend, inst.ID, mainScopeID)
 	acqRunID := seedRunForNodeAsset(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
 	intent := "rw"
 	claimHandleID := shared.UUID(uuid.New())
-	prodName := storeName
+	prodName := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
@@ -105,12 +105,12 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	}))
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-E2E",
-		Clock:         shared.SystemClock{},
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-E2E",
+		Clock:                 shared.SystemClock{},
 	}
 	var post func(context.Context)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

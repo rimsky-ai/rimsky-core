@@ -41,7 +41,7 @@ type AppDeps struct {
 
 	ExecutorCapabilities func(executorName string) (declaredTags []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool)
 
-	StoreDeclaredErrorClasses func(storeName string) (declaredErrorClasses []string, ok bool)
+	ClaimProducerDeclaredErrorClasses func(producerName string) (declaredErrorClasses []string, ok bool)
 
 	Metrics runtime.MetricsHook
 

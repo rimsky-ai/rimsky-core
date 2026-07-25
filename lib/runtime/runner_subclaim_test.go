@@ -37,10 +37,10 @@ func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 
 	clk := newTickClock(time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-U",
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-U",
 	}
 	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
@@ -61,10 +61,10 @@ func TestAcquireSubClaims_UnknownProducerErrors(t *testing.T) {
 	reg := locks.NewRegistry()
 	clk := newTickClock(time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-X",
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-X",
 	}
 	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
@@ -98,10 +98,10 @@ func TestAcquireSubClaims_EmptyPartitionKeyRejected(t *testing.T) {
 
 	clk := newTickClock(time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-EK",
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-EK",
 	}
 	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
@@ -222,9 +222,9 @@ func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedSt
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "idem-key-store"
+	const producerName = "idem-key-store"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -235,20 +235,20 @@ func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedSt
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
-	dpClient := newFakeDataProcessingClient(storeName)
+	dpClient := newFakeDataProcessingClient(producerName)
 	dpReg := newFakeDataProcessingRegistry(dpClient)
 
 	clk := newTickClock(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		Persist:        backend,
-		ClaimHandles:   backend.ClaimHandles(),
-		StoreRegistry:  reg,
-		DataProcessors: dpReg,
-		Logger:         shared.SilentLogger{},
-		Clock:          clk,
-		SupervisorID:   "sup-IDEM",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		DataProcessors:        dpReg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-IDEM",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -275,11 +275,11 @@ func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedSt
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope-idem"`)
 	intent := "rw"
-	producerName := storeName
+	producerNameRef := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: parentClaimID, LockKind: persistence.LockKindScope,
-			ProducerName: &producerName, ClaimScopeData: parentScope, Address: json.RawMessage(`"addr"`),
+			ProducerName: &producerNameRef, ClaimScopeData: parentScope, Address: json.RawMessage(`"addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-IDEM", HolderNodeID: parentNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -291,7 +291,7 @@ func TestAcquireSubClaims_BeginCandidateIdempotencyKeyIsRunAndPartitionDerivedSt
 		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			_, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
 				ParentClaimHandleID: parentClaimID,
-				ProducerName:        storeName,
+				ProducerName:        producerName,
 				NodeRunID:           parentNodeRunID,
 				HolderNodeID:        parentNode.ID,
 				HolderSupervisorID:  "sup-IDEM",
@@ -322,9 +322,9 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "fan-out-store"
+	const producerName = "fan-out-store"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -336,20 +336,20 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
-	dpClient := newFakeDataProcessingClient(storeName)
+	dpClient := newFakeDataProcessingClient(producerName)
 	dpReg := newFakeDataProcessingRegistry(dpClient)
 
 	clk := newTickClock(time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		Persist:        backend,
-		ClaimHandles:   backend.ClaimHandles(),
-		StoreRegistry:  reg,
-		DataProcessors: dpReg,
-		Logger:         shared.SilentLogger{},
-		Clock:          clk,
-		SupervisorID:   "sup-FAN",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		DataProcessors:        dpReg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-FAN",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -381,12 +381,12 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	parentScope := json.RawMessage(`"parent-scope"`)
 	parentAddr := json.RawMessage(`"parent-addr"`)
 	intent := "rw"
-	producerName := storeName
+	producerNameRef := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     parentScope,
 			Address:            parentAddr,
 			Intent:             &intent,
@@ -401,7 +401,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-FAN",
@@ -417,8 +417,8 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 
 	begins := dpClient.Begins()
 	require.Len(t, begins, 2, "BeginCandidate must fire per sub-scope")
-	require.Equal(t, storeName, begins[0].ProducerName)
-	require.Equal(t, storeName, begins[1].ProducerName)
+	require.Equal(t, producerName, begins[0].ProducerName)
+	require.Equal(t, producerName, begins[1].ProducerName)
 	beginIDs := map[string]bool{begins[0].ClaimHandleID: true, begins[1].ClaimHandleID: true}
 	require.True(t, beginIDs[subClaims[0].ClaimHandleID.String()],
 		"BeginCandidate.ClaimHandleID must match the sub-claim row id")
@@ -443,7 +443,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			Address:             []byte{},
 			Lifetime:            "subgraph",
 			CandidateHandle:     candidateHandle0,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			ParentClaimHandleID: &parentClaimID,
 		}, tx)
 		post0 = pc
@@ -466,7 +466,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			Address:             []byte{},
 			Lifetime:            "subgraph",
 			CandidateHandle:     candidateHandle1,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			ParentClaimHandleID: &parentClaimID,
 		}, tx)
 		post1 = pc
@@ -526,12 +526,12 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "xsup-store"
+	const producerName = "xsup-store"
 	const supOne = "sup-ONE"
 	const supTwo = "sup-TWO"
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -543,16 +543,16 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	clk := newTickClock(time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC))
 	argsOne := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  supOne,
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          supOne,
 	}
 	argsOne = withSyncVerbFlush(argsOne)
 	argsTwo := argsOne
@@ -585,12 +585,12 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope"`)
 	intent := "rw"
-	producerName := storeName
+	producerNameRef := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     parentScope,
 			Address:            json.RawMessage(`"parent-addr"`),
 			Intent:             &intent,
@@ -605,7 +605,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, argsOne, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  supOne,
@@ -640,7 +640,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 				Scope:               []byte(sc.ClaimScope),
 				Address:             []byte{},
 				Lifetime:            "subgraph",
-				ProducerName:        storeName,
+				ProducerName:        producerName,
 				ParentClaimHandleID: &parentClaimID,
 			}, tx)
 			post = pc
@@ -692,9 +692,9 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "ro-intent-store"
+	const producerName = "ro-intent-store"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -706,16 +706,16 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-RO",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-RO",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -745,12 +745,12 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope-ro"`)
 	parentIntent := string(claimproducer.IntentRead)
-	producerName := storeName
+	producerNameRef := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     parentScope,
 			Intent:             &parentIntent,
 			HolderSupervisorID: "sup-RO",
@@ -764,7 +764,7 @@ func TestAcquireSubClaims_InheritsParentReadOnlyIntent(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-RO",
@@ -799,9 +799,9 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "rw-intent-store"
+	const producerName = "rw-intent-store"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -813,16 +813,16 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-RW",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-RW",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -852,12 +852,12 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope-rw"`)
 	parentIntent := string(claimproducer.IntentReadWrite)
-	producerName := storeName
+	producerNameRef := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     parentScope,
 			Intent:             &parentIntent,
 			HolderSupervisorID: "sup-RW",
@@ -871,7 +871,7 @@ func TestAcquireSubClaims_InheritsParentReadWriteIntent(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-RW",
@@ -906,9 +906,9 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "addr-payload-store"
+	const producerName = "addr-payload-store"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -924,16 +924,16 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-AP",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-AP",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -963,12 +963,12 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"parent-scope-ap"`)
 	parentIntent := string(claimproducer.IntentReadWrite)
-	producerName := storeName
+	producerNameRef := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     parentScope,
 			Intent:             &parentIntent,
 			HolderSupervisorID: "sup-AP",
@@ -982,7 +982,7 @@ func TestAcquireSubClaims_PersistsAddressAndPayload(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-AP",
@@ -1023,9 +1023,9 @@ func TestAcquireSubClaims_RejectsNonJSONAddress(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	const storeName = "non-json-addr-store"
+	const producerName = "non-json-addr-store"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -1036,19 +1036,19 @@ func TestAcquireSubClaims_RejectsNonJSONAddress(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-AJ",
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-AJ",
 	}
 	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
 		ParentClaimHandleID: shared.UUID(uuid.New()),
-		ProducerName:        storeName,
+		ProducerName:        producerName,
 		HolderSupervisorID:  "sup-AJ",
 		InstanceID:          shared.UUID{},
 		LivenessInterval:    30 * time.Second,
@@ -1061,9 +1061,9 @@ func TestAcquireSubClaims_RejectsNonJSONPayload(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	const storeName = "non-json-payload-store"
+	const producerName = "non-json-payload-store"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -1074,19 +1074,19 @@ func TestAcquireSubClaims_RejectsNonJSONPayload(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	clk := newTickClock(time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-PJ",
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-PJ",
 	}
 	args = withSyncVerbFlush(args)
 	_, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
 		ParentClaimHandleID: shared.UUID(uuid.New()),
-		ProducerName:        storeName,
+		ProducerName:        producerName,
 		HolderSupervisorID:  "sup-PJ",
 		InstanceID:          shared.UUID{},
 		LivenessInterval:    30 * time.Second,
@@ -1103,9 +1103,9 @@ func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "linked-subclaim-store"
+	const producerName = "linked-subclaim-store"
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -1117,16 +1117,16 @@ func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 			},
 		}, nil
 	}
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	clk := newTickClock(time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC))
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		Clock:         clk,
-		SupervisorID:  "sup-LSC",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		Clock:                 clk,
+		SupervisorID:          "sup-LSC",
 	}
 	args = withSyncVerbFlush(args)
 
@@ -1164,12 +1164,12 @@ func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 	parentClaimID := shared.UUID(uuid.New())
 	parentScope := json.RawMessage(`"@queue"`)
 	parentIntent := string(claimproducer.IntentReadWrite)
-	producerName := storeName
+	producerNameRef := producerName
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     parentScope,
 			Intent:             &parentIntent,
 			HolderSupervisorID: "sup-LSC",
@@ -1183,7 +1183,7 @@ func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ProducerName:        storeName,
+			ProducerName:        producerName,
 			NodeRunID:           parentNodeRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-LSC",
@@ -1197,7 +1197,7 @@ func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 	require.Len(t, subClaims, 1)
 
 	claimSpec := claimproducer.ClaimSpec{
-		ProducerName: storeName,
+		ProducerName: producerName,
 		Alias:        "fs_queue",
 		Selector:     "@queue",
 		Intent:       claimproducer.IntentReadWrite,

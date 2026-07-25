@@ -21,8 +21,8 @@ func TestSubClaimPayloadSubstitutionE2E(t *testing.T) {
 
 	netName := harness.SharedNetworkName(ctx, t)
 
-	fs := harness.StartFilesystemStore(ctx, t, netName, "store-fs",
-		harness.FilesystemStoreSpec{
+	fs := harness.StartFilesystemClaimProducer(ctx, t, netName, "producer-fs",
+		harness.FilesystemClaimProducerSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
 				"@seed-queue": {
 					Root:                     "queue/available",
@@ -39,7 +39,7 @@ func TestSubClaimPayloadSubstitutionE2E(t *testing.T) {
 
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
-		harness.WithClaimProducer("fs-store", fs.InternalEndpoint),
+		harness.WithClaimProducer("claim-producer-filesystem", fs.InternalEndpoint),
 	)
 
 	tid := deploySubClaimPayloadTemplate(t, ep)
@@ -72,7 +72,7 @@ func deploySubClaimPayloadTemplate(t *testing.T, ep harness.RimskyEndpoint) stri
 					"type": "triage",
 					"kind": "attribute_passthrough",
 					"claim_producers": []map[string]any{
-						{"name": "fs-store", "selector": "@seed-queue", "intent": "rw", "alias": "fs_queue"},
+						{"name": "claim-producer-filesystem", "selector": "@seed-queue", "intent": "rw", "alias": "fs_queue"},
 					},
 					"error_types": map[string]any{
 						"acquire/unavailable": map[string]any{"action": "retry"},

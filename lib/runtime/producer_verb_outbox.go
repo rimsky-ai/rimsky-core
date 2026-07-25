@@ -107,7 +107,7 @@ func FlushProducerVerbOutbox(ctx context.Context, args RunArgs) (int, error) {
 	if clock == nil {
 		clock = shared.SystemClock{}
 	}
-	d := NewProducerVerbDispatcher(outbox, args.Persist, args.StoreRegistry, clock, args.Logger)
+	d := NewProducerVerbDispatcher(outbox, args.Persist, args.ClaimProducerRegistry, clock, args.Logger)
 	return d.DispatchOnce(ctx)
 }
 

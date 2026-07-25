@@ -30,12 +30,12 @@ type RunnerResult struct {
 }
 
 type RunArgs struct {
-	Persist        persistence.Tables
-	Queue          persistence.Queue
-	AdvisoryLocker persistence.AdvisoryLocker
-	ClaimHandles   persistence.ClaimHandleTable
-	StoreRegistry  *locks.Registry
-	NamedLocks     locks.NamedLocksConfig
+	Persist               persistence.Tables
+	Queue                 persistence.Queue
+	AdvisoryLocker        persistence.AdvisoryLocker
+	ClaimHandles          persistence.ClaimHandleTable
+	ClaimProducerRegistry *locks.Registry
+	NamedLocks            locks.NamedLocksConfig
 
 	VerbOutbox       persistence.ProducerVerbOutboxTable
 	ProducerVerbKick func()
@@ -119,20 +119,20 @@ func metricsOf(args RunArgs) MetricsHook {
 }
 
 type AsyncContext struct {
-	NodeID             shared.UUID
-	InstanceID         shared.UUID
-	NodeRunID          shared.UUID
-	SupervisorID       string
-	StoreRegistry      *locks.Registry
-	FrameID            shared.UUID
-	AcquiredLocks      []AcquiredLock
-	NodeType           string
-	Executor           string
-	NodeDef            *node.TemplateNodeDef
-	GraphName          string
-	ResolvedAttributes map[string]any
-	AttributesSchema   map[string]any
-	AsyncAckPrincipal  string
+	NodeID                shared.UUID
+	InstanceID            shared.UUID
+	NodeRunID             shared.UUID
+	SupervisorID          string
+	ClaimProducerRegistry *locks.Registry
+	FrameID               shared.UUID
+	AcquiredLocks         []AcquiredLock
+	NodeType              string
+	Executor              string
+	NodeDef               *node.TemplateNodeDef
+	GraphName             string
+	ResolvedAttributes    map[string]any
+	AttributesSchema      map[string]any
+	AsyncAckPrincipal     string
 }
 
 type AcquiredLock struct {
@@ -276,8 +276,8 @@ func validateRunArgs(args RunArgs) error {
 	if args.ClaimHandles == nil {
 		return errors.New("supervisor.RunNode: ClaimHandles is required")
 	}
-	if args.StoreRegistry == nil {
-		return errors.New("supervisor.RunNode: StoreRegistry is required")
+	if args.ClaimProducerRegistry == nil {
+		return errors.New("supervisor.RunNode: ClaimProducerRegistry is required")
 	}
 	if args.SupervisorID == "" {
 		return errors.New("supervisor.RunNode: SupervisorID is required")

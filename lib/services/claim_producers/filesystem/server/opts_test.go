@@ -136,16 +136,16 @@ func TestLoadOptsFromEnv_PickPolicyExplicitSyncStrategyRequiresAdminPort(t *test
 func TestLoadOptsFromEnv_UndefinedEnvVarInConfigFailsStartup(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
-	writeFile(t, cfgPath, "root: \"${STORE_FILESYSTEM_TEST_UNDEFINED_VAR}\"\n")
+	writeFile(t, cfgPath, "root: \"${RIMSKY_CLAIM_PRODUCER_FILESYSTEM_TEST_UNDEFINED_VAR}\"\n")
 
 	t.Setenv(ConfigEnv, cfgPath)
-	os.Unsetenv("STORE_FILESYSTEM_TEST_UNDEFINED_VAR")
+	os.Unsetenv("RIMSKY_CLAIM_PRODUCER_FILESYSTEM_TEST_UNDEFINED_VAR")
 
 	_, err := LoadOptsFromEnv()
 	if err == nil {
 		t.Fatal("LoadOptsFromEnv: expected an error for an undefined ${VAR} reference, got nil")
 	}
-	if !strings.Contains(err.Error(), "STORE_FILESYSTEM_TEST_UNDEFINED_VAR") {
+	if !strings.Contains(err.Error(), "RIMSKY_CLAIM_PRODUCER_FILESYSTEM_TEST_UNDEFINED_VAR") {
 		t.Fatalf("LoadOptsFromEnv error = %q, want it to name the undefined variable", err.Error())
 	}
 }

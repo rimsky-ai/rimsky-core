@@ -70,11 +70,11 @@ func TestSettleFromFanoutChild_LateBoundProducer_ResolvesViaContext(t *testing.T
 	reg.Add(proxyName, proxy)
 
 	args := runtime.RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-LB",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-LB",
 	}
 	args = withSyncVerbFlush(args)
 

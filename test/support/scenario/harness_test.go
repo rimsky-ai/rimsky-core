@@ -94,11 +94,11 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	require.NotContains(t, n, "reads_resources")
 	require.NotContains(t, n, "restore_version")
 
-	stores := n["claim_producers"].([]map[string]any)
-	require.Len(t, stores, 2)
-	require.Equal(t, "inbound", stores[0]["name"])
-	require.Equal(t, "@queue", stores[0]["selector"])
-	require.Equal(t, "rw", stores[0]["intent"])
+	producers := n["claim_producers"].([]map[string]any)
+	require.Len(t, producers, 2)
+	require.Equal(t, "inbound", producers[0]["name"])
+	require.Equal(t, "@queue", producers[0]["selector"])
+	require.Equal(t, "rw", producers[0]["intent"])
 
 	locks := n["locks"].([]map[string]any)
 	require.Len(t, locks, 2)

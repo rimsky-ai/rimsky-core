@@ -46,7 +46,7 @@ create_instance() {
     local key="$2"
     local out
     out="$( curl -sS -X POST -H 'Content-Type: application/json' \
-        --data "{\"template\": \"${tid}\", \"instance_key\": \"${key}\"}" \
+        --data "{\"template\": \"${tid}\", \"instance_key\": \"${key}\", \"target_agent\": \"demo-agent\"}" \
         "${RIMSKY_ENDPOINT}/v1/instances" )"
     local iid
     iid="$( echo "${out}" | jq -r '.instance_id' )"

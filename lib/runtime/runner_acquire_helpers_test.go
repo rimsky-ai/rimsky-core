@@ -333,7 +333,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	t.Parallel()
 	ctx := context.Background()
 
-	const storeName = "fan-out-store"
+	const producerName = "fan-out-store"
 	const directive = `{{messages.invalidate.partition_request_override | "all"}}`
 	frameID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
@@ -361,7 +361,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 
 	errStop := errors.New("stop-after-capture")
 	var captured []byte
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -370,7 +370,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 		return claimproducer.SplitClaimScopeResponse{}, errStop
 	}
 	reg := locks.NewRegistry()
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	nodeDef := &node.TemplateNodeDef{
 		Type:     "fan-root",
@@ -382,7 +382,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	}
 	acquiredLocks := []AcquiredLock{{
 		Alias:         "data",
-		Spec:          claimproducer.ClaimSpec{ProducerName: storeName, Intent: "rw"},
+		Spec:          claimproducer.ClaimSpec{ProducerName: producerName, Intent: "rw"},
 		ClaimHandleID: shared.UUID(uuid.New()),
 		ClaimResult:   claimproducer.ClaimResult{ClaimScope: json.RawMessage(`"parent-scope"`)},
 	}}
@@ -393,10 +393,10 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 		msgs:             msgs,
 	}
 	args := RunArgs{
-		Persist:       persist,
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-FAN",
+		Persist:               persist,
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-FAN",
 	}
 	cand := persistence.Candidate{
 		FrameID:   frameID,
@@ -434,7 +434,7 @@ func TestAcquireFanOutIfDeclared_SubgraphDelegationScopeStillFansOut(t *testing.
 	t.Parallel()
 	ctx := context.Background()
 
-	const storeName = "delegation-scope-store"
+	const producerName = "delegation-scope-store"
 	instanceID := shared.UUID(uuid.New())
 	parentRun := shared.UUID(uuid.New())
 	delegationScopeID := shared.UUID(uuid.New())
@@ -445,7 +445,7 @@ func TestAcquireFanOutIfDeclared_SubgraphDelegationScopeStillFansOut(t *testing.
 	}, nil)
 
 	errStop := errors.New("stop-after-capture")
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -453,7 +453,7 @@ func TestAcquireFanOutIfDeclared_SubgraphDelegationScopeStillFansOut(t *testing.
 		return claimproducer.SplitClaimScopeResponse{}, errStop
 	}
 	reg := locks.NewRegistry()
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	nodeDef := &node.TemplateNodeDef{
 		Type:     "fan-in-subgraph",
@@ -465,17 +465,17 @@ func TestAcquireFanOutIfDeclared_SubgraphDelegationScopeStillFansOut(t *testing.
 	}
 	acquiredLocks := []AcquiredLock{{
 		Alias:         "data",
-		Spec:          claimproducer.ClaimSpec{ProducerName: storeName, Intent: "rw"},
+		Spec:          claimproducer.ClaimSpec{ProducerName: producerName, Intent: "rw"},
 		ClaimHandleID: shared.UUID(uuid.New()),
 		ClaimResult:   claimproducer.ClaimResult{ClaimScope: json.RawMessage(`"parent-scope"`)},
 	}}
 
 	out := &acquisition{InstanceID: instanceID, RunScopeID: delegationScopeID}
 	args := RunArgs{
-		Persist:       &scopeOnlyPersist{scopes: scopes},
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-FAN-DELEGATE",
+		Persist:               &scopeOnlyPersist{scopes: scopes},
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-FAN-DELEGATE",
 	}
 	cand := persistence.Candidate{
 		FrameID:   shared.UUID(uuid.New()),

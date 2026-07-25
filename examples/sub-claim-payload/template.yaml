@@ -34,7 +34,7 @@ nodes:
       payload bytes. Each child substitutes its own sub-claim payload
       via {{claim.fs_queue.payload.v}}.
     claim_producers:
-      - name: fs-store
+      - name: claim-producer-filesystem
         selector: "@seed-queue"
         intent: rw
         alias: fs_queue

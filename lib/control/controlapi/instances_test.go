@@ -513,7 +513,7 @@ func TestCreateInstance_IdempotentRetryFansOutExistingParamsNotRequestParams(t *
 	require.Equal(t, http.StatusCreated, status, out)
 	instID := out["instance_id"].(string)
 
-	cp, ok := h.stores.Get("content")
+	cp, ok := h.producers.Get("content")
 	require.True(t, ok)
 	contentFake, ok := cp.(*storetest.Fake)
 	require.True(t, ok)
@@ -596,7 +596,7 @@ func TestDeleteInstance_MissingTemplateFallsBackToLifecycleRows(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["deleted"])
 
-	cp, ok := h.stores.Get("content")
+	cp, ok := h.producers.Get("content")
 	require.True(t, ok)
 	fake, ok := cp.(*storetest.Fake)
 	require.True(t, ok)
@@ -635,7 +635,7 @@ func TestDeleteInstance_MissingTemplateLifecycleFailureReturns500(t *testing.T) 
 		}, tx)
 	}))
 
-	cp, ok := h.stores.Get("content")
+	cp, ok := h.producers.Get("content")
 	require.True(t, ok)
 	fake, ok := cp.(*storetest.Fake)
 	require.True(t, ok)

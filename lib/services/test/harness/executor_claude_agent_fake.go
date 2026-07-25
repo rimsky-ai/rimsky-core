@@ -35,12 +35,11 @@ func StartClaudeAgentFakeOnNetwork(
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
 	env := map[string]string{
-		"CLAUDE_CODE_OAUTH_TOKEN":       "dummy-token-for-fake-cli-cross-stack-test",
-		"RIMSKY_EXECUTOR_HOST":          "0.0.0.0",
-		"RIMSKY_EXECUTOR_PORT_GRPC":     "9090",
-		"RIMSKY_EXECUTOR_PORT_HTTP":     "9190",
-		"RIMSKY_EXECUTOR_CALLBACK_HOST": "127.0.0.1",
-		"RIMSKY_EXECUTOR_SILENCE_MS":    "30000",
+		"CLAUDE_CODE_OAUTH_TOKEN":    "dummy-token-for-fake-cli-cross-stack-test",
+		"RIMSKY_EXECUTOR_HOST":       "0.0.0.0",
+		"RIMSKY_EXECUTOR_PORT_GRPC":  "9090",
+		"RIMSKY_EXECUTOR_PORT_HTTP":  "9190",
+		"RIMSKY_EXECUTOR_SILENCE_MS": "30000",
 	}
 	if opts.McpAllowlist != nil {
 		env["RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST"] = strings.Join(opts.McpAllowlist, ",")

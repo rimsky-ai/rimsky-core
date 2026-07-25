@@ -82,7 +82,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 			Queue:                  h.Queue,
 			ClaimHandles:           h.Persist.ClaimHandles(),
 			AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-			StoreRegistry:          reg,
+			ClaimProducerRegistry:  reg,
 			Clock:                  shared.SystemClock{},
 			Logger:                 shared.SilentLogger{},
 			SupervisorID:           supID,

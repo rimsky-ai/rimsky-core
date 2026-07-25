@@ -57,17 +57,18 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
 
 	h.WaitForEventCount(worker.ID, "transient/park", 1)
+	h.WaitForLeafRunLineageCount(worker.ID, 1)
 
-	var parkSettlingSignal string
+	var parkLeafRunCount int
 	h.QueryRowSQL(
-		`SELECT record->>'settling_signal_type' FROM rimsky_lineage
+		`SELECT count(*) FROM rimsky_lineage
 		 WHERE record_kind = 'leaf_run' AND record->>'node_id' = $1
-		 ORDER BY observed_at DESC LIMIT 1`,
+		   AND record->>'settling_signal_type' = 'transient/park'`,
 		[]any{worker.ID.String()},
-		&parkSettlingSignal,
+		&parkLeafRunCount,
 	)
-	require.Equal(t, "transient/park", parkSettlingSignal,
-		"park leaf-run lineage row should carry settling_signal_type=transient/park")
+	require.GreaterOrEqual(t, parkLeafRunCount, 1,
+		"a leaf-run lineage row with settling_signal_type=transient/park must exist for the parked run")
 
 	h.WaitForEventCount(worker.ID, "parked_resume_started", 1)
 	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")

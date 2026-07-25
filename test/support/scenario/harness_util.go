@@ -21,16 +21,16 @@ func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 func parseUUIDStr(s string) (uuid.UUID, error) { return uuid.Parse(s) }
 
-func ClaimRef(storeName, selector string) node.NodeClaimProducerRef {
-	return node.NodeClaimProducerRef{Name: storeName, Selector: selector, Intent: "r"}
+func ClaimRef(producerName, selector string) node.NodeClaimProducerRef {
+	return node.NodeClaimProducerRef{Name: producerName, Selector: selector, Intent: "r"}
 }
 
-func WriteClaimRef(storeName, selector string) node.NodeClaimProducerRef {
-	return node.NodeClaimProducerRef{Name: storeName, Selector: selector, Intent: "rw"}
+func WriteClaimRef(producerName, selector string) node.NodeClaimProducerRef {
+	return node.NodeClaimProducerRef{Name: producerName, Selector: selector, Intent: "rw"}
 }
 
-func AliasedClaimRef(storeName, selector, intent, alias string) node.NodeClaimProducerRef {
-	return node.NodeClaimProducerRef{Name: storeName, Selector: selector, Intent: intent, Alias: alias}
+func AliasedClaimRef(producerName, selector, intent, alias string) node.NodeClaimProducerRef {
+	return node.NodeClaimProducerRef{Name: producerName, Selector: selector, Intent: intent, Alias: alias}
 }
 
 func MutexLock(name string) node.NodeLockRef {

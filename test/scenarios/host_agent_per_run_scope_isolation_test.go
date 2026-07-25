@@ -76,7 +76,7 @@ func TestHostAgentPerRunScopeIsolation(t *testing.T) {
 
 	fx := newHostAgentFixture(t, fixtureOpts{
 		withAgent: true,
-		stores: config.RemoteClaimProducersConfig{
+		producers: config.RemoteClaimProducersConfig{
 			ClaimProducers: map[string]config.ClaimProducerEntry{
 				perRunScopeStoreName: {
 					Endpoint: "grpc://" + endpoint,

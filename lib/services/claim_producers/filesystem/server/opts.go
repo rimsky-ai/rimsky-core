@@ -16,7 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
 
-const ConfigEnv = "STORE_FILESYSTEM_CONFIG"
+const ConfigEnv = "RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG"
 
 const (
 	defaultGRPCPort = 9100

@@ -395,7 +395,7 @@ func classedStatus(err error) error {
 	st := status.New(codes.Internal, ce.Error())
 	withInfo, derr := st.WithDetails(&errdetails.ErrorInfo{
 		Reason: ce.Class,
-		Domain: "rimsky.store-postgres",
+		Domain: "rimsky.claim-producer-postgres",
 	})
 	if derr != nil {
 		return st.Err()

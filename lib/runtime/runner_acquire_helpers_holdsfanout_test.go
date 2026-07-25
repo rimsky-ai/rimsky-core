@@ -33,7 +33,7 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 	d := pgdbtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	const storeName = "holds-fanout-store"
+	const producerName = "holds-fanout-producer"
 	tmplSpec := &node.TemplateSpec{
 		Name:    "holds-fanout-tmpl",
 		Version: "1",
@@ -42,15 +42,15 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 				Type:     "producer",
 				Executor: "stub",
 				ClaimProducers: []spec.NodeClaimProducerRef{
-					{Name: storeName, Selector: "sel", Intent: "rw"},
+					{Name: producerName, Selector: "sel", Intent: "rw"},
 				},
 			},
 			{
 				Type:     "fan-out-consumer",
 				Executor: "stub",
-				Holds:    map[string]spec.HoldsBinding{storeName: {From: "producer"}},
+				Holds:    map[string]spec.HoldsBinding{producerName: {From: "producer"}},
 				FanOut: &spec.FanOutSpec{
-					Claim:            storeName,
+					Claim:            producerName,
 					PartitionRequest: `"all"`,
 				},
 			},
@@ -111,13 +111,13 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 		return err
 	}))
 
-	producerName := storeName
+	producerNameRef := producerName
 	intent := "rw"
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 shared.UUID(uuid.New()),
 			LockKind:           persistence.LockKindScope,
-			ProducerName:       &producerName,
+			ProducerName:       &producerNameRef,
 			ClaimScopeData:     []byte(`"parent-scope"`),
 			Address:            []byte(`"addr"`),
 			Intent:             &intent,
@@ -129,7 +129,7 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 	}))
 
 	errStop := errors.New("stop-after-capture")
-	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+	store := storetest.NewFake(producerName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
@@ -137,18 +137,18 @@ func TestAcquireFanOutIfDeclared_HoldsBoundClaimReachesSplitScope(t *testing.T) 
 		return claimproducer.SplitClaimScopeResponse{}, errStop
 	}
 	reg := locks.NewRegistry()
-	reg.Add(storeName, store)
+	reg.Add(producerName, store)
 
 	consumerDef := LookupNodeDef(tmplSpec, "fan-out-consumer")
 	require.NotNil(t, consumerDef)
 
 	out := &acquisition{InstanceID: instID, RunScopeID: mainScopeID}
 	args := RunArgs{
-		Persist:       backend,
-		ClaimHandles:  backend.ClaimHandles(),
-		StoreRegistry: reg,
-		Logger:        shared.SilentLogger{},
-		SupervisorID:  "sup-holds-fanout",
+		Persist:               backend,
+		ClaimHandles:          backend.ClaimHandles(),
+		ClaimProducerRegistry: reg,
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-holds-fanout",
 	}
 	cand := persistence.Candidate{
 		FrameID:   frameID,

@@ -1,7 +1,7 @@
-# Postgres-store config for STORY-pg-fanout-list-array. The operator
-# mounts this at /etc/store/config.yml when running the postgres
-# bundled-store image; the items table schema and seed are described in
-# the demo.sh prerequisites.
+# Postgres claim-producer config for STORY-pg-fanout-list-array. The
+# operator mounts this at /etc/store/config.yml when running the postgres
+# bundled claim-producer image; the items table schema and seed are
+# described in the demo.sh prerequisites.
 
 connection: "postgres://store_postgres:store_postgres@db:5432/rimsky?sslmode=disable"
 

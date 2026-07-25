@@ -335,7 +335,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, err
 	}
 	rawProducers := wrapper.ClaimProducers
-	stores := RemoteClaimProducersConfig{ClaimProducers: make(map[string]ClaimProducerEntry, len(rawProducers))}
+	producers := RemoteClaimProducersConfig{ClaimProducers: make(map[string]ClaimProducerEntry, len(rawProducers))}
 	for name, e := range rawProducers {
 		envelope, err := parseAllowed(name, e.WriteSemanticsAllowed)
 		if err != nil {
@@ -361,7 +361,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
-		stores.ClaimProducers[name] = ClaimProducerEntry{
+		producers.ClaimProducers[name] = ClaimProducerEntry{
 			Endpoint:              e.Endpoint,
 			Capabilities:          claimproducer.Capabilities{WriteSemanticsAllowed: envelope},
 			TLS:                   tlsMode,
@@ -565,7 +565,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	return RimskyConfig{
 		Persistence:                  pcfg,
 		Blob:                         bcfg,
-		ClaimProducers:               stores,
+		ClaimProducers:               producers,
 		NamedLocks:                   locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
 		Executors:                    executors,
 		Publishers:                   publishersCfg,
@@ -773,9 +773,9 @@ func LookupInstanceBindings(ctx context.Context, persist persistence.Tables, ins
 }
 
 // @concept: lifecycle-subscriber
-func DialLifecycleSubscribers(ctx context.Context, stores RemoteClaimProducersConfig, execs ExecutorsConfig, publishers RemotePublishersConfig) (*lifecycle.Registry, error) {
+func DialLifecycleSubscribers(ctx context.Context, producers RemoteClaimProducersConfig, execs ExecutorsConfig, publishers RemotePublishersConfig) (*lifecycle.Registry, error) {
 	reg := lifecycle.NewRegistry()
-	for name, entry := range stores.ClaimProducers {
+	for name, entry := range producers.ClaimProducers {
 		if !entry.HasProtocol(claimproducer.ProtocolLifecycleSubscriber) {
 			continue
 		}

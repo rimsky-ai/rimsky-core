@@ -256,7 +256,7 @@ func TestTemplateRegister_Idempotent(t *testing.T) {
 	storeNames := []string{"content", "topics-ring"}
 	preCounts := make(map[string]int, len(storeNames))
 	for _, name := range storeNames {
-		s, ok := h.stores.Get(name)
+		s, ok := h.producers.Get(name)
 		require.True(t, ok)
 		fake, ok := s.(*storetest.Fake)
 		require.True(t, ok)
@@ -270,7 +270,7 @@ func TestTemplateRegister_Idempotent(t *testing.T) {
 	require.Equal(t, out1["template_id"], out2["template_id"])
 
 	for _, name := range storeNames {
-		s, _ := h.stores.Get(name)
+		s, _ := h.producers.Get(name)
 		fake := s.(*storetest.Fake)
 		require.Equal(t, preCounts[name], len(fake.Calls()),
 			"idempotent re-register must not fire OnTemplateRegistered again for %q", name)
@@ -606,7 +606,7 @@ func newConstrainedExecutorHarness(t *testing.T) (*harness, func()) {
 		},
 	})
 	srv := httptest.NewServer(app)
-	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
+	h := &harness{srv: srv, driver: d, persist: d.Tables(), producers: reg, logger: capLog}
 	return h, func() { srv.Close() }
 }
 

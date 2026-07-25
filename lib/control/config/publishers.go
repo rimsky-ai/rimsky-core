@@ -57,7 +57,7 @@ func (r *dataProcessingRegistryImpl) Get(name string) (runtime.DataProcessingCli
 }
 
 func DialPublisherAndValidationRegistries(
-	ctx context.Context, stores RemoteClaimProducersConfig, execs ExecutorsConfig, publishers RemotePublishersConfig,
+	ctx context.Context, producers RemoteClaimProducersConfig, execs ExecutorsConfig, publishers RemotePublishersConfig,
 	validatorsCfg RemoteValidatorsConfig, dataProcessorsCfg RemoteDataProcessorsConfig,
 ) (
 	publisherReg runtime.PublisherRegistry,
@@ -96,8 +96,8 @@ func DialPublisherAndValidationRegistries(
 		protocols  []string
 		fetchRoles func(context.Context) ([]string, error)
 	}
-	peers := make([]peerSpec, 0, len(stores.ClaimProducers)+len(execs.Executors)+len(publishers.Publishers))
-	for n, e := range stores.ClaimProducers {
+	peers := make([]peerSpec, 0, len(producers.ClaimProducers)+len(execs.Executors)+len(publishers.Publishers))
+	for n, e := range producers.ClaimProducers {
 		nameCopy, endpointCopy, tlsCopy := n, e.Endpoint, e.TLS
 		peers = append(peers, peerSpec{
 			name:      n,

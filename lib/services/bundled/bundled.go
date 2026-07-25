@@ -22,9 +22,9 @@ import (
 	verifiershapechecks "github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks"
 )
 
-const ProducerNameFilesystem = "store-filesystem"
+const ProducerNameFilesystem = "claim-producer-filesystem"
 
-const ProducerNamePostgres = "store-postgres"
+const ProducerNamePostgres = "claim-producer-postgres"
 
 type ExecutorHandler interface {
 	Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error)

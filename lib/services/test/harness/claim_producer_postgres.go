@@ -17,7 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const storePostgresImage = "rimsky-claim-producer-postgres"
+const claimProducerPostgresImage = "rimsky-claim-producer-postgres"
 
 type PostgresOnNetwork struct {
 	InternalDSN string
@@ -42,7 +42,7 @@ func StartPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alia
 		),
 	)
 	if err != nil {
-		t.Fatalf("harness: start store postgres: %v", err)
+		t.Fatalf("harness: start claim-producer postgres: %v", err)
 	}
 	t.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -52,7 +52,7 @@ func StartPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alia
 
 	hostDSN, err := c.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		t.Fatalf("harness: store postgres host DSN: %v", err)
+		t.Fatalf("harness: claim-producer postgres host DSN: %v", err)
 	}
 	internalDSN := fmt.Sprintf("postgres://store:store@%s:5432/storedb?sslmode=disable", uniqueAlias)
 
@@ -62,31 +62,31 @@ func StartPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alia
 	}
 }
 
-type PostgresStorePickPolicy struct {
+type PostgresPickPolicy struct {
 	ItemsTable               string
 	OnCommit                 string
 	OnGiveUp                 string
 	VisibilityTimeoutSeconds int
 }
 
-type PostgresStoreSpec struct {
+type PostgresClaimProducerSpec struct {
 	Connection           string
 	WriteSemantics       string
-	PickPolicies         map[string]PostgresStorePickPolicy
+	PickPolicies         map[string]PostgresPickPolicy
 	EnableExecutor       bool
 	SweepIntervalSeconds int
 }
 
-func StartPostgresStore(ctx context.Context, t testing.TB, networkName, alias string, spec PostgresStoreSpec) (endpoint string) {
+func StartPostgresClaimProducer(ctx context.Context, t testing.TB, networkName, alias string, spec PostgresClaimProducerSpec) (endpoint string) {
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 
-	configYAML := renderPostgresStoreConfig(spec)
+	configYAML := renderPostgresClaimProducerConfig(spec)
 
-	c, err := runWithRetry(ctx, ImageRef(storePostgresImage),
+	c, err := runWithRetry(ctx, ImageRef(claimProducerPostgresImage),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
-			"STORE_POSTGRES_CONFIG": "/etc/store/config.yml",
+			"RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG": "/etc/store/config.yml",
 		}),
 		testcontainers.WithExposedPorts("9101/tcp"),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
@@ -99,7 +99,7 @@ func StartPostgresStore(ctx context.Context, t testing.TB, networkName, alias st
 		),
 	)
 	if err != nil {
-		t.Fatalf("harness: start store-postgres: %v", err)
+		t.Fatalf("harness: start claim-producer-postgres: %v", err)
 	}
 	t.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -110,7 +110,7 @@ func StartPostgresStore(ctx context.Context, t testing.TB, networkName, alias st
 	return fmt.Sprintf("grpc://%s:9101", uniqueAlias)
 }
 
-func renderPostgresStoreConfig(spec PostgresStoreSpec) string {
+func renderPostgresClaimProducerConfig(spec PostgresClaimProducerSpec) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "connection: %q\n", spec.Connection)
 	ws := spec.WriteSemantics

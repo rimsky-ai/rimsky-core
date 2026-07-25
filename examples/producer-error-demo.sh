@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ALL_IN_ONE_IMAGE="${ALL_IN_ONE_IMAGE:-rimsky-all-in-one:latest}"
-STORE_IMAGE="${STORE_IMAGE:-rimsky-claim-producer-filesystem:latest}"
+PRODUCER_IMAGE="${PRODUCER_IMAGE:-rimsky-claim-producer-filesystem:latest}"
 EXECUTOR_IMAGE="${EXECUTOR_IMAGE:-rimsky-executor-http-node:latest}"
 
 for bin in docker curl python3; do
@@ -17,7 +17,7 @@ for bin in docker curl python3; do
         exit 1
     fi
 done
-for image in "${ALL_IN_ONE_IMAGE}" "${STORE_IMAGE}" "${EXECUTOR_IMAGE}"; do
+for image in "${ALL_IN_ONE_IMAGE}" "${PRODUCER_IMAGE}" "${EXECUTOR_IMAGE}"; do
     if ! docker image inspect "${image}" >/dev/null 2>&1; then
         echo "producer-error-demo: image ${image} not found locally —" >&2
         echo "  run 'make core-images service-images' first" >&2
@@ -27,15 +27,15 @@ done
 
 RUN_ID="$( date +%s )-$$"
 NET="rimsky-producer-error-demo-${RUN_ID}"
-STORE="rimsky-producer-error-demo-store-${RUN_ID}"
+PRODUCER="rimsky-producer-error-demo-producer-${RUN_ID}"
 EXECUTOR="rimsky-producer-error-demo-executor-${RUN_ID}"
 RIMSKY="rimsky-producer-error-demo-rimsky-${RUN_ID}"
 TMP_DIR="$( mktemp -d -t rimsky-producer-error-demo.XXXXXXXX )"
 
 cleanup() {
     local rc=$?
-    docker exec "${STORE}" rm -rf /workspace/data >/dev/null 2>&1 || true
-    docker rm -f "${STORE}" "${EXECUTOR}" "${RIMSKY}" >/dev/null 2>&1 || true
+    docker exec "${PRODUCER}" rm -rf /workspace/data >/dev/null 2>&1 || true
+    docker rm -f "${PRODUCER}" "${EXECUTOR}" "${RIMSKY}" >/dev/null 2>&1 || true
     docker network rm "${NET}" >/dev/null 2>&1 || true
     rm -rf "${TMP_DIR}" 2>/dev/null || true
     exit "${rc}"
@@ -58,21 +58,21 @@ echo "producer-error-demo: [1/6] booting the stack (network ${NET})"
 docker network create "${NET}" >/dev/null
 
 mkdir -p "${TMP_DIR}/workspace/data"
-cat > "${TMP_DIR}/store-config.yml" <<'YAML'
+cat > "${TMP_DIR}/producer-config.yml" <<'YAML'
 root: /workspace/data
 host: 0.0.0.0
 grpc_port: 9100
 http_port: 9110
 YAML
-docker run -d --name "${STORE}" \
-    --network "${NET}" --network-alias store \
-    -e STORE_FILESYSTEM_CONFIG=/etc/store/config.yml \
-    -v "${TMP_DIR}/store-config.yml:/etc/store/config.yml:ro" \
+docker run -d --name "${PRODUCER}" \
+    --network "${NET}" --network-alias producer \
+    -e RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG=/etc/producer/config.yml \
+    -v "${TMP_DIR}/producer-config.yml:/etc/producer/config.yml:ro" \
     -v "${TMP_DIR}/workspace:/workspace:rw" \
     -p 127.0.0.1:0:9110 \
-    "${STORE_IMAGE}" >/dev/null
-STORE_HTTP_PORT="$( docker port "${STORE}" 9110 | head -n1 | sed 's/.*://' )"
-STORE_BRIDGE="http://127.0.0.1:${STORE_HTTP_PORT}"
+    "${PRODUCER_IMAGE}" >/dev/null
+PRODUCER_HTTP_PORT="$( docker port "${PRODUCER}" 9110 | head -n1 | sed 's/.*://' )"
+PRODUCER_BRIDGE="http://127.0.0.1:${PRODUCER_HTTP_PORT}"
 
 docker run -d --name "${EXECUTOR}" \
     --network "${NET}" --network-alias executor \
@@ -86,7 +86,7 @@ persistence:
     path: /var/lib/rimsky/state.db
 claim_producers:
   docs:
-    endpoint: "grpc://store:9100"
+    endpoint: "grpc://producer:9100"
     protocols: [claim_producer]
     write_semantics_allowed: [sync]
 named_locks: {}
@@ -116,7 +116,7 @@ if ! curl -fsS "${BASE}/v1/health" >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "producer-error-demo: [2/6] registering + deploying the template (durable claim on store 'docs')"
+echo "producer-error-demo: [2/6] registering + deploying the template (durable claim on producer 'docs')"
 TEMPLATE_BODY='{
   "spec": {
     "name": "producer-error-demo",
@@ -152,7 +152,7 @@ fi
 curl -fsS -X POST -H 'Content-Type: application/json' -d '{}' \
     "${BASE}/v1/templates/${TEMPLATE_ID}/deploy" >/dev/null
 
-INSTANCE_BODY="$( printf '{"template":"%s","instance_key":"demo-1","params":{"url":"http://rimsky:8080/v1/health"}}' "${TEMPLATE_ID}" )"
+INSTANCE_BODY="$( printf '{"template":"%s","instance_key":"demo-1","target_agent":"demo-agent","params":{"url":"http://rimsky:8080/v1/health"}}' "${TEMPLATE_ID}" )"
 INST_RESP="$( curl -sS -X POST -H 'Content-Type: application/json' \
     -d "${INSTANCE_BODY}" \
     "${BASE}/v1/instances" )"
@@ -169,7 +169,7 @@ for _ in $( seq 1 240 ); do
         | json_get "d['node']['state']" || true )"
     if [ "${NODE_STATE}" = "fresh" ]; then break; fi
     if [ "${NODE_STATE}" = "failed" ]; then
-        echo "producer-error-demo: node run FAILED (expected success while the store is healthy)" >&2
+        echo "producer-error-demo: node run FAILED (expected success while the producer is healthy)" >&2
         docker logs "${RIMSKY}" >&2 || true
         exit 1
     fi
@@ -195,25 +195,25 @@ if [ "${ASSET_LIFETIME}" != "durable" ]; then
 fi
 echo "producer-error-demo:       durable asset committed: produce-report.out"
 
-echo "producer-error-demo: [4/6] sabotaging the store's backing path (rm -rf of the configured root)"
-rm -rf "${TMP_DIR}/workspace/data" 2>/dev/null     || docker exec "${STORE}" rm -rf /workspace/data
+echo "producer-error-demo: [4/6] sabotaging the producer's backing path (rm -rf of the configured root)"
+rm -rf "${TMP_DIR}/workspace/data" 2>/dev/null     || docker exec "${PRODUCER}" rm -rf /workspace/data
 
 SABOTAGE_SEEN=""
 for _ in $( seq 1 60 ); do
     PROBE="$( curl -sS -X POST -H 'Content-Type: application/json' \
         -d '{"claim_id":"sabotage-probe","selector":"probe/x","intent":"r"}' \
-        "${STORE_BRIDGE}/v1/open" 2>/dev/null || true )"
+        "${PRODUCER_BRIDGE}/v1/open" 2>/dev/null || true )"
     case "${PROBE}" in
         *fs/root_unavailable*) SABOTAGE_SEEN="yes"; break ;;
     esac
     sleep 0.5
 done
 if [ -z "${SABOTAGE_SEEN}" ]; then
-    echo "producer-error-demo: store never observed the removed root; last probe: ${PROBE}" >&2
+    echo "producer-error-demo: producer never observed the removed root; last probe: ${PROBE}" >&2
     exit 1
 fi
 
-echo "producer-error-demo: [5/6] DELETE the asset — rimsky calls the store's Release, the store rejects"
+echo "producer-error-demo: [5/6] DELETE the asset — rimsky calls the producer's Release, the producer rejects"
 HTTP_STATUS_FILE="${TMP_DIR}/delete-status"
 DELETE_RESP="$( curl -sS -X DELETE -o - -w '%{stderr}%{http_code}' \
     "${BASE}/v1/instances/${INSTANCE_ID}/assets/produce-report.out" \
@@ -232,21 +232,21 @@ PRODUCER_NAME="$( echo "${DELETE_RESP}" | json_get "d['producer_name']" )"
 ERROR_CLASS="$(   echo "${DELETE_RESP}" | json_get "d['error_class']" )"
 MESSAGE="$(       echo "${DELETE_RESP}" | json_get "d['message']" )"
 if [ "${PRODUCER_NAME}" != "docs" ]; then
-    echo "producer-error-demo: FAIL — body.producer_name should name the operator's store 'docs', got '${PRODUCER_NAME}'" >&2
+    echo "producer-error-demo: FAIL — body.producer_name should name the operator's producer 'docs', got '${PRODUCER_NAME}'" >&2
     exit 1
 fi
 if [ "${ERROR_CLASS}" != "fs/root_unavailable" ]; then
-    echo "producer-error-demo: FAIL — body.error_class should carry the store's own class 'fs/root_unavailable', got '${ERROR_CLASS}'" >&2
+    echo "producer-error-demo: FAIL — body.error_class should carry the producer's own class 'fs/root_unavailable', got '${ERROR_CLASS}'" >&2
     exit 1
 fi
 case "${MESSAGE}" in
     *"/workspace/data"*"not accessible"*) ;;
     *)
-        echo "producer-error-demo: FAIL — body.message should carry the store's own message naming the root, got '${MESSAGE}'" >&2
+        echo "producer-error-demo: FAIL — body.message should carry the producer's own message naming the root, got '${MESSAGE}'" >&2
         exit 1
         ;;
 esac
 
-echo "producer-error-demo: PASS — the store's own error class ('${ERROR_CLASS}') and message"
+echo "producer-error-demo: PASS — the producer's own error class ('${ERROR_CLASS}') and message"
 echo "producer-error-demo:        crossed the gRPC → HTTP boundary intact, under 502 (producer"
 echo "producer-error-demo:        failed) rather than a bare rimsky-internal 500."

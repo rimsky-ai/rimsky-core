@@ -66,18 +66,18 @@ func TestUnresolvedExecutor(t *testing.T) {
 	}))
 
 	args := runtime.RunArgs{
-		Persist:           h.Persist,
-		Queue:             h.Queue,
-		ClaimHandles:      h.Persist.ClaimHandles(),
-		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
-		StoreRegistry:     locks.NewRegistry(),
-		Clock:             shared.SystemClock{},
-		Logger:            shared.SilentLogger{},
-		SupervisorID:      "scenario-runner",
-		AcceptedExecutors: []string{"does_not_exist_unknown"},
-		Pool:              pool,
-		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
-		LivenessInterval:  100 * time.Millisecond,
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+		ClaimProducerRegistry: locks.NewRegistry(),
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "scenario-runner",
+		AcceptedExecutors:     []string{"does_not_exist_unknown"},
+		Pool:                  pool,
+		Resolver:              executor.NewStaticResolver(map[string]executor.Endpoint{}),
+		LivenessInterval:      100 * time.Millisecond,
 	}
 
 	out, err := runtime.RunNode(h.Ctx, args, nil)
@@ -193,7 +193,7 @@ func TestUnresolvedExecutor_LateBindResolverMiss(t *testing.T) {
 		Queue:                  h.Queue,
 		ClaimHandles:           h.Persist.ClaimHandles(),
 		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-		StoreRegistry:          locks.NewRegistry(),
+		ClaimProducerRegistry:  locks.NewRegistry(),
 		Clock:                  shared.SystemClock{},
 		Logger:                 shared.SilentLogger{},
 		SupervisorID:           "scenario-runner",
