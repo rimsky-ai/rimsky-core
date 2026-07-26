@@ -14,7 +14,7 @@
 # outcome: file-level parallelism with no upstream enumeration.
 #
 # Stack prerequisites (operator-side):
-#   - rimsky stack reachable at RIMSKY_ENDPOINT
+#   - rimsky stack reachable at RIMSKY_CONTROL_API_URL
 #   - bundled `rimsky-claim-producer-filesystem` registered as claim producer
 #     `claim-producer-filesystem` advertising supports_split_scope=true with pick policy
 #     `@folder-queue` rooted at the seed/queue/ directory shipped with

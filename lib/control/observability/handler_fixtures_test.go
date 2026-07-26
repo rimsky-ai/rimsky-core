@@ -141,9 +141,7 @@ func seedPendingRun(t *testing.T, ctx context.Context, d persistence.Database, n
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err

@@ -16,10 +16,9 @@ type HealthResponse struct {
 }
 
 type SupervisorSummary struct {
-	ID                string   `json:"id"`
-	AcceptedExecutors []string `json:"accepted_executors"`
-	Concurrency       int      `json:"concurrency"`
-	ActiveNodeCount   int      `json:"active_node_count"`
+	ID              string `json:"id"`
+	Concurrency     int    `json:"concurrency"`
+	ActiveNodeCount int    `json:"active_node_count"`
 }
 
 func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {

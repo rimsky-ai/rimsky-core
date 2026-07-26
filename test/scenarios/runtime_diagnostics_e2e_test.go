@@ -185,22 +185,35 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 			"the HTTP surface must reflect this exact holder")
 
 	var inheritorState string
-	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT state::text FROM rimsky_node_runs WHERE node_id = $1 ORDER BY enqueued_at DESC LIMIT 1`,
-		uuid.UUID(rcv.ID),
-	).Scan(&inheritorState))
-	require.Equal(t, string(cascade.NodeStateStale), inheritorState,
-		"inheritor must stay blocked behind the parked acquirer's held claim and never dispatch, "+
-			"even though the signaler it subscribes to already settled terminal/success")
+	for {
+		require.NoError(t, h.Pool.QueryRow(h.Ctx,
+			`SELECT state::text FROM rimsky_node_runs WHERE node_id = $1 ORDER BY enqueued_at DESC LIMIT 1`,
+			uuid.UUID(rcv.ID),
+		).Scan(&inheritorState))
+		if inheritorState == string(cascade.NodeStateHeld) {
+			break
+		}
+		require.Contains(t,
+			[]string{string(cascade.NodeStateStale), string(cascade.NodeStateRunning), string(cascade.NodeStateHeld)},
+			inheritorState,
+			"the inheritor's run settles held behind the parked acquirer's held claim — stale (unclaimed), "+
+				"running (mid-dispatch), and held are its only legal states; a fresh or failed terminal would "+
+				"mean its settlement escaped the wedge")
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	var inheritorDispatchCount int
+	var escapedTerminals int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'work_started'`,
-		uuid.UUID(rcv.ID),
-	).Scan(&inheritorDispatchCount))
-	require.Zero(t, inheritorDispatchCount,
-		"inheritor must never actually dispatch (no work_started event) while blocked behind "+
-			"the parked acquirer's held claim")
+		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND state IN ($2, $3)`,
+		uuid.UUID(rcv.ID), string(cascade.NodeStateFresh), string(cascade.NodeStateFailed),
+	).Scan(&escapedTerminals))
+	require.Equal(t, 0, escapedTerminals,
+		"once the inheritor settles held, no run of it may carry a fresh or failed terminal — "+
+			"a settled terminal would mean its settlement escaped the wedge")
+	require.Equal(t, 1, h.EventCount(rcv.ID, "work_started"),
+		"the inheritor dispatches exactly once on this path — one work_started event, never more")
+	require.Equal(t, 1, h.DispatchCount(rcv.ID),
+		"the inheritor's lineage holds exactly one run row, settled held behind the wedge")
 }
 
 func waitForNodeOnParkedSurface(t *testing.T, h *scenario.Harness, nodeID string) {

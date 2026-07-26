@@ -31,7 +31,7 @@ func TestValidatorHooks_BuiltinDeclaredErrorClasses_CapabilitiesBranch(t *testin
 			return nil, nil, nil, false
 		},
 	}
-	hooks := validatorHooksFor(deps, node.TemplateSpec{})
+	hooks, _ := validatorHooksFor(deps, node.TemplateSpec{})
 	classes, ok := hooks.ExecutorDeclaredErrorClasses(loop_counter.ExecutorAlias)
 	require.True(t, ok, "builtin alias must advertise a known error-class vocabulary")
 	require.Contains(t, classes, loop_counter.AttributesSchemaFailedClass)
@@ -40,7 +40,7 @@ func TestValidatorHooks_BuiltinDeclaredErrorClasses_CapabilitiesBranch(t *testin
 func TestValidatorHooks_BuiltinDeclaredErrorClasses_KindAliasesBranch(t *testing.T) {
 	t.Parallel()
 	deps := AppDeps{KindAliases: builtinAliasKindMap(t)}
-	hooks := validatorHooksFor(deps, node.TemplateSpec{})
+	hooks, _ := validatorHooksFor(deps, node.TemplateSpec{})
 	classes, ok := hooks.ExecutorDeclaredErrorClasses(loop_counter.ExecutorAlias)
 	require.True(t, ok, "builtin alias must advertise a known error-class vocabulary")
 	require.Contains(t, classes, loop_counter.AttributesSchemaFailedClass)
@@ -79,7 +79,8 @@ func TestTemplateRegistration_LoopCounterEmittedErrorClassIsInVocabulary(t *test
 	t.Parallel()
 	deps := AppDeps{KindAliases: builtinAliasKindMap(t)}
 	tmpl := loopCounterErrorTypesSpec(loop_counter.AttributesSchemaFailedClass)
-	res := node.ValidateTemplate(&tmpl, validatorHooksFor(deps, tmpl))
+	hooks, _ := validatorHooksFor(deps, tmpl)
+	res := node.ValidateTemplate(&tmpl, hooks)
 	require.Empty(t, vocabularyWarnings(res),
 		"error_types on loop_counter's genuinely-emitted class must not draw a vocabulary warning")
 }
@@ -88,7 +89,8 @@ func TestTemplateRegistration_LoopCounterUndeclaredErrorClassStillWarns(t *testi
 	t.Parallel()
 	deps := AppDeps{KindAliases: builtinAliasKindMap(t)}
 	tmpl := loopCounterErrorTypesSpec("no_such_class")
-	res := node.ValidateTemplate(&tmpl, validatorHooksFor(deps, tmpl))
+	hooks, _ := validatorHooksFor(deps, tmpl)
+	res := node.ValidateTemplate(&tmpl, hooks)
 	require.NotEmpty(t, vocabularyWarnings(res),
 		"an error class outside the builtin's declared vocabulary must keep drawing the advisory warning")
 }

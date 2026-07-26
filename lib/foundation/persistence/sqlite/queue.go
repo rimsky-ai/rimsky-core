@@ -132,15 +132,6 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 	return nil
 }
 
-func containsStr(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
 func (q *queueImpl) SelectCandidates(
 	ctx context.Context, req persistence.SelectCandidatesRequest, tx persistence.Tx,
 ) ([]persistence.Candidate, error) {
@@ -154,18 +145,10 @@ func (q *queueImpl) SelectCandidates(
 	if limit <= 0 {
 		limit = defaultCandidateLimit
 	}
-	acceptedClaimProducers := req.AcceptedClaimProducers
-	if acceptedClaimProducers == nil {
-		acceptedClaimProducers = []string{}
-	}
-	acceptedExecutors := req.AcceptedExecutors
-	if acceptedExecutors == nil {
-		acceptedExecutors = []string{}
-	}
 
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_claim_producers, d.enqueued_at, d.frame_id,
-		        d.prior_dispatch_id, d.prior_dispatch_disposition, i.service_bindings
+		        d.prior_dispatch_id, d.prior_dispatch_disposition
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
@@ -194,35 +177,6 @@ func (q *queueImpl) SelectCandidates(
 	}
 	defer rows.Close()
 
-	lateBoundIn := func(name string, serviceBindings map[string]json.RawMessage, proxy string, accepted []string) bool {
-		if proxy == "" || !containsStr(accepted, proxy) {
-			return false
-		}
-		_, ok := serviceBindings[name]
-		return ok
-	}
-	executorAccepted := func(executor string, requiredClaimProducers []string, serviceBindings map[string]json.RawMessage) bool {
-		if executor == "" {
-			return len(requiredClaimProducers) > 0
-		}
-		if containsStr(acceptedExecutors, executor) {
-			return true
-		}
-		return lateBoundIn(executor, serviceBindings, req.LateBindExecutorProxy, acceptedExecutors)
-	}
-	claimProducerAccepted := func(required []string, serviceBindings map[string]json.RawMessage) bool {
-		for _, r := range required {
-			if containsStr(acceptedClaimProducers, r) {
-				continue
-			}
-			if lateBoundIn(r, serviceBindings, req.LateBindClaimProducerProxy, acceptedClaimProducers) {
-				continue
-			}
-			return false
-		}
-		return true
-	}
-
 	var out []persistence.Candidate
 	for rows.Next() {
 		var (
@@ -236,18 +190,11 @@ func (q *queueImpl) SelectCandidates(
 			frameIDStr                string
 			priorDispatchIDStr        sql.NullString
 			priorDispositionStr       sql.NullString
-			serviceBindingsStr        sql.NullString
 		)
 		if err := rows.Scan(&dispatchIDStr, &nodeIDStr, &nodeType, &executorName,
 			&requiredClaimProducersStr, &enqueuedAtStr, &frameIDStr,
-			&priorDispatchIDStr, &priorDispositionStr, &serviceBindingsStr); err != nil {
+			&priorDispatchIDStr, &priorDispositionStr); err != nil {
 			return nil, fmt.Errorf("sqlite.SelectCandidates: scan: %w", err)
-		}
-		serviceBindings := map[string]json.RawMessage{}
-		if serviceBindingsStr.Valid && serviceBindingsStr.String != "" {
-			if err := json.Unmarshal([]byte(serviceBindingsStr.String), &serviceBindings); err != nil {
-				return nil, fmt.Errorf("sqlite.SelectCandidates: unmarshal service_bindings: %w", err)
-			}
 		}
 		c.NodeType = nodeType
 		if executorName.Valid {
@@ -268,7 +215,7 @@ func (q *queueImpl) SelectCandidates(
 			return nil, err
 		}
 		c.RequiredClaimProducers = claimProducers
-		if !executorAccepted(c.ExecutorName, c.RequiredClaimProducers, serviceBindings) || !claimProducerAccepted(c.RequiredClaimProducers, serviceBindings) {
+		if c.ExecutorName == "" && len(c.RequiredClaimProducers) == 0 {
 			continue
 		}
 		if c.NodeRunID, err = uuid.Parse(dispatchIDStr); err != nil {
@@ -416,7 +363,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 		        claimed_by, claimed_at, frame_id, async_ack_id,
 		        async_ack_registered_at, last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
-		        async_ack_principal
+		        async_ack_principal, async_callback_url
 		   FROM rimsky_node_runs
 		  WHERE claimed_by IS NOT NULL
 		    AND async_ack_id IS NOT NULL`,
@@ -558,7 +505,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, ackID string, tx 
 		        claimed_by, claimed_at, frame_id, async_ack_id,
 		        async_ack_registered_at, last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
-		        async_ack_principal
+		        async_ack_principal, async_callback_url
 		   FROM rimsky_node_runs
 		  WHERE async_ack_id = ?`,
 		ackID,
@@ -573,7 +520,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, ackID string, tx 
 	return &r, nil
 }
 
-func (q *queueImpl) RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, tx persistence.Tx) error {
+func (q *queueImpl) RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, callbackURL string, tx persistence.Tx) error {
 	if tx == nil {
 		return errors.New("sqlite.RegisterAsyncAck: tx required")
 	}
@@ -594,9 +541,11 @@ func (q *queueImpl) RegisterAsyncAck(ctx context.Context, runID shared.UUID, ack
 		        last_progress_at = ?,
 		        effective_max_quiet_period_seconds = ?,
 		        effective_max_runtime_seconds = ?,
-		        async_ack_principal = ?
+		        async_ack_principal = ?,
+		        async_callback_url = ?
 		  WHERE id = ?`,
-		ackID, formatTime(now), formatTime(now), maxQuietArg, maxRuntimeArg, nullableString(expectedPrincipal), runID.String(),
+		ackID, formatTime(now), formatTime(now), maxQuietArg, maxRuntimeArg, nullableString(expectedPrincipal),
+		nullableString(callbackURL), runID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.RegisterAsyncAck: %w", err)
@@ -649,7 +598,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 	        d.async_ack_registered_at, d.last_progress_at, d.tags,
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
-	        d.async_ack_principal
+	        d.async_ack_principal, d.async_callback_url
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 	  WHERE d.state IN (` + inFlightNodeRunStates + `)` +
@@ -718,7 +667,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
-	        d.async_ack_principal
+	        d.async_ack_principal, d.async_callback_url
 		   FROM rimsky_node_runs d
 		  WHERE d.id = ?
 		    AND d.state IN (`+inFlightNodeRunStates+`)`, id.String(),
@@ -859,13 +808,14 @@ func scanDispatchRow(row scannable) (persistence.DispatchRow, error) {
 		maxQuietSec               sql.NullInt64
 		maxRuntimeSec             sql.NullInt64
 		asyncAckPrincipal         sql.NullString
+		asyncCallbackURL          sql.NullString
 		r                         persistence.DispatchRow
 	)
 	if err := row.Scan(
 		&idStr, &nodeIDStr, &stateStr, &executorName, &requiredClaimProducersStr,
 		&enqueuedAtStr, &claimedBy, &claimedAtStr, &frameIDStr,
 		&asyncAckID, &asyncAckRegisteredAt, &lastProgressAtStr, &tagsStr,
-		&maxQuietSec, &maxRuntimeSec, &asyncAckPrincipal,
+		&maxQuietSec, &maxRuntimeSec, &asyncAckPrincipal, &asyncCallbackURL,
 	); err != nil {
 		return persistence.DispatchRow{}, err
 	}
@@ -940,6 +890,10 @@ func scanDispatchRow(row scannable) (persistence.DispatchRow, error) {
 	if asyncAckPrincipal.Valid {
 		v := asyncAckPrincipal.String
 		r.AsyncAckPrincipal = &v
+	}
+	if asyncCallbackURL.Valid {
+		v := asyncCallbackURL.String
+		r.AsyncCallbackURL = &v
 	}
 	return r, nil
 }

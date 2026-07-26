@@ -128,7 +128,7 @@ func TestResolveServiceBindings_Empty(t *testing.T) {
 }
 
 func TestRunRun_TemplateAndFileMutuallyExclusive(t *testing.T) {
-	t.Setenv("RIMSKY_CONTROL_API", "http://127.0.0.1:0")
+	t.Setenv("RIMSKY_CONTROL_API_URL", "http://127.0.0.1:0")
 	t.Setenv("RIMSKY_CONTEXT", "")
 	t.Setenv("HOME", t.TempDir())
 	specPath := filepath.Join(t.TempDir(), "spec.yml")

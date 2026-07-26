@@ -98,9 +98,7 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 	go func() {
 		holderDone <- store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-				AcceptedExecutors:      []string{"test-executor"},
-				AcceptedClaimProducers: []string{},
-				Limit:                  1,
+				Limit: 1,
 			}, tx)
 			close(holderReady)
 			<-release
@@ -119,9 +117,7 @@ func TestSelectCandidates_ForUpdateScopedToDispatchRow_NoInstanceRowContention(t
 	var probeCands []persistence.Candidate
 	require.NoError(t, store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  10,
+			Limit: 10,
 		}, tx)
 		probeCands = cands
 		return err

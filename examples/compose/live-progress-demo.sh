@@ -2,27 +2,6 @@
 # Copyright © 2026 Fall Guy Consulting.
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
-#
-# live-progress-demo.sh — STORY-live-progress proof.
-#
-# Role: operator watching a one-shot run unfold — wants to see per-
-# instance and per-node terminal lines emitted IN TIME with execution,
-# not buffered until the run ends.
-#
-# What this demo exhibits, by Falsifier:
-#  - the verb's stderr is captured line-by-line into a timestamped
-#    transcript while the run is in progress (each transcript line
-#    is prefixed with the wall-clock time at which the line crossed
-#    the pipe);
-#  - the manifest has two instances: `fast` (no delay) and `slow`
-#    (stub executor's delay_ms attribute holds dispatch for 3s);
-#  - the transcript shows the `fast: success` line at a wall-clock
-#    time at LEAST 1 second before the `slow: success` line — the
-#    fast instance's terminal arrived during the slow instance's
-#    delay, not buffered to the end;
-#  - the operator-visible cadence is bounded by the verb's
-#    DefaultWaitPollInterval (≤1s); the test allows up to a 2s slop
-#    above the 3s delay to admit polling jitter without false fails.
 
 set -u
 

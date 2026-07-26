@@ -368,9 +368,8 @@ func TestProxyPassesExecutorConformanceSuite(t *testing.T) {
 
 	ctx := metadata.AppendToOutgoingContext(context.Background(), serviceNameHeader, "codegen")
 	results, err := executorconf.Run(ctx, executorconf.RunnerOpts{
-		Endpoint:        executorconf.Endpoint{Transport: "grpc", URL: proxyAddr},
-		RequireStubMode: true,
-		Timeout:         20 * time.Second,
+		Endpoint: executorconf.Endpoint{Transport: "grpc", URL: proxyAddr},
+		Timeout:  20 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("executor conformance run: %v", err)

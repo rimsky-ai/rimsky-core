@@ -55,7 +55,7 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	templateID := deployObjectStoreSensorTemplate(t, ep)
 	instanceID := createObjectStoreSensorInstance(t, ep, templateID, "ck-sensor-object-store-e2e")
 
-	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+	ep.WaitForSubscriptionsActive(t, instanceID)
 
 	statePool := connectSensorStatePostgres(ctx, t, statePG.hostDSN)
 	defer statePool.Close()

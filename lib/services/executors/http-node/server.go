@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
 )
@@ -36,8 +37,9 @@ type Server struct {
 
 func NewServer(cfg Opts) *Server {
 	return &Server{
-		cfg:      cfg,
-		client:   cfg.Egress.HTTPClient(time.Duration(cfg.TimeoutMs) * time.Millisecond),
+		cfg: cfg,
+		// @decision: three-dispatch-deadlines
+		client:   cfg.Egress.HTTPClient(0),
 		stubMode: cfg.StubMode,
 	}
 }
@@ -104,13 +106,13 @@ func (s *Server) recordTerminal(nodeRunID, stepID string, outcome *genv1.Outcome
 func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	ud := req.GetAttributes().AsMap()
 
-	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
+	if stubmode.IsProbe(ud) && s.stubMode {
 		return s.executeStub(req), nil
 	}
-	if probePark, _ := ud["probe_park"].(bool); probePark && s.stubMode {
+	if stubmode.IsParkProbe(ud) && s.stubMode {
 		return s.executeParkProbe(ud, req.GetScratch()), nil
 	}
-	if probeCancel, _ := ud["probe_cancel"].(bool); probeCancel && s.stubMode {
+	if stubmode.IsCancelProbe(ud) && s.stubMode {
 		return nil, s.executeCancelProbe(ctx, req.GetCallbackUrl())
 	}
 
@@ -215,18 +217,18 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 }
 
 var configAttributeKeys = map[string]struct{}{
-	"url":               {},
-	"method":            {},
-	"headers":           {},
-	"body":              {},
-	"expect_status":     {},
-	"stub_probe":        {},
-	"stub_response":     {},
-	"stub_tags":         {},
-	"error_class_field": {},
-	"probe_park":        {},
-	"probe_cancel":      {},
-	"park_resume_at":    {},
+	"url":                          {},
+	"method":                       {},
+	"headers":                      {},
+	"body":                         {},
+	"expect_status":                {},
+	stubmode.ProbeAttribute:        {},
+	"stub_response":                {},
+	stubmode.TagsAttribute:         {},
+	"error_class_field":            {},
+	stubmode.ParkProbeAttribute:    {},
+	stubmode.CancelProbeAttribute:  {},
+	stubmode.ParkResumeAtAttribute: {},
 }
 
 func buildRequestBody(ud map[string]any) (io.Reader, string, error) {
@@ -282,7 +284,7 @@ func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, er
 
 func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 	ud := req.GetAttributes().AsMap()
-	delta := map[string]any{"stub": true}
+	delta := stubmode.ResponseDelta()
 	if sr, ok := ud["stub_response"]; ok {
 		m, ok := sr.(map[string]any)
 		if !ok {
@@ -304,7 +306,7 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 }
 
 func stubTags(ud map[string]any) []string {
-	raw, ok := ud["stub_tags"].([]any)
+	raw, ok := ud[stubmode.TagsAttribute].([]any)
 	if !ok {
 		return nil
 	}
@@ -353,7 +355,7 @@ func (s *Server) executeParkProbe(ud map[string]any, incomingScratch []byte) *ge
 	if len(park.Scratch) == 0 {
 		park.Scratch = []byte(defaultParkProbeScratch)
 	}
-	if raw, _ := ud["park_resume_at"].(string); raw != "" {
+	if raw, _ := ud[stubmode.ParkResumeAtAttribute].(string); raw != "" {
 		if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
 			park.ResumeAt = timestamppb.New(t)
 		}

@@ -134,14 +134,6 @@ func (q *queueImpl) SelectCandidates(
 	if limit <= 0 {
 		limit = defaultCandidateLimit
 	}
-	acceptedClaimProducers := req.AcceptedClaimProducers
-	if acceptedClaimProducers == nil {
-		acceptedClaimProducers = []string{}
-	}
-	acceptedExecutors := req.AcceptedExecutors
-	if acceptedExecutors == nil {
-		acceptedExecutors = []string{}
-	}
 
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_claim_producers, d.enqueued_at, d.frame_id,
@@ -153,24 +145,12 @@ func (q *queueImpl) SelectCandidates(
 		    AND d.state = 'stale'
 		    AND i.paused = false
 		    AND i.terminated_at IS NULL
-		    AND NOT EXISTS (
-		      SELECT 1 FROM unnest(d.required_claim_producers) AS rs(name)
-		      WHERE NOT (
-		        rs.name = ANY($1::text[])
-		        OR ($5 <> '' AND $5 = ANY($1::text[]) AND i.service_bindings ? rs.name)
-		      )
-		    )
 		    AND (
-		      d.executor_name = ANY($2::text[])
-		      OR (d.executor_name IS NULL AND d.required_claim_producers IS NOT NULL AND cardinality(d.required_claim_producers) > 0)
-		      OR (
-		        $4 <> ''
-		        AND $4 = ANY($2::text[])
-		        AND i.service_bindings ? d.executor_name
-		      )
+		      d.executor_name IS NOT NULL
+		      OR (d.required_claim_producers IS NOT NULL AND cardinality(d.required_claim_producers) > 0)
 		    )
 		    AND d.enqueued_at <= NOW()
-		    AND (d.enqueued_at > $6 OR (d.enqueued_at = $6 AND d.id > $7))
+		    AND (d.enqueued_at > $2 OR (d.enqueued_at = $2 AND d.id > $3))
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_node_runs other
 		       WHERE other.node_id = d.node_id
@@ -184,10 +164,9 @@ func (q *queueImpl) SelectCandidates(
 		        AND w.drained_at IS NULL
 		    )
 		  ORDER BY d.enqueued_at, d.id
-		  LIMIT $3
+		  LIMIT $1
 		  FOR UPDATE OF d SKIP LOCKED`,
-		acceptedClaimProducers, acceptedExecutors, limit, req.LateBindExecutorProxy, req.LateBindClaimProducerProxy,
-		req.CursorEnqueuedAfter, req.CursorAfterNodeRunID,
+		limit, req.CursorEnqueuedAfter, req.CursorAfterNodeRunID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.SelectCandidates: %w", err)
@@ -338,7 +317,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 		        claimed_by, claimed_at, frame_id, async_ack_id, async_ack_registered_at,
 		        last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
-		        async_ack_principal
+		        async_ack_principal, async_callback_url
 		   FROM rimsky_node_runs
 		  WHERE claimed_by IS NOT NULL
 		    AND async_ack_id IS NOT NULL`,
@@ -356,7 +335,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
-			&r.AsyncAckPrincipal,
+			&r.AsyncAckPrincipal, &r.AsyncCallbackURL,
 		); err != nil {
 			return nil, fmt.Errorf("postgres.ListOrphanedClaims: scan: %w", err)
 		}
@@ -491,7 +470,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, ackID string, tx 
 		        claimed_by, claimed_at, frame_id, async_ack_id, async_ack_registered_at,
 		        last_progress_at, tags,
 		        effective_max_quiet_period_seconds, effective_max_runtime_seconds,
-		        async_ack_principal
+		        async_ack_principal, async_callback_url
 		   FROM rimsky_node_runs
 		  WHERE async_ack_id = $1`,
 		ackID,
@@ -502,7 +481,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, ackID string, tx 
 		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
-		&r.AsyncAckPrincipal,
+		&r.AsyncAckPrincipal, &r.AsyncCallbackURL,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -516,7 +495,7 @@ func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, ackID string, tx 
 	return &r, nil
 }
 
-func (q *queueImpl) RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, tx persistence.Tx) error {
+func (q *queueImpl) RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, callbackURL string, tx persistence.Tx) error {
 	if tx == nil {
 		return errors.New("postgres.RegisterAsyncAck: tx required")
 	}
@@ -530,9 +509,11 @@ func (q *queueImpl) RegisterAsyncAck(ctx context.Context, runID shared.UUID, ack
 		        last_progress_at = $3,
 		        effective_max_quiet_period_seconds = $4,
 		        effective_max_runtime_seconds = $5,
-		        async_ack_principal = $6
+		        async_ack_principal = $6,
+		        async_callback_url = $7
 		  WHERE id = $1`,
 		runID, ackID, now, maxQuietSec, maxRuntimeSec, nullableString(expectedPrincipal),
+		nullableString(callbackURL),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.RegisterAsyncAck: %w", err)
@@ -593,7 +574,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
-		        d.async_ack_principal
+		        d.async_ack_principal, d.async_callback_url
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.state IN (`+inFlightNodeRunStates+`)
@@ -620,7 +601,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
-			&r.AsyncAckPrincipal,
+			&r.AsyncAckPrincipal, &r.AsyncCallbackURL,
 		); err != nil {
 			return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 		}
@@ -690,7 +671,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
 		        d.async_ack_registered_at, d.last_progress_at, d.tags,
 		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
-		        d.async_ack_principal
+		        d.async_ack_principal, d.async_callback_url
 		   FROM rimsky_node_runs d
 		  WHERE d.id = $1
 		    AND d.state IN (`+inFlightNodeRunStates+`)`, id,
@@ -702,7 +683,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
 		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
 		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
-		&r.AsyncAckPrincipal,
+		&r.AsyncAckPrincipal, &r.AsyncCallbackURL,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

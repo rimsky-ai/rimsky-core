@@ -58,7 +58,7 @@ docker network create "${NET}" >/dev/null
 docker run -d --name "${SENSOR}" \
     --network "${NET}" --network-alias sensor \
     -e RIMSKY_SENSOR_OBJECT_STORE_PORT=9083 \
-    -e RIMSKY_ENDPOINT=http://rimsky:8080 \
+    -e RIMSKY_CONTROL_API_URL=http://rimsky:8080 \
     -e RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT=/data/object-store \
     "${SENSOR_IMAGE}" >/dev/null
 
@@ -152,10 +152,6 @@ if [ -z "${INSTANCE_ID}" ]; then
     exit 1
 fi
 echo "subscription-mounting-demo: 201 Created in ${ELAPSED}s — instance_id=${INSTANCE_ID}"
-# @constraint: "immediately" must be falsifiable — the old inline-
-# Subscribe path would burn its multi-second retry budget against the
-# paused sensor before responding. 2s is generous slack for HTTP +
-# SQLite writes while still refuting any inline publisher handshake.
 python3 -c "import sys; sys.exit(0 if ${ELAPSED} < 2.0 else 1)" || {
     echo "subscription-mounting-demo: create took ${ELAPSED}s — not the immediate return the story promises" >&2
     exit 1
@@ -177,9 +173,6 @@ echo "subscription-mounting-demo: [5/6] unpausing the sensor — the subscriptio
 docker unpause "${SENSOR}" >/dev/null
 ACTIVE=""
 for _ in $( seq 1 120 ); do
-    # @deliberate: `|| true` — a transient curl/parse failure inside a
-    # poll loop must not abort the demo under `set -euo pipefail`; the
-    # loop retries.
     SUB_STATE="$( curl -fsS "${BASE}/v1/instances/${INSTANCE_ID}" \
         | json_get "', '.join(s['publisher_name'] + '=' + s['state'] for s in d.get('subscriptions') or [])" || true )"
     echo "subscription-mounting-demo:   subscriptions: ${SUB_STATE}"
@@ -200,14 +193,6 @@ fi
 echo "subscription-mounting-demo: subscription is active — the reconciler converged unattended"
 
 echo "subscription-mounting-demo: [6/6] dropping an object into the sensor's bucket — the sensor's message must arrive on the instance"
-# @deliberate: stage the whole bucket tree locally and copy it from
-# the root — the distroless sensor image has no shell and no pre-baked
-# /data, and `docker cp` (unlike the test harness's tar-based
-# CopyToContainer) does not create missing intermediate directories at
-# the destination. Copying the staged `data/` directory into `/`
-# creates the full /data/object-store/events/ tree in one shot. World-
-# readable modes so the nonroot sensor process can traverse + read
-# what the daemon writes as root.
 mkdir -p "${TMP_DIR}/stage/data/object-store/events"
 printf '{"event":"created","payload":"demo"}' > "${TMP_DIR}/stage/data/object-store/events/001-event.json"
 chmod -R a+rX "${TMP_DIR}/stage/data"
@@ -215,8 +200,6 @@ docker cp "${TMP_DIR}/stage/data" "${SENSOR}:/" >/dev/null
 
 MESSAGE=""
 for _ in $( seq 1 60 ); do
-    # @deliberate: `|| true` — transient curl/parse failures retry on
-    # the next poll.
     MESSAGE="$( curl -fsS "${BASE}/v1/instances/${INSTANCE_ID}/messages?sender_kind=publisher" \
         | json_get "json.dumps((d.get('messages') or [None])[0])" || true )"
     if [ -n "${MESSAGE}" ] && [ "${MESSAGE}" != "null" ]; then break; fi

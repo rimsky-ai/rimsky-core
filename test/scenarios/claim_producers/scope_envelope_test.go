@@ -67,17 +67,15 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	reg.Add("content", fake)
 
 	args := runtime.RunArgs{
-		Persist:                h.Persist,
-		Queue:                  h.Queue,
-		ClaimHandles:           h.Persist.ClaimHandles(),
-		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-		ClaimProducerRegistry:  reg,
-		Clock:                  shared.SystemClock{},
-		Logger:                 shared.SilentLogger{},
-		SupervisorID:           "scenario-runner-scope",
-		AcceptedExecutors:      []string{"stub"},
-		AcceptedClaimProducers: []string{"content"},
-		Pool:                   pool,
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+		ClaimProducerRegistry: reg,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "scenario-runner-scope",
+		Pool:                  pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),

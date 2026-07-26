@@ -75,7 +75,7 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	templateID := deploySensorHttpTemplate(t, ep, watchedURL)
 	instanceID := createSensorHttpInstance(t, ep, templateID, "ck-sensor-http-e2e")
 
-	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+	ep.WaitForSubscriptionsActive(t, instanceID)
 
 	// @story: sensor-http
 	waitForUpstreamPolls(t, &pollHits, 3, 30*time.Second)

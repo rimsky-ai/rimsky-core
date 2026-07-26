@@ -40,11 +40,9 @@ type RunArgs struct {
 	VerbOutbox       persistence.ProducerVerbOutboxTable
 	ProducerVerbKick func()
 
-	Clock                  shared.Clock
-	Logger                 shared.Logger
-	SupervisorID           string
-	AcceptedExecutors      []string
-	AcceptedClaimProducers []string
+	Clock        shared.Clock
+	Logger       shared.Logger
+	SupervisorID string
 
 	Pool        *executor.ClientPool
 	Resolver    executor.Resolver

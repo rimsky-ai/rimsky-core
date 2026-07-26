@@ -9,14 +9,14 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TEMPLATE_PATH="${SCRIPT_DIR}/onboarding-template.yaml"
 
-RIMSKY_ENDPOINT="${RIMSKY_ENDPOINT:-http://127.0.0.1:8080}"
+RIMSKY_CONTROL_API_URL="${RIMSKY_CONTROL_API_URL:-http://127.0.0.1:8080}"
 
 RIMSKY_BIN="${RIMSKY_BIN:-rimsky}"
 
-echo "onboarding-demo: registering + deploying + instantiating ${TEMPLATE_PATH} against ${RIMSKY_ENDPOINT}"
+echo "onboarding-demo: registering + deploying + instantiating ${TEMPLATE_PATH} against ${RIMSKY_CONTROL_API_URL}"
 
 RUN_STDOUT="$( "${RIMSKY_BIN}" run \
-    --endpoint "${RIMSKY_ENDPOINT}" \
+    --endpoint "${RIMSKY_CONTROL_API_URL}" \
     --instance-key "onboarding-demo-$( date +%s )-$$" \
     "${TEMPLATE_PATH}" )"
 echo "${RUN_STDOUT}"
@@ -34,7 +34,7 @@ fi
 echo "onboarding-demo: instance_id=${INSTANCE_ID} — watching to terminal"
 
 "${RIMSKY_BIN}" watch \
-    --endpoint "${RIMSKY_ENDPOINT}" \
+    --endpoint "${RIMSKY_CONTROL_API_URL}" \
     --poll-interval 250ms \
     "${INSTANCE_ID}"
 

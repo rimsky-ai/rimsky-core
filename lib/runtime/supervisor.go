@@ -221,16 +221,12 @@ func Start(cfg Config) (*Handle, error) {
 		_ = callbackSrv.Close(context.Background())
 		return nil, err
 	}
-	accepted := cfg.Resolver.AcceptedNames()
-	acceptedClaimProducers := claimProducerRegistryNames(cfg.ClaimProducerRegistry)
 	if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		return cfg.Persist.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{
-			ID:                     cfg.SupervisorID,
-			AcceptedExecutors:      accepted,
-			AcceptedClaimProducers: acceptedClaimProducers,
-			Concurrency:            cfg.Concurrency,
-			CallbackHost:           host,
-			CallbackPort:           port,
+			ID:           cfg.SupervisorID,
+			Concurrency:  cfg.Concurrency,
+			CallbackHost: host,
+			CallbackPort: port,
 		}, tx)
 	}); err != nil {
 		_ = callbackSrv.Close(context.Background())
@@ -254,7 +250,7 @@ func Start(cfg Config) (*Handle, error) {
 	advertised := advertisedCallbackURL(host, port, cfg.PeerAuth)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
 	fanOutSems := NewFanOutSemaphoreRegistry()
-	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedClaimProducers, claimHandles, verbDispatcher, fanOutSems)
+	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, claimHandles, verbDispatcher, fanOutSems)
 	return h, nil
 }
 
@@ -270,22 +266,15 @@ func seedInprocExecutorAlias(r executor.Resolver, alias string, ep executor.Endp
 			if r == nil {
 				return false
 			}
+		case *executor.AddressBookResolver:
+			r = s.Unwrap()
+			if r == nil {
+				return false
+			}
 		default:
 			return false
 		}
 	}
-}
-
-func claimProducerRegistryNames(reg *locks.Registry) []string {
-	producers := reg.Producers()
-	if len(producers) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(producers))
-	for name := range producers {
-		out = append(out, name)
-	}
-	return out
 }
 
 func isWildcardHost(host string) bool {
@@ -327,8 +316,6 @@ func runLoop(
 	srv *CallbackServer,
 	reg *CallbackRegistry,
 	pool *executor.ClientPool,
-	accepted []string,
-	acceptedClaimProducers []string,
 	claimHandles persistence.ClaimHandleTable,
 	verbDispatcher *ProducerVerbDispatcher,
 	fanOutSems *FanOutSemaphoreRegistry,
@@ -336,7 +323,6 @@ func runLoop(
 	defer close(h.done)
 	cfg.Logger.Info("supervisor started",
 		"supervisor_id", cfg.SupervisorID,
-		"accepts", accepted,
 		"concurrency", cfg.Concurrency)
 
 	dispatchCtx, cancelDispatch := context.WithCancel(context.Background())
@@ -373,8 +359,6 @@ func runLoop(
 				Clock:                       cfg.Clock,
 				Logger:                      cfg.Logger,
 				SupervisorID:                cfg.SupervisorID,
-				AcceptedExecutors:           accepted,
-				AcceptedClaimProducers:      acceptedClaimProducers,
 				Pool:                        pool,
 				Resolver:                    cfg.Resolver,
 				ClaimProducerRegistry:       cfg.ClaimProducerRegistry,

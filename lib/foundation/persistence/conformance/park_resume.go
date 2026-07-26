@@ -36,9 +36,7 @@ func seedClaimedRunForNode(
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  32,
+			Limit: 32,
 		}, tx)
 		if err != nil {
 			return err
@@ -366,9 +364,7 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	}
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  32,
+			Limit: 32,
 		}, tx)
 		if err != nil {
 			return err
@@ -442,8 +438,9 @@ func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 	now := time.Now().UTC().Truncate(time.Second)
 	wantMaxQuietSec := 45
 	wantMaxRuntimeSec := 1800
+	wantCallbackURL := "http://supervisor.internal:9099"
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RegisterAsyncAck(ctx, runID, ackID, now, &wantMaxQuietSec, &wantMaxRuntimeSec, expectedPrincipal, tx)
+		return q.RegisterAsyncAck(ctx, runID, ackID, now, &wantMaxQuietSec, &wantMaxRuntimeSec, expectedPrincipal, wantCallbackURL, tx)
 	}); err != nil {
 		t.Fatalf("RegisterAsyncAck: %v", err)
 	}
@@ -478,9 +475,60 @@ func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
 				"value computed at dispatch time must survive the RegisterAsyncAck round-trip, not just a "+
 				"nil no-op)", got.EffectiveMaxRuntimeSeconds, wantMaxRuntimeSec)
 		}
+		if got.AsyncCallbackURL == nil || *got.AsyncCallbackURL != wantCallbackURL {
+			t.Fatalf("LookupRunByAsyncAckID AsyncCallbackURL = %v, want %s (the callback URL registered "+
+				"with the ack must round-trip identically on every backend)", got.AsyncCallbackURL, wantCallbackURL)
+		}
 		return nil
 	}); err != nil {
 		t.Fatalf("LookupRunByAsyncAckID round-trip: %v", err)
+	}
+
+	orphans, err := q.ListOrphanedClaims(ctx)
+	if err != nil {
+		t.Fatalf("ListOrphanedClaims: %v", err)
+	}
+	foundOrphan := false
+	for _, r := range orphans {
+		if r.ID != runID {
+			continue
+		}
+		foundOrphan = true
+		if r.AsyncCallbackURL == nil || *r.AsyncCallbackURL != wantCallbackURL {
+			t.Fatalf("ListOrphanedClaims AsyncCallbackURL = %v, want %s", r.AsyncCallbackURL, wantCallbackURL)
+		}
+	}
+	if !foundOrphan {
+		t.Fatalf("ListOrphanedClaims did not return run %s with a registered async ack", runID)
+	}
+
+	byID, err := q.GetByID(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if byID == nil {
+		t.Fatalf("GetByID(%s) returned nil for an in-flight run", runID)
+	}
+	if byID.AsyncCallbackURL == nil || *byID.AsyncCallbackURL != wantCallbackURL {
+		t.Fatalf("GetByID AsyncCallbackURL = %v, want %s", byID.AsyncCallbackURL, wantCallbackURL)
+	}
+
+	live, err := q.ListLive(ctx, persistence.DispatchListFilter{}, persistence.ListPagination{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListLive: %v", err)
+	}
+	foundLive := false
+	for _, r := range live.Rows {
+		if r.ID != runID {
+			continue
+		}
+		foundLive = true
+		if r.AsyncCallbackURL == nil || *r.AsyncCallbackURL != wantCallbackURL {
+			t.Fatalf("ListLive AsyncCallbackURL = %v, want %s", r.AsyncCallbackURL, wantCallbackURL)
+		}
+	}
+	if !foundLive {
+		t.Fatalf("ListLive did not return in-flight run %s", runID)
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

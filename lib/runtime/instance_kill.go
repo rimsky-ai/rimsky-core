@@ -175,7 +175,15 @@ func resolveKilledClaimTerminal(
 	var producer locks.ClaimProducer
 	producerOK := false
 	if args.ClaimProducerRegistry != nil {
-		producer, producerOK = args.ClaimProducerRegistry.Get(producerName)
+		p, ok, resolveErr := args.ClaimProducerRegistry.ResolveWithContext(ctx, producerName, "", tx)
+		if resolveErr != nil {
+			if args.Logger != nil {
+				args.Logger.Warn("resolveKilledClaimTerminal: producer resolution failed transiently; record-only abandon",
+					"claim_handle_id", h.ID.String(), "producer", producerName, "error", resolveErr.Error())
+			}
+		} else {
+			producer, producerOK = p, ok
+		}
 	}
 	if producerOK {
 		pc, err := ResolveClaimHandleTerminal(ctx, args, TerminalDecision{

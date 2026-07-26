@@ -101,7 +101,7 @@ func startAgent(t *testing.T, proxyAddr string, opts agentStartOptions) (context
 	if err != nil {
 		t.Fatalf("LoadConfigFromEnv: %v", err)
 	}
-	cfg.RimskyURL = proxyAddr
+	cfg.ProxyURL = proxyAddr
 	cfg.APIKey = opts.APIKey
 	cfg.AgentLabel = "scenario-agent"
 	cfg.RoutingLabel = opts.RoutingLabel

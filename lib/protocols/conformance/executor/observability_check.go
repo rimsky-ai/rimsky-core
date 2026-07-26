@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -124,7 +125,7 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 }
 
 func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.ExecutorObservabilityClient, nodeRunID string, logf func(string, ...any)) error {
-	ud, err := structpb.NewStruct(map[string]any{"stub_probe": true})
+	ud, err := structpb.NewStruct(map[string]any{stubmode.ProbeAttribute: true})
 	if err != nil {
 		return fmt.Errorf("build attributes: %w", err)
 	}

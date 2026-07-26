@@ -99,20 +99,17 @@ linters-settings:
           - pkg: "github.com/rimsky-ai/rimsky-core/test/support/executors"
             desc: "foundation/ may not import test/support/executors/ (test-support stubs)."
       # graph-purity: graph/ depends only on foundation/ + protocols/ + stdlib + third-party.
-      # Documented residual: graph/scheduler imports runtime for ConductorArgs + sweep fns +
-      # InvalidateNode / RecalculateNode — the scheduler tick drives runtime sweeps. Flagged
-      # for separate follow-up (likely needs scheduler split: graph-side fan-out vs runtime
-      # tick orchestration). The scenario harness that boots the full stack now lives at
-      # test/support/scenario/, outside the graph/ glob, so it is not subject to this rule.
+      # Unconditional — no per-site exemptions. The scheduler tick loop lives in the runtime
+      # layer (lib/runtime/scheduler) and calls graph-exported step functions downward. The
+      # scenario harness that boots the full stack lives at test/support/scenario/, outside
+      # the graph/ glob, so it is not subject to this rule.
       graph-purity:
         list-mode: lax
         files:
           - "**/graph/**"
-          - "!**/graph/scheduler/scheduler.go"
-          - "!**/graph/scheduler/pure_cascade.go"
         deny:
           - pkg: "github.com/rimsky-ai/rimsky-core/lib/runtime"
-            desc: "graph/ may not import runtime/ (four-layer ordering: foundation < graph < runtime < control). Exception: graph/scheduler/{scheduler.go,pure_cascade.go} imports runtime for sweep entry points — documented residual flagged for separate follow-up."
+            desc: "graph/ may not import runtime/ (four-layer ordering: foundation < graph < runtime < control). Unconditional — no per-site exemptions."
           - pkg: "github.com/rimsky-ai/rimsky-core/lib/control"
             desc: "graph/ may not import control/ (four-layer ordering)."
           - pkg: "github.com/rimsky-ai/rimsky-core/cmd"

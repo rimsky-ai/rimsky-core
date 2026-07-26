@@ -67,6 +67,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `run-scope` — RunScope is the first-class execution context for one graph instantiation (root / sub-graph / fanout_partition).
 - `sensor` — A sensor is a class of `concept:publisher` implementation that observes external state.
 - `service` — An out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky.
+- `service-address-book` — The shared, persisted catalog of the deployment's declared dispatch peers — executor and claim-producer store names mapped to endpoints — published by the control plane at startup and on configuration reload and resolved read-through by every supervisor.
 - `signal` — A signal is the unified emission shape for any transition that affects a node-run.
 - `sub-graph` — A sub-graph is a graph with declared `entry:` and `exit:` nodes; invocable from another node via `delegate: <graph-name>`.
 - `supervisor` — One of the three rimsky runtime binaries.

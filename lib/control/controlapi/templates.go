@@ -91,7 +91,39 @@ func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/templates/{id}/undeploy", gate(deps, "template:undeploy", handleUndeployTemplateState(deps)))
 }
 
-func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks {
+// @concept: service-address-book
+func serviceDeclaredInAddressBook(persist persistence.Tables, kind, name string) (bool, error) {
+	if persist == nil {
+		return false, nil
+	}
+	var row *persistence.ServiceAddressRow
+	if err := persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := persist.ServiceAddressBook().Get(ctx, kind, name, tx)
+		row = r
+		return err
+	}); err != nil {
+		return false, fmt.Errorf("service-address-book lookup for %s %q failed: %w", kind, name, err)
+	}
+	return row != nil, nil
+}
+
+type hookInfraErrors struct {
+	errs []error
+}
+
+func (h *hookInfraErrors) record(err error) {
+	h.errs = append(h.errs, err)
+}
+
+func (h *hookInfraErrors) first() error {
+	if len(h.errs) == 0 {
+		return nil
+	}
+	return h.errs[0]
+}
+
+func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) (node.RegistryHooks, *hookInfraErrors) {
+	infra := &hookInfraErrors{}
 	isLateBind := func(name string) bool {
 		for _, ls := range spec.LateBindServices {
 			if ls == name {
@@ -104,23 +136,36 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		KindAliases: deps.KindAliases,
 	}
 	if deps.ClaimProducers != nil {
+		// @concept: service-address-book
 		hooks.StoreDeclared = func(name string) bool {
 			if isLateBind(name) {
 				return true
 			}
-			_, ok := deps.ClaimProducers.Get(name)
-			return ok
+			if _, ok := deps.ClaimProducers.Get(name); ok {
+				return true
+			}
+			declared, err := serviceDeclaredInAddressBook(deps.Persist, persistence.ServiceKindClaimProducer, name)
+			if err != nil {
+				infra.record(err)
+				return false
+			}
+			return declared
 		}
 		hooks.ClaimProducerAdvertisesSplitScope = func(name string) bool {
 			if isLateBind(name) {
 				return true
 			}
-			p, ok := deps.ClaimProducers.Get(name)
+			p, ok, err := deps.ClaimProducers.ResolveWithContext(context.Background(), name, "", nil)
+			if err != nil {
+				infra.record(fmt.Errorf("resolving claim producer %q: %w", name, err))
+				return false
+			}
 			if !ok {
 				return false
 			}
 			caps, err := p.Capabilities(context.Background())
 			if err != nil {
+				infra.record(fmt.Errorf("claim producer %q capabilities: %w", name, err))
 				return false
 			}
 			return caps.SupportsSplitScope
@@ -139,6 +184,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		return ok
 	}
 	if deps.Executors != nil {
+		// @concept: service-address-book
 		hooks.ExecutorDeclared = func(name string) bool {
 			if isLateBind(name) {
 				return true
@@ -146,8 +192,15 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			if builtin.IsBuiltinAlias(name) {
 				return true
 			}
-			_, ok := deps.Executors[name]
-			return ok
+			if _, ok := deps.Executors[name]; ok {
+				return true
+			}
+			declared, err := serviceDeclaredInAddressBook(deps.Persist, persistence.ServiceKindExecutor, name)
+			if err != nil {
+				infra.record(err)
+				return false
+			}
+			return declared
 		}
 	} else if deps.KindAliases != nil {
 		hooks.ExecutorDeclared = func(name string) bool {
@@ -188,7 +241,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			return builtin.SchemaFor(name)
 		}
 	}
-	return hooks
+	return hooks, infra
 }
 
 func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
@@ -213,7 +266,14 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 		}
 
 		spec := *specBody
-		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
+		hooks, infra := validatorHooksFor(deps, spec)
+		res := node.ValidateTemplate(&spec, hooks)
+		if err := infra.first(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": "template validation could not consult the service registry (transient infrastructure fault, not a validation failure): " + err.Error(),
+			})
+			return
+		}
 		if !res.Ok() {
 			entries := make([]map[string]any, 0, len(res.Errors)+len(res.StructuredErrors))
 			for _, e := range res.Errors {
@@ -390,7 +450,14 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		}
 
 		spec := *specBody
-		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
+		hooks, infra := validatorHooksFor(deps, spec)
+		res := node.ValidateTemplate(&spec, hooks)
+		if err := infra.first(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": "template validation could not consult the service registry (transient infrastructure fault, not a validation failure): " + err.Error(),
+			})
+			return
+		}
 
 		validationErrors := make([]map[string]any, 0, len(res.Errors)+len(res.StructuredErrors))
 		for _, e := range res.Errors {

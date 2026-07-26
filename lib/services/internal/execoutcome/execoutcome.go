@@ -9,6 +9,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -26,7 +27,7 @@ func Errored(class, msg string) *genv1.Outcome {
 }
 
 func StubSuccess(changeSummary string) *genv1.Outcome {
-	delta, _ := structpb.NewStruct(map[string]any{"stub": true})
+	delta, _ := structpb.NewStruct(stubmode.ResponseDelta())
 	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
 		AttributesDelta: delta,
 		Changed:         false,

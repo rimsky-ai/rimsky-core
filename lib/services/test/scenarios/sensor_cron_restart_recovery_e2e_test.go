@@ -50,7 +50,7 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 	templateID := deployCronSensorTemplate(t, ep)
 	instanceID := createCronSensorInstance(t, ep, templateID, "ck-sensor-cron-restart")
 
-	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+	ep.WaitForSubscriptionsActive(t, instanceID)
 
 	statePool := connectSensorStatePostgres(ctx, t, statePGContainer.hostDSN)
 	defer statePool.Close()
@@ -72,7 +72,7 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 
 	requireRecoveredPublisherMessage(t, ep, instanceID, cronPublisherName, restartAt, originalNextFire, 90*time.Second)
 
-	ep.RequireNodeTerminalSucceeded(t, instanceID, cronReactorNode, 90*time.Second)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, cronReactorNode)
 
 	requireSensorCronAdvancedWatermark(t, ctx, statePool, subID, originalNextFire, 60*time.Second)
 }

@@ -18,7 +18,7 @@ import (
 
 func resolveAuthEndpointAndKey(flagEndpoint, flagKey string) (string, string, error) {
 	cfgPath, _ := DefaultConfigPath()
-	endpoint, err := ResolveEndpoint(flagEndpoint, os.Getenv("RIMSKY_CONTROL_API"), cfgPath, "")
+	endpoint, err := ResolveEndpoint(flagEndpoint, os.Getenv("RIMSKY_CONTROL_API_URL"), cfgPath, "")
 	if err != nil {
 		return "", "", err
 	}

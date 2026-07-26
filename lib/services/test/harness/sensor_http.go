@@ -91,7 +91,7 @@ func runSensorHTTPContainer(ctx context.Context, t testing.TB, networkName, alia
 	}
 	env := map[string]string{
 		"RIMSKY_SENSOR_HTTP_PORT":             "9082",
-		"RIMSKY_ENDPOINT":                     rimskyEndpoint,
+		"RIMSKY_CONTROL_API_URL":              rimskyEndpoint,
 		"RIMSKY_SENSOR_HTTP_EGRESS_ALLOWLIST": "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,::1/128,fc00::/7,fe80::/10",
 	}
 	if stateDSN != "" {

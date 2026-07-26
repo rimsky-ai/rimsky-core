@@ -150,9 +150,9 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	supID := resolved.SupervisorID
 	concurrency := resolved.Concurrency
 
-	endpoints := map[string]executor.Endpoint{}
+	configuredExecutors := map[string]executor.Endpoint{}
 	for name, e := range rimskyCfg.Executors.Executors {
-		endpoints[name] = executor.Endpoint{
+		configuredExecutors[name] = executor.Endpoint{
 			Transport: e.Transport,
 			URL:       e.Endpoint,
 			TLS:       e.TLS,
@@ -188,7 +188,8 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		}
 	}
 
-	staticResolver := executor.NewStaticResolver(endpoints)
+	// @concept: service-address-book
+	staticResolver := executor.NewStaticResolver(nil)
 
 	execPeers := make([]observability.PeerSpec, 0, len(rimskyCfg.Executors.Executors))
 	for name, e := range rimskyCfg.Executors.Executors {
@@ -201,13 +202,16 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, logger)
 
 	if bundledRegs != nil {
-		mergeBundledExecutorAliases(staticResolver, endpoints, bundledRegs.ExecutorAliases, func(name string) {
+		mergeBundledExecutorAliases(staticResolver, configuredExecutors, bundledRegs.ExecutorAliases, func(name string) {
 			log.Info("bundled executor overridden by configured endpoint", "executor", name)
 		})
 		bundledRegs.AdvertiseInto(disc, rimskyCfg.Executors.Executors, storesCfg.ClaimProducers)
 	}
 
-	resolver := buildSupervisorResolver(staticResolver, rimskyCfg.LateBindServiceProxies, driver.Tables())
+	// @concept: service-address-book
+	addressBookResolver := executor.NewAddressBookResolver(
+		staticResolver, config.AddressBookExecutorLookup(driver.Tables()), 0, nil)
+	resolver := buildSupervisorResolver(addressBookResolver, rimskyCfg.LateBindServiceProxies, driver.Tables())
 
 	mreg := observability.NewMetricsRegistry()
 
@@ -290,12 +294,12 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	return stop, reporter.ch, nil
 }
 
-func buildSupervisorResolver(staticResolver *executor.StaticResolver, lateBindProxies map[string]string, persistTables persistence.Tables) executor.Resolver {
+func buildSupervisorResolver(staticResolver executor.Resolver, lateBindProxies map[string]string, persistTables persistence.Tables) executor.Resolver {
 	if len(lateBindProxies) == 0 {
 		return staticResolver
 	}
 	lookupBindings := func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
-		return config.LookupInstanceBindings(ctx, persistTables, instanceID)
+		return config.LookupInstanceBindings(ctx, persistTables, instanceID, nil)
 	}
 	return executor.NewLateBindResolver(staticResolver, lookupBindings, lateBindProxies)
 }

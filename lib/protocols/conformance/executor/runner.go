@@ -13,25 +13,27 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type Result struct {
-	Scenario string
-	Passed   bool
-	Skipped  bool
-	Error    string
-	Duration time.Duration
+	Scenario     string
+	Passed       bool
+	Skipped      bool
+	StubGateSkip bool
+	Error        string
+	Duration     time.Duration
 }
 
 type RunnerOpts struct {
-	Endpoint        Endpoint
-	RequireStubMode bool
-	Only            []string
-	Skip            []string
-	Timeout         time.Duration
-	CallbackBind    string
-	CallbackHost    string
+	Endpoint     Endpoint
+	AllowLive    bool
+	Only         []string
+	Skip         []string
+	Timeout      time.Duration
+	CallbackBind string
+	CallbackHost string
 }
 
 // @concept: conformance
@@ -55,14 +57,18 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	defer func() { _ = receiver.Close() }()
 	env := Env{Client: client, Callbacks: receiver}
 
-	stubOK, err := ProbeStubMode(ctx, env, opts.Timeout)
-	if opts.RequireStubMode {
-		if err != nil {
-			return nil, fmt.Errorf("stub-mode probe failed: %w", err)
+	stubOK, probeErr := ProbeStubMode(ctx, env, opts.Timeout)
+	if !opts.AllowLive {
+		if probeErr != nil {
+			return nil, fmt.Errorf("stub-mode probe failed: %w — refusing to run scenarios against an endpoint not proven to be in stub mode; pass --allow-live to run against a live executor (stub-requiring scenarios then skip)", probeErr)
 		}
 		if !stubOK {
-			return nil, fmt.Errorf("executor not in stub mode")
+			return nil, fmt.Errorf("executor not in stub mode — refusing to run scenarios against a live endpoint; pass --allow-live to override (stub-requiring scenarios then skip)")
 		}
+	}
+	stubSkipReason := "stub mode required"
+	if probeErr != nil {
+		stubSkipReason = fmt.Sprintf("stub mode required (stub-mode probe failed: %v)", probeErr)
 	}
 	asyncSupport := probeAsyncSupport(ctx, env, opts.Timeout)
 
@@ -78,7 +84,7 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 			continue
 		}
 		if sc.RequiresStub && !stubOK {
-			results = append(results, Result{Scenario: sc.Name, Skipped: true, Error: "stub mode required"})
+			results = append(results, Result{Scenario: sc.Name, Skipped: true, StubGateSkip: true, Error: stubSkipReason})
 			continue
 		}
 		if sc.RequiresAsync && !asyncSupport {
@@ -101,7 +107,7 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 func ProbeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, error) {
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
+	ud, _ := structpb.NewStruct(map[string]any{stubmode.ProbeAttribute: true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "probe", InstanceId: "probe", NodeType: "conformance-probe",
 		Attributes:  ud,
@@ -116,8 +122,7 @@ func ProbeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 		return false, err
 	}
 	if succ, ok := settled.GetOutcome().(*genv1.Outcome_Success); ok {
-		m := succ.Success.GetAttributesDelta().AsMap()
-		if v, ok := m["stub"].(bool); ok && v {
+		if stubmode.ConfirmsStub(succ.Success.GetAttributesDelta().AsMap()) {
 			return true, nil
 		}
 	}
@@ -127,7 +132,7 @@ func ProbeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 func probeAsyncSupport(ctx context.Context, env Env, timeout time.Duration) bool {
 	pctx, cancel := context.WithTimeout(ctx, timeout/3)
 	defer cancel()
-	ud, _ := structpb.NewStruct(map[string]any{"probe_async": true})
+	ud, _ := structpb.NewStruct(map[string]any{stubmode.AsyncProbeAttribute: true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "probe-async", InstanceId: "probe", NodeType: "conformance-probe-async",
 		Attributes:  ud,

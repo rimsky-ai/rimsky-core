@@ -47,8 +47,6 @@ func nextAliasSuffix() uint64 {
 
 const rimskyAllImage = "rimsky-all-in-one"
 
-const healthDeadline = 90 * time.Second
-
 const healthPollInterval = 500 * time.Millisecond
 
 type RimskyEndpoint struct {
@@ -483,7 +481,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 	}
 	callbackBaseURL := fmt.Sprintf("http://%s:%s", hostIP, mappedCb.Port())
 
-	if err := waitForHealth(ctx, baseURL, healthDeadline); err != nil {
+	if err := waitForHealth(ctx, baseURL); err != nil {
 		dumpLogsForFailure(t, "rimsky/all", rimsky)
 		t.Fatalf("harness: rimsky /health did not return 200: %v", err)
 	}
@@ -591,30 +589,39 @@ func (e RimskyEndpoint) CreateInstance(t testing.TB, templateID, instanceKey, wa
 
 func (e RimskyEndpoint) GetJSON(t testing.TB, path, bearer string) (int, []byte) {
 	t.Helper()
+	status, out, err := e.TryGetJSON(path, bearer)
+	if err != nil {
+		t.Fatalf("harness: GET %s: %v", path, err)
+	}
+	return status, out
+}
+
+func (e RimskyEndpoint) TryGetJSON(path, bearer string) (int, []byte, error) {
 	req, err := http.NewRequest(http.MethodGet, e.BaseURL+path, nil)
 	if err != nil {
-		t.Fatalf("harness: build GET %s: %v", path, err)
+		return 0, nil, fmt.Errorf("build GET %s: %w", path, err)
 	}
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("harness: GET %s: %v", path, err)
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, out
+	return resp.StatusCode, out, nil
 }
 
-func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID string, deadline time.Duration) {
+// @decision: testing-scenario-based-e2e
+func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
 	var last string
-	everObservedSubscriptions := false
-	for time.Now().Before(end) {
-		status, raw := e.GetJSON(t, "/v1/instances/"+instanceID, "")
-		if status == http.StatusOK {
+	for poll := 1; ; poll++ {
+		status, raw, err := e.TryGetJSON("/v1/instances/"+instanceID, "")
+		if err != nil {
+			last = fmt.Sprintf("GET /v1/instances/%s transport error: %v", instanceID, err)
+		} else if status == http.StatusOK {
 			var resp struct {
 				Subscriptions []struct {
 					ID            string `json:"id"`
@@ -625,9 +632,6 @@ func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID stri
 			}
 			if err := json.Unmarshal(raw, &resp); err != nil {
 				t.Fatalf("harness: decode GET /v1/instances/%s: %v: %s", instanceID, err, string(raw))
-			}
-			if len(resp.Subscriptions) > 0 {
-				everObservedSubscriptions = true
 			}
 			allActive := len(resp.Subscriptions) > 0
 			states := make([]string, 0, len(resp.Subscriptions))
@@ -650,36 +654,37 @@ func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID stri
 		} else {
 			last = fmt.Sprintf("GET /v1/instances/%s returned %d", instanceID, status)
 		}
+		if poll%50 == 0 {
+			t.Logf("harness: still waiting for all subscriptions on instance %s to reach state=active "+
+				"(last observed: %s) — the helper blocks until they do; the suite-level timeout is the only backstop",
+				instanceID, last)
+		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if !everObservedSubscriptions {
-		t.Fatalf("harness: instance %s never showed any subscriptions within %v (last observed: %s) — "+
-			"no subscription rows appeared at all, distinct from a reconciler stuck short of state=active",
-			instanceID, deadline, last)
-	}
-	t.Fatalf("harness: subscriptions on instance %s never all reached state=active within "+
-		"%v (last observed: %s) — the mounting reconciler is not converging",
-		instanceID, deadline, last)
 }
 
-func waitForHealth(ctx context.Context, baseURL string, deadline time.Duration) error {
-	pollCtx, cancel := context.WithTimeout(ctx, deadline)
-	defer cancel()
+// @decision: testing-scenario-based-e2e
+func waitForHealth(ctx context.Context, baseURL string) error {
+	last := "no probe completed"
 	for {
-		if pollCtx.Err() != nil {
-			return fmt.Errorf("timed out after %v", deadline)
+		if ctx.Err() != nil {
+			return fmt.Errorf("waitForHealth: %s/v1/health never returned 200 before the caller's context ended (expected: HTTP 200; last observed: %s): %w", baseURL, last, ctx.Err())
 		}
-		req, _ := http.NewRequestWithContext(pollCtx, http.MethodGet, baseURL+"/v1/health", nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/health", nil)
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
+			last = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		} else {
+			last = fmt.Sprintf("transport error: %v", err)
 		}
 		select {
-		case <-pollCtx.Done():
-			return fmt.Errorf("timed out after %v", deadline)
+		case <-ctx.Done():
+			return fmt.Errorf("waitForHealth: %s/v1/health never returned 200 before the caller's context ended (expected: HTTP 200; last observed: %s): %w", baseURL, last, ctx.Err())
+		//nolint:testwallclock inter-poll pacing between health probes, not a verdict input — the loop only exits on success or the caller's context
 		case <-time.After(healthPollInterval):
 		}
 	}

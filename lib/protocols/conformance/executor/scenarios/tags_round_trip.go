@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -30,8 +31,8 @@ func init() {
 			tag := declared[0]
 
 			attrs, err := structpb.NewStruct(map[string]any{
-				"stub_probe": true,
-				"stub_tags":  []any{tag},
+				stubmode.ProbeAttribute: true,
+				stubmode.TagsAttribute:  []any{tag},
 			})
 			if err != nil {
 				return fmt.Errorf("build attributes: %w", err)

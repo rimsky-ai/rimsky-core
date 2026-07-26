@@ -14,9 +14,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/scheduler"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/scheduler"
 )
 
 type SchedulerConfig struct {
@@ -63,11 +63,8 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		}
 		stopIdentity = cancel
 	}
-	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, nil)
-	if err != nil {
-		stopIdentity()
-		return nil, fmt.Errorf("StartScheduler: %w", err)
-	}
+	// @concept: service-address-book
+	registry := newAddressBookProducerRegistry(persistStore, nil)
 	persistQueue := cfg.Driver.Queue()
 	if persistQueue == nil {
 		stopIdentity()

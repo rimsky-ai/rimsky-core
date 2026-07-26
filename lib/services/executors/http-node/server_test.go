@@ -62,7 +62,6 @@ func testServer(t *testing.T, stub bool) *Server {
 		Host:         "127.0.0.1",
 		GRPCPort:     0,
 		HTTPPort:     0,
-		TimeoutMs:    5000,
 		MaxBodyBytes: 1 << 20,
 		StubMode:     stub,
 		Egress:       loopbackGuard(t),
@@ -154,11 +153,13 @@ func TestExecute_Timeout_ReturnsTimeout(t *testing.T) {
 	defer ts.Close()
 
 	s := NewServer(Opts{
-		Host: "127.0.0.1", TimeoutMs: 50, MaxBodyBytes: 1 << 20,
+		Host: "127.0.0.1", MaxBodyBytes: 1 << 20,
 		Egress: loopbackGuard(t),
 	})
 	req := newRequest(t, map[string]any{"url": ts.URL})
-	outcome, _ := s.Execute(context.Background(), req)
+	deadlineCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	outcome, _ := s.Execute(deadlineCtx, req)
 	errd := outcome.GetError()
 	if errd == nil {
 		t.Fatalf("expected Error terminal, got %T", outcome.GetOutcome())

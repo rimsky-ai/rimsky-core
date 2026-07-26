@@ -69,9 +69,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	var originalNodeRunID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err
@@ -136,9 +134,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	var found bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err
@@ -247,9 +243,7 @@ func assertCandidateDisposition(
 	var got *persistence.Candidate
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor", "stub"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  32,
+			Limit: 32,
 		}, tx)
 		if err != nil {
 			return err
@@ -344,9 +338,7 @@ func findCandidateRun(
 	var out shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor", "stub"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  32,
+			Limit: 32,
 		}, tx)
 		if err != nil {
 			return err

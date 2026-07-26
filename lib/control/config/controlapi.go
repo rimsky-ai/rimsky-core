@@ -188,6 +188,17 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if cfg.Bundled != nil {
 		mergeBundledExecutorEntries(executorsByName, cfg.Bundled.ExecutorAliases)
 	}
+	bundledStores := map[string]locks.ClaimProducer{}
+	if cfg.Bundled != nil {
+		bundledStores = cfg.Bundled.ClaimProducerClients()
+	}
+	// @concept: service-address-book
+	if err := publishServiceAddressBook(context.Background(), persistStore, executorsByName, cfg.ClaimProducers, bundledStores); err != nil {
+		stopIdentity()
+		registry.Close()
+		lifecycleReg.Close()
+		return nil, fmt.Errorf("StartControlAPI: %w", err)
+	}
 	execPeers := make([]observability.PeerSpec, 0, len(cfg.Executors.Executors))
 	for name, e := range cfg.Executors.Executors {
 		execPeers = append(execPeers, observability.PeerSpec{

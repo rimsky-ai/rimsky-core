@@ -20,10 +20,9 @@ func TestConformanceParkEmission_HonestStubPasses(t *testing.T) {
 	addr := listenForTest(t, s)
 
 	results, err := executorconf.Run(context.Background(), executorconf.RunnerOpts{
-		Endpoint:        executorconf.Endpoint{Transport: "grpc", URL: addr},
-		RequireStubMode: true,
-		Only:            []string{"park_emission"},
-		Timeout:         30 * time.Second,
+		Endpoint: executorconf.Endpoint{Transport: "grpc", URL: addr},
+		Only:     []string{"park_emission"},
+		Timeout:  30 * time.Second,
 	})
 	require.NoError(t, err)
 	r := findScenarioResult(t, results, "park_emission")

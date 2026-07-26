@@ -69,9 +69,7 @@ func testSelectCandidatesExcludesPureCascadeAdmitsClaimRouting(t *testing.T, d p
 	var sawPureCascade, sawClaimRouting bool
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{"fixture-store"},
-			Limit:                  100,
+			Limit: 100,
 		}, tx)
 		if err != nil {
 			return err

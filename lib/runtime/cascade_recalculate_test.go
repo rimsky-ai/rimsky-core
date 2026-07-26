@@ -137,7 +137,7 @@ func (f *invTestQueue) CountParked(_ context.Context) (int, error) {
 func (f *invTestQueue) BumpLastProgressAt(_ context.Context, _ shared.UUID, _ time.Time, _ persistence.Tx) (bool, error) {
 	return true, nil
 }
-func (f *invTestQueue) RegisterAsyncAck(_ context.Context, _ shared.UUID, _ string, _ time.Time, _ *int, _ *int, _ string, _ persistence.Tx) error {
+func (f *invTestQueue) RegisterAsyncAck(_ context.Context, _ shared.UUID, _ string, _ time.Time, _ *int, _ *int, _ string, _ string, _ persistence.Tx) error {
 	return nil
 }
 func (f *invTestQueue) LookupRunByAsyncAckID(_ context.Context, _ string, _ persistence.Tx) (*persistence.DispatchRow, error) {

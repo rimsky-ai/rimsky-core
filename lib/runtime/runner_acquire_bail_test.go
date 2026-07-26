@@ -132,7 +132,7 @@ func TestTryAcquire_TransientConflictBailAbandonsAlreadyOpenedLocks(t *testing.T
 			return err
 		}
 		cands, err := queue.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"stub"}, AcceptedClaimProducers: []string{}, Limit: 16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err

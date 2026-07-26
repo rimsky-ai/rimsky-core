@@ -15,13 +15,13 @@ the full per-directory rules). The short version every session needs:
   `@concept:` / `@story:` / `@decision:` annotations.
 - **`issues/` — the issue intake.** One markdown file per question awaiting
   the owner's judgment. Anyone may file one; `/verify-issues` makes each
-  ruling-ready (a compact discussion ending at a `## Ruling` section the
-  owner fills in — or a closure when the corpus already answers it);
-  `/recommend-rulings` may fill empty Rulings with marked recommendations
-  the owner accepts by silence; only a
-  `/plan-sprint` session closes one, by **promoting** it into that sprint
-  (file stamped with the sprint's name) or **retiring** it. Closed files move
-  to `history/issues/`. Agents never write a ruling.
+  ruling-ready — closing it when the corpus already answers it, repairing
+  rules-determined code gaps, and rewriting the rest as a from-the-top
+  narrative ending in a marked generated/recommended ruling the owner
+  accepts by silence or overrides. Only a `/plan-sprint` session closes
+  one, by **promoting** it into that sprint (file stamped with the
+  sprint's name) or **retiring** it. Closed files move to
+  `history/issues/`. Unmarked ruling text is the owner's alone.
 - **`sprints/`, `sketches/`, `history/` — records, out of context by
   default.** Do not read them to understand the project, do not include them
   in general exploration, do not reconcile them with current code. A sprint

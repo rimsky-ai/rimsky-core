@@ -70,9 +70,7 @@ func seedRunForNode(
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"stub"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err

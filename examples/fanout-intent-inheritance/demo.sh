@@ -11,7 +11,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TEMPLATE_R="${SCRIPT_DIR}/template-readonly.yaml"
 TEMPLATE_RW="${SCRIPT_DIR}/template-readwrite.yaml"
 
-RIMSKY_ENDPOINT="${RIMSKY_ENDPOINT:-http://127.0.0.1:8080}"
+RIMSKY_CONTROL_API_URL="${RIMSKY_CONTROL_API_URL:-http://127.0.0.1:8080}"
 POLL_BUDGET_SECONDS="${POLL_BUDGET_SECONDS:-180}"
 
 RIMSKY_DSN="${RIMSKY_DSN:-postgres://rimsky:rimsky@localhost:5432/rimsky?sslmode=disable}"
@@ -30,7 +30,7 @@ register_and_deploy() {
     body="$( jq -n --argjson spec "${spec_json}" '{spec: $spec}' )"
     local out
     out="$( curl -sS -X POST -H 'Content-Type: application/json' \
-        --data "${body}" "${RIMSKY_ENDPOINT}/v1/templates" )"
+        --data "${body}" "${RIMSKY_CONTROL_API_URL}/v1/templates" )"
     local tid
     tid="$( echo "${out}" | jq -r '.template_id' )"
     if [ -z "${tid}" ] || [ "${tid}" = "null" ]; then
@@ -38,7 +38,7 @@ register_and_deploy() {
         return 1
     fi
     curl -sS -X POST -H 'Content-Type: application/json' --data '{}' \
-        "${RIMSKY_ENDPOINT}/v1/templates/${tid}/deploy" >/dev/null
+        "${RIMSKY_CONTROL_API_URL}/v1/templates/${tid}/deploy" >/dev/null
     echo "${tid}"
 }
 
@@ -48,7 +48,7 @@ create_instance() {
     local out
     out="$( curl -sS -X POST -H 'Content-Type: application/json' \
         --data "{\"template\": \"${tid}\", \"instance_key\": \"${key}\", \"target_agent\": \"demo-agent\"}" \
-        "${RIMSKY_ENDPOINT}/v1/instances" )"
+        "${RIMSKY_CONTROL_API_URL}/v1/instances" )"
     local iid
     iid="$( echo "${out}" | jq -r '.instance_id' )"
     if [ -z "${iid}" ] || [ "${iid}" = "null" ]; then
@@ -67,7 +67,7 @@ post_seed() {
     curl -sS -X POST -H 'Content-Type: application/json' \
         -H "Idempotency-Key: ${k}" \
         --data "{\"type\":\"${type}\",\"payload\":{\"items\":${items}}}" \
-        "${RIMSKY_ENDPOINT}/v1/instances/${iid}/messages" >/dev/null
+        "${RIMSKY_CONTROL_API_URL}/v1/instances/${iid}/messages" >/dev/null
 }
 
 count_sub_claims_with_intent_for_instance() {

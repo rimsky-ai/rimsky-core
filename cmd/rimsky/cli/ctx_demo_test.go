@@ -75,7 +75,7 @@ func TestCtxDemo(t *testing.T) {
 		"STAGING_URL="+stagingURL,
 		"PROD_URL="+prodURL,
 		"RIMSKY_CONTEXT=",
-		"RIMSKY_CONTROL_API=",
+		"RIMSKY_CONTROL_API_URL=",
 	)
 	stdout, err := cmd.Output()
 	if err != nil {

@@ -136,7 +136,7 @@ func TestSweepExecutorDeadlines_StampsStaleRecoveryOnReleasedRow(t *testing.T) {
 			return err
 		}
 		require.True(t, ok, "seeded run must claim")
-		return d.Queue().RegisterAsyncAck(ctx, runID, "ack-"+uuid.NewString(), time.Now().UTC(), &maxQuiet, nil, "", tx)
+		return d.Queue().RegisterAsyncAck(ctx, runID, "ack-"+uuid.NewString(), time.Now().UTC(), &maxQuiet, nil, "", "", tx)
 	}))
 
 	farFuture := shared.NewControllableClock(time.Now().UTC().Add(24 * time.Hour))

@@ -19,5 +19,5 @@ The frame-scoped lookup is not a policy choice made here — it is a direct cons
 
 ## Alternatives
 
-- **Read from drained wait-set rows.** The original model keyed substitution on row presence. Retired — tied substitution-availability to cascade-emission decisions, which under diff-based attribute cascade broke substitution for unchanged-but-needed sender values. See `decision:_retired/substitution-context-builder-reads-drained-rows`.
+- **Read from drained wait-set rows.** Key substitution on wait-set row presence. Rejected — it would tie substitution-availability to cascade-emission decisions, which under diff-based attribute cascade breaks substitution for unchanged-but-needed sender values.
 - **Carry sender snapshots on cascade signals.** Include the sender's full attribute snapshot in the cascade payload, propagate it through the wait-set, deliver to the receiver. Rejected: payload propagation through the wait-set is a deliberate non-feature (`concept:signal` — wait-set rows carry no payload), and snapshots would diverge from the persisted store as soon as the sender's next run settled. Reading from the store is both simpler and more current.

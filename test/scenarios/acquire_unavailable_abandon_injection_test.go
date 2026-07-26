@@ -122,17 +122,15 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 
 	var hooked atomic.Bool
 	args := runtime.RunArgs{
-		Persist:                h.Persist,
-		Queue:                  h.Queue,
-		ClaimHandles:           h.Persist.ClaimHandles(),
-		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-		ClaimProducerRegistry:  registry,
-		Clock:                  shared.SystemClock{},
-		Logger:                 shared.SilentLogger{},
-		SupervisorID:           "scenario-runner",
-		AcceptedExecutors:      []string{"stub"},
-		AcceptedClaimProducers: []string{"store-a", "store-b"},
-		Pool:                   pool,
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+		ClaimProducerRegistry: registry,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "scenario-runner",
+		Pool:                  pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),

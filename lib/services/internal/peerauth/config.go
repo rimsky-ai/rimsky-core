@@ -18,7 +18,6 @@ import (
 const (
 	EnvPeerAuth      = enroll.EnvPeerAuth
 	EnvControlAPIURL = enroll.EnvControlAPIURL
-	EnvEndpoint      = "RIMSKY_ENDPOINT"
 	EnvAPIKey        = enroll.EnvAPIKey
 )
 
@@ -40,9 +39,6 @@ func LoadConfigFromEnv(label string) (Config, error) {
 		return Config{}, fmt.Errorf("peerauth: %s=%q is invalid (want %q or %q)", EnvPeerAuth, mode, enroll.PeerAuthNone, enroll.PeerAuthMTLS)
 	}
 	controlURL := os.Getenv(EnvControlAPIURL)
-	if controlURL == "" {
-		controlURL = os.Getenv(EnvEndpoint)
-	}
 	return Config{
 		Mode:          mode,
 		ControlAPIURL: strings.TrimSpace(controlURL),
@@ -59,7 +55,7 @@ func Load(ctx context.Context, cfg Config, httpClient *http.Client, now func() t
 		return &Identity{mode: enroll.PeerAuthNone, now: now}, nil
 	}
 	if cfg.ControlAPIURL == "" || cfg.APIKey == "" {
-		return nil, fmt.Errorf("peerauth: %s=%s requires %s (or %s) and %s to be set", EnvPeerAuth, enroll.PeerAuthMTLS, EnvControlAPIURL, EnvEndpoint, EnvAPIKey)
+		return nil, fmt.Errorf("peerauth: %s=%s requires %s and %s to be set", EnvPeerAuth, enroll.PeerAuthMTLS, EnvControlAPIURL, EnvAPIKey)
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}

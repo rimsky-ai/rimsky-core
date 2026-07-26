@@ -71,7 +71,7 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	templateID := deploySensorWebhookTemplate(t, ep)
 	instanceID := createSensorWebhookInstance(t, ep, templateID, "ck-sensor-webhook-e2e")
 
-	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+	ep.WaitForSubscriptionsActive(t, instanceID)
 
 	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookPathPrefix, 30*time.Second)
 
@@ -153,7 +153,7 @@ func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
 	templateID := deploySensorWebhookRestartTemplate(t, ep)
 	instanceID := createSensorWebhookInstance(t, ep, templateID, "ck-sensor-webhook-restart")
 
-	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+	ep.WaitForSubscriptionsActive(t, instanceID)
 	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookRestartPathPrefix, 30*time.Second)
 
 	preRestartPath := sensor.WebhookBaseURL + webhookRestartPathPrefix

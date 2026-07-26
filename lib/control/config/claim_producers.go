@@ -720,12 +720,13 @@ func dialRemoteClaimProducers(
 	persist persistence.Tables,
 	lateBindServiceProxies map[string]string,
 ) (*locks.Registry, error) {
-	lookupBindings := func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
-		return LookupInstanceBindings(ctx, persist, instanceID)
+	lookupBindings := func(ctx context.Context, instanceID string, tx persistence.Tx) (map[string]json.RawMessage, bool, error) {
+		return LookupInstanceBindings(ctx, persist, instanceID, tx)
 	}
 	reg := locks.NewRegistry(
 		locks.WithLookupInstanceBindings(lookupBindings),
 		locks.WithLateBindServiceProxies(lateBindServiceProxies),
+		locks.WithAddressBookResolution(addressBookStoreLookup(persist), addressBookStoreDialer(), 0, nil),
 	)
 	for name, entry := range cfg.ClaimProducers {
 		if err := validateClaimProducerEntry(name, entry); err != nil {
@@ -749,14 +750,20 @@ func dialRemoteClaimProducers(
 	return reg, nil
 }
 
-func LookupInstanceBindings(ctx context.Context, persist persistence.Tables, instanceID string) (map[string]json.RawMessage, bool, error) {
+func LookupInstanceBindings(ctx context.Context, persist persistence.Tables, instanceID string, tx persistence.Tx) (map[string]json.RawMessage, bool, error) {
 	instID, err := uuid.Parse(instanceID)
 	if err != nil {
 		return nil, false, err
 	}
 	var row *persistence.InstanceRow
-	if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if tx != nil {
 		r, err := persist.Instances().Get(ctx, instID, tx)
+		if err != nil {
+			return nil, false, err
+		}
+		row = r
+	} else if err := persist.Transaction(ctx, func(ctx context.Context, itx persistence.Tx) error {
+		r, err := persist.Instances().Get(ctx, instID, itx)
 		row = r
 		return err
 	}); err != nil {

@@ -75,17 +75,15 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	reg.Add("content", fake)
 
 	args := runtime.RunArgs{
-		Persist:                h.Persist,
-		Queue:                  h.Queue,
-		ClaimHandles:           h.Persist.ClaimHandles(),
-		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-		ClaimProducerRegistry:  reg,
-		Clock:                  shared.SystemClock{},
-		Logger:                 shared.SilentLogger{},
-		SupervisorID:           "scenario-runner-rollback",
-		AcceptedExecutors:      []string{"stub"},
-		AcceptedClaimProducers: []string{"content"},
-		Pool:                   pool,
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+		ClaimProducerRegistry: reg,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "scenario-runner-rollback",
+		Pool:                  pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
@@ -182,17 +180,15 @@ func TestAtomicAcquisitionMultiSpec_SortedOrderAndAllOrNothingRollback(t *testin
 	reg.Add("content", fake)
 
 	args := runtime.RunArgs{
-		Persist:                h.Persist,
-		Queue:                  h.Queue,
-		ClaimHandles:           h.Persist.ClaimHandles(),
-		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-		ClaimProducerRegistry:  reg,
-		Clock:                  shared.SystemClock{},
-		Logger:                 shared.SilentLogger{},
-		SupervisorID:           "scenario-runner-multi-rollback",
-		AcceptedExecutors:      []string{"stub"},
-		AcceptedClaimProducers: []string{"content"},
-		Pool:                   pool,
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+		ClaimProducerRegistry: reg,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "scenario-runner-multi-rollback",
+		Pool:                  pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type Endpoint struct {
@@ -24,7 +25,6 @@ type DispatchContext struct {
 
 type Resolver interface {
 	Resolve(name string, ctx DispatchContext) (Endpoint, bool)
-	AcceptedNames() []string
 }
 
 type ErrorAwareResolver interface {
@@ -66,14 +66,82 @@ func (r *StaticResolver) Resolve(name string, _ DispatchContext) (Endpoint, bool
 	return e, ok
 }
 
-func (r *StaticResolver) AcceptedNames() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]string, 0, len(r.m))
-	for n := range r.m {
-		out = append(out, n)
+// @concept: service-address-book
+type AddressBookLookup func(ctx context.Context, name string) (Endpoint, bool, error)
+
+const DefaultAddressBookCacheTTL = 2 * time.Second
+
+// @concept: service-address-book
+type AddressBookResolver struct {
+	static Resolver
+	lookup AddressBookLookup
+	ttl    time.Duration
+	now    func() time.Time
+
+	mu    sync.Mutex
+	cache map[string]addressBookCacheEntry
+}
+
+type addressBookCacheEntry struct {
+	ep        Endpoint
+	found     bool
+	fetchedAt time.Time
+}
+
+func NewAddressBookResolver(static Resolver, lookup AddressBookLookup, ttl time.Duration, now func() time.Time) *AddressBookResolver {
+	if ttl <= 0 {
+		ttl = DefaultAddressBookCacheTTL
 	}
-	return out
+	if now == nil {
+		now = time.Now
+	}
+	return &AddressBookResolver{
+		static: static,
+		lookup: lookup,
+		ttl:    ttl,
+		now:    now,
+		cache:  map[string]addressBookCacheEntry{},
+	}
+}
+
+func (r *AddressBookResolver) Resolve(name string, ctx DispatchContext) (Endpoint, bool) {
+	ep, ok, _ := r.ResolveWithError(name, ctx)
+	return ep, ok
+}
+
+func (r *AddressBookResolver) ResolveWithError(name string, ctx DispatchContext) (Endpoint, bool, error) {
+	if r.static != nil {
+		if ep, ok := r.static.Resolve(name, ctx); ok {
+			return ep, true, nil
+		}
+	}
+	now := r.now()
+	r.mu.Lock()
+	entry, cached := r.cache[name]
+	r.mu.Unlock()
+	if cached && now.Sub(entry.fetchedAt) < r.ttl {
+		return entry.ep, entry.found, nil
+	}
+	lookupCtx := ctx.Ctx
+	if lookupCtx == nil {
+		lookupCtx = context.Background()
+	}
+	ep, found, err := r.lookup(lookupCtx, name)
+	if err != nil {
+		if cached {
+			return entry.ep, entry.found, nil
+		}
+		return Endpoint{}, false, fmt.Errorf("AddressBookResolver.ResolveWithError: lookup %q: %w", name, err)
+	}
+	r.mu.Lock()
+	r.cache[name] = addressBookCacheEntry{ep: ep, found: found, fetchedAt: now}
+	r.mu.Unlock()
+	return ep, found, nil
+}
+
+// @concept: executor
+func (r *AddressBookResolver) Unwrap() Resolver {
+	return r.static
 }
 
 type LateBindResolver struct {
@@ -100,7 +168,9 @@ func (r *LateBindResolver) Resolve(name string, ctx DispatchContext) (Endpoint, 
 }
 
 func (r *LateBindResolver) ResolveWithError(name string, ctx DispatchContext) (Endpoint, bool, error) {
-	if ep, ok := r.static.Resolve(name, ctx); ok {
+	if ep, ok, err := ResolveExecutor(r.static, name, ctx); err != nil {
+		return Endpoint{}, false, err
+	} else if ok {
 		return ep, true, nil
 	}
 	if ctx.InstanceID == "" {
@@ -127,12 +197,11 @@ func (r *LateBindResolver) ResolveWithError(name string, ctx DispatchContext) (E
 	if _, exists := bindings[name]; !exists {
 		return Endpoint{}, false, nil
 	}
-	ep, ok := r.static.Resolve(proxyName, ctx)
+	ep, ok, err := ResolveExecutor(r.static, proxyName, ctx)
+	if err != nil {
+		return Endpoint{}, false, err
+	}
 	return ep, ok, nil
-}
-
-func (r *LateBindResolver) AcceptedNames() []string {
-	return r.static.AcceptedNames()
 }
 
 // @concept: executor

@@ -7,7 +7,6 @@ package scenarios
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -46,5 +45,5 @@ func TestSplitTopology_DriveNodeToTerminal(t *testing.T) {
 	})
 	instanceID := createScenarioInstance(t, ep, templateID, "ck-split-topology")
 
-	waitForDispatchToFresh(t, ep, instanceID, "worker", 120*time.Second)
+	waitForDispatchToFresh(t, ep, instanceID, "worker")
 }

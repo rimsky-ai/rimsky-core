@@ -51,15 +51,11 @@ func (b *deploymentCAImpl) GetOrCreate(ctx context.Context, candidate persistenc
 		var out persistence.DeploymentCA
 		err := (*tablesImpl)(b).Transaction(ctx, func(ctx context.Context, itx persistence.Tx) error {
 			var ierr error
-			out, ierr = b.getOrCreateInTx(ctx, candidate, itx)
+			out, ierr = b.GetOrCreate(ctx, candidate, itx)
 			return ierr
 		})
 		return out, err
 	}
-	return b.getOrCreateInTx(ctx, candidate, tx)
-}
-
-func (b *deploymentCAImpl) getOrCreateInTx(ctx context.Context, candidate persistence.DeploymentCA, tx persistence.Tx) (persistence.DeploymentCA, error) {
 	candidate.ID = persistence.DeploymentCASingletonID
 	if _, err := b.run(tx).Exec(ctx, insertDeploymentCASQL,
 		candidate.ID, candidate.CACertPEM, candidate.CAKeyEncrypted, candidate.CreatedAt,

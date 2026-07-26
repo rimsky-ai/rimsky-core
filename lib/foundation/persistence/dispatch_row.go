@@ -28,4 +28,5 @@ type DispatchRow struct {
 	EffectiveMaxQuietPeriodSeconds *int              `json:"effective_max_quiet_period_seconds,omitempty"`
 	EffectiveMaxRuntimeSeconds     *int              `json:"effective_max_runtime_seconds,omitempty"`
 	AsyncAckPrincipal              *string           `json:"async_ack_principal,omitempty"`
+	AsyncCallbackURL               *string           `json:"async_callback_url,omitempty"`
 }

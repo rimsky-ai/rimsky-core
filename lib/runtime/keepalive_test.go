@@ -26,9 +26,10 @@ import (
 
 type stubTables struct{}
 
-func (stubTables) Templates() persistence.TemplateTable       { return nil }
-func (stubTables) TemplateTags() persistence.TemplateTagTable { return nil }
-func (stubTables) Instances() persistence.InstanceTable       { return nil }
+func (stubTables) Templates() persistence.TemplateTable                    { return nil }
+func (stubTables) ServiceAddressBook() persistence.ServiceAddressBookTable { return nil }
+func (stubTables) TemplateTags() persistence.TemplateTagTable              { return nil }
+func (stubTables) Instances() persistence.InstanceTable                    { return nil }
 func (stubTables) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
 	return nil
 }

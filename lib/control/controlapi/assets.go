@@ -107,7 +107,12 @@ func handleListAssets(deps AppDeps) http.HandlerFunc {
 			if r.ProducerName == nil || *r.ProducerName == "" {
 				continue
 			}
-			if !producerAdvertises(req.Context(), *r.ProducerName) {
+			advertises, err := producerAdvertises(req.Context(), *r.ProducerName)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			if !advertises {
 				continue
 			}
 			node := nodeByID[r.HolderNodeID]
@@ -160,20 +165,23 @@ func toAssetItem(r persistence.ClaimHandleRow, node persistence.NodeRow, claimAl
 	return out
 }
 
-func buildDataProcessingPredicate(deps AppDeps) func(context.Context, string) bool {
+func buildDataProcessingPredicate(deps AppDeps) func(context.Context, string) (bool, error) {
 	if deps.ClaimProducers == nil {
-		return func(context.Context, string) bool { return false }
+		return func(context.Context, string) (bool, error) { return false, nil }
 	}
-	return func(ctx context.Context, name string) bool {
-		p, ok := deps.ClaimProducers.Get(name)
+	return func(ctx context.Context, name string) (bool, error) {
+		p, ok, err := deps.ClaimProducers.ResolveWithContext(ctx, name, "", nil)
+		if err != nil {
+			return false, fmt.Errorf("resolving claim producer %q: %w", name, err)
+		}
 		if !ok {
-			return false
+			return false, nil
 		}
 		caps, err := p.Capabilities(ctx)
 		if err != nil {
-			return false
+			return false, fmt.Errorf("claim producer %q capabilities: %w", name, err)
 		}
-		return caps.AdvertisesProtocol("data_processing")
+		return caps.AdvertisesProtocol("data_processing"), nil
 	}
 }
 
@@ -219,7 +227,11 @@ func resolveAsset(
 	if producerName == "" {
 		return nil, node, nil
 	}
-	if !buildDataProcessingPredicate(deps)(ctx, producerName) {
+	advertises, err := buildDataProcessingPredicate(deps)(ctx, producerName)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !advertises {
 		return nil, node, nil
 	}
 	for i := range rows {
@@ -477,7 +489,10 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			if row.ProducerName == nil || deps.ClaimProducers == nil {
 				return errAssetProducerUnresolvable
 			}
-			producer, ok := deps.ClaimProducers.Get(*row.ProducerName)
+			producer, ok, resolveErr := deps.ClaimProducers.ResolveWithContext(ctx, *row.ProducerName, "", tx)
+			if resolveErr != nil {
+				return fmt.Errorf("asset delete: resolving producer %q: %w", *row.ProducerName, resolveErr)
+			}
 			if !ok {
 				return errAssetProducerUnresolvable
 			}

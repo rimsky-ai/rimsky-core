@@ -59,7 +59,7 @@ func TestSettleFromFanoutChild_LateBoundProducer_ResolvesViaContext(t *testing.T
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg := locks.NewRegistry(
-		locks.WithLookupInstanceBindings(func(_ context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
+		locks.WithLookupInstanceBindings(func(_ context.Context, instanceID string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			if instanceID != inst.ID.String() {
 				return nil, false, nil
 			}
@@ -107,7 +107,7 @@ func TestSettleFromFanoutChild_LateBoundProducer_ResolvesViaContext(t *testing.T
 			pc(ctx)
 		}
 		return nil
-	}), "SettleFromFanoutChild must resolve the parent's producer via GetWithContext (the late-bind proxy path), not the static-only Get")
+	}), "SettleFromFanoutChild must resolve the parent's producer via ResolveWithContext (the late-bind proxy path), not the static-only Get")
 
 	var parentRow *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

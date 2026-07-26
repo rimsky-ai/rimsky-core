@@ -17,8 +17,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/scheduler"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/scheduler"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 

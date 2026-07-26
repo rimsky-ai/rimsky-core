@@ -39,11 +39,14 @@ starting point.
    tests can assert on what the supervisor wired through (attributes,
    store handles, callback URL).
 
-2. **`rimsky conformance executor`** — when invoked with
-   `--require-stub-mode`, the conformance probe runs against a stub-mode
-   target as a known-good baseline for protocol-shape checks. The stub
-   is the protocol's reference implementation in the same sense that
-   `rimsky conformance probe` is the executor's reference client.
+2. **`rimsky conformance executor`** — the runner is fail-closed by
+   default: it probes for stub mode first and refuses to run scenarios
+   against an endpoint not proven to be in stub mode. A stub-mode target
+   (this stub with `EnableStubMode()`) is the known-good baseline for
+   protocol-shape checks. Passing `--allow-live` overrides the refusal
+   for a live executor; stub-requiring scenarios then skip instead. The
+   stub is the protocol's reference implementation in the same sense
+   that `rimsky conformance probe` is the executor's reference client.
 
 ## Scripting DSL surface
 

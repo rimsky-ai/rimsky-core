@@ -46,11 +46,8 @@ func Suite(
 	})
 	t.Run("SelectCandidatesSkipsTerminatedInstances", func(t *testing.T) { testSelectCandidatesSkipsTerminatedInstances(t, factory(t)) })
 	t.Run("SelectCandidatesKeysetCursor", func(t *testing.T) { testSelectCandidatesKeysetCursor(t, factory(t)) })
-	t.Run("SelectCandidatesLateBindMixedStores", func(t *testing.T) { testSelectCandidatesLateBindMixedStores(t, factory(t)) })
-	t.Run("SelectCandidatesLateBindExecutor", func(t *testing.T) { testSelectCandidatesLateBindExecutor(t, factory(t)) })
-	t.Run("SelectCandidatesNoLateBindProxyLeavesStaticFilterUnchanged", func(t *testing.T) {
-		testSelectCandidatesNoLateBindProxyLeavesStaticFilterUnchanged(t, factory(t))
-	})
+	t.Run("SelectCandidatesIgnoresServiceNames", func(t *testing.T) { testSelectCandidatesIgnoresServiceNames(t, factory(t)) })
+	t.Run("ServiceAddressBookPublishGetList", func(t *testing.T) { testServiceAddressBookPublishGetList(t, factory(t)) })
 	t.Run("ClaimHandlesUpdateClaimScope", func(t *testing.T) { testClaimHandlesUpdateClaimScope(t, factory(t)) })
 
 	t.Run("RunScopeLifecycle", func(t *testing.T) {

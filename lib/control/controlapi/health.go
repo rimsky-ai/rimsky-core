@@ -16,11 +16,10 @@ import (
 )
 
 type supervisorSummary struct {
-	ID                string    `json:"id"`
-	AcceptedExecutors []string  `json:"accepted_executors"`
-	Concurrency       int       `json:"concurrency"`
-	ActiveNodeCount   int       `json:"active_node_count"`
-	RegisteredAt      time.Time `json:"registered_at"`
+	ID              string    `json:"id"`
+	Concurrency     int       `json:"concurrency"`
+	ActiveNodeCount int       `json:"active_node_count"`
+	RegisteredAt    time.Time `json:"registered_at"`
 }
 
 type healthResponse struct {
@@ -64,11 +63,10 @@ func handleHealth(deps AppDeps) http.HandlerFunc {
 		supOut := make([]supervisorSummary, 0, len(sups))
 		for _, s := range sups {
 			supOut = append(supOut, supervisorSummary{
-				ID:                s.ID,
-				AcceptedExecutors: s.AcceptedExecutors,
-				Concurrency:       s.Concurrency,
-				ActiveNodeCount:   runningPerSup[s.ID],
-				RegisteredAt:      s.RegisteredAt,
+				ID:              s.ID,
+				Concurrency:     s.Concurrency,
+				ActiveNodeCount: runningPerSup[s.ID],
+				RegisteredAt:    s.RegisteredAt,
 			})
 		}
 		countOut := map[string]int{

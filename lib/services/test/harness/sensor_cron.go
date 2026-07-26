@@ -76,7 +76,7 @@ func runSensorCronContainer(ctx context.Context, t testing.TB, networkName, alia
 	}
 	env := map[string]string{
 		"RIMSKY_SENSOR_CRON_PORT": "9081",
-		"RIMSKY_ENDPOINT":         rimskyEndpoint,
+		"RIMSKY_CONTROL_API_URL":  rimskyEndpoint,
 	}
 	if stateDSN != "" {
 		env["RIMSKY_SENSOR_CRON_STATE_DSN"] = stateDSN

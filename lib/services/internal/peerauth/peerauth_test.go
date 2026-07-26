@@ -241,16 +241,25 @@ func TestLoadConfigFromEnvRejectsBogusMode(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFromEnvFallsBackToEndpoint(t *testing.T) {
+func TestLoadConfigFromEnvReadsOnlyControlAPIURL(t *testing.T) {
 	t.Setenv(EnvPeerAuth, enroll.PeerAuthMTLS)
 	t.Setenv(EnvControlAPIURL, "")
-	t.Setenv(EnvEndpoint, "http://control:8080")
+	t.Setenv("RIMSKY_ENDPOINT", "http://control:8080")
 	t.Setenv(EnvAPIKey, "k")
 	cfg, err := LoadConfigFromEnv("svc")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cfg.ControlAPIURL != "" {
+		t.Fatalf("ControlAPIURL = %q, want empty — the retired RIMSKY_ENDPOINT alias must not be read; "+
+			"RIMSKY_CONTROL_API_URL is the one name for the control API's endpoint", cfg.ControlAPIURL)
+	}
+	t.Setenv(EnvControlAPIURL, "http://control:8080")
+	cfg, err = LoadConfigFromEnv("svc")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cfg.ControlAPIURL != "http://control:8080" {
-		t.Fatalf("ControlAPIURL = %q, want RIMSKY_ENDPOINT fallback", cfg.ControlAPIURL)
+		t.Fatalf("ControlAPIURL = %q, want the RIMSKY_CONTROL_API_URL value", cfg.ControlAPIURL)
 	}
 }

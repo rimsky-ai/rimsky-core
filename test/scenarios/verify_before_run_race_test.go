@@ -64,7 +64,6 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 		Clock:                 shared.SystemClock{},
 		Logger:                shared.SilentLogger{},
 		SupervisorID:          "scenario-runner",
-		AcceptedExecutors:     []string{"stub"},
 		Pool:                  pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},

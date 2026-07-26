@@ -47,9 +47,7 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		defer wg.Done()
 		err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-				AcceptedExecutors:      []string{"test-executor"},
-				AcceptedClaimProducers: []string{},
-				Limit:                  10,
+				Limit: 10,
 			}, tx)
 			if err != nil {
 				return err

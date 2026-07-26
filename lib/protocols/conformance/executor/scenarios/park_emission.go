@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -23,8 +24,8 @@ func init() {
 		Run: func(ctx context.Context, env conformance.Env) error {
 			resumeAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 			attrs, err := structpb.NewStruct(map[string]any{
-				"probe_park":     true,
-				"park_resume_at": resumeAt.Format(time.RFC3339Nano),
+				stubmode.ParkProbeAttribute:    true,
+				stubmode.ParkResumeAtAttribute: resumeAt.Format(time.RFC3339Nano),
 			})
 			if err != nil {
 				return fmt.Errorf("build attributes: %w", err)

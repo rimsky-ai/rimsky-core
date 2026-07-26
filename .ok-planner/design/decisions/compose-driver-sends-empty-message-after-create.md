@@ -15,4 +15,4 @@ The compose driver's user-facing contract (`story:one-shot-to-terminal`) is unch
 
 ## Alternatives considered
 
-Require operator-authored wake messages in the manifest — breaks the compose UX; add a convenience flag at instance-create that bundles the wake — rejected per the spec's instance-create-is-idle decision that instance-create is strictly two-step.
+Require operator-authored wake messages in the manifest — breaks the compose UX; add a convenience flag at instance-create that bundles the wake — rejected per `story:instance-create-is-idle`: instance-create is strictly two-step.

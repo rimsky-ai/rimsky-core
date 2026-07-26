@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
@@ -112,7 +113,7 @@ func RunAgent(opts AgentRunOptions) AgentOutcome {
 		attrs = map[string]any{}
 		opts.Attributes = attrs
 	}
-	isProbe := (attrs["stub_probe"] == true || attrs["probe_park"] == true) && StubModeEnabled()
+	isProbe := (stubmode.IsProbe(attrs) || stubmode.IsParkProbe(attrs)) && StubModeEnabled()
 	if !isProbe {
 		if reason := malformedAttributesReason(attrs); reason != "" {
 			return erroredOutcome("agent/attribute_invalid", map[string]any{"reason": reason})
@@ -136,9 +137,9 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 	time.Sleep(50 * time.Millisecond)
 	attrs := opts.Attributes
 
-	if attrs["probe_park"] == true {
+	if stubmode.IsParkProbe(attrs) {
 		t := time.Now().Add(30 * time.Second)
-		if raw, ok := attrs["park_resume_at"].(string); ok && raw != "" {
+		if raw, ok := attrs[stubmode.ParkResumeAtAttribute].(string); ok && raw != "" {
 			if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
 				t = parsed
 			}
@@ -151,7 +152,7 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 	}
 
 	summary := "stub"
-	if attrs["stub_probe"] != true {
+	if !stubmode.IsProbe(attrs) {
 		return defaultStubCompleteOutcome(opts.SessionID, &summary)
 	}
 
@@ -180,7 +181,7 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 func defaultStubCompleteOutcome(sessionID string, changeSummary *string) AgentOutcome {
 	return AgentOutcome{
 		Kind:            OutcomeComplete,
-		AttributesDelta: map[string]any{"stub": true, "session_token": sessionID},
+		AttributesDelta: map[string]any{stubmode.ResponseAttribute: true, "session_token": sessionID},
 		Changed:         true,
 		ChangeSummary:   changeSummary,
 	}

@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
@@ -55,7 +54,7 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 		t.Fatalf("rimsky instance get %s exited %d (want 0)", instanceID, getCode)
 	}
 
-	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
+	waitForDispatchToFresh(t, ep, instanceID, "worker")
 
 	readmeArgs := documentedRunInvocation(t, ep.BaseURL, "examples/compose/template-a.yml")
 	_, readmeCode := captureRunRun(t, ctx, readmeArgs)

@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -21,7 +22,7 @@ func init() {
 		RequiresStub: true,
 		Run: func(ctx context.Context, env conformance.Env) error {
 			attrs, err := structpb.NewStruct(map[string]any{
-				"stub_probe": true,
+				stubmode.ProbeAttribute: true,
 				"nested": map[string]any{
 					"list":    []any{1.0, "two", true, nil},
 					"unicode": "héllo wörld 世界",
@@ -51,7 +52,7 @@ func init() {
 				return fmt.Errorf("expected Outcome_Success, got %T", settled.GetOutcome())
 			}
 			delta := success.Success.GetAttributesDelta().AsMap()
-			if _, ok := delta["stub"]; !ok {
+			if _, ok := delta[stubmode.ResponseAttribute]; !ok {
 				return fmt.Errorf("attributes_delta missing the stub marker: %#v", delta)
 			}
 			return nil

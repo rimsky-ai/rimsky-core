@@ -81,7 +81,7 @@ func runConformanceExecutor(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance executor", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "endpoint URL (executor or lifecycle peer)")
 	transport := fs.String("transport", "grpc", "transport: grpc")
-	requireStub := fs.Bool("require-stub-mode", false, "fail if executor not in stub mode")
+	allowLive := fs.Bool("allow-live", false, "run against a live (non-stub) endpoint; stub-requiring scenarios skip instead of the run refusing to start")
 	only := fs.String("scenarios", "", "comma-list of scenario names to run (default: all)")
 	skip := fs.String("skip", "", "comma-list of scenario names to skip")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-scenario timeout")
@@ -125,13 +125,13 @@ func runConformanceExecutor(args []string) int {
 	skipList := splitConformanceCSV(*skip)
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        ep,
-		RequireStubMode: *requireStub,
-		Only:            onlyList,
-		Skip:            skipList,
-		Timeout:         *timeout,
-		CallbackBind:    *callbackBind,
-		CallbackHost:    *callbackHost,
+		Endpoint:     ep,
+		AllowLive:    *allowLive,
+		Only:         onlyList,
+		Skip:         skipList,
+		Timeout:      *timeout,
+		CallbackBind: *callbackBind,
+		CallbackHost: *callbackHost,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "conformance: %v\n", err)
@@ -139,7 +139,7 @@ func runConformanceExecutor(args []string) int {
 	}
 
 	conformance.Summary(results, os.Stdout)
-	passed := 0
+	passed, skipped, stubGateSkips := 0, 0, 0
 	for _, r := range results {
 		if !r.Passed && !r.Skipped {
 			return 1
@@ -147,10 +147,12 @@ func runConformanceExecutor(args []string) int {
 		if r.Passed {
 			passed++
 		}
-	}
-	if passed == 0 && len(results) > 0 {
-		fmt.Fprintln(os.Stderr, "rimsky conformance executor: 0 scenarios passed (all skipped); executor coverage was not verified")
-		return 1
+		if r.Skipped {
+			skipped++
+			if r.StubGateSkip {
+				stubGateSkips++
+			}
+		}
 	}
 
 	if *checkObs {
@@ -163,6 +165,15 @@ func runConformanceExecutor(args []string) int {
 			return 1
 		}
 		fmt.Fprintln(os.Stdout, "observability: ok")
+	}
+
+	if passed == 0 && len(results) > 0 {
+		if *allowLive && stubGateSkips > 0 && stubGateSkips == skipped {
+			fmt.Fprintln(os.Stdout, "rimsky conformance executor: 0 scenarios ran — all skipped by the stub gate under --allow-live; the endpoint answered the probes but scenario coverage was not verified")
+			return 0
+		}
+		fmt.Fprintln(os.Stderr, "rimsky conformance executor: 0 scenarios passed (all skipped); executor coverage was not verified")
+		return 1
 	}
 	return 0
 }
@@ -249,7 +260,7 @@ func runConformancePublisher(args []string) int {
 	timeout := fs.Duration("timeout", 30*time.Second, "per-suite timeout")
 	instanceID := fs.String("instance-id", "", "instance_id passed to Subscribe; required when publisher pushes to /instances/{id}/messages")
 	messageType := fs.String("message-type", "", "message type passed to Subscribe and watched for on the control API (default: "+defaultConformancePublisherMessageType+")")
-	controlAPI := fs.String("control-api", "", "control-API base URL to poll for the publisher's pushed message (e.g. http://localhost:8080); enables the MessagePush check together with --instance-id (overrides $RIMSKY_CONTROL_API)")
+	controlAPI := fs.String("control-api", "", "control-API base URL to poll for the publisher's pushed message (e.g. http://localhost:8080); enables the MessagePush check together with --instance-id (overrides $RIMSKY_CONTROL_API_URL)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -293,7 +304,7 @@ func runConformancePublisher(args []string) int {
 
 	controlAPIURL := *controlAPI
 	if controlAPIURL == "" {
-		controlAPIURL = os.Getenv("RIMSKY_CONTROL_API")
+		controlAPIURL = os.Getenv("RIMSKY_CONTROL_API_URL")
 	}
 	if *instanceID != "" && controlAPIURL != "" {
 		receiver := publisher.NewMessageReceiver()

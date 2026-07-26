@@ -18,6 +18,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/checkspec"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
@@ -39,7 +40,7 @@ func NewServer(stubMode bool) *Server {
 
 func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	ud := req.GetAttributes().AsMap()
-	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
+	if stubmode.IsProbe(ud) && s.stubMode {
 		return execoutcome.StubSuccess("verifier-http stub"), nil
 	}
 	urlStr, _ := ud["url"].(string)

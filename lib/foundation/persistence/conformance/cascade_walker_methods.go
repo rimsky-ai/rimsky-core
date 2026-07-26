@@ -43,9 +43,7 @@ func testTwoLegClaimPromoteContract(t *testing.T, d persistence.Database) {
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  10,
+			Limit: 10,
 		}, tx)
 		if err != nil {
 			return err
@@ -293,13 +291,11 @@ func testSetRunRequiredClaimProducers_ReusesStaleRun(t *testing.T, d persistence
 		t.Fatalf("seed stale run: %v", err)
 	}
 
-	countRoutable := func(accepted []string) int {
+	countRoutable := func() int {
 		n := 0
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-				AcceptedExecutors:      []string{"test-executor"},
-				AcceptedClaimProducers: accepted,
-				Limit:                  10,
+				Limit: 10,
 			}, tx)
 			if err != nil {
 				return err
@@ -330,11 +326,8 @@ func testSetRunRequiredClaimProducers_ReusesStaleRun(t *testing.T, d persistence
 		}
 	}
 
-	if got := countRoutable([]string{"alpha", "beta"}); got != 1 {
+	if got := countRoutable(); got != 1 {
 		t.Fatalf("SetRunRequiredClaimProducers must update in place: want exactly 1 routable run after 3 ticks, got %d", got)
-	}
-	if got := countRoutable(nil); got != 0 {
-		t.Fatalf("a prepared run must route only to a supervisor hosting its claim producers; got %d", got)
 	}
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

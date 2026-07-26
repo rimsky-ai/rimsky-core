@@ -113,8 +113,8 @@ func (a *agent) markSendClosed() {
 
 func Run(ctx context.Context, cfg Config) error {
 	cfg = cfg.withDefaults()
-	if cfg.RimskyURL == "" {
-		return errors.New("hostagent: RIMSKY_URL is required")
+	if cfg.ProxyURL == "" {
+		return errors.New("hostagent: RIMSKY_HOST_AGENT_PROXY_URL is required")
 	}
 	anonymous := cfg.APIKey == ""
 	if anonymous {
@@ -184,7 +184,7 @@ func Run(ctx context.Context, cfg Config) error {
 		_ = callbackSrv.Shutdown(shutCtx)
 	}()
 
-	slog.Info("hostagent starting", "rimsky_url", cfg.RimskyURL, "agent_label", cfg.AgentLabel, "enroll_base_url", enrollBase, "callback_base_url", callbackBase)
+	slog.Info("hostagent starting", "proxy_url", cfg.ProxyURL, "agent_label", cfg.AgentLabel, "enroll_base_url", enrollBase, "callback_base_url", callbackBase)
 
 	// @story: host-agent-control-plane
 	clearStatusFile(cfg.StatusFile)
@@ -274,7 +274,7 @@ func (a *agent) snapshotChildren() []ChildStatus {
 func (a *agent) writeStatus() {
 	writeStatusFile(a.cfg.StatusFile, StatusSnapshot{
 		Connected: true,
-		Proxy:     a.cfg.RimskyURL,
+		Proxy:     a.cfg.ProxyURL,
 		Since:     a.connectedAt,
 		Children:  a.snapshotChildren(),
 	})
@@ -317,7 +317,7 @@ func connectOnce(ctx context.Context, cfg Config, trust *localTrust, enrollBaseU
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(cfg.RimskyURL,
+	conn, err := grpc.NewClient(cfg.ProxyURL,
 		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(proxyKeepaliveParams),
 	)

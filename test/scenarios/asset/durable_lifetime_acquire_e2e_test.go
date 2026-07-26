@@ -118,17 +118,15 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 	t.Cleanup(func() { _ = pool.Close() })
 
 	args := runtime.RunArgs{
-		Persist:                backend,
-		Queue:                  d.Queue(),
-		ClaimHandles:           backend.ClaimHandles(),
-		AdvisoryLocker:         d.AdvisoryLocker(),
-		ClaimProducerRegistry:  reg,
-		Clock:                  shared.SystemClock{},
-		Logger:                 shared.SilentLogger{},
-		SupervisorID:           "sup-D5",
-		AcceptedExecutors:      []string{"stub"},
-		AcceptedClaimProducers: []string{producerName},
-		Pool:                   pool,
+		Persist:               backend,
+		Queue:                 d.Queue(),
+		ClaimHandles:          backend.ClaimHandles(),
+		AdvisoryLocker:        d.AdvisoryLocker(),
+		ClaimProducerRegistry: reg,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "sup-D5",
+		Pool:                  pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: "127.0.0.1:1"},
 		}),

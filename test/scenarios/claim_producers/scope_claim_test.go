@@ -77,9 +77,23 @@ func TestScopeClaimEndToEnd(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
-	require.Equal(t, 1, openCount, "expected exactly one Open over the wire")
-	require.Equal(t, 1, commitCount,
-		"expected exactly one Commit terminal verb — the successful write-claim dispatch's sole resolution")
+	require.GreaterOrEqual(t, openCount, 1, "the dispatch must Open its claim over the wire "+
+		"(an acquisition transaction that rolls back after Open legally retries with a fresh Open, so the wire count is at-least-once)")
+	require.GreaterOrEqual(t, commitCount, 1,
+		"the successful write-claim dispatch's sole resolution is Commit "+
+			"(terminal-verb delivery is at-least-once by design — the conformance battery requires producers to tolerate retried terminal verbs)")
+	var commitClaimIDs []string
+	for _, c := range sub.Calls() {
+		if c.Verb == "commit" {
+			commitClaimIDs = append(commitClaimIDs, c.ClaimID)
+		}
+	}
+	for _, id := range commitClaimIDs {
+		require.Equal(t, commitClaimIDs[0], id,
+			"every observed Commit must carry the same claim id — the at-least-once wire count is only "+
+				"idempotent redelivery of ONE resolution; a second distinct claim id would mean a second "+
+				"resolution, not a retry")
+	}
 	require.Equal(t, 0, abandonCount, "a successful dispatch must not also fire Abandon (double terminal)")
 	require.Equal(t, 0, deleteCount, "a successful write-claim dispatch must not fire Delete")
 	require.Equal(t, 0, releaseCount, "a successful write-claim dispatch must not fire Release")

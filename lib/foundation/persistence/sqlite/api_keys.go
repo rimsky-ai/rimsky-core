@@ -140,15 +140,11 @@ func (b *apiKeysImpl) MarkRevoked(ctx context.Context, id shared.UUID, now time.
 	if tx == nil {
 		txErr := (*tablesImpl)(b).Transaction(ctx, func(ctx context.Context, itx persistence.Tx) error {
 			var ierr error
-			changed, found, ierr = b.markRevokedInTx(ctx, id, now, itx)
+			changed, found, ierr = b.MarkRevoked(ctx, id, now, itx)
 			return ierr
 		})
 		return changed, found, txErr
 	}
-	return b.markRevokedInTx(ctx, id, now, tx)
-}
-
-func (b *apiKeysImpl) markRevokedInTx(ctx context.Context, id shared.UUID, now time.Time, tx persistence.Tx) (changed bool, found bool, err error) {
 	nowStr := now.UTC().Format(timeLayoutFixedNanos)
 	res, err := b.run(tx).ExecContext(ctx,
 		`UPDATE rimsky_api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
@@ -176,15 +172,11 @@ func (b *apiKeysImpl) RevokeIfNotLast(ctx context.Context, id shared.UUID, now t
 		var result persistence.RevokeResult
 		txErr := (*tablesImpl)(b).Transaction(ctx, func(ctx context.Context, itx persistence.Tx) error {
 			var ierr error
-			result, ierr = b.revokeIfNotLastInTx(ctx, id, now, force, itx)
+			result, ierr = b.RevokeIfNotLast(ctx, id, now, force, itx)
 			return ierr
 		})
 		return result, txErr
 	}
-	return b.revokeIfNotLastInTx(ctx, id, now, force, tx)
-}
-
-func (b *apiKeysImpl) revokeIfNotLastInTx(ctx context.Context, id shared.UUID, now time.Time, force bool, tx persistence.Tx) (persistence.RevokeResult, error) {
 	nowStr := now.UTC().Format(timeLayoutFixedNanos)
 	if !force {
 		var targetActive int

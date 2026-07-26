@@ -90,7 +90,7 @@ func TestCLIRunService_AutoStartsAgentAndSpawnsHoldsReapsBoundBinary(t *testing.
 	cmd.Env = append(os.Environ(),
 		"HOME="+homeDir,
 		"RIMSKY_API_KEY="+adminKey,
-		"RIMSKY_URL="+proxyAddr,
+		"RIMSKY_HOST_AGENT_PROXY_URL="+proxyAddr,
 	)
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "`rimsky run --service` failed: %v\noutput:\n%s", err, out)

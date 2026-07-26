@@ -7,7 +7,6 @@ package claimproducers
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -72,7 +71,6 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 
 	instanceID := ep.CreateInstance(t, templateID, "ck-fs-xqueue", "claim_producers")
 
-	const deadline = 90 * time.Second
-	ep.RequireNodeTerminalSucceeded(t, instanceID, "worker-r1", deadline)
-	ep.RequireNodeTerminalSucceeded(t, instanceID, "worker-r2", deadline)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "worker-r1")
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "worker-r2")
 }

@@ -111,7 +111,7 @@ var conformanceSubcommands = []struct {
 	{
 		name:    "executor",
 		run:     runConformanceExecutor,
-		flags:   []string{"endpoint", "transport", "require-stub-mode", "scenarios", "skip", "timeout", "check-observability", "retention-test-seconds", "check-lifecycle", "callback-bind", "callback-host", "tls"},
+		flags:   []string{"endpoint", "transport", "allow-live", "scenarios", "skip", "timeout", "check-observability", "retention-test-seconds", "check-lifecycle", "callback-bind", "callback-host", "tls"},
 		reqMsg:  "--endpoint required",
 		reqExit: 2,
 	},

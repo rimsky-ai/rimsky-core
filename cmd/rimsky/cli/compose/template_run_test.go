@@ -14,7 +14,7 @@ import (
 
 func isolateEndpointEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	for _, name := range []string{"RIMSKY_CONTROL_API", "RIMSKY_CONTEXT"} {
+	for _, name := range []string{"RIMSKY_CONTROL_API_URL", "RIMSKY_CONTEXT"} {
 		t.Setenv(name, "")
 		os.Unsetenv(name)
 	}
@@ -186,7 +186,7 @@ func TestSnapshotAndSetEnvPreservesOperatorServiceEnv(t *testing.T) {
 
 func TestRunTemplateRun_SelfHostOverridesContextEndpoint(t *testing.T) {
 	isolateEndpointEnv(t)
-	t.Setenv("RIMSKY_CONTROL_API", "http://127.0.0.1:1")
+	t.Setenv("RIMSKY_CONTROL_API_URL", "http://127.0.0.1:1")
 	got := RunTemplateRun(context.Background(), []string{"--self-host", "--template", "x"})
 	if got != 2 {
 		t.Fatalf("exit %d, want 2 (self-host branch's --template rejection, not a remote dial)", got)

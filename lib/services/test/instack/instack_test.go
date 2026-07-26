@@ -7,7 +7,6 @@ package instack
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -31,7 +30,7 @@ func TestInStack_StubExecutorDrivesNodeToFreshTerminal(t *testing.T) {
 
 	instanceID := ep.CreateInstance(t, templateID, "ck-instack-terminal", "instack")
 
-	obs := ep.RequireNodeTerminalSucceeded(t, instanceID, "worker", 90*time.Second)
+	obs := ep.RequireNodeTerminalSucceeded(t, instanceID, "worker")
 	if !obs.HasEventKind("work_started") {
 		t.Fatalf("node %q reached fresh terminal without a work_started event — no real dispatch happened; events=%+v",
 			"worker", obs.Events)

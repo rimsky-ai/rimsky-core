@@ -28,7 +28,7 @@ func AcquireInStackEndpoint(ctx context.Context, t testing.TB) RimskyEndpoint {
 	if base == "" {
 		return BootInStackProfile(ctx, t)
 	}
-	if err := waitForHealth(ctx, base, healthDeadline); err != nil {
+	if err := waitForHealth(ctx, base); err != nil {
 		t.Fatalf("harness: in-stack rimsky at %s (from %s) not healthy: %v", base, EnvInStackBaseURL, err)
 	}
 	return RimskyEndpoint{BaseURL: base, InternalURL: base}

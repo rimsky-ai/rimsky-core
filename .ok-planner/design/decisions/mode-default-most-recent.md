@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-The per-template cascade-mode configuration defaults to `most-recent`. The four legal values:
+The per-template cascade-mode configuration defaults to `most-recent`, and the mode is a single per-node setting applied uniformly to every upstream feeding the node. The four legal values:
 
 - **`most-recent`** (default): the gate evaluator deletes any prior cascade-driven stale-not-claimed run for the same (node, run-scope) at pending→stale transition; the new run takes its place. Cascade-stale depth ≤ 1 per (node, run-scope). M cascade rounds during a single in-flight period collapse to one post-settle dispatch with the latest view.
 - **`sequenced`** (opt-in): no delete, no dedup. Multiple cascade-driven stales coexist; the dispatcher claims them in `sequence` order. M cascade rounds produce M dispatches.
@@ -16,6 +16,8 @@ The per-template cascade-mode configuration defaults to `most-recent`. The four 
 - **`idempotent-settled`** (opt-in): same as `idempotent-queue` but also compares against the most recent fresh-settled predecessor when no cascade-stale exists.
 
 Non-cascade rows (`operator_invalidate`, `recalculate`, `message_delivery`) are immune to all mode rules regardless of the configured mode.
+
+A node that needs different policies for different upstreams — a chatty feed to coalesce and an audit feed to keep in full — splits into one node per policy. That split is the supported pattern for mixed-cadence subscriptions, not a workaround.
 
 ## Rationale
 
@@ -33,4 +35,8 @@ Default to `idempotent-settled` — rejected because it pays the JCS comparison 
 
 No default; require explicit per-template config — rejected because it adds friction to template authoring with no upside. The vast majority of templates want `most-recent`; requiring explicit declaration for the common case is paperwork.
 
-Default to a hybrid "most-recent for attribute cascades, sequenced for message cascades" — rejected as the per-cascade-source-mode generalization (see `issue:per-cascade-source-mode`). One mode per node is the chosen surface; the generalization is undecided and tracked as an open issue.
+Per-upstream-source mode configuration (a node-wide default with per-sender or per-signal-type overrides, or a mode on the subscription declaration) — rejected: no workload in the catalog motivates it, and every keying axis adds a resolution-precedence question to the cascade walk when several upstreams feed one pending run. Splitting the node carries the mixed-cadence case.
+
+## Proof
+
+A test registers a template omitting the cascade mode and asserts the resolved mode is `most-recent`, then exhibits the coalescing bound: a second cascade round during one in-flight period deletes the prior cascade-driven stale run. Falsifier: changing the default resolution, or disabling the pending-delete at the pending→stale transition, turns the test red.

@@ -59,7 +59,7 @@ func runAgentStart(args []string) int {
 	fs := flag.NewFlagSet("agent start", flag.ContinueOnError)
 	allowPaths := fs.String("allow-paths", "", "comma-separated glob patterns for binary path validation")
 	listen := fs.String("listen", "", "agent local listener addr (default 127.0.0.1:0)")
-	proxy := fs.String("proxy", "", "host-agent-proxy endpoint host:port (overrides $RIMSKY_URL)")
+	proxy := fs.String("proxy", "", "host-agent-proxy endpoint host:port (overrides $RIMSKY_HOST_AGENT_PROXY_URL)")
 	apiKey := fs.String("api-key", "", "api-key plaintext presented to the proxy on Register (overrides $RIMSKY_API_KEY); omit to register anonymously")
 	tls := fs.Bool("tls", false, "dial the proxy over TLS, verifying its server cert against --tls-ca (overrides $RIMSKY_AGENT_TLS)")
 	tlsCA := fs.String("tls-ca", "", "path to the pinned deployment CA root PEM used to verify the proxy server cert (overrides $RIMSKY_AGENT_TLS_CA)")
@@ -84,7 +84,7 @@ func runAgentStart(args []string) int {
 		cfg.ListenAddr = *listen
 	}
 	if *proxy != "" {
-		cfg.RimskyURL = *proxy
+		cfg.ProxyURL = *proxy
 	}
 	if *apiKey != "" {
 		cfg.APIKey = *apiKey
@@ -110,8 +110,8 @@ func runAgentStart(args []string) int {
 	statusPath := filepath.Join(dir, "agent.status")
 	cfg.StatusFile = statusPath
 
-	if cfg.RimskyURL == "" {
-		fmt.Fprintln(os.Stderr, "rimsky agent: --proxy is required (or set RIMSKY_URL)")
+	if cfg.ProxyURL == "" {
+		fmt.Fprintln(os.Stderr, "rimsky agent: --proxy is required (or set RIMSKY_HOST_AGENT_PROXY_URL)")
 		return 2
 	}
 
@@ -125,7 +125,7 @@ func runAgentStart(args []string) int {
 		return 0
 	}
 
-	return daemonizeAgent(args, dir, statusPath, cfg.RimskyURL)
+	return daemonizeAgent(args, dir, statusPath, cfg.ProxyURL)
 }
 
 // @story: host-agent-control-plane

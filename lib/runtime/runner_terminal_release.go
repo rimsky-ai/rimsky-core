@@ -79,7 +79,10 @@ func resolveLinkedSubClaimsInTx(
 		if row.ProducerName != nil {
 			producerName = *row.ProducerName
 		}
-		producer, ok := args.ClaimProducerRegistry.Get(producerName)
+		producer, ok, resolveErr := args.ClaimProducerRegistry.ResolveWithContext(ctx, producerName, "", tx)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolveLinkedSubClaims: resolving producer %q for sub-claim %s: %w", producerName, row.ID, resolveErr)
+		}
 		if !ok {
 			return nil, fmt.Errorf("resolveLinkedSubClaims: unknown producer %q for sub-claim %s", producerName, row.ID)
 		}

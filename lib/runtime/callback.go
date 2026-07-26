@@ -465,7 +465,11 @@ func reconstructAcquiredLocks(
 			}
 			var producer locks.ClaimProducer
 			if args.ClaimProducerRegistry != nil {
-				if p, ok := args.ClaimProducerRegistry.Get(producerName); ok {
+				p, ok, resolveErr := args.ClaimProducerRegistry.ResolveWithContext(ctx, producerName, "", tx)
+				if resolveErr != nil {
+					return nil, fmt.Errorf("reconstructAcquiredLocks: resolving producer %q: %w", producerName, resolveErr)
+				}
+				if ok {
 					producer = p
 				}
 			}

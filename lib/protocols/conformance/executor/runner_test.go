@@ -220,15 +220,48 @@ func TestRun_DialsProbesAndReturnsOneResultPerRegisteredScenario(t *testing.T) {
 	}
 }
 
-func TestRun_RequireStubModeFailsAgainstNonStubExecutor(t *testing.T) {
+func TestRun_RefusesLiveEndpointByDefault(t *testing.T) {
 	addr := startFakeExecutorGRPC(t, nonStubFakeExecutor{})
 	_, err := Run(context.Background(), RunnerOpts{
-		Endpoint:        Endpoint{Transport: "grpc", URL: addr},
-		RequireStubMode: true,
-		Timeout:         5 * time.Second,
+		Endpoint: Endpoint{Transport: "grpc", URL: addr},
+		Timeout:  5 * time.Second,
 	})
 	if err == nil {
-		t.Fatal("expected Run to fail when --require-stub-mode is set against an executor that never signals stub:true")
+		t.Fatal("expected Run to refuse an executor that never signals stub:true — the gate is fail-closed by default")
+	}
+}
+
+func TestRun_AllowLiveSkipsStubRequiringScenarios(t *testing.T) {
+	Register(Scenario{
+		Name:         "allow-live-stub-required-probe",
+		RequiresStub: true,
+		Run: func(context.Context, Env) error {
+			t.Fatal("a stub-requiring scenario must not execute under AllowLive against a live executor")
+			return nil
+		},
+	})
+	t.Cleanup(func() { registered = registered[:len(registered)-1] })
+
+	addr := startFakeExecutorGRPC(t, nonStubFakeExecutor{})
+	results, err := Run(context.Background(), RunnerOpts{
+		Endpoint:  Endpoint{Transport: "grpc", URL: addr},
+		AllowLive: true,
+		Timeout:   5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run with AllowLive against a live executor: %v", err)
+	}
+	sawSkip := false
+	for _, r := range results {
+		if r.Scenario == "allow-live-stub-required-probe" {
+			if !r.Skipped {
+				t.Fatalf("stub-requiring scenario must skip under AllowLive against a live executor: %+v", r)
+			}
+			sawSkip = true
+		}
+	}
+	if !sawSkip {
+		t.Fatal("expected the registered stub-requiring scenario to appear as skipped")
 	}
 }
 

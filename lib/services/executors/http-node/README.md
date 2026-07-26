@@ -100,7 +100,6 @@ destinations are blocked by default. Opt a CIDR back in via
 | `RIMSKY_EXECUTOR_HTTP_NODE_HOST` | `0.0.0.0` | bind host for both transports |
 | `RIMSKY_EXECUTOR_HTTP_NODE_PORT` | `9091` | gRPC port (also honors `RIMSKY_AGENT_PORT` for late-bound spawns) |
 | `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT` | `grpc+1` | HTTP+JSON bridge port |
-| `RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS` | `60000` | per-request upstream timeout |
 | `RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES` | `10485760` | response-body size cap |
 | `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL` | `` | advertised HTTP-bridge URL surfaced in observability capabilities |
 | `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` | `error_class` | JSON key read from 4xx error bodies to build `http/request_invalid/<class>` |

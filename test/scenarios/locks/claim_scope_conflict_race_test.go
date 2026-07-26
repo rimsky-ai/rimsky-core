@@ -78,17 +78,15 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 
 	makeArgs := func(supID string) runtime.RunArgs {
 		return runtime.RunArgs{
-			Persist:                h.Persist,
-			Queue:                  h.Queue,
-			ClaimHandles:           h.Persist.ClaimHandles(),
-			AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-			ClaimProducerRegistry:  reg,
-			Clock:                  shared.SystemClock{},
-			Logger:                 shared.SilentLogger{},
-			SupervisorID:           supID,
-			AcceptedExecutors:      []string{"stub"},
-			AcceptedClaimProducers: []string{"content"},
-			Pool:                   pool,
+			Persist:               h.Persist,
+			Queue:                 h.Queue,
+			ClaimHandles:          h.Persist.ClaimHandles(),
+			AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+			ClaimProducerRegistry: reg,
+			Clock:                 shared.SystemClock{},
+			Logger:                shared.SilentLogger{},
+			SupervisorID:          supID,
+			Pool:                  pool,
 			Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 				"stub": {Transport: "grpc", URL: h.StubAddr},
 			}),

@@ -33,7 +33,7 @@ func main() {
 	host := envOr("RIMSKY_SENSOR_WEBHOOK_HOST", "0.0.0.0")
 	grpcPort := atoiOr("RIMSKY_SENSOR_WEBHOOK_PORT", 9084)
 	webhookPort := atoiOr("RIMSKY_SENSOR_WEBHOOK_HTTP_PORT", 9184)
-	rimskyEndpoint := envOr("RIMSKY_ENDPOINT", "http://localhost:8080")
+	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.Info("sensor-webhook starting",

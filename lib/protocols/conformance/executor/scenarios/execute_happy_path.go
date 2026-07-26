@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -20,13 +21,13 @@ func init() {
 		Name:         "execute_happy_path",
 		RequiresStub: true,
 		Run: func(ctx context.Context, env conformance.Env) error {
-			attrs, err := structpb.NewStruct(map[string]any{"stub_probe": true})
+			attrs, err := structpb.NewStruct(map[string]any{stubmode.ProbeAttribute: true})
 			if err != nil {
 				return fmt.Errorf("build attributes: %w", err)
 			}
 			schema, err := structpb.NewStruct(map[string]any{
 				"type":       "object",
-				"properties": map[string]any{"stub_probe": map[string]any{"type": "boolean"}},
+				"properties": map[string]any{stubmode.ProbeAttribute: map[string]any{"type": "boolean"}},
 			})
 			if err != nil {
 				return fmt.Errorf("build attributes_schema: %w", err)
@@ -55,8 +56,8 @@ func init() {
 				return fmt.Errorf("expected Outcome_Success, got %T", settled.GetOutcome())
 			}
 			delta := success.Success.GetAttributesDelta().AsMap()
-			if stub, _ := delta["stub"].(bool); !stub {
-				return fmt.Errorf("expected attributes_delta.stub=true, got %#v", delta["stub"])
+			if !stubmode.ConfirmsStub(delta) {
+				return fmt.Errorf("expected attributes_delta.stub=true, got %#v", delta[stubmode.ResponseAttribute])
 			}
 			return nil
 		},

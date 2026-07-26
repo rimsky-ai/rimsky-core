@@ -112,7 +112,7 @@ func FlushProducerVerbOutbox(ctx context.Context, args RunArgs) (int, error) {
 }
 
 type ProducerVerbResolver interface {
-	GetWithContext(ctx context.Context, name string, instanceID string) (claimproducer.ClaimProducer, bool)
+	ResolveWithContext(ctx context.Context, name string, instanceID string, tx persistence.Tx) (claimproducer.ClaimProducer, bool, error)
 }
 
 type ProducerVerbDispatcher struct {
@@ -262,7 +262,10 @@ func (d *ProducerVerbDispatcher) deliverRow(ctx context.Context, row persistence
 	if row.InstanceID != nil {
 		instanceID = row.InstanceID.String()
 	}
-	producer, ok := d.Producers.GetWithContext(ctx, row.ProducerName, instanceID)
+	producer, ok, err := d.Producers.ResolveWithContext(ctx, row.ProducerName, instanceID, nil)
+	if err != nil {
+		return fmt.Errorf("resolving producer %q (transient): %w", row.ProducerName, err)
+	}
 	if !ok {
 		return fmt.Errorf("producer %q not registered", row.ProducerName)
 	}

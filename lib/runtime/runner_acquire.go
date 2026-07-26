@@ -316,13 +316,9 @@ func selectCandidatesShortTx(
 	var candidates []persistence.Candidate
 	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := args.Queue.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:          args.AcceptedExecutors,
-			AcceptedClaimProducers:     args.AcceptedClaimProducers,
-			Limit:                      limit,
-			LateBindExecutorProxy:      args.LateBindServiceProxies["executor"],
-			LateBindClaimProducerProxy: args.LateBindServiceProxies["claim_producer"],
-			CursorEnqueuedAfter:        cursorEnqueued,
-			CursorAfterNodeRunID:       cursorID,
+			Limit:                limit,
+			CursorEnqueuedAfter:  cursorEnqueued,
+			CursorAfterNodeRunID: cursorID,
 		}, tx)
 		if err != nil {
 			return err

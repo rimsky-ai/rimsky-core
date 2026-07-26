@@ -142,7 +142,7 @@ func TestCallback_RegistryMiss_RecoversParentedSubClaim(t *testing.T) {
 			return err
 		}
 		require.True(t, promoted, "leaf run must promote to running")
-		return d.Queue().RegisterAsyncAck(ctx, leafNodeRunID, ackID, clk.Now(), nil, nil, "", tx)
+		return d.Queue().RegisterAsyncAck(ctx, leafNodeRunID, ackID, clk.Now(), nil, nil, "", "", tx)
 	}))
 
 	cb := &runtime.CallbackServer{

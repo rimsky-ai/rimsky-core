@@ -37,7 +37,7 @@ func runWithCommon(name string, args []string, registerExtra func(fs *flag.FlagS
 	}
 	SetActiveCommonFlags(&common)
 	cfgPath, _ := DefaultConfigPath()
-	endpoint, err := ResolveEndpoint(common.Endpoint, os.Getenv("RIMSKY_CONTROL_API"), cfgPath, "")
+	endpoint, err := ResolveEndpoint(common.Endpoint, os.Getenv("RIMSKY_CONTROL_API_URL"), cfgPath, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, nil, "", 2

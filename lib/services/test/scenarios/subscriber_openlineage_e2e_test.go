@@ -89,7 +89,7 @@ func TestSubscriberOpenlineage(t *testing.T) {
 	templateID := deployOLTemplate(t, ep, "openlineage-e2e")
 	instanceID := createOLInstance(t, ep, templateID, "ck-openlineage-e2e")
 
-	ep.RequireNodeTerminalSucceeded(t, instanceID, "acquire-and-execute", 90*time.Second)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "acquire-and-execute")
 
 	pool, err := pgxpool.New(ctx, ep.HostDSN)
 	if err != nil {

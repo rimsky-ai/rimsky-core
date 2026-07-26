@@ -7,7 +7,6 @@ package claimproducers
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -64,7 +63,6 @@ func TestFSPickVsScopeConcurrency(t *testing.T) {
 
 	instanceID := ep.CreateInstance(t, templateID, "ck-fs-pick-vs-scope", "claim_producers")
 
-	const deadline = 90 * time.Second
-	ep.RequireNodeTerminalSucceeded(t, instanceID, "pick-worker", deadline)
-	ep.RequireNodeTerminalSucceeded(t, instanceID, "scope-worker", deadline)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "pick-worker")
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "scope-worker")
 }

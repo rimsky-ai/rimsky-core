@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
@@ -170,83 +171,83 @@ func TestRegistryAddEmptyInternalNameLogsNothing(t *testing.T) {
 	}
 }
 
-func TestRegistryGetWithContextDirectHit(t *testing.T) {
+func TestRegistryResolveWithContextDirectHit(t *testing.T) {
 	r := NewRegistry()
 	r.Add("alpha", mockProducer{name: "alpha"})
 
-	got, ok := r.GetWithContext(context.Background(), "alpha", "instance-1")
-	if !ok || got == nil {
-		t.Fatalf("GetWithContext direct hit: got (%v, %v), want a producer and true", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "alpha", "instance-1", nil)
+	if err != nil || !ok || got == nil {
+		t.Fatalf("ResolveWithContext direct hit: got (%v, %v, %v), want a producer, true, nil", got, ok, err)
 	}
 }
 
-func TestRegistryGetWithContextEmptyInstanceID(t *testing.T) {
+func TestRegistryResolveWithContextEmptyInstanceID(t *testing.T) {
 	r := NewRegistry(
-		WithLookupInstanceBindings(func(_ context.Context, _ string) (map[string]json.RawMessage, bool, error) {
+		WithLookupInstanceBindings(func(_ context.Context, _ string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			t.Fatalf("lookupInstanceBindings must not be called when instanceID is empty")
 			return nil, false, nil
 		}),
 		WithLateBindServiceProxies(map[string]string{"claim_producer": "proxy"}),
 	)
 
-	got, ok := r.GetWithContext(context.Background(), "missing", "")
-	if ok || got != nil {
-		t.Fatalf("GetWithContext with empty instanceID = (%v, %v), want (nil, false)", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "missing", "", nil)
+	if err != nil || ok || got != nil {
+		t.Fatalf("ResolveWithContext with empty instanceID = (%v, %v, %v), want (nil, false, nil)", got, ok, err)
 	}
 }
 
-func TestRegistryGetWithContextNoLookupFn(t *testing.T) {
+func TestRegistryResolveWithContextNoLookupFn(t *testing.T) {
 	r := NewRegistry(WithLateBindServiceProxies(map[string]string{"claim_producer": "proxy"}))
 
-	got, ok := r.GetWithContext(context.Background(), "missing", "instance-1")
-	if ok || got != nil {
-		t.Fatalf("GetWithContext with no lookup fn = (%v, %v), want (nil, false)", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "missing", "instance-1", nil)
+	if err != nil || ok || got != nil {
+		t.Fatalf("ResolveWithContext with no lookup fn = (%v, %v, %v), want (nil, false, nil)", got, ok, err)
 	}
 }
 
-func TestRegistryGetWithContextNoProxyMapping(t *testing.T) {
+func TestRegistryResolveWithContextNoProxyMapping(t *testing.T) {
 	r := NewRegistry(
-		WithLookupInstanceBindings(func(_ context.Context, _ string) (map[string]json.RawMessage, bool, error) {
+		WithLookupInstanceBindings(func(_ context.Context, _ string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			t.Fatalf("lookupInstanceBindings must not be called when no proxy mapping is configured")
 			return nil, false, nil
 		}),
 	)
 
-	got, ok := r.GetWithContext(context.Background(), "missing", "instance-1")
-	if ok || got != nil {
-		t.Fatalf("GetWithContext with no proxy mapping = (%v, %v), want (nil, false)", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "missing", "instance-1", nil)
+	if err != nil || ok || got != nil {
+		t.Fatalf("ResolveWithContext with no proxy mapping = (%v, %v, %v), want (nil, false, nil)", got, ok, err)
 	}
 }
 
-func TestRegistryGetWithContextEmptyProxyName(t *testing.T) {
+func TestRegistryResolveWithContextEmptyProxyName(t *testing.T) {
 	r := NewRegistry(
-		WithLookupInstanceBindings(func(_ context.Context, _ string) (map[string]json.RawMessage, bool, error) {
+		WithLookupInstanceBindings(func(_ context.Context, _ string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			t.Fatalf("lookupInstanceBindings must not be called when the proxy name is empty")
 			return nil, false, nil
 		}),
 		WithLateBindServiceProxies(map[string]string{"claim_producer": ""}),
 	)
 
-	got, ok := r.GetWithContext(context.Background(), "missing", "instance-1")
-	if ok || got != nil {
-		t.Fatalf("GetWithContext with empty proxy name = (%v, %v), want (nil, false)", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "missing", "instance-1", nil)
+	if err != nil || ok || got != nil {
+		t.Fatalf("ResolveWithContext with empty proxy name = (%v, %v, %v), want (nil, false, nil)", got, ok, err)
 	}
 }
 
-func TestRegistryGetWithContextLookupError(t *testing.T) {
+func TestRegistryResolveWithContextBindingsLookupError(t *testing.T) {
 	buf := captureDefaultLog(t)
 
 	r := NewRegistry(
-		WithLookupInstanceBindings(func(_ context.Context, _ string) (map[string]json.RawMessage, bool, error) {
+		WithLookupInstanceBindings(func(_ context.Context, _ string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			return nil, false, errors.New("boom")
 		}),
 		WithLateBindServiceProxies(map[string]string{"claim_producer": "proxy"}),
 	)
 	r.Add("proxy", mockProducer{name: "proxy"})
 
-	got, ok := r.GetWithContext(context.Background(), "missing", "instance-1")
-	if ok || got != nil {
-		t.Fatalf("GetWithContext with lookup error = (%v, %v), want (nil, false)", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "missing", "instance-1", nil)
+	if err != nil || ok || got != nil {
+		t.Fatalf("ResolveWithContext with bindings lookup error = (%v, %v, %v), want (nil, false, nil)", got, ok, err)
 	}
 	logged := buf.String()
 	if !strings.Contains(logged, "instance-bindings lookup failed") || !strings.Contains(logged, "boom") {
@@ -254,39 +255,39 @@ func TestRegistryGetWithContextLookupError(t *testing.T) {
 	}
 }
 
-func TestRegistryGetWithContextLookupNotFound(t *testing.T) {
+func TestRegistryResolveWithContextBindingsLookupNotFound(t *testing.T) {
 	r := NewRegistry(
-		WithLookupInstanceBindings(func(_ context.Context, _ string) (map[string]json.RawMessage, bool, error) {
+		WithLookupInstanceBindings(func(_ context.Context, _ string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			return nil, false, nil
 		}),
 		WithLateBindServiceProxies(map[string]string{"claim_producer": "proxy"}),
 	)
 	r.Add("proxy", mockProducer{name: "proxy"})
 
-	got, ok := r.GetWithContext(context.Background(), "missing", "instance-1")
-	if ok || got != nil {
-		t.Fatalf("GetWithContext with lookup ok=false = (%v, %v), want (nil, false)", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "missing", "instance-1", nil)
+	if err != nil || ok || got != nil {
+		t.Fatalf("ResolveWithContext with bindings lookup ok=false = (%v, %v, %v), want (nil, false, nil)", got, ok, err)
 	}
 }
 
-func TestRegistryGetWithContextBindingAbsent(t *testing.T) {
+func TestRegistryResolveWithContextBindingAbsent(t *testing.T) {
 	r := NewRegistry(
-		WithLookupInstanceBindings(func(_ context.Context, _ string) (map[string]json.RawMessage, bool, error) {
+		WithLookupInstanceBindings(func(_ context.Context, _ string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			return map[string]json.RawMessage{"other-producer": json.RawMessage(`{}`)}, true, nil
 		}),
 		WithLateBindServiceProxies(map[string]string{"claim_producer": "proxy"}),
 	)
 	r.Add("proxy", mockProducer{name: "proxy"})
 
-	got, ok := r.GetWithContext(context.Background(), "missing", "instance-1")
-	if ok || got != nil {
-		t.Fatalf("GetWithContext with binding absent = (%v, %v), want (nil, false)", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "missing", "instance-1", nil)
+	if err != nil || ok || got != nil {
+		t.Fatalf("ResolveWithContext with binding absent = (%v, %v, %v), want (nil, false, nil)", got, ok, err)
 	}
 }
 
-func TestRegistryGetWithContextProxyHit(t *testing.T) {
+func TestRegistryResolveWithContextProxyHit(t *testing.T) {
 	r := NewRegistry(
-		WithLookupInstanceBindings(func(_ context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
+		WithLookupInstanceBindings(func(_ context.Context, instanceID string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			if instanceID != "instance-1" {
 				t.Fatalf("lookupInstanceBindings called with instanceID %q, want %q", instanceID, "instance-1")
 			}
@@ -296,19 +297,19 @@ func TestRegistryGetWithContextProxyHit(t *testing.T) {
 	)
 	r.Add("proxy", mockProducer{name: "proxy"})
 
-	got, ok := r.GetWithContext(context.Background(), "missing", "instance-1")
-	if !ok || got == nil {
-		t.Fatalf("GetWithContext proxy hit = (%v, %v), want a producer and true", got, ok)
+	got, ok, err := r.ResolveWithContext(context.Background(), "missing", "instance-1", nil)
+	if err != nil || !ok || got == nil {
+		t.Fatalf("ResolveWithContext proxy hit = (%v, %v, %v), want a producer, true, nil", got, ok, err)
 	}
 	if got.Name() != "proxy" {
-		t.Fatalf("GetWithContext proxy hit resolved producer %q, want %q", got.Name(), "proxy")
+		t.Fatalf("ResolveWithContext proxy hit resolved producer %q, want %q", got.Name(), "proxy")
 	}
 }
 
-func TestRegistryGetWithContextNilContextSubstituted(t *testing.T) {
+func TestRegistryResolveWithContextNilContextSubstituted(t *testing.T) {
 	var sawContext bool
 	r := NewRegistry(
-		WithLookupInstanceBindings(func(ctx context.Context, _ string) (map[string]json.RawMessage, bool, error) {
+		WithLookupInstanceBindings(func(ctx context.Context, _ string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			sawContext = ctx != nil
 			return map[string]json.RawMessage{"missing": json.RawMessage(`{}`)}, true, nil
 		}),
@@ -317,12 +318,12 @@ func TestRegistryGetWithContextNilContextSubstituted(t *testing.T) {
 	r.Add("proxy", mockProducer{name: "proxy"})
 
 	//nolint:staticcheck // exercising the registry's own nil-context substitution branch
-	got, ok := r.GetWithContext(nil, "missing", "instance-1")
-	if !ok || got == nil {
-		t.Fatalf("GetWithContext with nil ctx = (%v, %v), want a producer and true", got, ok)
+	got, ok, err := r.ResolveWithContext(nil, "missing", "instance-1", nil)
+	if err != nil || !ok || got == nil {
+		t.Fatalf("ResolveWithContext with nil ctx = (%v, %v, %v), want a producer, true, nil", got, ok, err)
 	}
 	if !sawContext {
-		t.Fatalf("GetWithContext did not substitute a non-nil context for the lookup function")
+		t.Fatalf("ResolveWithContext did not substitute a non-nil context for the lookup function")
 	}
 }
 

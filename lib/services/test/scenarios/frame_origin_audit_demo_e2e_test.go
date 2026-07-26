@@ -46,7 +46,7 @@ func runFrameOriginAuditDemoScript(t *testing.T, ctx context.Context, scriptPath
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "/bin/bash", scriptPath)
 	cmd.Env = append(os.Environ(),
-		"RIMSKY_ENDPOINT="+baseURL,
+		"RIMSKY_CONTROL_API_URL="+baseURL,
 	)
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out

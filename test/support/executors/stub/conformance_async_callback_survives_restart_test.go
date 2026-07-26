@@ -20,10 +20,9 @@ func TestConformanceAsyncCallbackSurvivesRestart_HonestStubPasses(t *testing.T) 
 	addr := listenForTest(t, s)
 
 	results, err := executorconf.Run(context.Background(), executorconf.RunnerOpts{
-		Endpoint:        executorconf.Endpoint{Transport: "grpc", URL: addr},
-		RequireStubMode: true,
-		Only:            []string{"async_callback_survives_restart"},
-		Timeout:         30 * time.Second,
+		Endpoint: executorconf.Endpoint{Transport: "grpc", URL: addr},
+		Only:     []string{"async_callback_survives_restart"},
+		Timeout:  30 * time.Second,
 	})
 	require.NoError(t, err)
 	r := findScenarioResult(t, results, "async_callback_survives_restart")

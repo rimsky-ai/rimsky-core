@@ -7,7 +7,7 @@
 # element.key and Payload = element.payload.
 #
 # Stack prerequisites (operator-side):
-#   - rimsky stack reachable at RIMSKY_ENDPOINT
+#   - rimsky stack reachable at RIMSKY_CONTROL_API_URL
 #   - bundled `rimsky-claim-producer-postgres` registered as claim producer
 #     `claim-producer-postgres` advertising supports_split_scope=true and a pick
 #     policy `@items-queue` over a `pgfanout_items` table (see

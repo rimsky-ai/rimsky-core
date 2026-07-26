@@ -143,7 +143,7 @@ func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 
 func ResolveRunEndpoint(common *CommonFlags) (string, error) {
 	cfgPath, _ := DefaultConfigPath()
-	endpoint, err := ResolveEndpoint(common.Endpoint, os.Getenv("RIMSKY_CONTROL_API"), cfgPath, "")
+	endpoint, err := ResolveEndpoint(common.Endpoint, os.Getenv("RIMSKY_CONTROL_API_URL"), cfgPath, "")
 	if errors.Is(err, ErrNoEndpointConfigured) {
 		return "", nil
 	}

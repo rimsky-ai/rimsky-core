@@ -69,8 +69,8 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	commitTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-commit", fsCommitSelector, "ok")
 	commitInstanceID := ep.CreateInstance(t, commitTemplateID, "ck-fs-held-swap-commit", "held-swap")
 
-	ep.WaitForNodeSettledTo(t, commitInstanceID, "acquirer", "fresh", 120*time.Second)
-	ep.WaitForNodeSettledTo(t, commitInstanceID, "verifier", "fresh", 120*time.Second)
+	ep.WaitForNodeSettledTo(t, commitInstanceID, "acquirer", "fresh")
+	ep.WaitForNodeSettledTo(t, commitInstanceID, "verifier", "fresh")
 
 	committedDst := filepath.Join(producer.HostDir, fsCommittedSubdir, fsCommitFolder)
 	sourceSrc := filepath.Join(producer.HostDir, fsCommitSource, fsCommitFolder)
@@ -79,8 +79,8 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	abandonTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-abandon", fsAbandonSelector, "err")
 	abandonInstanceID := ep.CreateInstance(t, abandonTemplateID, "ck-fs-held-swap-abandon", "held-swap")
 
-	ep.WaitForNodeSettledTo(t, abandonInstanceID, "verifier", "failed", 120*time.Second)
-	ep.WaitForNodeSettledTo(t, abandonInstanceID, "acquirer", "failed", 120*time.Second)
+	ep.WaitForNodeSettledTo(t, abandonInstanceID, "verifier", "failed")
+	ep.WaitForNodeSettledTo(t, abandonInstanceID, "acquirer", "failed")
 
 	abandonCommittedDst := filepath.Join(producer.HostDir, fsCommittedSubdir, fsAbandonFolder)
 	abandonSource := filepath.Join(producer.HostDir, fsAbandonSource, fsAbandonFolder)

@@ -369,7 +369,7 @@ func resolveTemplatePaths(m *Manifest, manifestPath string) {
 
 func clientForManifest(flags *composeUpFlags, m *Manifest) (*cli.Client, string, int) {
 	cfgPath, _ := cli.DefaultConfigPath()
-	endpoint, err := cli.ResolveEndpointForCompose(flags.common.Endpoint, os.Getenv("RIMSKY_CONTROL_API"), cfgPath, m.Context)
+	endpoint, err := cli.ResolveEndpointForCompose(flags.common.Endpoint, os.Getenv("RIMSKY_CONTROL_API_URL"), cfgPath, m.Context)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, "", 2

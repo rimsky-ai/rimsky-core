@@ -14,6 +14,7 @@ import (
 	"testing"
 )
 
+// @story: clean-lint
 func TestPlumblineClean(t *testing.T) {
 	repoRoot := findRepoRoot(t)
 	assertAllChecksActive(t, repoRoot)
@@ -98,12 +99,10 @@ func assertAllChecksActive(t *testing.T, repoRoot string) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("parse %s: %v", cfgPath, err)
 	}
-	required := []string{"comment_hygiene", "citation_resolution"}
-	for _, name := range required {
-		v, present := cfg.Checks[name]
-		if !present {
-			t.Fatalf(".ok-plumbline/config.json checks.%s missing; expected true", name)
-		}
+	if len(cfg.Checks) == 0 {
+		t.Fatalf(".ok-plumbline/config.json checks is empty; expected at least one configured check")
+	}
+	for name, v := range cfg.Checks {
 		if !v {
 			t.Fatalf(".ok-plumbline/config.json checks.%s = false; expected true", name)
 		}

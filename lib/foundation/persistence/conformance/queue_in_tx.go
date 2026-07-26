@@ -218,9 +218,7 @@ func selectCandidateIDForNode(ctx context.Context, t *testing.T,
 	var found shared.UUID
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  100,
+			Limit: 100,
 		}, tx)
 		if err != nil {
 			return err

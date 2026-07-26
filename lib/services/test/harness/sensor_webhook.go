@@ -86,7 +86,7 @@ func runSensorWebhookContainer(
 	env := map[string]string{
 		"RIMSKY_SENSOR_WEBHOOK_PORT":      "9084",
 		"RIMSKY_SENSOR_WEBHOOK_HTTP_PORT": "9184",
-		"RIMSKY_ENDPOINT":                 rimskyEndpoint,
+		"RIMSKY_CONTROL_API_URL":          rimskyEndpoint,
 	}
 	if stateDSN != "" {
 		env["RIMSKY_SENSOR_WEBHOOK_STATE_DSN"] = stateDSN

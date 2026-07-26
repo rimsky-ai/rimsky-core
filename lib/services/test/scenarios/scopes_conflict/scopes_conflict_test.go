@@ -92,10 +92,10 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 
 	instanceID := ep.CreateInstance(t, templateID, "ck-scopes-conflict-top-level", "scopes-conflict")
 
-	ep.RequireNodeTerminalSucceeded(t, instanceID, "acquirer", 120*time.Second)
-	ep.RequireNodeTerminalSucceeded(t, instanceID, "verifier", 120*time.Second)
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "acquirer")
+	ep.RequireNodeTerminalSucceeded(t, instanceID, "verifier")
 
-	contenderObs := ep.WaitForNodeTerminal(t, instanceID, "contender", 30*time.Second)
+	contenderObs := ep.WaitForNodeTerminal(t, instanceID, "contender")
 	if contenderObs.RunSummary.FailedCount == 0 {
 		t.Fatalf("top-level overlap: contender node on instance %s reached terminal without "+
 			"failing (run_summary=%+v) — a correctly-held-off contender must actually attempt "+
@@ -151,7 +151,7 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 
 	instanceID := ep.CreateInstance(t, templateID, "ck-scopes-conflict-fanout", "scopes-conflict")
 
-	obs := ep.WaitForNodeTerminal(t, instanceID, "fan-parent", 45*time.Second)
+	obs := ep.WaitForNodeTerminal(t, instanceID, "fan-parent")
 	if obs.RunSummary.FailedCount == 0 {
 		t.Fatalf("fan-out overlap: fan-parent reached terminal without failing (run_summary=%+v) — "+
 			"the overlapping partition keys \"a\" and \"a/x\" must cause AcquireSubClaims to reject "+

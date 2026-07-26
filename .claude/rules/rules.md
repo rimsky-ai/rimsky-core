@@ -16,7 +16,7 @@ Run **every** check that could be affected by the change. This is mandatory, not
 - **Any Go change:** `go build ./... && go test ./... && make lint`
 - **Proto changes (`lib/protocols/proto/v1/*.proto`):** `make proto-gen` first, then the Go checks above.
 - **Scenario or storage changes:** `go test ./test/scenarios/... ./lib/foundation/persistence/... -count=1` (these spin up real Postgres via testcontainers — Docker must be running).
-- **Race-sensitive paths (queue, supervisor, scheduler):** add `-race`, e.g. `go test ./lib/foundation/persistence/postgres/... ./lib/runtime/... ./lib/graph/scheduler/... -race -count=3`.
+- **Race-sensitive paths (queue, supervisor, scheduler):** add `-race`, e.g. `go test ./lib/foundation/persistence/postgres/... ./lib/runtime/... ./lib/runtime/scheduler/... -race -count=3`.
 - **Reference-binary or deploy changes:** rebuild the touched core images with `make core-images` (and `make service-images` for bundled-service changes), then verify the stack via the testcontainers-based services harness under `lib/services/test/` (e.g. `go test ./lib/services/test/scenarios/... -count=1`), which boots `rimsky-all-in-one:latest` and drives a node to terminal.
 - **Conformance-relevant changes (protocol, executor surface):** `go run ./cmd/rimsky conformance executor --endpoint <executor> --transport grpc` against the executors you touched.
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.

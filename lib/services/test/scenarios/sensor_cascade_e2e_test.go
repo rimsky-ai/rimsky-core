@@ -60,9 +60,9 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	templateID := deploySensorCascadeTemplate(t, ep, watchedURL)
 	instanceID := createSensorCascadeInstance(t, ep, templateID, "ck-sensor-cascade")
 
-	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+	ep.WaitForSubscriptionsActive(t, instanceID)
 
-	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
+	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh")
 
 	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
@@ -121,9 +121,9 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	templateID := deploySensorCascadeTemplate(t, ep, watchedURL)
 	instanceID := createSensorCascadeInstance(t, ep, templateID, "ck-sensor-durable")
 
-	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+	ep.WaitForSubscriptionsActive(t, instanceID)
 
-	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh", 90*time.Second)
+	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh")
 	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
@@ -142,7 +142,7 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 		// @story: cascade-signal-blind
 		requireWorkStartedGrew(t, ep, instanceID, reactorNodeAlias, reactorBefore, 120*time.Second,
 			fmt.Sprintf("fire %d/%d", i, fires))
-		ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh", 30*time.Second)
+		ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh")
 		requireInstanceNotTerminated(t, ep, instanceID)
 	}
 
@@ -302,7 +302,7 @@ func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, no
 	end := time.Now().Add(deadline)
 	for time.Now().Before(end) {
 		if workStartedCount(t, ep, instanceID, nodeType) > baseline {
-			ep.WaitForNodeSettledTo(t, instanceID, nodeType, "fresh", 30*time.Second)
+			ep.WaitForNodeSettledTo(t, instanceID, nodeType, "fresh")
 			return
 		}
 		time.Sleep(250 * time.Millisecond)

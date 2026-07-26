@@ -134,10 +134,9 @@ func TestUnaryProtocolScenarios_RunAgainstALiveExecutor(t *testing.T) {
 	defer cancel()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		RequireStubMode: true,
-		Only:            []string{"tags_round_trip", "attributes_serialization", "async_callback_survives_restart", "scratch_park_round_trip"},
-		Timeout:         10 * time.Second,
+		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		Only:     []string{"tags_round_trip", "attributes_serialization", "async_callback_survives_restart", "scratch_park_round_trip"},
+		Timeout:  10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)
@@ -211,10 +210,9 @@ func TestTagsRoundTrip_FailsWhenExecutorDropsDeclaredTag(t *testing.T) {
 	defer cancel()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		RequireStubMode: true,
-		Only:            []string{"tags_round_trip"},
-		Timeout:         10 * time.Second,
+		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		Only:     []string{"tags_round_trip"},
+		Timeout:  10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)
@@ -235,10 +233,9 @@ func TestTagsRoundTrip_SkipsWhenExecutorDeclaresNoTags(t *testing.T) {
 	defer cancel()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		RequireStubMode: true,
-		Only:            []string{"tags_round_trip"},
-		Timeout:         10 * time.Second,
+		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		Only:     []string{"tags_round_trip"},
+		Timeout:  10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)
@@ -309,10 +306,9 @@ func TestScratchParkRoundTrip_FailsWhenExecutorEmitsEmptyScratch(t *testing.T) {
 	defer cancel()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		RequireStubMode: true,
-		Only:            []string{"scratch_park_round_trip"},
-		Timeout:         10 * time.Second,
+		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		Only:     []string{"scratch_park_round_trip"},
+		Timeout:  10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)
@@ -381,10 +377,9 @@ func TestScratchParkRoundTrip_PassesThroughAsyncCallbackDecode(t *testing.T) {
 	defer cancel()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		RequireStubMode: true,
-		Only:            []string{"scratch_park_round_trip"},
-		Timeout:         10 * time.Second,
+		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		Only:     []string{"scratch_park_round_trip"},
+		Timeout:  10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)
@@ -462,10 +457,9 @@ func TestAsyncCallbackSurvivesRestart_FailsWhenExecutorDoesNotRetry(t *testing.T
 	defer cancel()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		RequireStubMode: true,
-		Only:            []string{"async_callback_survives_restart"},
-		Timeout:         5 * time.Second,
+		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		Only:     []string{"async_callback_survives_restart"},
+		Timeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)
@@ -516,10 +510,9 @@ func TestParkEmission_PassesWhenExecutorEchoesRequestedResumeAt(t *testing.T) {
 	defer cancel()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		RequireStubMode: true,
-		Only:            []string{"park_emission"},
-		Timeout:         5 * time.Second,
+		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		Only:     []string{"park_emission"},
+		Timeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)
@@ -564,10 +557,9 @@ func TestParkEmission_FailsWhenExecutorIgnoresRequestedResumeAt(t *testing.T) {
 	defer cancel()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
-		Endpoint:        conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		RequireStubMode: true,
-		Only:            []string{"park_emission"},
-		Timeout:         5 * time.Second,
+		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
+		Only:     []string{"park_emission"},
+		Timeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)

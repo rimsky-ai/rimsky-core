@@ -103,17 +103,15 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 
 	var stolen atomic.Bool
 	args := runtime.RunArgs{
-		Persist:                h.Persist,
-		Queue:                  h.Queue,
-		ClaimHandles:           h.Persist.ClaimHandles(),
-		AdvisoryLocker:         h.Driver.AdvisoryLocker(),
-		ClaimProducerRegistry:  registry,
-		Clock:                  shared.SystemClock{},
-		Logger:                 shared.SilentLogger{},
-		SupervisorID:           "scenario-runner",
-		AcceptedExecutors:      []string{"stub"},
-		AcceptedClaimProducers: []string{"store-a"},
-		Pool:                   pool,
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+		ClaimProducerRegistry: registry,
+		Clock:                 shared.SystemClock{},
+		Logger:                shared.SilentLogger{},
+		SupervisorID:          "scenario-runner",
+		Pool:                  pool,
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),

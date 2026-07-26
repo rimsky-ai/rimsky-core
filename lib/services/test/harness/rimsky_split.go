@@ -142,7 +142,7 @@ func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, 
 		t.Fatalf("harness: split control-api mapped port: %v", err)
 	}
 	baseURL := fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
-	if err := waitForHealth(ctx, baseURL, healthDeadline); err != nil {
+	if err := waitForHealth(ctx, baseURL); err != nil {
 		dumpLogsForFailure(t, "split control-api", c)
 		t.Fatalf("harness: split control-api /health did not return 200: %v", err)
 	}

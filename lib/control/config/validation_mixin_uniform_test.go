@@ -74,6 +74,7 @@ func startStubPeer(t *testing.T, register func(*grpc.Server)) string {
 	return lis.Addr().String()
 }
 
+// @story: validation-mixin-uniform
 func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
 	cpEndpoint := startStubPeer(t, func(s *grpc.Server) {
 		genv1.RegisterClaimProducerServer(s, stubClaimProducerService{})

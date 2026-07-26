@@ -15,31 +15,20 @@ import (
 )
 
 const supervisorCols = `
-  id, accepted_executors, accepted_claim_producers, concurrency, callback_host, callback_port,
-  registered_at
+  id, concurrency, callback_host, callback_port, registered_at
 `
 
 func (s *supervisorsImpl) Register(ctx context.Context, in persistence.SupervisorRegisterInput, tx persistence.Tx) error {
 	ex := s.q(tx)
-	accepts := in.AcceptedExecutors
-	if accepts == nil {
-		accepts = []string{}
-	}
-	claimProducers := in.AcceptedClaimProducers
-	if claimProducers == nil {
-		claimProducers = []string{}
-	}
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_supervisors
-		   (id, accepted_executors, accepted_claim_producers, concurrency, callback_host, callback_port)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		   (id, concurrency, callback_host, callback_port)
+		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (id) DO UPDATE
-		   SET accepted_executors      = EXCLUDED.accepted_executors,
-		       accepted_claim_producers = EXCLUDED.accepted_claim_producers,
-		       concurrency              = EXCLUDED.concurrency,
-		       callback_host            = EXCLUDED.callback_host,
-		       callback_port            = EXCLUDED.callback_port`,
-		in.ID, accepts, claimProducers, in.Concurrency,
+		   SET concurrency   = EXCLUDED.concurrency,
+		       callback_host = EXCLUDED.callback_host,
+		       callback_port = EXCLUDED.callback_port`,
+		in.ID, in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort),
 	)
 	if err != nil {
@@ -93,7 +82,7 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 		callbackPort *int
 	)
 	if err := sc.Scan(
-		&r.ID, &r.AcceptedExecutors, &r.AcceptedClaimProducers, &r.Concurrency,
+		&r.ID, &r.Concurrency,
 		&callbackHost, &callbackPort,
 		&r.RegisteredAt,
 	); err != nil {
@@ -102,12 +91,6 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 	r.CallbackHost = derefString(callbackHost)
 	if callbackPort != nil {
 		r.CallbackPort = *callbackPort
-	}
-	if r.AcceptedExecutors == nil {
-		r.AcceptedExecutors = []string{}
-	}
-	if r.AcceptedClaimProducers == nil {
-		r.AcceptedClaimProducers = []string{}
 	}
 	return r, nil
 }

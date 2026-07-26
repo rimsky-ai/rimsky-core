@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -62,7 +61,7 @@ func TestBundledInProcDispatchZeroExecutorConfig(t *testing.T) {
 	})
 	instanceID := createScenarioInstance(t, ep, templateID, "ck-bundled-inproc-dispatch")
 
-	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
+	waitForDispatchToFresh(t, ep, instanceID, "worker")
 
 	status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/worker", "")
 	if status != http.StatusOK {

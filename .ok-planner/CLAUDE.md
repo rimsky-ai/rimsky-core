@@ -44,16 +44,17 @@ judgment, named `<YYYY-MM-DD-HHMMSS>-<slug>.md` so listings sort
 chronologically. Filed by `/audit`, `/discover-design`,
 `/plan-sprint`, or humans; `/verify-issues` then makes each file
 **ruling-ready**: it closes any issue the design corpus already
-answers (with the citation) and writes a compact from-the-top
-discussion into the rest, ending at a `## Ruling` section.
-`/recommend-rulings` (owner-invoked, inline) may then fill empty
-Rulings with marked recommendations — left untouched, they ride the
-next `/plan-sprint` as rulings, named as a batch at sign-off.
+answers (with the citation), repairs code-side gaps the rules fully
+determine, and rewrites the rest as a single from-the-top narrative
+ending in a marked generated or recommended ruling — left untouched,
+those ride the next `/plan-sprint` as rulings, named as batches at
+sign-off; edit or empty one to override.
 
-**The Ruling section is the owner's.** Write your decision there in
-your own words, whenever you like; the next `/plan-sprint` pulls
-every ruled issue into the sprint it plans without re-discussing it.
-Agents never write a ruling — only transcribe one you give live.
+**Unmarked Ruling text is the owner's alone.** Write your decision
+there in your own words, whenever you like; the next `/plan-sprint`
+pulls every ruled issue into the sprint it plans without
+re-discussing it. Agents write only the marked generated/recommended
+forms — or transcribe a decision you give live.
 
 **Intake, not a work tracker.** An issue is a question waiting for a
 ruling. It is never worked or tracked to completion here — it closes
@@ -178,10 +179,13 @@ time:
    ruling-ready; they are the next sprint's business, not this
    session's. `/certify` runs exactly this contract as its core —
    and is the recommended way to close.
-6. **Archive** the sprint to `history/sprints/` once the contract
-   holds, together with the issue files it resolved, which move to
-   `history/issues/` (`/certify` does this once it certifies
-   clean).
+6. **Offer the close-out** once the contract holds: archiving the
+   sprint to `history/sprints/` together with the issue files it
+   resolved (which move to `history/issues/`), and committing the
+   work. Both are owner acts — `/certify` offers them at the end of
+   its presentation and performs them only on the owner's word,
+   leaving the sprint at its `sprints/` path until then so a goal
+   keyed to that path can verify completion.
 
 Scale is a judgment call: independent, large stages are worth
 parallel subagents or a worktree; coupled or small ones are not. The
@@ -201,7 +205,8 @@ the same brief.
 execution boilerplate, `/certify` discharges the completion contract
 (steps 5–6 above), adds the code-review and design-doc-compliance
 cycles with a fix loop that drives every fixable finding to clean,
-presents the outcomes and any divergences to the owner, and archives
-the sprint. It is the same call whether the sprint was run inline,
-under a goal, or under an orchestrator — the contract does not
-change.
+presents the outcomes and any divergences to the owner, and closes
+by offering to archive the sprint and commit the work — owner acts,
+taken only on the owner's word. It is the same call whether the
+sprint was run inline, under a goal, or under an orchestrator — the
+contract does not change.

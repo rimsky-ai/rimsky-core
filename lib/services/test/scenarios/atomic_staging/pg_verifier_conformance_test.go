@@ -86,8 +86,9 @@ func TestPGFusedStore_ExecutorConformance(t *testing.T) {
 	runCtx, runCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer runCancel()
 	results, err := executorconf.Run(runCtx, executorconf.RunnerOpts{
-		Endpoint: executorconf.Endpoint{Transport: "grpc", URL: endpoint},
-		Timeout:  15 * time.Second,
+		Endpoint:  executorconf.Endpoint{Transport: "grpc", URL: endpoint},
+		AllowLive: true,
+		Timeout:   15 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("executor conformance Run: %v", err)

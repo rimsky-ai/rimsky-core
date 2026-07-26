@@ -13,7 +13,7 @@ import (
 )
 
 type Config struct {
-	RimskyURL          string
+	ProxyURL           string
 	APIKey             string
 	ListenAddr         string
 	AllowPaths         []string
@@ -45,7 +45,7 @@ func LoadConfigFromEnv() (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		RimskyURL:          os.Getenv("RIMSKY_URL"),
+		ProxyURL:           os.Getenv("RIMSKY_HOST_AGENT_PROXY_URL"),
 		APIKey:             os.Getenv("RIMSKY_API_KEY"),
 		ListenAddr:         os.Getenv("RIMSKY_AGENT_LISTEN"),
 		AgentLabel:         envOr("RIMSKY_AGENT_LABEL", defaultAgentLabel()),

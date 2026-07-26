@@ -41,7 +41,7 @@ func setupServer(t *testing.T) *clitest.Server {
 	t.Helper()
 	srv := clitest.NewServer(t)
 	t.Cleanup(srv.Close)
-	t.Setenv("RIMSKY_CONTROL_API", srv.URL)
+	t.Setenv("RIMSKY_CONTROL_API_URL", srv.URL)
 	t.Setenv("RIMSKY_CONTEXT", "")
 	t.Setenv("HOME", t.TempDir())
 	return srv

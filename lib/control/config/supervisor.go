@@ -102,11 +102,8 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		stopIdentity = cancel
 	}
 
-	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, cfg.LateBindServiceProxies)
-	if err != nil {
-		stopIdentity()
-		return nil, fmt.Errorf("StartSupervisor: %w", err)
-	}
+	// @concept: service-address-book
+	registry := newAddressBookProducerRegistry(persistStore, cfg.LateBindServiceProxies)
 	if cfg.Bundled != nil {
 		logger := cfg.Logger
 		if logger == nil {

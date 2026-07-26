@@ -23,7 +23,7 @@ func TestAnonymousModeBootstrap(t *testing.T) {
 	defer f.Close()
 
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("RIMSKY_CONTROL_API", "")
+	t.Setenv("RIMSKY_CONTROL_API_URL", "")
 	t.Setenv("RIMSKY_API_KEY", "")
 
 	assertAuthStatus(t, f, "", "anonymous", 0, 0)

@@ -37,7 +37,6 @@ func TestRunNode_NoCandidate(t *testing.T) {
 		Clock:                 shared.SystemClock{},
 		Logger:                shared.SilentLogger{},
 		SupervisorID:          "test-supervisor",
-		AcceptedExecutors:     []string{"stub"},
 		Pool:                  clientPool,
 		Resolver:              executor.NewStaticResolver(map[string]executor.Endpoint{}),
 		LivenessInterval:      100 * time.Millisecond,

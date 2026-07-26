@@ -16,6 +16,9 @@ const acquireUnavailableSyntheticClass = "acquire/unavailable"
 
 const producerAcquireErrorFallbackClass = "acquire/producer_error"
 
+// @concept: service-address-book
+const unresolvedClaimProducerSyntheticClass = "acquire/unresolved_claim_producer"
+
 const nilFrameIDSyntheticClass = "acquire/nil_frame_id"
 
 const fanOutSubstitutionFailedSyntheticClass = "acquire/fan_out_partition_request_substitution_failed"

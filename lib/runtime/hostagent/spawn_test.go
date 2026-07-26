@@ -23,7 +23,7 @@ import (
 
 func connectAgentToFakeProxy(t *testing.T, fp *fakeProxy, cfg Config) {
 	t.Helper()
-	cfg.RimskyURL = fp.addr
+	cfg.ProxyURL = fp.addr
 	if cfg.APIKey == "" {
 		cfg.APIKey = "k"
 	}

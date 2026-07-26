@@ -26,9 +26,19 @@ func acquireClaim(
 	ctx context.Context, args RunArgs, instanceID shared.UUID, spec claimproducer.ClaimSpec, cand persistence.Candidate, livenessInterval time.Duration, heldSubgraphs []node.HoldingSubgraph, acquired []AcquiredLock, tx persistence.Tx,
 ) (AcquiredLock, openResult, error) {
 	acquireStart := args.Clock.Now()
-	s, ok := args.ClaimProducerRegistry.GetWithContext(ctx, spec.ProducerName, instanceID.String())
+	s, ok, resolveErr := args.ClaimProducerRegistry.ResolveWithContext(ctx, spec.ProducerName, instanceID.String(), tx)
+	if resolveErr != nil {
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: resolve claim producer %q: %w", spec.ProducerName, resolveErr)
+	}
 	if !ok {
-		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: unknown claim producer %q", spec.ProducerName)
+		// @concept: service-address-book
+		return AcquiredLock{}, openResultErrored, &peer.ProducerCallError{
+			ProducerName: spec.ProducerName,
+			Method:       "resolve",
+			ErrorClass:   unresolvedClaimProducerSyntheticClass,
+			Message:      "claim producer resolves nowhere: not in the service address book, not bundled in-process, and not late-bound for this instance",
+			Underlying:   fmt.Errorf("acquireClaim: unresolved claim producer %q", spec.ProducerName),
+		}
 	}
 	scopeInitial, err := json.Marshal(spec.Selector)
 	if err != nil {

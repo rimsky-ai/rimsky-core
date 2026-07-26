@@ -139,9 +139,7 @@ func seedClaimedGuardRun(ctx context.Context, t *testing.T, d persistence.Databa
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  10,
+			Limit: 10,
 		}, tx)
 		if err != nil {
 			return err
@@ -666,9 +664,7 @@ func testClaimantGuardRunClaimSelfIdempotent(t *testing.T, d persistence.Databas
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  10,
+			Limit: 10,
 		}, tx)
 		if err != nil {
 			return err
@@ -727,9 +723,7 @@ func testClaimantGuardRunPromote(t *testing.T, d persistence.Database) {
 			return err
 		}
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  10,
+			Limit: 10,
 		}, tx)
 		if err != nil {
 			return err

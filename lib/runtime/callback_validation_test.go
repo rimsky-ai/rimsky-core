@@ -98,7 +98,7 @@ func newDriveSetupWithPartitionKey(
 			return err
 		}
 		require.True(t, promoted, "run must promote to running")
-		return d.Queue().RegisterAsyncAck(ctx, nodeRunID, ackID, clk.Now(), nil, nil, "", tx)
+		return d.Queue().RegisterAsyncAck(ctx, nodeRunID, ackID, clk.Now(), nil, nil, "", "", tx)
 	}))
 
 	cb := &runtime.CallbackServer{

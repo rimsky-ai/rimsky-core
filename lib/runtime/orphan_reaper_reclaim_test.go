@@ -87,7 +87,7 @@ func TestSweepExecutorDeadlines_ReleasedClaimReclaimedByDifferentSupervisor(t *t
 			return err
 		}
 		maxQuiet := 1
-		return d.Queue().RegisterAsyncAck(ctx, runID, "reclaim-fixture-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "", tx)
+		return d.Queue().RegisterAsyncAck(ctx, runID, "reclaim-fixture-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "", "", tx)
 	}); err != nil {
 		t.Fatalf("seed fixture: %v", err)
 	}
@@ -117,9 +117,7 @@ func TestSweepExecutorDeadlines_ReleasedClaimReclaimedByDifferentSupervisor(t *t
 	var reclaimed bool
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := d.Queue().SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"stub"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err

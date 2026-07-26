@@ -47,7 +47,7 @@ func startSilentProxy(t *testing.T) (addr string, received <-chan struct{}) {
 func TestConnectOnce_RegisterAckTimeoutBounds(t *testing.T) {
 	addr, received := startSilentProxy(t)
 	cfg := Config{
-		RimskyURL:          addr,
+		ProxyURL:           addr,
 		APIKey:             "k",
 		RegisterAckTimeout: 50 * time.Millisecond,
 	}.withDefaults()
@@ -73,7 +73,7 @@ func TestRecvWithTimeout_ReturnsFrameWhenDeliveredBeforeDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newLocalTrust: %v", err)
 	}
-	cfg := Config{RimskyURL: fp.addr, APIKey: "k", RegisterAckTimeout: 5 * time.Second}.withDefaults()
+	cfg := Config{ProxyURL: fp.addr, APIKey: "k", RegisterAckTimeout: 5 * time.Second}.withDefaults()
 	a, err := connectOnce(context.Background(), cfg, trust, "http://127.0.0.1:0", "https://127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("connectOnce: %v", err)

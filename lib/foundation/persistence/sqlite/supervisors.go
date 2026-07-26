@@ -13,31 +13,20 @@ import (
 )
 
 const supervisorCols = `
-  id, accepted_executors, accepted_claim_producers, concurrency, callback_host, callback_port,
-  registered_at
+  id, concurrency, callback_host, callback_port, registered_at
 `
 
 func (s *supervisorsImpl) Register(ctx context.Context, in persistence.SupervisorRegisterInput, tx persistence.Tx) error {
-	accepts := in.AcceptedExecutors
-	if accepts == nil {
-		accepts = []string{}
-	}
-	claimProducers := in.AcceptedClaimProducers
-	if claimProducers == nil {
-		claimProducers = []string{}
-	}
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_supervisors
-		   (id, accepted_executors, accepted_claim_producers, concurrency, callback_host, callback_port, registered_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		   (id, concurrency, callback_host, callback_port, registered_at)
+		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE
-		   SET accepted_executors      = excluded.accepted_executors,
-		       accepted_claim_producers = excluded.accepted_claim_producers,
-		       concurrency              = excluded.concurrency,
-		       callback_host            = excluded.callback_host,
-		       callback_port            = excluded.callback_port`,
-		in.ID, marshalStringArray(accepts), marshalStringArray(claimProducers), in.Concurrency,
+		   SET concurrency   = excluded.concurrency,
+		       callback_host = excluded.callback_host,
+		       callback_port = excluded.callback_port`,
+		in.ID, in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort), now,
 	)
 	return err
@@ -74,30 +63,18 @@ func (s *supervisorsImpl) Unregister(ctx context.Context, id string, tx persiste
 
 func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 	var (
-		r                         persistence.SupervisorRow
-		acceptedExecutorsStr      string
-		acceptedClaimProducersStr string
-		callbackHost              sql.NullString
-		callbackPort              sql.NullInt64
-		registeredAtStr           string
+		r               persistence.SupervisorRow
+		callbackHost    sql.NullString
+		callbackPort    sql.NullInt64
+		registeredAtStr string
 	)
 	if err := sc.Scan(
-		&r.ID, &acceptedExecutorsStr, &acceptedClaimProducersStr, &r.Concurrency,
+		&r.ID, &r.Concurrency,
 		&callbackHost, &callbackPort,
 		&registeredAtStr,
 	); err != nil {
 		return persistence.SupervisorRow{}, err
 	}
-	executors, err := unmarshalStringArray(acceptedExecutorsStr)
-	if err != nil {
-		return persistence.SupervisorRow{}, err
-	}
-	claimProducers, err := unmarshalStringArray(acceptedClaimProducersStr)
-	if err != nil {
-		return persistence.SupervisorRow{}, err
-	}
-	r.AcceptedExecutors = executors
-	r.AcceptedClaimProducers = claimProducers
 	r.CallbackHost = callbackHost.String
 	if callbackPort.Valid {
 		r.CallbackPort = int(callbackPort.Int64)
@@ -107,12 +84,6 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 		return persistence.SupervisorRow{}, err
 	}
 	r.RegisteredAt = regAt
-	if r.AcceptedExecutors == nil {
-		r.AcceptedExecutors = []string{}
-	}
-	if r.AcceptedClaimProducers == nil {
-		r.AcceptedClaimProducers = []string{}
-	}
 	return r, nil
 }
 

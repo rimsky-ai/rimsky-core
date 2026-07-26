@@ -22,22 +22,18 @@ func testSupervisorsRegisterGetListUnregisterRoundTrip(t *testing.T, d persisten
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{
-			ID:                     idA,
-			AcceptedExecutors:      []string{"executor-alpha"},
-			AcceptedClaimProducers: []string{"claim-producer-alpha"},
-			Concurrency:            4,
-			CallbackHost:           "supervisor-a.internal",
-			CallbackPort:           9001,
+			ID:           idA,
+			Concurrency:  4,
+			CallbackHost: "supervisor-a.internal",
+			CallbackPort: 9001,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("Register(A): %v", err)
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{
-			ID:                     idB,
-			AcceptedExecutors:      []string{"executor-beta"},
-			AcceptedClaimProducers: []string{},
-			Concurrency:            2,
+			ID:          idB,
+			Concurrency: 2,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("Register(B): %v", err)
@@ -53,12 +49,6 @@ func testSupervisorsRegisterGetListUnregisterRoundTrip(t *testing.T, d persisten
 	}
 	if rowA == nil {
 		t.Fatalf("Get(A) after Register: got nil row")
-	}
-	if len(rowA.AcceptedExecutors) != 1 || rowA.AcceptedExecutors[0] != "executor-alpha" {
-		t.Fatalf("Get(A).AcceptedExecutors = %v, want [executor-alpha]", rowA.AcceptedExecutors)
-	}
-	if len(rowA.AcceptedClaimProducers) != 1 || rowA.AcceptedClaimProducers[0] != "claim-producer-alpha" {
-		t.Fatalf("Get(A).AcceptedClaimProducers = %v, want [claim-producer-alpha]", rowA.AcceptedClaimProducers)
 	}
 	if rowA.Concurrency != 4 {
 		t.Fatalf("Get(A).Concurrency = %d, want 4", rowA.Concurrency)
@@ -97,12 +87,10 @@ func testSupervisorsRegisterGetListUnregisterRoundTrip(t *testing.T, d persisten
 	originalRegisteredAt := rowA.RegisteredAt
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{
-			ID:                     idA,
-			AcceptedExecutors:      []string{"executor-alpha", "executor-gamma"},
-			AcceptedClaimProducers: []string{"claim-producer-alpha", "claim-producer-gamma"},
-			Concurrency:            8,
-			CallbackHost:           "supervisor-a-v2.internal",
-			CallbackPort:           9002,
+			ID:           idA,
+			Concurrency:  8,
+			CallbackHost: "supervisor-a-v2.internal",
+			CallbackPort: 9002,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("Register(A) re-register: %v", err)
@@ -119,8 +107,8 @@ func testSupervisorsRegisterGetListUnregisterRoundTrip(t *testing.T, d persisten
 	if rowA2 == nil {
 		t.Fatalf("Get(A) after re-register: got nil row")
 	}
-	if len(rowA2.AcceptedExecutors) != 2 || rowA2.Concurrency != 8 || rowA2.CallbackHost != "supervisor-a-v2.internal" || rowA2.CallbackPort != 9002 {
-		t.Fatalf("Get(A) after re-register = %+v, want updated executors/concurrency/callback", rowA2)
+	if rowA2.Concurrency != 8 || rowA2.CallbackHost != "supervisor-a-v2.internal" || rowA2.CallbackPort != 9002 {
+		t.Fatalf("Get(A) after re-register = %+v, want updated concurrency/callback", rowA2)
 	}
 	if !rowA2.RegisteredAt.Equal(originalRegisteredAt) {
 		t.Fatalf("Get(A).RegisteredAt changed on re-register: got %v, want unchanged %v", rowA2.RegisteredAt, originalRegisteredAt)

@@ -91,7 +91,7 @@ func runSensorObjectStoreContainer(ctx context.Context, t testing.TB, networkNam
 	}
 	env := map[string]string{
 		"RIMSKY_SENSOR_OBJECT_STORE_PORT":    "9083",
-		"RIMSKY_ENDPOINT":                    rimskyEndpoint,
+		"RIMSKY_CONTROL_API_URL":             rimskyEndpoint,
 		"RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT": sensorObjectStoreBucketRoot,
 	}
 	if stateDSN != "" {

@@ -8,8 +8,161 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 )
+
+type addressBookLookupFixture struct {
+	mu      sync.Mutex
+	clock   time.Time
+	ep      Endpoint
+	found   bool
+	err     error
+	lookups int
+}
+
+func newAddressBookLookupFixture() *addressBookLookupFixture {
+	return &addressBookLookupFixture{clock: time.Unix(1000, 0)}
+}
+
+func (f *addressBookLookupFixture) now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.clock
+}
+
+func (f *addressBookLookupFixture) advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clock = f.clock.Add(d)
+}
+
+func (f *addressBookLookupFixture) set(ep Endpoint, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ep, f.found, f.err = ep, found, err
+}
+
+func (f *addressBookLookupFixture) lookup(_ context.Context, _ string) (Endpoint, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookups++
+	if f.err != nil {
+		return Endpoint{}, false, f.err
+	}
+	return f.ep, f.found, nil
+}
+
+func (f *addressBookLookupFixture) lookupCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lookups
+}
+
+func TestAddressBookResolver_TTLCache(t *testing.T) {
+	epA := Endpoint{Transport: "grpc", URL: "exec-a:1"}
+	epB := Endpoint{Transport: "grpc", URL: "exec-a:2"}
+	cases := []struct {
+		name        string
+		advance     time.Duration
+		wantEP      Endpoint
+		wantLookups int
+	}{
+		{"within TTL serves cached endpoint", 5 * time.Second, epA, 1},
+		{"after TTL re-looks-up and serves the fresh endpoint", 11 * time.Second, epB, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAddressBookLookupFixture()
+			f.set(epA, true, nil)
+			r := NewAddressBookResolver(nil, f.lookup, 10*time.Second, f.now)
+
+			ep, ok, err := r.ResolveWithError("exec-a", DispatchContext{})
+			if err != nil || !ok || ep != epA {
+				t.Fatalf("first resolve = (%+v, %v, %v), want (%+v, true, nil)", ep, ok, err, epA)
+			}
+			f.set(epB, true, nil)
+			f.advance(tc.advance)
+			ep, ok, err = r.ResolveWithError("exec-a", DispatchContext{})
+			if err != nil || !ok || ep != tc.wantEP {
+				t.Fatalf("second resolve = (%+v, %v, %v), want (%+v, true, nil)", ep, ok, err, tc.wantEP)
+			}
+			if got := f.lookupCount(); got != tc.wantLookups {
+				t.Fatalf("lookup count = %d, want %d", got, tc.wantLookups)
+			}
+		})
+	}
+}
+
+func TestAddressBookResolver_NegativeCaching(t *testing.T) {
+	f := newAddressBookLookupFixture()
+	f.set(Endpoint{}, false, nil)
+	r := NewAddressBookResolver(nil, f.lookup, 10*time.Second, f.now)
+
+	if _, ok, err := r.ResolveWithError("missing", DispatchContext{}); ok || err != nil {
+		t.Fatalf("authoritative miss must return (false, nil), got (%v, %v)", ok, err)
+	}
+	f.advance(5 * time.Second)
+	if _, ok, err := r.ResolveWithError("missing", DispatchContext{}); ok || err != nil {
+		t.Fatalf("cached miss must return (false, nil), got (%v, %v)", ok, err)
+	}
+	if got := f.lookupCount(); got != 1 {
+		t.Fatalf("a miss within the TTL must be served from the negative cache: lookups=%d, want 1", got)
+	}
+
+	ep := Endpoint{Transport: "grpc", URL: "exec-a:1"}
+	f.set(ep, true, nil)
+	f.advance(11 * time.Second)
+	got, ok, err := r.ResolveWithError("missing", DispatchContext{})
+	if err != nil || !ok || got != ep {
+		t.Fatalf("negative entry must expire with the TTL: got (%+v, %v, %v), want (%+v, true, nil)", got, ok, err, ep)
+	}
+}
+
+func TestAddressBookResolver_StaleServeOnError(t *testing.T) {
+	ep := Endpoint{Transport: "grpc", URL: "exec-a:1"}
+	f := newAddressBookLookupFixture()
+	f.set(ep, true, nil)
+	r := NewAddressBookResolver(nil, f.lookup, 10*time.Second, f.now)
+
+	if _, ok, err := r.ResolveWithError("exec-a", DispatchContext{}); !ok || err != nil {
+		t.Fatalf("seed resolve failed: (%v, %v)", ok, err)
+	}
+	f.set(Endpoint{}, false, errors.New("address book down"))
+	f.advance(11 * time.Second)
+	got, ok, err := r.ResolveWithError("exec-a", DispatchContext{})
+	if err != nil || !ok || got != ep {
+		t.Fatalf("a transient lookup error with a cached entry must serve stale: got (%+v, %v, %v), want (%+v, true, nil)", got, ok, err, ep)
+	}
+}
+
+func TestAddressBookResolver_ErrorWithoutCacheIsSurfaced(t *testing.T) {
+	wantErr := errors.New("address book down")
+	f := newAddressBookLookupFixture()
+	f.set(Endpoint{}, false, wantErr)
+	r := NewAddressBookResolver(nil, f.lookup, 10*time.Second, f.now)
+
+	_, ok, err := r.ResolveWithError("exec-a", DispatchContext{})
+	if ok || !errors.Is(err, wantErr) {
+		t.Fatalf("lookup error with no cache must surface: got (%v, %v), want (false, wrapping %v)", ok, err, wantErr)
+	}
+}
+
+func TestAddressBookResolver_StaticTakesPrecedence(t *testing.T) {
+	staticEP := Endpoint{Transport: "grpc", URL: "static:1"}
+	f := newAddressBookLookupFixture()
+	f.set(Endpoint{Transport: "grpc", URL: "book:1"}, true, nil)
+	r := NewAddressBookResolver(NewStaticResolver(map[string]Endpoint{"exec-a": staticEP}), f.lookup, 10*time.Second, f.now)
+
+	ep, ok, err := r.ResolveWithError("exec-a", DispatchContext{})
+	if err != nil || !ok || ep != staticEP {
+		t.Fatalf("static registration must win over the address book: got (%+v, %v, %v), want (%+v, true, nil)", ep, ok, err, staticEP)
+	}
+	if got := f.lookupCount(); got != 0 {
+		t.Fatalf("a static hit must not consult the address book: lookups=%d, want 0", got)
+	}
+}
 
 func TestLateBindResolver_ResolveWithError_SurfacesLookupError(t *testing.T) {
 	wantErr := errors.New("binding lookup: transient db error")

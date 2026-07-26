@@ -15,14 +15,6 @@ func TestLoadOptsFromEnv_MalformedGRPCPortFailsStartup(t *testing.T) {
 	}
 }
 
-func TestLoadOptsFromEnv_MalformedTimeoutMsFailsStartup(t *testing.T) {
-	t.Setenv("RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS", "not-a-number")
-
-	if _, err := LoadOptsFromEnv(); err == nil {
-		t.Fatal("LoadOptsFromEnv: expected an error for a malformed RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS, got nil")
-	}
-}
-
 func TestLoadOptsFromEnv_MalformedMaxBodyBytesFailsStartup(t *testing.T) {
 	t.Setenv("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", "not-a-number")
 
@@ -33,7 +25,6 @@ func TestLoadOptsFromEnv_MalformedMaxBodyBytesFailsStartup(t *testing.T) {
 
 func TestLoadOptsFromEnv_ValidEnvSucceeds(t *testing.T) {
 	t.Setenv("RIMSKY_EXECUTOR_HTTP_NODE_PORT", "9191")
-	t.Setenv("RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS", "5000")
 	t.Setenv("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", "2048")
 
 	opts, err := LoadOptsFromEnv()
@@ -42,9 +33,6 @@ func TestLoadOptsFromEnv_ValidEnvSucceeds(t *testing.T) {
 	}
 	if opts.GRPCPort != 9191 {
 		t.Fatalf("GRPCPort = %d, want 9191", opts.GRPCPort)
-	}
-	if opts.TimeoutMs != 5000 {
-		t.Fatalf("TimeoutMs = %d, want 5000", opts.TimeoutMs)
 	}
 	if opts.MaxBodyBytes != 2048 {
 		t.Fatalf("MaxBodyBytes = %d, want 2048", opts.MaxBodyBytes)

@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -36,7 +37,7 @@ func postAsyncProbeCallback(callbackURL, ackID string) {
 	}
 	body, err := json.Marshal(map[string]any{
 		"success": map[string]any{
-			"attributes_delta": map[string]any{"stub": true},
+			"attributes_delta": stubmode.ResponseDelta(),
 			"changed":          false,
 			"change_summary":   "stub async probe settle",
 		},
@@ -89,7 +90,7 @@ func postCancelProbeSignal(callbackURL, ackID string) {
 }
 
 func parkResumeAtFromAttrs(attrs map[string]any) *timestamppb.Timestamp {
-	raw, _ := attrs["park_resume_at"].(string)
+	raw, _ := attrs[stubmode.ParkResumeAtAttribute].(string)
 	if raw == "" {
 		return nil
 	}
@@ -310,28 +311,28 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 
 	if stubMode {
 		attrs := req.GetAttributes().AsMap()
-		if probe, _ := attrs["probe_cancel"].(bool); probe && !ignoreCancelProbe {
+		if stubmode.IsCancelProbe(attrs) && !ignoreCancelProbe {
 			postCancelProbeSignal(req.GetCallbackUrl(), "cancel-observed")
 			<-ctx.Done()
 			postCancelProbeSignal(req.GetCallbackUrl(), "cancel-acknowledged")
 			return nil, ctx.Err()
 		}
-		if probe, _ := attrs["probe_park"].(bool); probe {
+		if stubmode.IsParkProbe(attrs) {
 			park := &genv1.Park{
 				ResumeAt: parkResumeAtFromAttrs(attrs),
 				Scratch:  parkProbeScratch(req.GetScratch()),
 			}
 			return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}, nil
 		}
-		if probe, _ := attrs["probe_async"].(bool); probe {
+		if stubmode.IsAsyncProbe(attrs) {
 			ackID := "stub-async-" + uuid.NewString()
 			go postAsyncProbeCallback(req.GetCallbackUrl(), ackID)
 			return &genv1.Outcome{Outcome: &genv1.Outcome_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
 				AsyncAckId: ackID,
 			}}}, nil
 		}
-		if probe, _ := attrs["stub_probe"].(bool); probe {
-			delta, err := structpb.NewStruct(map[string]any{"stub": true})
+		if stubmode.IsProbe(attrs) {
+			delta, err := structpb.NewStruct(stubmode.ResponseDelta())
 			if err != nil {
 				return nil, err
 			}

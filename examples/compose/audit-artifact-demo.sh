@@ -2,34 +2,6 @@
 # Copyright © 2026 Fall Guy Consulting.
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
-#
-# audit-artifact-demo.sh — STORY-audit-artifact proof.
-#
-# Role: operator who wants to reach into the durable record of a run
-# after the verb returns and reconstruct what happened — instance
-# terminations, node-run history, attributes, event log — using
-# widely-available tooling, not rimsky-specific ones.
-#
-# What this demo exhibits, by Falsifier:
-#  - the per-run artifact survives the process exit and lives at a
-#    stable, discoverable location (the .rimsky/latest symlink + the
-#    timestamped per-run directory under .rimsky/runs/);
-#  - the artifact loads in `sqlite3` — a widely-available CLI, NOT a
-#    rimsky-specific tool — and the operator can query both
-#    instance-level state AND per-node-run history out of it;
-#  - the run-directory layout includes the blobs/ subdirectory the
-#    spec's @decision: artifact-layout mandates;
-#  - the per-node-run row for the failing node carries phase='failed'
-#    — the operator-readable terminal class column the post-mortem
-#    walkthrough pulls out by hand.
-#
-# This demo drives the mixed-outcome manifest from
-# STORY-one-shot-to-terminal: one instance succeeds, one fails. The
-# audit-artifact story's Proof field literally requires "drive a small
-# failing manifest, then walk through opening the artifact and pulling
-# the failing node-run's terminal event out by hand"; the post-mortem
-# query below executes that walkthrough against
-# rimsky_node_runs.phase='failed'.
 
 set -u
 

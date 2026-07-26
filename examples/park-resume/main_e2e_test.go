@@ -79,15 +79,10 @@ func TestParkThenResumeOnBundledStackE2E(t *testing.T) {
 
 func waitForResumedSuccess(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) {
 	t.Helper()
-	var lastSummary harness.NodeRunSummary
-	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, 180*time.Second, func(o harness.NodeObservability) bool {
-		lastSummary = o.RunSummary
+	obs := ep.PollNodeObservability(t, instanceID, nodeType, func(o harness.NodeObservability) bool {
 		return o.RunSummary.FailedCount > 0 ||
 			(o.RunSummary.FreshCount > 0 && o.RunSummary.ActiveCount == 0 && o.RunSummary.PendingCount == 0)
 	})
-	if !ok {
-		t.Fatalf("node %q on instance %s never settled; last run summary %+v", nodeType, instanceID, lastSummary)
-	}
 	if obs.RunSummary.FailedCount > 0 {
 		t.Fatalf("node %q settled failed, want a resumed success; run summary %+v", nodeType, obs.RunSummary)
 	}

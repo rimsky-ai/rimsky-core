@@ -38,7 +38,7 @@ func TestVerifierSeverityPartition(t *testing.T) {
 	)
 	inBoundsTID := ep.DeployTemplate(t, inBoundsTemplate)
 	inBoundsIID := ep.CreateInstance(t, inBoundsTID, "ck-severity-in-bounds", "severity-partition")
-	requireVerifierSucceededWithWarning(t, ep, inBoundsIID, "verifier", 120*time.Second)
+	requireVerifierSucceededWithWarning(t, ep, inBoundsIID, "verifier")
 
 	outOfBoundsTemplate := buildSeverityPartitionTemplate(
 		"severity-partition-out-of-bounds",
@@ -107,10 +107,10 @@ func buildSeverityPartitionTemplate(name string, rows []map[string]any) map[stri
 	}
 }
 
-func requireVerifierSucceededWithWarning(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
+func requireVerifierSucceededWithWarning(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) {
 	t.Helper()
 	var sawDispatch bool
-	obs, ok := ep.PollNodeObservability(t, instanceID, nodeType, deadline, func(o harness.NodeObservability) bool {
+	obs := ep.PollNodeObservability(t, instanceID, nodeType, func(o harness.NodeObservability) bool {
 		sawDispatch = sawDispatch || o.HasEventKind("work_started")
 		if sawDispatch && o.RunSummary.FailedCount > 0 {
 			t.Fatalf("warning leg: node %q settled with failed_count=%d after a real dispatch — "+
@@ -122,12 +122,6 @@ func requireVerifierSucceededWithWarning(t *testing.T, ep harness.RimskyEndpoint
 		}
 		return sawDispatch && o.RunSummary.FreshCount > 0
 	})
-	if !ok {
-		t.Fatalf("warning leg: node %q on instance %s did not reach a terminal state within %v "+
-			"(run_summary.fresh_count=%d failed_count=%d, work_started seen=%v) — the cross-stack severity-partition exhibition "+
-			"never got a real dispatch from the bundled verifier-shape-checks executor.",
-			nodeType, instanceID, deadline, obs.RunSummary.FreshCount, obs.RunSummary.FailedCount, sawDispatch)
-	}
 	assertWarningRecorded(t, decodeLatestAttributes(t, obs.LatestAttributes), string(obs.LatestAttributes))
 }
 

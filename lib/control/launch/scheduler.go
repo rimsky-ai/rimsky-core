@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -170,9 +169,15 @@ var metricsRoleOffsets = map[string]int{
 	"control-api": 2,
 }
 
+var metricsPortEnvVars = map[string]string{
+	"scheduler":   "RIMSKY_METRICS_PORT_SCHEDULER",
+	"supervisor":  "RIMSKY_METRICS_PORT_SUPERVISOR",
+	"control-api": "RIMSKY_METRICS_PORT_CONTROL_API",
+}
+
 func metricsPortFor(role string, topology persistence.Topology) (int, error) {
-	perRoleVar := "RIMSKY_METRICS_PORT_" + strings.ToUpper(strings.ReplaceAll(role, "-", "_"))
-	if s := os.Getenv(perRoleVar); s != "" {
+	perRoleVar := metricsPortEnvVars[role]
+	if s := os.Getenv(perRoleVar); perRoleVar != "" && s != "" {
 		port, err := strconv.Atoi(s)
 		if err != nil {
 			return 0, fmt.Errorf("invalid %s=%q: not a number", perRoleVar, s)

@@ -67,7 +67,7 @@ func startAgentStack(t *testing.T) *agentStack {
 	go func() { _ = callbackSrv.ServeTLS(callbackLis, "", "") }()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cfg := Config{RimskyURL: fp.addr, APIKey: "k"}.withDefaults()
+	cfg := Config{ProxyURL: fp.addr, APIKey: "k"}.withDefaults()
 	a, err := connectOnce(ctx, cfg, trust, enrollBase, callbackBase)
 	if err != nil {
 		cancel()

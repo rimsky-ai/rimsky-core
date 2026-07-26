@@ -62,7 +62,7 @@ func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 	})
 	instanceID := createScenarioInstance(t, ep, templateID, "ck-single-process-all-in-one")
 
-	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
+	waitForDispatchToFresh(t, ep, instanceID, "worker")
 
 	if got := readWorkerPayload(t, ep, instanceID); got != singleProcessPayload {
 		h.DumpRimskyLogs(t)

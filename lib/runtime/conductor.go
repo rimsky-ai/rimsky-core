@@ -67,23 +67,39 @@ func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 			log.Warn("tick: orphan node lookup failed; emit without instance_id",
 				"node_id", nodeID.String(), "error", err.Error())
 		}
+		// @concept: supervisor
+		callbackURL := ""
+		if o.AsyncCallbackURL != nil {
+			callbackURL = *o.AsyncCallbackURL
+		}
+		payload := map[string]any{
+			"dispatch_id":      o.ID.String(),
+			"prior_claimed_by": prior,
+			"last_progress_at": lastProgress,
+			"error_class":      errorClass,
+			"reason":           releaseReason,
+		}
+		if callbackURL != "" {
+			payload["callback_url"] = callbackURL
+		}
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: instancePtr,
 				NodeID:     &nodeID,
 				Kind:       events.KindOrphanedClaimReleased(),
-				Payload: map[string]any{
-					"dispatch_id":      o.ID.String(),
-					"prior_claimed_by": prior,
-					"last_progress_at": lastProgress,
-					"error_class":      errorClass,
-					"reason":           releaseReason,
-				},
+				Payload:    payload,
 			}, tx)
 		}); err != nil {
 			log.Warn("tick: append orphaned_claim_released failed",
 				"dispatch_id", o.ID.String(), "error", err.Error())
 		}
+		log.Warn("tick: released orphaned async dispatch",
+			"dispatch_id", o.ID.String(),
+			"prior_claimed_by", prior,
+			"error_class", errorClass,
+			"reason", releaseReason,
+			"callback_url", callbackURL,
+			"hint", "the callback URL stamped into this dispatch was never called back; if it is unreachable from the executor, fix callback.advertise_host / RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST")
 	}
 	return nil
 }

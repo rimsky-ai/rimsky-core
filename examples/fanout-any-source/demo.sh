@@ -11,7 +11,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TEMPLATE_FROM_NODE="${SCRIPT_DIR}/template-from-node.yaml"
 TEMPLATE_FROM_MESSAGE="${SCRIPT_DIR}/template-from-message.yaml"
 
-RIMSKY_ENDPOINT="${RIMSKY_ENDPOINT:-http://127.0.0.1:8080}"
+RIMSKY_CONTROL_API_URL="${RIMSKY_CONTROL_API_URL:-http://127.0.0.1:8080}"
 POLL_BUDGET_SECONDS="${POLL_BUDGET_SECONDS:-120}"
 
 which yq >/dev/null 2>&1 || { echo "fanout-any-source: yq not on PATH" >&2; exit 2; }
@@ -28,7 +28,7 @@ register_and_deploy() {
     local out
     out="$( curl -sS -X POST -H 'Content-Type: application/json' \
         --data "${body}" \
-        "${RIMSKY_ENDPOINT}/v1/templates" )"
+        "${RIMSKY_CONTROL_API_URL}/v1/templates" )"
     local tid
     tid="$( echo "${out}" | jq -r '.template_id' )"
     if [ -z "${tid}" ] || [ "${tid}" = "null" ]; then
@@ -37,7 +37,7 @@ register_and_deploy() {
     fi
     echo "fanout-any-source: registered ${label} as ${tid}"
     curl -sS -X POST -H 'Content-Type: application/json' --data '{}' \
-        "${RIMSKY_ENDPOINT}/v1/templates/${tid}/deploy" >/dev/null
+        "${RIMSKY_CONTROL_API_URL}/v1/templates/${tid}/deploy" >/dev/null
     echo "${tid}"
 }
 
@@ -47,7 +47,7 @@ create_instance() {
     local out
     out="$( curl -sS -X POST -H 'Content-Type: application/json' \
         --data "{\"template\": \"${tid}\", \"instance_key\": \"${key}\", \"target_agent\": \"demo-agent\"}" \
-        "${RIMSKY_ENDPOINT}/v1/instances" )"
+        "${RIMSKY_CONTROL_API_URL}/v1/instances" )"
     local iid
     iid="$( echo "${out}" | jq -r '.instance_id' )"
     if [ -z "${iid}" ] || [ "${iid}" = "null" ]; then
@@ -65,14 +65,14 @@ post_message() {
     curl -sS -X POST -H 'Content-Type: application/json' \
         -H "Idempotency-Key: ${k}" \
         --data "${body}" \
-        "${RIMSKY_ENDPOINT}/v1/instances/${iid}/messages" >/dev/null
+        "${RIMSKY_CONTROL_API_URL}/v1/instances/${iid}/messages" >/dev/null
 }
 
 count_distinct_partition_keys() {
     local iid="$1"
     local node_type="$2"
     local nodes_out
-    nodes_out="$( curl -sS "${RIMSKY_ENDPOINT}/v1/instances/${iid}/nodes?limit=100" )"
+    nodes_out="$( curl -sS "${RIMSKY_CONTROL_API_URL}/v1/instances/${iid}/nodes?limit=100" )"
     local ids
     ids="$( echo "${nodes_out}" \
         | jq -r --arg t "${node_type}" '.nodes[] | select(.node_type == $t) | .id' )"
@@ -84,7 +84,7 @@ count_distinct_partition_keys() {
     while IFS= read -r nid; do
         [ -z "${nid}" ] && continue
         local detail
-        detail="$( curl -sS "${RIMSKY_ENDPOINT}/v1/nodes/${nid}" )"
+        detail="$( curl -sS "${RIMSKY_CONTROL_API_URL}/v1/nodes/${nid}" )"
         local pk
         pk="$( echo "${detail}" | jq -r '.latest_attributes.partition_key // empty' )"
         if [ -n "${pk}" ]; then

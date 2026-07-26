@@ -16,7 +16,7 @@
 # outcome: one parallel child per upstream item, no custom producer.
 #
 # Stack prerequisites (operator-side):
-#   - rimsky stack reachable at RIMSKY_ENDPOINT
+#   - rimsky stack reachable at RIMSKY_CONTROL_API_URL
 #   - bundled `rimsky-claim-producer-filesystem` registered as claim producer
 #     `claim-producer-filesystem` in rimsky.yml advertising supports_split_scope=true
 #     and a pick policy `@seed-queue` over a seed root containing one

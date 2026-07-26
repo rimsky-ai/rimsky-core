@@ -17,7 +17,6 @@ type Opts struct {
 	Host            string
 	GRPCPort        int
 	HTTPPort        int
-	TimeoutMs       int
 	MaxBodyBytes    int
 	StubMode        bool
 	HTTPBridgeURL   string
@@ -35,9 +34,6 @@ func LoadOptsFromEnv() (Opts, error) {
 	}
 	opts.GRPCPort = grpcPort
 	if opts.HTTPPort, err = atoi(envOr("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT", strconv.Itoa(opts.GRPCPort+1)), "RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT"); err != nil {
-		return Opts{}, err
-	}
-	if opts.TimeoutMs, err = atoi(envOr("RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS", "60000"), "RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS"); err != nil {
 		return Opts{}, err
 	}
 	if opts.MaxBodyBytes, err = atoi(envOr("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", "10485760"), "RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES"); err != nil {

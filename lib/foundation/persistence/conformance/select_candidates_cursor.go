@@ -56,11 +56,9 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		var out []persistence.Candidate
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-				AcceptedExecutors:      []string{"test-executor"},
-				AcceptedClaimProducers: []string{},
-				Limit:                  limit,
-				CursorEnqueuedAfter:    curAt,
-				CursorAfterNodeRunID:   curID,
+				Limit:                limit,
+				CursorEnqueuedAfter:  curAt,
+				CursorAfterNodeRunID: curID,
 			}, tx)
 			if err != nil {
 				return err

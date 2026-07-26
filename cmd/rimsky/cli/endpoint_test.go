@@ -20,7 +20,7 @@ func writeConfig(t *testing.T, cfg *Config) string {
 }
 
 func TestResolveEndpoint_FlagWins(t *testing.T) {
-	t.Setenv("RIMSKY_CONTROL_API", "http://env")
+	t.Setenv("RIMSKY_CONTROL_API_URL", "http://env")
 	t.Setenv("RIMSKY_CONTEXT", "")
 	cfg := writeConfig(t, &Config{
 		CurrentContext: "dev",

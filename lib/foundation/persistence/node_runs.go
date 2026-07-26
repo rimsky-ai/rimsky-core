@@ -40,16 +40,9 @@ type DispatchRequest struct {
 	InitialScratchHandleBackend string
 }
 
+// @concept: service-address-book
 type SelectCandidatesRequest struct {
-	AcceptedExecutors []string
-
-	AcceptedClaimProducers []string
-
 	Limit int
-
-	LateBindExecutorProxy string
-
-	LateBindClaimProducerProxy string
 
 	CursorEnqueuedAfter  time.Time
 	CursorAfterNodeRunID shared.UUID
@@ -127,7 +120,7 @@ type Queue interface {
 
 	LookupRunByAsyncAckID(ctx context.Context, ackID string, tx Tx) (*DispatchRow, error)
 
-	RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, tx Tx) error
+	RegisterAsyncAck(ctx context.Context, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int, expectedPrincipal string, callbackURL string, tx Tx) error
 
 	BumpLastProgressAt(ctx context.Context, runID shared.UUID, now time.Time, tx Tx) (bool, error)
 

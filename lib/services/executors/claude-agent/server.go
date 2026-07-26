@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
@@ -78,7 +79,7 @@ func NewExecutorServer(cfg ServerConfig) *ExecutorServer {
 }
 
 func (s *ExecutorServer) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
-	if probeCancel, _ := req.GetAttributes().AsMap()["probe_cancel"].(bool); probeCancel && StubModeEnabled() {
+	if stubmode.IsCancelProbe(req.GetAttributes().AsMap()) && StubModeEnabled() {
 		return nil, executeCancelProbe(ctx, req.GetCallbackUrl())
 	}
 	ackID := uuid.NewString()

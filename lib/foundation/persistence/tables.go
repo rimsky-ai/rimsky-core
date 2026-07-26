@@ -17,6 +17,9 @@ type Tables interface {
 	ClaimHolders() ClaimHolderTable
 	Events() EventTable
 	Supervisors() SupervisorTable
+
+	// @concept: service-address-book
+	ServiceAddressBook() ServiceAddressBookTable
 	Frames() FrameTable
 	BlobOrphans() BlobOrphanTable
 	WaitSet() WaitSetTable

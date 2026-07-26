@@ -48,7 +48,11 @@ func cancelClaimHandleWalk(
 		if row.ProducerName != nil {
 			producerName = *row.ProducerName
 		}
-		producer, ok := args.ClaimProducerRegistry.Get(producerName)
+		producer, ok, resolveErr := args.ClaimProducerRegistry.ResolveWithContext(ctx, producerName, "", tx)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("cancelClaimHandleWalk: resolving producer %q for claim handle %s: %w",
+				producerName, row.ID, resolveErr)
+		}
 		if !ok {
 			return nil, fmt.Errorf("cancelClaimHandleWalk: unknown producer %q for claim handle %s",
 				producerName, row.ID)

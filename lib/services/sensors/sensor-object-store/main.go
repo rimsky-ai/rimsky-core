@@ -32,7 +32,7 @@ func main() {
 		slog.Error("sensor-object-store port", "error", err.Error())
 		os.Exit(1)
 	}
-	rimskyEndpoint := envOr("RIMSKY_ENDPOINT", "http://localhost:8080")
+	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.Info("sensor-object-store starting",

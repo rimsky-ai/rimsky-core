@@ -160,15 +160,11 @@ func (b *apiKeysImpl) RevokeIfNotLast(ctx context.Context, id shared.UUID, now t
 		var result persistence.RevokeResult
 		txErr := (*tablesImpl)(b).Transaction(ctx, func(ctx context.Context, itx persistence.Tx) error {
 			var ierr error
-			result, ierr = b.revokeIfNotLastInTx(ctx, id, now, force, itx)
+			result, ierr = b.RevokeIfNotLast(ctx, id, now, force, itx)
 			return ierr
 		})
 		return result, txErr
 	}
-	return b.revokeIfNotLastInTx(ctx, id, now, force, tx)
-}
-
-func (b *apiKeysImpl) revokeIfNotLastInTx(ctx context.Context, id shared.UUID, now time.Time, force bool, tx persistence.Tx) (persistence.RevokeResult, error) {
 	if !force {
 		rows, err := b.run(tx).Query(ctx,
 			`SELECT id FROM rimsky_api_keys

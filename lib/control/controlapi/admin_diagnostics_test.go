@@ -23,9 +23,10 @@ type noopStore struct{}
 
 type noopTx struct{ persistence.TxMarker }
 
-func (noopStore) Templates() persistence.TemplateTable       { return nil }
-func (noopStore) TemplateTags() persistence.TemplateTagTable { return nil }
-func (noopStore) Instances() persistence.InstanceTable       { return nil }
+func (noopStore) Templates() persistence.TemplateTable                    { return nil }
+func (noopStore) ServiceAddressBook() persistence.ServiceAddressBookTable { return nil }
+func (noopStore) TemplateTags() persistence.TemplateTagTable              { return nil }
+func (noopStore) Instances() persistence.InstanceTable                    { return nil }
 func (noopStore) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
 	return nil
 }
@@ -326,7 +327,7 @@ func (f *fakeDiagnosticQueue) UpdateDispatchTuning(context.Context, shared.UUID,
 func (f *fakeDiagnosticQueue) BumpLastProgressAt(context.Context, shared.UUID, time.Time, persistence.Tx) (bool, error) {
 	return true, nil
 }
-func (f *fakeDiagnosticQueue) RegisterAsyncAck(context.Context, shared.UUID, string, time.Time, *int, *int, string, persistence.Tx) error {
+func (f *fakeDiagnosticQueue) RegisterAsyncAck(context.Context, shared.UUID, string, time.Time, *int, *int, string, string, persistence.Tx) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) LookupRunByAsyncAckID(context.Context, string, persistence.Tx) (*persistence.DispatchRow, error) {

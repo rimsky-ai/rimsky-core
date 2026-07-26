@@ -10,20 +10,20 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 TEMPLATE_PATH="${SCRIPT_DIR}/template.yaml"
 
-RIMSKY_ENDPOINT="${RIMSKY_ENDPOINT:-http://127.0.0.1:8080}"
+RIMSKY_CONTROL_API_URL="${RIMSKY_CONTROL_API_URL:-http://127.0.0.1:8080}"
 POLL_BUDGET_SECONDS="${POLL_BUDGET_SECONDS:-120}"
 
 which yq >/dev/null 2>&1 || { echo "sub-claim-payload: yq not on PATH" >&2; exit 2; }
 which curl >/dev/null 2>&1 || { echo "sub-claim-payload: curl not on PATH" >&2; exit 2; }
 which jq >/dev/null 2>&1 || { echo "sub-claim-payload: jq not on PATH" >&2; exit 2; }
 
-echo "sub-claim-payload: registering template at ${RIMSKY_ENDPOINT}"
+echo "sub-claim-payload: registering template at ${RIMSKY_CONTROL_API_URL}"
 
 SPEC_JSON="$( yq -o=json '.' "${TEMPLATE_PATH}" )"
 REGISTER_BODY="$( jq -n --argjson spec "${SPEC_JSON}" '{spec: $spec}' )"
 REGISTER_OUT="$( curl -sS -X POST -H 'Content-Type: application/json' \
     --data "${REGISTER_BODY}" \
-    "${RIMSKY_ENDPOINT}/v1/templates" )"
+    "${RIMSKY_CONTROL_API_URL}/v1/templates" )"
 TEMPLATE_ID="$( echo "${REGISTER_OUT}" | jq -r '.template_id' )"
 if [ -z "${TEMPLATE_ID}" ] || [ "${TEMPLATE_ID}" = "null" ]; then
     echo "sub-claim-payload: template register failed: ${REGISTER_OUT}" >&2
@@ -32,13 +32,13 @@ fi
 echo "sub-claim-payload: registered template ${TEMPLATE_ID}"
 
 curl -sS -X POST -H 'Content-Type: application/json' --data '{}' \
-    "${RIMSKY_ENDPOINT}/v1/templates/${TEMPLATE_ID}/deploy" >/dev/null
+    "${RIMSKY_CONTROL_API_URL}/v1/templates/${TEMPLATE_ID}/deploy" >/dev/null
 echo "sub-claim-payload: template deployed"
 
 INSTANCE_KEY="sub-claim-payload-$( date +%s )-$$"
 INSTANCE_OUT="$( curl -sS -X POST -H 'Content-Type: application/json' \
     --data "{\"template\": \"${TEMPLATE_ID}\", \"instance_key\": \"${INSTANCE_KEY}\", \"target_agent\": \"demo-agent\"}" \
-    "${RIMSKY_ENDPOINT}/v1/instances" )"
+    "${RIMSKY_CONTROL_API_URL}/v1/instances" )"
 INSTANCE_ID="$( echo "${INSTANCE_OUT}" | jq -r '.instance_id' )"
 if [ -z "${INSTANCE_ID}" ] || [ "${INSTANCE_ID}" = "null" ]; then
     echo "sub-claim-payload: instance create failed: ${INSTANCE_OUT}" >&2
@@ -51,14 +51,14 @@ MESSAGE_BODY='{"type":"fanout/seed","payload":{"items":[{"key":"a","payload":{"v
 curl -sS -X POST -H 'Content-Type: application/json' \
     -H "Idempotency-Key: ${K}" \
     --data "${MESSAGE_BODY}" \
-    "${RIMSKY_ENDPOINT}/v1/instances/${INSTANCE_ID}/messages" >/dev/null
+    "${RIMSKY_CONTROL_API_URL}/v1/instances/${INSTANCE_ID}/messages" >/dev/null
 echo "sub-claim-payload: posted fanout_seed with three sub-claim payloads (v=1, v=2, v=3)"
 
 END=$(( $(date +%s) + POLL_BUDGET_SECONDS ))
 SAW_ALL_THREE=0
 LAST_DETAILS=""
 while [ "$( date +%s )" -lt "${END}" ]; do
-    NODES_OUT="$( curl -sS "${RIMSKY_ENDPOINT}/v1/instances/${INSTANCE_ID}/nodes?limit=100" )"
+    NODES_OUT="$( curl -sS "${RIMSKY_CONTROL_API_URL}/v1/instances/${INSTANCE_ID}/nodes?limit=100" )"
     NODE_IDS="$( echo "${NODES_OUT}" \
         | jq -r '.nodes[] | select(.node_type == "triage") | .id' )"
     if [ -z "${NODE_IDS}" ]; then
@@ -69,7 +69,7 @@ while [ "$( date +%s )" -lt "${END}" ]; do
     DETAILS_BUF=""
     while IFS= read -r NID; do
         [ -z "${NID}" ] && continue
-        DETAIL="$( curl -sS "${RIMSKY_ENDPOINT}/v1/nodes/${NID}" )"
+        DETAIL="$( curl -sS "${RIMSKY_CONTROL_API_URL}/v1/nodes/${NID}" )"
         DETAILS_BUF="${DETAILS_BUF}${DETAIL}\n"
         PV="$( echo "${DETAIL}" | jq -r '.latest_attributes.processed_value // empty' )"
         if [ -n "${PV}" ]; then

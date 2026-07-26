@@ -338,7 +338,10 @@ func resolveDelegateCallerClaimsInTx(
 		if row.ProducerName != nil {
 			producerName = *row.ProducerName
 		}
-		producer, ok := args.ClaimProducerRegistry.Get(producerName)
+		producer, ok, resolveErr := args.ClaimProducerRegistry.ResolveWithContext(ctx, producerName, "", tx)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolveDelegateCallerClaimsInTx: resolving producer %q for claim %s: %w", producerName, row.ID, resolveErr)
+		}
 		if !ok {
 			return nil, fmt.Errorf("resolveDelegateCallerClaimsInTx: unknown producer %q for claim %s", producerName, row.ID)
 		}
@@ -489,7 +492,10 @@ func SettleFromFanoutChild(
 	if err != nil {
 		return nil, fmt.Errorf("SettleFromFanoutChild: %w", err)
 	}
-	producer, ok := args.ClaimProducerRegistry.GetWithContext(ctx, producerName, instID.String())
+	producer, ok, resolveErr := args.ClaimProducerRegistry.ResolveWithContext(ctx, producerName, instID.String(), tx)
+	if resolveErr != nil {
+		return nil, fmt.Errorf("SettleFromFanoutChild: resolving producer %q: %w", producerName, resolveErr)
+	}
 	if !ok {
 		return nil, fmt.Errorf("SettleFromFanoutChild: unknown producer %q", producerName)
 	}

@@ -35,10 +35,9 @@ func TestConformanceCancelScenario_HonestStubPasses(t *testing.T) {
 	addr := listenForTest(t, s)
 
 	results, err := executorconf.Run(context.Background(), executorconf.RunnerOpts{
-		Endpoint:        executorconf.Endpoint{Transport: "grpc", URL: addr},
-		RequireStubMode: true,
-		Only:            []string{"cancel"},
-		Timeout:         30 * time.Second,
+		Endpoint: executorconf.Endpoint{Transport: "grpc", URL: addr},
+		Only:     []string{"cancel"},
+		Timeout:  30 * time.Second,
 	})
 	require.NoError(t, err)
 	r := findScenarioResult(t, results, "cancel")
@@ -51,10 +50,9 @@ func TestConformanceCancelScenario_CancelIgnoringStubFails(t *testing.T) {
 	addr := listenForTest(t, s)
 
 	results, err := executorconf.Run(context.Background(), executorconf.RunnerOpts{
-		Endpoint:        executorconf.Endpoint{Transport: "grpc", URL: addr},
-		RequireStubMode: true,
-		Only:            []string{"cancel"},
-		Timeout:         5 * time.Second,
+		Endpoint: executorconf.Endpoint{Transport: "grpc", URL: addr},
+		Only:     []string{"cancel"},
+		Timeout:  5 * time.Second,
 	})
 	require.NoError(t, err)
 	r := findScenarioResult(t, results, "cancel")

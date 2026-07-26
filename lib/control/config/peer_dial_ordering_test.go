@@ -324,7 +324,8 @@ func TestPeerAuthMTLS_SplitRoleWiring_EachRoleInstallsOwnIdentity(t *testing.T) 
 	}
 }
 
-func TestStartSupervisor_UnreachablePeerFailsStartupFast(t *testing.T) {
+// @concept: service-address-book
+func TestStartSupervisor_DoesNotBootDialConfiguredProducers(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	db, err := persistence.Open(ctx, persistence.Config{Driver: "sqlite", SQLite: &persistence.SQLiteConfig{Path: dbPath}})
@@ -362,9 +363,12 @@ func TestStartSupervisor_UnreachablePeerFailsStartupFast(t *testing.T) {
 			},
 		}},
 	})
-	if err == nil {
-		_ = handle.Shutdown(context.Background())
-		t.Fatalf("StartSupervisor dialed a claim producer with nothing listening at %q — "+
-			"process startup must fail fast on an unreachable peer, not start with a broken registry", unreachable)
+	if err != nil {
+		t.Fatalf("StartSupervisor failed on a config naming an unreachable producer at %q — "+
+			"supervisors resolve store names read-through against the service address book at dispatch "+
+			"time and must not boot-dial per-process producer config: %v", unreachable, err)
+	}
+	if err := handle.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
 	}
 }

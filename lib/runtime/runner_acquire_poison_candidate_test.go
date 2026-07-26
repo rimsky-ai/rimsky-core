@@ -92,7 +92,7 @@ func seedStaleCandidateInternal(
 	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"stub"}, AcceptedClaimProducers: []string{}, Limit: 16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err
@@ -202,7 +202,7 @@ func TestHandleAcquireNilFrameID_TerminalizesPoisonRowInsteadOfLoopingForever(t 
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"stub"}, AcceptedClaimProducers: []string{}, Limit: 16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err
@@ -306,7 +306,7 @@ func TestHandleAcquireFanOutSubstitutionFailed_TerminalizesRowInsteadOfHotLoopin
 
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: []string{"stub"}, AcceptedClaimProducers: []string{}, Limit: 16,
+			Limit: 16,
 		}, tx)
 		if err != nil {
 			return err

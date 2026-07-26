@@ -2,30 +2,6 @@
 # Copyright © 2026 Fall Guy Consulting.
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
-#
-# one-shot-to-terminal-demo.sh — STORY-one-shot-to-terminal proof.
-#
-# Role: operator who wants to drive a compose manifest to terminal in
-# one invocation, without standing up rimsky infrastructure first.
-#
-# What this demo exhibits, by Falsifier:
-#  - the verb runs `rimsky compose run` against a two-instance manifest
-#    where one instance succeeds and one fails (the literal Proof
-#    shape from STORY-one-shot-to-terminal);
-#  - the verb returns ON ITS OWN (no kill needed) after every instance
-#    reaches terminal;
-#  - the exit code is 1 (mixed outcome → any-failure class per the
-#    spec's @decision: exit-codes table);
-#  - stderr carries a per-instance summary line for each declared
-#    instance by name with its outcome
-#    (`instance sample-pipeline/ok: success`,
-#    `instance sample-pipeline/oops: failure`) — proving per-instance
-#    summary is surfaced by name AND by outcome class, not collapsed
-#    into a count;
-#  - the aggregate summary line names the any-failure reason class
-#    (`compose run: any-failure (2 instances)`), proving the
-#    classifier observed the per-instance outcomes rather than
-#    defaulting.
 
 set -u
 

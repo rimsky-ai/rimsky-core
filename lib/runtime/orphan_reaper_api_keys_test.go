@@ -116,7 +116,7 @@ func TestReapers_NeverTouchAPIKeys(t *testing.T) {
 			return err
 		}
 		maxQuiet := 1
-		if err := d.Queue().RegisterAsyncAck(ctx, orphanedRunID, "reaper-fixture-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "", tx); err != nil {
+		if err := d.Queue().RegisterAsyncAck(ctx, orphanedRunID, "reaper-fixture-ack", time.Now().Add(-1*time.Hour), &maxQuiet, nil, "", "", tx); err != nil {
 			return err
 		}
 		return tables.APIKeys().Insert(ctx, original, tx)

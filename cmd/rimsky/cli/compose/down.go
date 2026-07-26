@@ -128,7 +128,7 @@ func RunComposeDown(ctx context.Context, args []string) int {
 		return 2
 	}
 	cfgPath, _ := cli.DefaultConfigPath()
-	endpoint, err := cli.ResolveEndpointForCompose(flags.common.Endpoint, os.Getenv("RIMSKY_CONTROL_API"), cfgPath, m.Context)
+	endpoint, err := cli.ResolveEndpointForCompose(flags.common.Endpoint, os.Getenv("RIMSKY_CONTROL_API_URL"), cfgPath, m.Context)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2

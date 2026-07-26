@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -162,7 +161,7 @@ func dispatchAndReadTerminal(t *testing.T, ep harness.RimskyEndpoint, templateBy
 	templateID := deployScenarioTemplate(t, ep, body)
 	instanceID := createScenarioInstance(t, ep, templateID, instanceKey)
 
-	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
+	waitForDispatchToFresh(t, ep, instanceID, "worker")
 
 	status, obs, raw := ep.GetNodeObservability(t, instanceID, "worker")
 	if status != http.StatusOK {

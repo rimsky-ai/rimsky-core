@@ -211,7 +211,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 			},
 		}
 		if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := dctx.Args.Queue.RegisterAsyncAck(ctx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal, tx); err != nil {
+			if err := dctx.Args.Queue.RegisterAsyncAck(ctx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal, dctx.Args.CallbackURL, tx); err != nil {
 				return fmt.Errorf("register async ack: %w", err)
 			}
 			return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),

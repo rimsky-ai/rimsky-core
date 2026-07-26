@@ -96,9 +96,7 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 	var sawActive, sawPaused bool
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  100,
+			Limit: 100,
 		}, tx)
 		if err != nil {
 			return err
@@ -133,9 +131,7 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 	sawPaused = false
 	err = store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors:      []string{"test-executor"},
-			AcceptedClaimProducers: []string{},
-			Limit:                  100,
+			Limit: 100,
 		}, tx)
 		if err != nil {
 			return err

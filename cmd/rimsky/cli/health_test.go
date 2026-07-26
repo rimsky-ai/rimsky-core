@@ -21,7 +21,7 @@ func fakeHealthServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":      "ok",
-			"supervisors": []map[string]any{{"id": "sup1", "concurrency": 4, "active_node_count": 0, "accepted_executors": []string{}}},
+			"supervisors": []map[string]any{{"id": "sup1", "concurrency": 4, "active_node_count": 0}},
 			"node_counts": map[string]int{"fresh": 0},
 		})
 	}))
@@ -30,7 +30,7 @@ func fakeHealthServer(t *testing.T) *httptest.Server {
 func TestRunHealth_Human(t *testing.T) {
 	srv := fakeHealthServer(t)
 	defer srv.Close()
-	t.Setenv("RIMSKY_CONTROL_API", srv.URL)
+	t.Setenv("RIMSKY_CONTROL_API_URL", srv.URL)
 	t.Setenv("RIMSKY_CONTEXT", "")
 	t.Setenv("HOME", t.TempDir())
 	if got := RunHealth(context.Background(), nil); got != 0 {
@@ -41,7 +41,7 @@ func TestRunHealth_Human(t *testing.T) {
 func TestRunHealth_JSON(t *testing.T) {
 	srv := fakeHealthServer(t)
 	defer srv.Close()
-	t.Setenv("RIMSKY_CONTROL_API", srv.URL)
+	t.Setenv("RIMSKY_CONTROL_API_URL", srv.URL)
 	t.Setenv("RIMSKY_CONTEXT", "")
 	t.Setenv("HOME", t.TempDir())
 	if got := RunHealth(context.Background(), []string{"-o", "json"}); got != 0 {
@@ -50,7 +50,7 @@ func TestRunHealth_JSON(t *testing.T) {
 }
 
 func TestRunHealth_NoEndpoint(t *testing.T) {
-	t.Setenv("RIMSKY_CONTROL_API", "")
+	t.Setenv("RIMSKY_CONTROL_API_URL", "")
 	t.Setenv("RIMSKY_CONTEXT", "")
 	t.Setenv("HOME", t.TempDir())
 	if got := RunHealth(context.Background(), nil); got != 2 {
