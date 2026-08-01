@@ -39,9 +39,3 @@ the abstraction would buy nothing while closing that door.
   object-store abstraction until a cloud backend ships — considered and
   rejected: the abstraction's cost is one small interface, and the rename
   would churn the shipped surface twice.
-
-## Proof
-
-The sensor's tests drive multiple backends — in-memory and local filesystem —
-through the identical watch-and-publish path, and a backend has no other path
-to publish through, so per-backend machinery divergence has nowhere to exist.

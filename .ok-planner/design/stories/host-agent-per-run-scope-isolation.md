@@ -17,14 +17,3 @@ Per-run-scope process isolation in the host agent: concurrent sibling run-scopes
 
 Template authors get isolated process state across concurrent sibling run-scopes — no surprise cross-talk between fan-out partitions — and clean reaping when a run-scope closes (sub-graph carry-rule, fan-out aggregation, or the owning frame ending).
 
-## Acceptance
-
-With a stateful late-bound executor whose binary records which run-scope dispatched to it, an instance whose fan-out produces two concurrent partition run-scopes both dispatching the same binding within one frame: the agent spawns two distinct child processes (one per run-scope, not one shared); each child sees only its own run-scope's dispatches; closing one run-scope reaps only that run-scope's child while the other keeps serving.
-
-## Falsifier
-
-The two sibling run-scopes share a single child, OR closing one run-scope reaps both children, OR a closed run-scope's child survives.
-
-## Proof
-
-Executable proof.

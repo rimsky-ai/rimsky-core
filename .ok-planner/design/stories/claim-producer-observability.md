@@ -17,14 +17,3 @@ Claim-producer observability protocol: claim-detail fetch; live claim-state stre
 
 Operators see producer-side state through rimsky's standard dashboard route — without writing a custom backplane for every producer.
 
-## Acceptance
-
-With a producer advertising the claim-producer-observability protocol, the operator's dashboard queries claim detail and receives the producer's actual state for that claim; subscribes to the live stream and observes state transitions as they happen; paginates the producer's claim inventory; renders an admin view the producer declared, with data from the producer.
-
-## Falsifier
-
-Streamed claim state lags or drops, OR an admin view the producer declared isn't surfaced through the dashboard route, OR the inventory pagination synthesizes rows.
-
-## Proof
-
-Executable proof.

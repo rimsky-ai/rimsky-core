@@ -17,14 +17,3 @@ Identity-bound dry-run floor: permission evaluation is set membership, so a key'
 
 Operators can hand out attempt-only credentials safely — to autonomous agents or untrusted tooling — without trusting the caller to set a per-request flag, as long as they don't also grant that same key unrestricted access to the action.
 
-## Acceptance
-
-An operator mints an api-key whose only grant matching a write action declares dry-run mode; using that key, an operator or agent issues a write request without the per-request dry-run flag and receives the synthetic envelope back; no row is persisted; the audit log records the attempt with executed-false. A second ordinary write-capable key issued by the same operator performs the same request and creates a real row — proving the floor is carried by key identity, not by the request flag. A key holding both a dry-run grant and a separate execute-mode grant for the same action is not held to the floor by that dry-run grant.
-
-## Falsifier
-
-A dry-run-pinned key's write actually persists state, OR the audit misses the attempt, OR no comparison shows the floor is identity-bound.
-
-## Proof
-
-Executable proof.

@@ -17,14 +17,3 @@ Bundled HTTP-callout verifier (an executor — see `concept:executor`): POST cla
 
 Template authors validate claim outputs against an external service without writing a custom verifier; the executor's terminal-on-HTTP-status mapping is faithful.
 
-## Acceptance
-
-A template using the bundled HTTP-callout verifier against a real verification service: a payload the service accepts (2xx) reaches a terminal success on the verifier node; a payload it rejects (4xx with a class field) reaches a terminal error with the typed class surfaced; the upstream actually receives the claim payload (echo-back or response-mirror exhibits this).
-
-## Falsifier
-
-The verifier resolves to success when the upstream returned 5xx, OR the upstream's class field is dropped, OR the payload posted is canned.
-
-## Proof
-
-Executable proof.

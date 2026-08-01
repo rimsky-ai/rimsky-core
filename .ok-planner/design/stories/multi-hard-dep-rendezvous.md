@@ -17,14 +17,3 @@ The upstream-refresh pull carries a settled-this-frame guard: when a later-settl
 
 Multi-hard-dep shapes are a checked contract, not a hazard: independent upstream settlements rendezvous on the receiver exactly once per frame, and the frame terminates.
 
-## Acceptance
-
-A node with two `force_upstream_refresh: true` upstreams that settle independently in the same frame: each upstream runs once; the receiver runs once, after both; the frame terminates.
-
-## Falsifier
-
-Upstreams re-running each other after settling in the frame (mutual re-seeding), the frame never terminating, or the receiver dispatching more than once for one frame.
-
-## Proof
-
-Executable proof — a deterministic scenario test for the two-hard-dep shape pins the exact-once rendezvous: each upstream runs once, the receiver runs once after both, and the frame terminates within the deadline. It stands as the regression pin against the mutual re-seeding livelock.

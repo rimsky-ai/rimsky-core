@@ -17,14 +17,3 @@ Both the register handler and the validate endpoint merge the static validator's
 
 Advice the validator already computes reaches the author who can act on it — and authors who want a strict gate can promote the same advisories to rejections with the warnings-as-errors flag.
 
-## Acceptance
-
-Registering or validating a template that trips a static-validator advisory (e.g. claims acquired with no acquisition-failure policy declared) returns the advisory in the response's validation-warnings field; with the warnings-as-errors flag set the same advisory rejects the registration.
-
-## Falsifier
-
-A static-validator warning that is computed but absent from both responses; or the warnings-as-errors flag not tripping on it.
-
-## Proof
-
-Executable proof — register a template that trips the acquisition-policy advisory and assert it appears in the response's validation-warnings field; repeat with the warnings-as-errors flag set and assert rejection.

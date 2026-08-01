@@ -10,9 +10,5 @@
     ".ok-planner/workbench/",
     ".ok-planner/archive/",
     ".ok-plumbline/"
-  ],
-  "checks": {
-    "comment_hygiene": true,
-    "citation_resolution": true
-  }
+  ]
 }

@@ -17,14 +17,3 @@ Operator-selected registration-time reference-validation strictness (all, availa
 
 Operators choose explicitly between strict bring-up safety and staged bring-up flexibility; the always-on instantiation gate ensures relaxed registration never produces a running instance with missing refs.
 
-## Acceptance
-
-With the all mode, registering a template whose node references a not-yet-provisioned executor, store, or lock is refused with a clear missing-reference error. With the available mode, the same registration succeeds while still validating refs to provisioned services. With the none mode, registration succeeds with no registration-time ref validation. In every mode, whatever the relaxed strictness let through is caught by the mandatory instantiation gate before the instance runs.
-
-## Falsifier
-
-Any mode's stated behavior isn't realized (strict accepts missing refs, or available rejects a real-reference-to-provisioned-service), OR the implicit always-on soft-fail heuristic is present alongside the explicit modes.
-
-## Proof
-
-Executable proof.

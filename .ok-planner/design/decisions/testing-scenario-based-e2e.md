@@ -29,10 +29,3 @@ messages used to provide.
 - Deadline-bounded poll helpers that fail the test on expiry —
   rejected: the deadline is a verdict input, the exact idiom the
   testing rules ban.
-
-## Proof
-
-The wall-clock-verdict lint covers the harness wait helpers, and the
-ratchet baseline records zero violations for them. Falsifier:
-reintroducing a deadline-fail helper into the harness turns the lint
-gate red.

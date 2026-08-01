@@ -17,14 +17,3 @@ Lenient marker on substitution directives: missing source resolves to empty at r
 
 Template authors gracefully handle optional upstream inputs without writing handler branches; the strict / lenient distinction is explicit at the directive site.
 
-## Acceptance
-
-A template node setting an attribute via a lenient-marked directive whose source is absent at dispatch dispatches successfully (the executor receives the resolved-empty attribute) and the node-run reaches terminal. A companion template using the same directive without the lenient marker against the same absent source fails dispatch with a clear missing-source error.
-
-## Falsifier
-
-The lenient marker is silently treated like no-marker (lenient dispatch fails when source absent), OR no-marker is silently treated like the lenient marker.
-
-## Proof
-
-Executable proof.

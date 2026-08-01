@@ -33,10 +33,3 @@ makes the renames cheap now in a way they never will be again.
   look-alike is set.
 - No registry — rejected: leaves discoverability at "grep the
   source" for three quarters of the operator surface.
-
-## Proof
-
-The registry fitness test: it fails on any `RIMSKY_*` read (including
-reads through the env-helper call sites) missing from the generated
-table. Falsifier: add an unregistered env-var read — the test turns
-red.

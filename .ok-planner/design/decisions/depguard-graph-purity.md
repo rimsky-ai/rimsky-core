@@ -34,9 +34,3 @@ the foundation layer.
 - An interface defined in the graph layer and implemented by the
   runtime layer (dependency inversion) — rejected: machinery whose
   only purpose is preserving a loop in the wrong layer.
-
-## Proof
-
-The dependency lint rule denying graph-layer imports of the runtime,
-control, and cmd layers, with no exemption entries. Falsifier: adding
-a runtime-layer import to any graph-layer file turns the lint red.

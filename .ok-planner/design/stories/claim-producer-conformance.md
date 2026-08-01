@@ -17,14 +17,3 @@ Conformance runner for the claim-producer protocol: drives every terminal verb p
 
 Custom producer authors prove correctness against rimsky's contract before shipping; the 9b probe catches dishonest internal serialization on the staged-async write-semantics that no in-process unit test could detect.
 
-## Acceptance
-
-The conformance runner driven against an honest producer reports pass on each terminal verb and on the serialization-discipline probe; against a deliberately-broken producer, reports FAIL with non-zero exit and a message citing the specific check.
-
-## Falsifier
-
-The serialization-discipline probe passes a dishonest producer, OR a duplicate-terminal-call failure is reported as pass, OR the runner exits zero on failure.
-
-## Proof
-
-Executable proof.

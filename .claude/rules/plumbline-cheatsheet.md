@@ -1,6 +1,8 @@
 # Plumbline Cheatsheet
 
-Actionable conventions for this codebase under the Plumbline methodology. The full reference (manifesto and style guide) ships with the Plumbline plugin. Core idea: comprehension is cheap, verification is not — make wrong edits fail mechanically.
+Materialized by ok-plumbline v14.1.0. Suite-owned: overwritten wholesale by the front door's administration (`/ok`); project-specific rules belong in your own files under `.claude/rules/`.
+
+Actionable conventions for this codebase under the Plumbline methodology. The full reference (manifesto and style guide) ships with the ok-plumbline family. Core idea: comprehension is cheap, verification is not — make wrong edits fail mechanically.
 
 ## File Organization
 
@@ -55,10 +57,10 @@ Actionable conventions for this codebase under the Plumbline methodology. The fu
 
 ## Tooling
 
-The Plumbline plugin ships:
+The ok-plumbline family ships:
 
 - `plumbline <path>` — the lint binary; runs two checks: `comment-hygiene` (the rule above) and `citation-resolution` (every configured citation's slug must resolve). Exit 0 clean, 2 violations, 1 internal error.
-- `/ok-plumbline:true-up` — install or refresh `.claude/rules/plumbline-cheatsheet.md` from the plugin's canonical version.
-- `/ok-plumbline:audit` — run the lint over the whole project and group findings into a remediation plan.
+- `/ok` — the suite front door: installs or refreshes `.claude/rules/plumbline-cheatsheet.md` (and the whole vendored layer) from the carried canonical version.
+- `/ok-plumbline-audit` — run the lint over the whole project and group findings into a remediation plan.
 - A `PostToolUse` hook auto-runs the lint on every Edit/Write; violations block (exit 2) so the agent sees them and fixes in the same turn.
 - Project config lives in `.ok-plumbline/config.json` (optional). The `citations` array adds project-specific structured-tag exemptions (each pairs a tag with a resolution rule); `ignore` adds paths to skip.

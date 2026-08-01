@@ -18,7 +18,3 @@ Listing is the lowest common denominator every storage technology offers, so pol
 - Stateless polling — trivially simple, but every restart re-triggers the world.
 - Exactly-once delivery via a transactional outbox in the sensor — heavier machinery for a guarantee downstream idempotency already provides.
 - Operating-system filesystem-change notification for the filesystem backend, with bucket-notification analogs for object stores — the mechanisms are per-backend, are undelivered or lossy across exactly the deployment boundaries this sensor crosses (network filesystems, containerized watchers on bind-mounted host directories), and still require a reconciling scan to be correct against dropped events — so polling is the load-bearing mechanism either way, and hooks would only buy latency the story does not need.
-
-## Proof
-
-The sensor suite asserts each leg mechanically: a failed publish leaves the watermark unmoved and the object is re-attempted; a resubscribed watch resumes from persisted watermark and seen-names without re-publishing; idempotency keys are asserted byte-exact, including the name-only fallback when a backend supplies no etag.

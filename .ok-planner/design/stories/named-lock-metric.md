@@ -17,14 +17,3 @@ The named-lock acquisition path increments the acquisition metric family, labele
 
 Lock saturation is an operational condition: with named-lock activity on the metrics endpoint, operators graph and alert on it instead of reconstructing it forensically from the event ledger.
 
-## Acceptance
-
-Acquiring a named lock increments an acquisition metric distinguishable from producer-claim acquisitions; an operator watching the metrics endpoint sees named-lock activity move under load.
-
-## Falsifier
-
-Named-lock acquisitions that move no metric — the events ledger is the only trace.
-
-## Proof
-
-Executable proof — a test acquires named locks and asserts the counter's movement and labeling.

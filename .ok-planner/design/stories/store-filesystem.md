@@ -17,14 +17,3 @@ Bundled filesystem store claim-producer: directory-per-scope claims; sync-only w
 
 Operators get a filesystem-backed store whose lifecycle guarantees match the sync write semantics it advertises; nothing about the filesystem implementation undermines what holds for richer backends.
 
-## Acceptance
-
-A template referencing `store-filesystem`: `Open` returns the local directory path; `Commit` applies the configured pick-policy action in place, with no staging step and no swap; `Abandon` reverts the claim's pick-policy state, leaving no staged data behind because none is ever created; with `sync_strategy: explicit` and an empty queue, a call to the admin sync route picks up a newly-dropped folder and the next `Open` returns it; `SplitScope` partitions on the discriminator supplied in the request (list / batch_pick / expand_folder), never on a configured partition-key field.
-
-## Falsifier
-
-The explicit-sync route doesn't actually refresh the queue, OR any staging directory or stage-then-swap behavior appears in the filesystem store, OR SplitScope reads a configured partition-key field instead of the per-request discriminator.
-
-## Proof
-
-Executable proof.

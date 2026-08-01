@@ -17,14 +17,3 @@ Subscription declaration with type-path matching (exact or trailing-wildcard pre
 
 Template authors write reactive nodes that filter precisely on what triggers them — both by signal type and by payload content — without inline filtering inside the node.
 
-## Acceptance
-
-A template with a node declaring a subscription to a signal type-path with a CEL predicate (for example, a tenant-equality predicate against a payload field); when the runtime produces a signal of that type whose payload matches the predicate, the subscribed node fires; when payload doesn't match, the node doesn't fire. The trailing-wildcard prefix matches every type-path with that prefix.
-
-## Falsifier
-
-Subscription fires the node on a non-matching payload (predicate ignored), OR doesn't fire on a matching one, OR the trailing-wildcard prefix doesn't match its prefix.
-
-## Proof
-
-Executable proof.

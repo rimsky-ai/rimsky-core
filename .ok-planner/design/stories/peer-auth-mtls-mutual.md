@@ -17,14 +17,3 @@ A deployment-level switch `peer_auth: none|mtls` (default `none`). Under `none` 
 
 Production deployments get their internal call paths authenticated rather than resting on network isolation alone; local dev and the single-process all-in-one stay zero-config because the secured posture is opt-in.
 
-## Acceptance
-
-With `peer_auth: none` (and by default) internal dials are plaintext and require no CA, enrollment, or certificate material. With `peer_auth: mtls` set and the CA encryption key supplied, an internal dispatch between two enrolled services succeeds only when both present valid CA-signed certificates; a peer presenting no certificate (or one not signed by the deployment CA) is rejected; and the return leg (async callback, publish-back) is authenticated by the same peer identity. With `peer_auth: mtls` set but the CA encryption key missing or malformed, startup fails closed.
-
-## Falsifier
-
-An internal connection observed in plaintext (or one-directionally authenticated) while `peer_auth: mtls` is set; OR `peer_auth: mtls` starting up successfully with the CA encryption key absent or malformed; OR `peer_auth: none` requiring any CA/certificate material for a local run.
-
-## Proof
-
-Executable proof — integration test brings up two enrolled peers under `mtls` and exchanges a dispatch plus its callback across mutually verified certs; a companion asserts a certless (or foreign-cert) peer is rejected, and that a missing/malformed CA encryption key fails startup closed; a further case asserts a default (`none`) stack runs plaintext with no certificate material.

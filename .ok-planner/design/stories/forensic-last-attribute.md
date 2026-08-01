@@ -17,14 +17,3 @@ Read surface that returns a node's most recent resolved attribute bag — the va
 
 Operators see what values a node actually computed without forensic effort against the event log.
 
-## Acceptance
-
-After a node executes at least once, the operator queries the node through the control-api and observability surface and sees the latest resolved attribute bag — the values that were dispatched to the executor, read from real persistence — in the response. When the node has executed across multiple runs, the surface returns the most recent run's bag.
-
-## Falsifier
-
-The latest-attribute surface returns an earlier run's bag (stale), OR returns synthesized values, OR is absent on a node that has executed.
-
-## Proof
-
-Executable proof.

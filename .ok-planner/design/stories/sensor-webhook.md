@@ -17,14 +17,3 @@ Bundled webhook sensor publisher: HTTP route exposure under a configured path-pr
 
 External systems trigger rimsky nodes via webhooks without polling overhead; the webhook receipt is acknowledged only after the message has actually landed in rimsky. Requiring per-subscription auth closes unauthenticated message injection and forged-idempotency-key pre-seeding on the public-web ingress, and making the insecure `none` mode explicit keeps an unauthenticated port from being the silent default.
 
-## Acceptance
-
-A webhook-sensor instance subscribed with a configured path-prefix and an `auth` block exposes HTTP routes under that prefix; a correctly-signed (or correctly-headered) inbound POST to a route reaches a message in the targeted rimsky instance with the request body translated into the message payload, acknowledged with success once rimsky has persisted the message; an unsigned or mis-signed POST is rejected and produces no message; a subscription declared with no `auth` block is refused at bind time.
-
-## Falsifier
-
-Inbound POST acknowledged before the message is persisted in rimsky, OR the path-prefix filter is declared but unused, OR the request body translation is canned, OR an unsigned/mis-signed POST produces a message, OR a subscription with no `auth` block binds successfully.
-
-## Proof
-
-Executable proof.

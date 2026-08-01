@@ -1,31 +1,33 @@
 #!/usr/bin/env node
 
 // SPDX-License-Identifier: Apache-2.0
-//
-// Materialized by ok-plumbline v8.1.0. Plugin-owned:
-// overwritten wholesale by /ok-plumbline:true-up; do not hand-edit.
-//
-// The real PostToolUse hook. It lints the edited file with the project's own
-// vendored binary, so linting is pinned to the version this project was trued
-// up to — it does not change under an active session when the installed plugin
-// is updated or edited.
+// Materialized by ok-plumbline v14.1.0 — plugin-owned, overwritten wholesale on converge by the front door's administration (/ok); do not hand-edit.
 
-const fs = require('fs');
-const path = require('path');
-const { spawnSync } = require('child_process');
-
-function findRepoRoot(file) {
-  let dir = path.dirname(path.resolve(file));
-  while (dir !== path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, '.git'))) return dir;
-    dir = path.dirname(dir);
-  }
-  return null;
+// @story: edit-time-lint-enforcement
+let fs, path, spawnSync;
+try {
+  fs = require('fs');
+  path = require('path');
+  ({ spawnSync } = require('child_process'));
+} catch (err) {
+  process.exit(0);
 }
 
-function getChangedLineRanges(file) {
-  const repoRoot = findRepoRoot(file);
-  if (!repoRoot) return null;
+function resolveProjectRoot() {
+  const start = path.resolve(process.env.CLAUDE_PROJECT_DIR || process.cwd());
+  let dir = start;
+  while (dir !== path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) return { root: dir, inRepo: true };
+    dir = path.dirname(dir);
+  }
+  return { root: start, inRepo: false };
+}
+
+function isInsideRoot(root, target) {
+  return target === root || target.startsWith(root + path.sep);
+}
+
+function getChangedLineRanges(repoRoot, file) {
   const tracked = spawnSync('git', ['-C', repoRoot, 'ls-files', '--error-unmatch', file], { stdio: 'ignore' });
   if (tracked.status !== 0) return null;
   const diff = spawnSync('git', ['-C', repoRoot, 'diff', '-U0', 'HEAD', '--', file], { encoding: 'utf8' });
@@ -46,6 +48,16 @@ function formatRanges(ranges) {
   return ranges.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(',');
 }
 
+const BLOCKING_EXIT_CODE = 2;
+const AGENT_VISIBLE_CHANNEL = process.stderr;
+
+// @story: edit-time-lint-enforcement
+function blockWithViolationsOnAgentVisibleChannel(result) {
+  if (result.stdout) AGENT_VISIBLE_CHANNEL.write(result.stdout);
+  if (result.stderr) AGENT_VISIBLE_CHANNEL.write(result.stderr);
+  process.exit(BLOCKING_EXIT_CODE);
+}
+
 function main() {
   let event;
   try {
@@ -57,25 +69,27 @@ function main() {
   const file = event && event.tool_input && event.tool_input.file_path;
   if (!file || !fs.existsSync(file)) process.exit(0);
 
-  const repoRoot = findRepoRoot(file);
-  if (!repoRoot) process.exit(0);
+  const { root, inRepo } = resolveProjectRoot();
+  if (!inRepo) process.exit(0);
 
-  // The project's vendored binary — this hook lives beside it, under
-  // .ok-plumbline/, and never reaches back into the installed plugin.
+  const target = path.resolve(file);
+  if (!isInsideRoot(root, target)) process.exit(0);
+
   const binary = path.resolve(__dirname, '..', 'bin', 'plumbline');
   if (!fs.existsSync(binary)) process.exit(0);
 
   const args = [binary];
-  const ranges = getChangedLineRanges(file);
+  const ranges = getChangedLineRanges(root, target);
   if (ranges !== null) {
     if (ranges.length === 0) process.exit(0);
     args.push('--lines', formatRanges(ranges));
   }
-  args.push(file);
+  args.push(target);
 
-  const result = spawnSync('node', args, { stdio: 'inherit' });
+  const result = spawnSync('node', args, { encoding: 'utf8' });
   if (result.error) process.exit(0);
-  process.exit(result.status === 2 ? 2 : 0);
+  if (result.status === BLOCKING_EXIT_CODE) blockWithViolationsOnAgentVisibleChannel(result);
+  process.exit(0);
 }
 
 main();

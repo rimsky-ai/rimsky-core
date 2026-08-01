@@ -21,7 +21,3 @@ Silent failure modes (silent-empty on unset env; silent-ignore on unknown keys) 
 - **Opt-in strict knob** — rejected: an escape hatch to lax mode silences the exact error strict mode exists to raise. The project's pre-v1 posture leaves no forward-compat argument for a lax mode.
 - **`os.ExpandEnv` (accepts bare `$VAR` too)** — rejected: silent-empty on unset was one of the divergent semantics this decision unifies; supporting bare `$VAR` invites shell-substitution confusion in YAML values.
 - **Per-loader implementations behind an interface** — rejected: nothing about the three loaders' contexts differs enough to warrant divergent implementations; the abstraction adds indirection without covering any distinct case.
-
-## Proof
-
-Executable proof — a lint asserts zero occurrences of `os.ExpandEnv` or bare `yaml.Unmarshal` calls outside the single shared loader package that carries this decision's `@decision:config-yaml-loading-policy` annotation. A new bare `yaml.Unmarshal` call, a new `os.ExpandEnv` on config-derived text, or a duplicate env-expansion helper elsewhere in the tree all fail the lint.

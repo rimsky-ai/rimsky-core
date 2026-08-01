@@ -17,14 +17,3 @@ Operator-driven asset observation and governance: list, version, history, retire
 
 Operators observe and govern data outputs — walking version history, retiring assets — without bouncing the template that produces them; re-materialization is expressed through messages (the empty-message trigger for a whole-instance re-run, or a typed message the template author designs for partial paths).
 
-## Acceptance
-
-Against an instance running a template whose nodes declare durable claims against a data-processing-capable producer (the asset construction per `concept:asset`), the operator queries the instance's assets through the control-api and sees each asset alias with its current version; the materialization-history surface lists each materialization with its outcome; the lineage surface walks from an asset's materializing runs forward to the runs that read their outputs (per `concept:lineage`); deleting an asset removes the alias.
-
-## Falsifier
-
-The materialization-history surface returns rows that don't match what really materialized, OR the forward lineage walk omits a run that demonstrably read the asset's output, OR delete fails to remove the alias.
-
-## Proof
-
-Executable proof.

@@ -17,14 +17,3 @@ Bundled HTTP-node executor: HTTP request dispatch with response routing into nod
 
 Template authors integrate with HTTP upstreams without writing a custom executor; the bundled executor handles rate limits and error classification natively.
 
-## Acceptance
-
-A template using the HTTP-node executor against a real upstream: a 200 response populates the node's output attributes from the response body; a 429 response with a retry-after directive causes the node-run to enter the parked state with the corresponding resume time, and the supervisor wakes the node at that time and re-dispatches it (succeeding when the upstream returns 200 on retry); a 4xx response carrying the configured error-class JSON field surfaces a typed HTTP-family terminal error class; a 4xx with no such field surfaces the stable unspecified-class leaf.
-
-## Falsifier
-
-A 429 response errors a node-run instead of parking, OR the corresponding resume time isn't honored by the supervisor, OR the configured error-class JSON field is ignored.
-
-## Proof
-
-Executable proof.

@@ -17,14 +17,3 @@ Public validation protocol surface — the validation protocol's single validati
 
 Service authors customize validation beyond rimsky's built-in shape checks, with the same blocking vs informational severity semantics applied consistently.
 
-## Acceptance
-
-A service implementing the validation protocol (alongside its primary protocol), registered with rimsky's catalog, has its validator called on template registration with the role context appropriate to where it's referenced; findings the validator returns as errors cause the registration to be refused with the finding surfaced to the operator; findings returned as warnings are surfaced without blocking.
-
-## Falsifier
-
-Error-severity finding doesn't block registration, OR warning-severity finding blocks registration, OR validator is registered but the validation RPC is never called.
-
-## Proof
-
-Example — a shipped validation reference paired with a worked walkthrough.

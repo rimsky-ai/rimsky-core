@@ -17,14 +17,3 @@ Per-request dry-run flag on writes: real validation runs, synthetic envelope ret
 
 Operators preview the effect of a write before committing — same validation as a real write — so destructive changes can be inspected before they land.
 
-## Acceptance
-
-An operator sends a write request (instance create, tag bind, template register, etc.) with the dry-run flag set; the response carries the dry-run marker and the synthetic envelope describing the would-have-been outcome; no row is persisted (verified via a subsequent list or get); a read request with the same flag genuinely executes (reads are flag-no-ops).
-
-## Falsifier
-
-A dry-run write persists state, OR returns a canned envelope unrelated to the inputs (validation didn't actually run), OR a read returns the dry-run marker.
-
-## Proof
-
-Executable proof.

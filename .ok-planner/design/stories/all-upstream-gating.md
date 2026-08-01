@@ -17,14 +17,3 @@ The dispatch-eligibility predicate carries a propagation-path-independent condit
 
 Fan-in topologies (diamonds, N-parent receivers) compute from the full upstream set, not whichever subset happened to settle first — and the guarantee cannot be forgotten by a new staleness-propagation path, because it lives in the eligibility predicate rather than in per-path bookkeeping.
 
-## Acceptance
-
-In a diamond or N-parent shape where the upstream staleness propagates by sender settlement (not only by an invalidation walk), the receiver runs exactly once per frame, after the last in-flight upstream resolves, and its substitution context contains all upstream contributions.
-
-## Falsifier
-
-A receiver observed dispatching while a subscribed upstream still has an in-flight run in the same frame; or a receiver that runs early and is never re-fired when stragglers settle, leaving the frame's result computed from a partial upstream set.
-
-## Proof
-
-Executable proof — a deterministic scenario test builds the diamond with settlement-propagated staleness, holds one upstream open via an injection hook, and asserts the receiver is not dispatch-eligible until the held upstream resolves — then asserts single dispatch with the full upstream set in the substitution context.

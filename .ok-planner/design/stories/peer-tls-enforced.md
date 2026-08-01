@@ -17,14 +17,3 @@ The TLS config key is writable on executor, store, and publisher peer entries an
 
 A security-shaped config key that is accepted and ignored manufactures false confidence exactly where it is costliest; with enforcement at every dial site, the key means what it says for every peer kind.
 
-## Acceptance
-
-With TLS set to required on a peer entry, rimsky dials that peer with verified TLS; against a TLS-serving peer the connection works end-to-end; against a plaintext peer the dial fails with an error naming the peer and the mode. With TLS set to off (and by default) behavior is plaintext.
-
-## Falsifier
-
-A peer connection configured with TLS required observed on the wire in plaintext; or the TLS config key accepted and silently ignored.
-
-## Proof
-
-Executable proof — integration test dials a TLS-enabled stub peer under the required mode and exchanges a request; companion test dials a plaintext stub under the required mode and asserts the loud failure.

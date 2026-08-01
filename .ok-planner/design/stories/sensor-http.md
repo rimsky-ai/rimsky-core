@@ -17,14 +17,3 @@ Bundled HTTP sensor publisher: fixed-interval URL polling with per-poll body-cha
 
 Operators poll an external HTTP source without writing a custom publisher; polling state survives restart so windows don't get skipped or doubled.
 
-## Acceptance
-
-An HTTP-sensor instance polling a real upstream at a configured interval sends a message when the upstream returns 200 and the response body differs from the last-sent body; an unchanged body across repeated polls produces no repeat message; with a body-filter declared, only responses matching the filter are eligible to produce messages. Body state persists across restart, so a restart does not re-send an unchanged body.
-
-## Falsifier
-
-An unchanged body produces a repeat message, OR a genuinely changed body produces no message, OR the body filter is declared but unused, OR a process restart drops the persisted body state and re-sends an unchanged body.
-
-## Proof
-
-Executable proof.

@@ -17,14 +17,3 @@ Operator-driven lineage exploration: walk upstream / downstream from a run; quer
 
 Operators trace how data flowed through their rimsky stack — for debugging, impact analysis, or compliance.
 
-## Acceptance
-
-After running an instance whose template produces lineage records, an operator queries the lineage for a run through the control-api and walks upstream to the producers that fed it and downstream to consumers that depended on it; query by claim handle returns the lineage record for that claim; the source-pivot and producer-pivot return the records they should — a producer the run actually used appears in upstream, a consumer that actually consumed appears in downstream.
-
-## Falsifier
-
-A real upstream producer is missing from the ancestor walk, OR a real downstream consumer is missing from the descendant walk.
-
-## Proof
-
-Executable proof.

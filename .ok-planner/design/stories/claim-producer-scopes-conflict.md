@@ -17,14 +17,3 @@ Producer-declared scopes-conflict capability: rimsky consults the producer's sco
 
 Operators run templates whose claims overlap non-trivially; the safety invariant guarding "no two writers on overlapping scopes" extends to producers whose overlap definition is semantic, not byte-equal.
 
-## Acceptance
-
-A producer advertising the scopes-conflict capability whose scopes-conflict predicate returns true for prefix-overlapping scopes; two nodes acquiring claims on overlapping scopes — only one acquires, the second is routed to unavailable; a fan-out parent whose scope-split verb returns overlapping sub-scopes has its conflicting sub-claim rejected.
-
-## Falsifier
-
-Both writers acquire, OR the fan-out path skips the consult, OR producers that do not advertise the scopes-conflict capability are still asked.
-
-## Proof
-
-Executable proof.

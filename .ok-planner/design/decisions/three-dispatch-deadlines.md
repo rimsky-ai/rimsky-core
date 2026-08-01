@@ -25,7 +25,3 @@ Sync dispatches need a deadline on the RPC itself; async dispatches need a way t
 ## Alternatives
 
 Single unified deadline — rejected because it conflates three orthogonal concerns. `0` meaning "use default" — rejected because it collides with the disable semantic that the LLM / human-review use cases need. A per-executor timeout layer beneath the node deadlines — rejected: covers ground the deadline mechanism already owns and reintroduces the invisible second ceiling.
-
-## Proof
-
-A test raises a node's `sync_rpc_deadline` beyond any executor-internal default and asserts the outbound call runs to the declared deadline. Falsifier: reintroducing an independent client-level timeout beneath the per-node deadline turns the test red.

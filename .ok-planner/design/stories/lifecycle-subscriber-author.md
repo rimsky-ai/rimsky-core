@@ -17,14 +17,3 @@ Public lifecycle-subscriber protocol surface (seven synchronous callbacks, see `
 
 External services react to rimsky lifecycle events synchronously — a subscriber that needs to react to template-deployed or run-scope-terminal can wire in and rimsky honors the subscriber's response.
 
-## Acceptance
-
-A subscriber implementing all seven callbacks, registered with rimsky's catalog, receives each callback at the corresponding lifecycle transition: template registered fires when a template is registered, template deployed fires on deploy, instance created fires on the instance-creation surface, instance terminated fires on terminate, run-scope terminal fires when a run-scope closes (root, sub-graph, fan-out partition — see `concept:run-scope`). Each callback carries the documented context fields; the subscriber's response is honored synchronously at the close site.
-
-## Falsifier
-
-A callback fires for the wrong transition, OR a documented context field is missing from the callback payload, OR the subscriber's failure response on a callback is ignored by rimsky (fire-and-forget).
-
-## Proof
-
-Example.

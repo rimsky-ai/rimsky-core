@@ -17,14 +17,3 @@ Operator-driven lineage pruning: cutoff-based remove of lineage records through 
 
 Operators keep the lineage table bounded in a long-lived deployment without bulk-rebuilding the deployment or accepting unbounded growth.
 
-## Acceptance
-
-With lineage records of varied ages persisted, an operator submits a prune request through the control-api or the lineage-prune CLI verb carrying a cutoff; only records strictly older than the cutoff are removed, records at or after the cutoff are untouched (verifiable through a follow-up lineage query).
-
-## Falsifier
-
-Prune removes records at the cutoff boundary, OR removes records newer than cutoff, OR silently drops the cutoff and returns a no-op count.
-
-## Proof
-
-Executable proof.

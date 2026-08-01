@@ -17,14 +17,3 @@ Automated accuracy check over the after-code-changes verification rules: parses 
 
 Contributors can act on the recognized-shape citations without hitting missing surfaces; documentation rot in that recognized shape is caught before it lands.
 
-## Acceptance
-
-An automated accuracy check over the after-code-changes verification rules parses every backtick-quoted, recognized-shape filesystem path the rules cite, resolves each against the repo tree, and fails if any doesn't exist; mutating the rules to cite a non-existent path in that shape makes the check fail. The check separately fails if a hardcoded set of known-dead references reappears, or if a required rebuild instruction is missing. Citations outside the recognized path shape, and individual build-target names, are not resolved or checked for existence.
-
-## Falsifier
-
-The check accepts a non-existent path in its recognized shape (text-search only, no resolve), OR the check is informational and doesn't fail CI, OR the hardcoded dead-reference guard silently stops firing.
-
-## Proof
-
-Executable proof.

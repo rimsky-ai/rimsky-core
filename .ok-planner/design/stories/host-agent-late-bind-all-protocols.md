@@ -17,14 +17,3 @@ Host-agent late-binding covers exactly the two rimsky-implementable protocols wi
 
 Template authors exercise the assembled product against local executor and claim-producer code without rebuilding images. Authors who attempt to late-bind an unsupported protocol get a clear, immediate refusal instead of a silent stub or a runtime surprise.
 
-## Acceptance
-
-With the host-agent connected to a deployed host-agent-proxy (see `concept:host-agent`, `concept:host-agent-proxy`) and bindings declared for executor and claim-producer, instance dispatches reach spawned local binaries for both: an executor binding runs a real spawned executor to terminal, and a claim-producer binding's Open, Commit, and Abandon all reach the spawned binary. Declaring a late-bound binding for publisher, validation, or data-processing is refused at registration/config with a diagnostic naming the unsupported protocol.
-
-## Falsifier
-
-An executor or claim-producer dispatch through the proxy is served by an unimplemented-method error or by an effect canned at the proxy layer rather than reaching the spawned binary, OR a late-bound publisher, validation, or data-processing binding is silently accepted (registers or dispatches) instead of being refused.
-
-## Proof
-
-Executable proof.

@@ -17,14 +17,3 @@ Operator-driven instance creation that is strictly idempotent on instance state 
 
 Operators control when work begins. Creating an instance is a setup action (allocate the row, mint the per-instance node rows, notify lifecycle subscribers); waking the work is a separate, deliberate action (post a message). Conflating them prevents operators from creating instances ahead of the moment they want work to run.
 
-## Acceptance
-
-I `POST /instances` with `{template, instance_key?, params, attribute_overrides?}` against a deployed template. The instance row appears in `GET /instances/{id}` with `paused: false` and no terminal timestamp; the instance's frame collection (returned by `GET /instances/{id}/frames`) is empty; the instance's message ledger (returned by `GET /instances/{id}/messages`) is empty; no node-runs exist yet; the lifecycle-subscriber's `OnInstanceCreated` callback fires once. The supervisor does not dispatch anything for this instance until a sender posts a message.
-
-## Falsifier
-
-The create call returns success but a frame row exists for the instance with no operator-posted triggering message; OR a synthetic envelope appears in the message ledger immediately after create; OR a node-run row exists with no operator emission having occurred.
-
-## Proof
-
-Executable proof — `POST /instances` followed by `GET /instances/{id}/frames` and `GET /instances/{id}/messages` returning empty collections; one lifecycle-subscriber callback recorded.

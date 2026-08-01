@@ -17,14 +17,3 @@ Public publisher protocol surface — a capabilities advertisement plus the subs
 
 A custom publisher plugs into a rimsky stack; on rimsky restart, the publisher's already-active subscriptions are not re-issued — the list-subscriptions verb lets rimsky reconcile back to steady state.
 
-## Acceptance
-
-A custom publisher implementing the protocol, registered with rimsky's publisher catalog, is referenced from a template's publisher binding; rimsky issues a subscribe call with resolved config; the publisher acknowledges and begins sending messages to the rimsky message-send surface; the messages reach the targeted instance and downstream nodes consume them. After a simulated rimsky restart, rimsky calls the publisher's list-subscriptions verb and reconciles back to the steady state without re-subscribing what's already there.
-
-## Falsifier
-
-Subscribe is acknowledged but messages never reach the message-send surface, OR the post-restart reconcile re-subscribes already-active subscriptions, OR the publisher sends without the dedup header and is silently accepted.
-
-## Proof
-
-Example — a shipped publisher reference paired with a worked walkthrough that drives a real subscribe / publish / reconcile sequence against a running rimsky.

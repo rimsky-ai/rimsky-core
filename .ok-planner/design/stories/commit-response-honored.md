@@ -17,14 +17,3 @@ The producer client returns the base Commit response body; the unified claim-han
 
 The wire contract is honest for the base protocol: producers that stamp version and metadata on Commit see them land without having to adopt the data-processing mix-in just to make the base-protocol fields take effect.
 
-## Acceptance
-
-A producer whose base-protocol Commit response carries a version-id sees it persisted on the corresponding claim-handle row; a fan-out whose children's commits carry producer-metadata sees it surfaced in the parent's writeback.
-
-## Falsifier
-
-Base-protocol Commit response fields set by the producer and absent from the row / writeback (response body discarded).
-
-## Proof
-
-Executable proof — a scenario with a stub producer that stamps both fields on the base Commit response asserts the persisted version and the writeback-surfaced metadata.

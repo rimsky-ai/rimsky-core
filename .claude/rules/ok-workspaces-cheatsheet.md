@@ -1,7 +1,7 @@
 # ok-workspaces Cheatsheet
 
-Materialized by ok-workspaces v8.0.0 — plugin-owned; refreshed by
-`/ok-workspaces:true-up`; do not hand-edit. Profile:
+Materialized by ok-workspaces v14.1.0 — suite-owned; refreshed by
+the front door's administration (`/ok`); do not hand-edit. Profile:
 `.ok-workspaces/config.json` (stacks: go, docker;
 runtime: docker-compose).
 
@@ -11,8 +11,8 @@ isolation story has a hole.
 1. **One worktree per job.** Every unit of work gets its own checkout
    on its own branch: directory `../wt-<job>`, branch
    `wt/<job>`. Never share a working tree between concurrent
-   jobs; never do job work on the main checkout. Use
-   `/ok-workspaces:open <job>` and `/ok-workspaces:close <job>`.
+   jobs; never do job work on the main checkout. Use `/open <job>`
+   and `/close <job>`.
 
 2. **One runtime stack per worktree.** Every workspace runs its own compose
 project, namespaced by workspace: `COMPOSE_PROJECT_NAME=rimsky-core-<job>`

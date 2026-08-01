@@ -1,8 +1,9 @@
 # .ok-planner — the planner's directory
 
-Materialized by ok-planner v8.0.0. Skill-owned
-boilerplate: this file is overwritten wholesale by `/true-up`; do not
-hand-edit it (project guidance belongs in the project's root CLAUDE.md).
+Materialized by ok-planner v14.1.0. Suite-owned
+boilerplate: this file is overwritten wholesale by the front door's
+administration (`/ok`); do not hand-edit it (project guidance belongs
+in the project's root CLAUDE.md).
 
 This directory holds three kinds of content with different lifecycles
 and different rules for how agents should treat them.
@@ -14,13 +15,19 @@ self-contained:
 
 - **`concepts/`** — load-bearing nouns with definitions, purposes,
   boundaries, and invariants.
-- **`stories/`** — durable user expectations, each an agile-style
-  non-prescription of user need (`As <role>, I want <capability>,
-  so that <benefit>` — the "so that" clause is mandatory), with
-  acceptance, falsifier, and a proof.
+- **`stories/`** — durable user expectations, each one agile-style
+  statement of user need (`As <role>, I want <capability>,
+  so that <benefit>` — the "so that" clause is mandatory) and
+  nothing else: a pure expression of business value whose only
+  acceptance is that the user has a way to do the capability and
+  accomplish the benefit — stated concretely, so a reader can settle
+  it by looking. Verification is the periodic implementation audit's:
+  it reports whether the codebase supports the story at a named
+  commit.
 - **`decisions/`** — durable technical decisions (choice, rationale,
-  alternatives) — and each carries a proof: the mechanical check
-  that fails if the choice is silently violated.
+  alternatives). Whether an implementation honors a Choice is
+  determined by its implementation audit under `audits/decisions/`,
+  written by the periodic audit run.
 
 **A note on the name `design/`.** The directory name is a label, not
 a load-bearing claim about content. "Design" here is the project's
@@ -33,22 +40,94 @@ other project documentation.
 Code references the design (via `@concept:`, `@story:`, `@decision:`
 annotations at points of enforcement), not the other way around. The
 design docs are **a source of truth with the same weight as code**:
-they describe the project as it stands. Like code, they change only
-by applying an approved sprint's corpus deltas — never ad hoc.
-Read them freely; they are NOT an out-of-context record.
+they describe the project as it stands. What the project *commits
+to* — its concepts' invariants, its stories' promises, its
+decisions' choices — changes only by applying an approved sprint's
+corpus deltas, never ad hoc. How a commitment is *expressed* may
+also be repaired in-cycle by the certification fix loop and
+`/verify-issues`, when the rules fully determine the compliant text
+and no commitment changes (a stale TOC line, a stale sentence the
+code and a counterpart artifact both contradict); every such repair
+is surfaced to the owner for after-the-fact veto. Read the docs
+freely; they are NOT an out-of-context record.
+
+**Leave the annotation.** Annotation rollout is incremental and it is
+every session's job, not a bulk pass anyone runs: any time you consult
+a concept, story, or decision to understand or modify a file, leave
+`@concept:` / `@story:` / `@decision:` plus the slug in a comment at
+the most-specific load-bearing site in that file — the function,
+branch, or block where the artifact's commitment is actually
+enforced — so the next agent greps instead of re-deriving. Kind plus
+slug only: never a file path, a line number, or a quotation of the
+artifact. If the site already carries the annotation, leave it alone;
+if the slug it names no longer exists, repoint or remove it.
+Annotations carry exactly one job — this navigation — and play no part
+in certification scope: what a change puts in question is read from the
+change itself. Nothing computes audit invalidation at all, so nothing
+can key on a tag.
+
+## The audit corpus (`audits/`)
+
+`audits/{stories,decisions}/` holds one file per live story and
+decision, written only by the periodic `/verify-corpus` run — never by
+the session that implemented the work, never hand-edited. Each is a
+good-faith, adversarially-minded answer to one question: *is this
+artifact supported by the codebase at this commit?* The determination
+is one of three words — `supported`, `unsupported`, `unclear` — and the
+body is one sentence to one paragraph saying what was looked at and
+what was found.
+
+**An audit is a statement about a named commit.** Its `commit:` field
+names the tree it describes, so asking whether it still holds is a git
+question — how far has `HEAD` moved since — rather than a computation.
+Nothing tracks staleness, nothing invalidates anything, and no audit
+carries citations, hashes, or line numbers. What the next run navigates
+by is the `@story:` / `@decision:` annotations in the code, which is
+the one job annotations have.
+
+**Every universal carries its count and its population.** A quantified
+claim is only worth asserting if someone enumerated the members, so an
+audit reports the number it checked and where the set came from — a
+sentence a reader can refute in seconds — instead of a vague
+assurance.
+
+**Two stages, no loop.** Auditors read every live artifact in parallel
+batches. Everything they could not call `supported` goes to one
+second-opinion judge, which either confirms the gap (filing an intake
+issue and leaving `unsupported`), overturns it to `supported`, or calls
+it undecidable (filing an issue for the owner to settle). The judge is
+terminal: nothing comes back for another pass, and the run never fixes
+anything — a real gap is a future sprint's work.
+`.ok-planner/bin/audit-check` enforces the single mechanical
+invariant: no `unsupported` or `unclear` determination stands without
+an `issue:` slug.
+
+**Subjective promises become referrals, never determinations.** Where
+an artifact promises something whose quality only a human discipline
+can judge, the audit records the promise, what exists in form, and the
+discipline that owns the judgment — and opines no further. A concrete
+story avoids the situation: correct, clear, and helpful describe how
+well the product owes something, not what it owes.
 
 ## The issue intake (`issues/`) — questions awaiting judgment
 
 One markdown file per design question requiring the project owner's
 judgment, named `<YYYY-MM-DD-HHMMSS>-<slug>.md` so listings sort
-chronologically. Filed by `/audit`, `/discover-design`,
-`/plan-sprint`, or humans; `/verify-issues` then makes each file
-**ruling-ready**: it closes any issue the design corpus already
-answers (with the citation), repairs code-side gaps the rules fully
-determine, and rewrites the rest as a single from-the-top narrative
-ending in a marked generated or recommended ruling — left untouched,
-those ride the next `/plan-sprint` as rulings, named as batches at
-sign-off; edit or empty one to override.
+chronologically. Filed by certification's architect (the gated
+path — a finding from the repeating close cycle must survive the
+fixer's veto test and the architect's adversarial check), by the
+cycle cap's escalation (the second gated path — the remainders a
+bounded fix loop tried and failed to fix), by `/discover-design`'s
+one-time bootstrap run, by `/plan-sprint` transcribing a question
+you postponed, or by humans directly;
+`/verify-issues` then makes each file **ruling-ready**: it closes
+any issue the design corpus already answers (with the citation),
+repairs the gaps the rules fully determine — code- or corpus-side,
+so long as no commitment changes — and rewrites the rest as a
+single from-the-top narrative ending in a marked generated or
+recommended ruling — left untouched, those ride the next
+`/plan-sprint` as rulings, named as batches at sign-off; edit or
+empty one to override.
 
 **Unmarked Ruling text is the owner's alone.** Write your decision
 there in your own words, whenever you like; the next `/plan-sprint`
@@ -89,10 +168,14 @@ A legacy `issues.jsonl` from an older layout is converted by
 
 ## Project records (`sprints/`, `sketches/`, `history/`) — out of context by default
 
-Committed, versioned parts of the project — but not the source of
-truth, and not to be pulled into context unprompted. `sprints/`
-holds sprints from `/plan-sprint`; a sprint is in context only
-while it is the work being executed. `sketches/` holds design
+The record discipline, stated once: records — sprints, sketches, and
+the archive — are committed and versioned parts of the project but
+out of agent context by default, with exactly one live exception (the
+sprint currently being executed), and every completed or retired
+record moves to its same-named folder in the archive.
+
+`sprints/` holds sprints from `/plan-sprint`; a sprint is in context
+only while it is the work being executed. `sketches/` holds design
 sketches from `/sketch` — speculative or in-progress future
 thinking; reading one without a directing goal is context pollution.
 `history/` holds a same-named archive folder per artifact kind
@@ -133,80 +216,48 @@ for that work. Executing it is the next section.
 
 ## Executing a sprint
 
+**The sprint document is the brief — its own "How to execute this
+sprint" section is the execution shape.** Every sprint `/plan-sprint`
+produces carries that fixed section: read whole, stage in your own
+working state (a sprint is never rewritten into a plan document),
+apply deltas verbatim with the work, test as you build, work
+unsupervised to the contract, and keep the sprint's **completion
+report** current — the file beside the sprint (same filename with
+`-completion`) recording work done, divergences, and calls made,
+which the closing ceremony finishes and the completion contract
+requires. Follow it; nothing here overrides it.
 "Implement sprint X" is an ordinary working session, not a special
-mode. Nothing about a sprint requires an orchestrator or a
-worker fleet: whoever picks it up — this session inline, a fan-out
-of subagents, an external orchestrator — owes the same completion
-contract and nothing else. Use whatever machinery the work actually
-warrants; a three-item sprint is simply done, inline, by the agent
-that was asked.
+mode — inline, a fan-out of subagents, or an external orchestrator
+all owe the same completion contract and nothing else, so a sprint
+can equally be handed to the native `goal` mechanism
+(`/goal <path-to-sprint>`).
 
-**The sprint is the whole brief.** It is self-sufficient by
-construction: final-form deltas, work items, completion contract. Do
-not go looking for context behind it — not in the issue intake (a
-promoted issue's substance is in the sprint, and the file is only a
-receipt), not in older records under `history/`. If something the
-work needs genuinely is not in the sprint, that is a gap to raise
-with the owner, not to fill by inference.
-
-**Its work items are a flat, possibly disparate list** with no theme
-and no imposed order. Sequencing them is *your* job, at execution
-time:
-
-1. **Read the sprint whole first** — deltas, work items, completion
-   contract — before touching anything.
-2. **Stage it.** Group items that share a theme, a file surface, or
-   a dependency; order the groups so nothing is built on something
-   not yet there. This is real planning and it happens here, not in
-   the sprint — keep it in your working state (a task list is
-   ideal). Do not write a plan document; ok-planner has no plan
-   artifact, and a sprint is never rewritten into one.
-3. **Apply each corpus delta as part of the work that realizes it.**
-   A delta is a final-form artifact body: copy it into `design/`
-   verbatim, or delete the file for a retirement. Deltas no work
-   item implements — a clarification, a retirement — are applied on
-   their own.
-4. **Build stage by stage.** Every new or amended story and decision
-   needs its proof to exist, carry the `@story:` / `@decision:`
-   annotation, and actually be able to fail. Write the proof with
-   the work, not at the end.
-5. **Close on the completion contract, in its order.** The corpus
-   matches every delta verbatim → `/prove` clean over all new and
-   touched stories and decisions → `/audit` last, fixing its
-   mechanical findings in-cycle and re-running until that section is
-   empty. `/audit`'s judgment findings file themselves to
-   `.ok-planner/issues/`, and `/verify-issues` makes them
-   ruling-ready; they are the next sprint's business, not this
-   session's. `/certify` runs exactly this contract as its core —
-   and is the recommended way to close.
-6. **Offer the close-out** once the contract holds: archiving the
-   sprint to `history/sprints/` together with the issue files it
-   resolved (which move to `history/issues/`), and committing the
-   work. Both are owner acts — `/certify` offers them at the end of
-   its presentation and performs them only on the owner's word,
-   leaving the sprint at its `sprints/` path until then so a goal
-   keyed to that path can verify completion.
-
-Scale is a judgment call: independent, large stages are worth
-parallel subagents or a worktree; coupled or small ones are not. The
-contract in step 5 is what does not scale away.
-
-**The shape above is baked into every sprint.** `/plan-sprint`
-writes a fixed "How to execute this sprint" section into each sprint
-document — the same steps in short form — so the sprint is
-self-driving from the moment it is signed off. That means the sprint
-can be picked up inline by an ordinary working session, handed
-straight to the native `goal` mechanism (`/goal <path-to-sprint>`)
-so its Stop hook drives the build to completion, or dispatched to an
-orchestrator that does its own planning. Every executor works from
-the same brief.
-
-**`/certify` closes.** Named as the terminal step in the sprint's
-execution boilerplate, `/certify` discharges the completion contract
-(steps 5–6 above), adds the code-review and design-doc-compliance
-cycles with a fix loop that drives every fixable finding to clean,
-presents the outcomes and any divergences to the owner, and closes
-by offering to archive the sprint and commit the work — owner acts,
-taken only on the owner's word. It is the same call whether the
-sprint was run inline, under a goal, or under an orchestrator — the
-contract does not change.
+**`/certify-work` closes.** Named as the terminal step in the
+sprint's own boilerplate, it discharges the completion contract at
+the change's scope: the sprint-alignment judge (deltas verbatim,
+no undershoot, changed corpus coherent), the project's own test
+suites, code review over the diff — all feeding
+a no-discretion review-fix loop (fixer, then an architect on
+kickbacks; the issue intake is reached only by the two gated
+paths — architect-confirmed intent forks, and the remainders
+escalated at the cycle cap — both made ruling-ready by
+`/verify-issues`) — then the
+presentation, written into the sprint's completion report and
+walked with the owner, which ends by offering to archive the sprint
+(together with its report) and commit the work: owner acts, taken
+only on the owner's word, with the sprint left at its `sprints/`
+path until then. A goal keyed to the sprint follows the contract's
+own goal rule: done when the sprint is archived with its `closed:`
+stamp, or when every contract item — the finished completion report
+included — verifies against the repository; a run parked at the
+review-fix loop's cycle cap awaiting the owner's direction is a
+legal in-flight state — not done, not failed, and never grounds for
+the run to take either cap step itself. The close-out finishes by stamping
+the archived sprint with the closing commit (`closed: <sha>`
+frontmatter, one follow-on commit) — the baseline the next
+`/plan-sprint` reads to detect and reconcile work done out of band
+since this close. The gate never audits: whether the corpus's
+stories and decisions are still supported by the codebase is
+`/verify-corpus`'s question, asked over the whole corpus on the
+owner's cadence — before a release, after several sprints, when
+drift is suspected — and never at a close.

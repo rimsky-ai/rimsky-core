@@ -1,9 +1,16 @@
 #!/bin/sh
-# ok-workspaces canonical src-tag script v8.0.0.
-# Plugin-owned: refreshed by /ok-workspaces:true-up; do not hand-edit.
+# ok-workspaces canonical src-tag script v14.1.0.
+# Suite-owned: refreshed on converge by the front door's administration (/ok); do not hand-edit.
 # Prints a content-addressed tag for the current working tree
 # (including uncommitted changes): src-<first 12 hex of a git
-# tree-object hash>. Same tree -> same tag, on every machine.
+# tree-object hash>. Same tree -> same tag, on every machine: the file
+# set is enumerated with the repo's own committed .gitignore files as
+# the only exclude source, so per-machine and per-clone ignore
+# configuration (core.excludesFile, $GIT_DIR/info/exclude) and
+# per-machine content filters (core.attributesFile, core.autocrlf)
+# cannot reach the hash.
+
+# @decision: content-addressed-src-tag
 
 set -eu
 root=$(git rev-parse --show-toplevel)
@@ -12,6 +19,11 @@ tmp=$(mktemp "${TMPDIR:-/tmp}/ok-workspaces-src-tag.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
 if [ -f "$index" ]; then cp "$index" "$tmp"; else rm -f "$tmp"; fi
 cd "$root"
-GIT_INDEX_FILE="$tmp" git add -A
+git ls-files -z --cached --others --exclude-per-directory=.gitignore |
+    GIT_INDEX_FILE="$tmp" git \
+        -c core.excludesFile=/dev/null \
+        -c core.attributesFile=/dev/null \
+        -c core.autocrlf=false \
+        update-index --add --remove -z --stdin
 tree=$(GIT_INDEX_FILE="$tmp" git write-tree)
 printf 'src-%.12s\n' "$tree"

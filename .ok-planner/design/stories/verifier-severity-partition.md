@@ -17,14 +17,3 @@ Severity partition in verifier nodes: the warning severity is non-blocking; the 
 
 Template authors distinguish observed-but-tolerated quality issues from blocking ones without re-architecting their pipeline; runtime honors the partition consistently.
 
-## Acceptance
-
-With a template whose verifier node carries one warning-severity failing check and one error-severity passing check against an in-bounds dataset, the dispatch reaches terminal success and the observability surface records the failed check as warning. A second dispatch against an out-of-bounds dataset that flips the error-severity check to failing reaches a terminal error and the commit is blocked.
-
-## Falsifier
-
-Warning blocks commit, OR error doesn't block commit, OR the severity field is declared but unused.
-
-## Proof
-
-Executable proof.

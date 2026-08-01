@@ -17,14 +17,3 @@ When a node-run's terminal includes a held=true claim, the run transitions `runn
 
 Without cascade-defer-on-held, downstream nodes can act on provisional data that the held work later abandons — and there is no retract mechanism, so the downstream's effects persist after the rollback. The "held" state exists precisely to express "this work is provisional pending commit"; firing cascade on the held terminal collapses that semantic. With cascade-defer-on-held, downstream sees committed-or-nothing: either the work committed and the downstream cascades, or the work was abandoned and the abandoned-signal cascades instead.
 
-## Acceptance
-
-An author writes a graph A → B where A holds a claim (returns terminal with held=true) and B subscribes to A's `terminal/success`. The test asserts B does NOT dispatch when A returns its held terminal. The test then triggers auto-terminal commit on A's held claim. B dispatches at this moment, with its bag reflecting A's committed state. Observable as: B's first executor invocation comes only after the auto-terminal commit, never before.
-
-## Falsifier
-
-B is dispatched at the moment A returns its held terminal (before auto-terminal commit) — observable by comparing B's first dispatch timestamp against the auto-terminal commit event timestamp in A's lineage.
-
-## Proof
-
-An executable scenario test where A holds a claim, B subscribes to A's terminal/success, the test asserts B stays gated (no dispatch) at A's held terminal moment, the auto-terminal commit handler fires, the test asserts B dispatches AFTER the commit handler completes.

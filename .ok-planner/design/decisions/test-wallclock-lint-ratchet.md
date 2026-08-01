@@ -37,9 +37,3 @@ in-flight work.
 - Loosen the rule to sanction generous documented timeouts —
   rejected: "why 30 and not 29?" has no answer; any finite bound is
   an unprovable load guess.
-
-## Proof
-
-A fitness test over the lint and its baseline: introducing a new
-wall-clock verdict site fails the gate. Falsifier: add a
-deadline-bounded failing poll to any test file — the gate turns red.

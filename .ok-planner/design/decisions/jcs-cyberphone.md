@@ -17,7 +17,3 @@ The only Go implementation compliant with the canonicalization spec — and its 
 
 - Track the library's releases like an ordinary dependency — rejected: a routine bump that changes output bytes silently orphans every persisted template id, and the id format carries no scheme marker that could tell the two generations apart.
 - Version-prefix the template id so a canonicalization-scheme change ships as a structurally new identity — deliberately not taken up: a breaking format change with permanent parsing cost, unjustified while nothing requires the pin to move. Reconsidered only if a concrete need to move the pin appears.
-
-## Proof
-
-A check asserts the module manifest's pinned canonicalization-library version. Falsifier: bumping the pinned version turns the check red.

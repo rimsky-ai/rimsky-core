@@ -17,14 +17,3 @@ Bundled multi-role entrypoint role-selection + migration discipline (see `concep
 
 Operators choose any deployment topology (all-in-one or three-role split) and the schema reaches the right state deterministically — no races, no silent skips, no manual one-shot orchestration when not wanted.
 
-## Acceptance
-
-Running the bundled multi-role entrypoint with no command starts all three role binaries and runs migrations once before any of them start; running it with a single role command (scheduler, supervisor, or control-api) starts only that role and runs migrations only when the role is control-api (so a three-container split migrates exactly once, not three racing runs); running it with an unknown command or multiple arguments exits non-zero with a clear error. The migrate-mode override has a force-on setting that forces migrate and a force-off setting that skips it.
-
-## Falsifier
-
-Migrations race when the three-container split fires three simultaneous entrypoint processes, OR a three-container split never migrates, OR an unknown command silently spawns the all-in-one path.
-
-## Proof
-
-Executable proof.

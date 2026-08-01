@@ -17,14 +17,3 @@ The ephemeral-run verb, given a template file and no configured endpoint, self-h
 
 The iterate-on-a-template loop needs zero infrastructure: no rimsky.yml, no docker, no compose stack, no service containers. One binary, one command, real bundled services.
 
-## Acceptance
-
-With no endpoint configured and no rimsky.yml present, running a template file that references bundled executors or claim producers drives the instance to terminal through the in-process bundled handlers and exits with a code reflecting the outcome. Operator env vars on the CLI process (credentials, allowlists, producer config) reach the bundled handlers unchanged.
-
-## Falsifier
-
-The run demands a rimsky.yml, a configured endpoint, or an external service process for a bundled kind; or a template referencing only bundled kinds fails to reach terminal without infrastructure beyond the CLI process itself.
-
-## Proof
-
-Executable proof — a test invokes the ephemeral-run verb with a template file, no configured endpoint, and no rimsky.yml, and asserts the run self-hosts, dispatches through an in-process bundled executor, reaches terminal, and exits zero.

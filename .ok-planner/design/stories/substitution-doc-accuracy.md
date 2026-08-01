@@ -17,14 +17,3 @@ Automated accuracy gate: the documented list of substitution source kinds matche
 
 Template authors don't silently miss supported substitution sources because the doc undercounts; the gate catches drift at build time, not at template-author confusion time.
 
-## Acceptance
-
-An automated accuracy check asserts the documented list of substitution source kinds matches the runtime resolver's dispatch set. The check fails when the documented list undercounts, omits a real kind, or lists a kind the resolver doesn't handle.
-
-## Falsifier
-
-The check is informational only (doesn't fail CI), OR text-matches the doc without inspecting the resolver's runtime dispatch set.
-
-## Proof
-
-Executable proof.

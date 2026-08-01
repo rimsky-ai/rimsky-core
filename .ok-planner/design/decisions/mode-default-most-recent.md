@@ -36,7 +36,3 @@ Default to `idempotent-settled` — rejected because it pays the JCS comparison 
 No default; require explicit per-template config — rejected because it adds friction to template authoring with no upside. The vast majority of templates want `most-recent`; requiring explicit declaration for the common case is paperwork.
 
 Per-upstream-source mode configuration (a node-wide default with per-sender or per-signal-type overrides, or a mode on the subscription declaration) — rejected: no workload in the catalog motivates it, and every keying axis adds a resolution-precedence question to the cascade walk when several upstreams feed one pending run. Splitting the node carries the mixed-cadence case.
-
-## Proof
-
-A test registers a template omitting the cascade mode and asserts the resolved mode is `most-recent`, then exhibits the coalescing bound: a second cascade round during one in-flight period deletes the prior cascade-driven stale run. Falsifier: changing the default resolution, or disabling the pending-delete at the pending→stale transition, turns the test red.

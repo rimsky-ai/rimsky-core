@@ -1,8 +1,8 @@
 # ok-planner Cheatsheet
 
-Materialized by ok-planner v8.0.0. Plugin-owned: overwritten
-wholesale by `/true-up`; project-specific rules belong in your own files under
-`.claude/rules/`.
+Materialized by ok-planner v14.1.0. Suite-owned: overwritten
+wholesale by the front door's administration (`/ok`); project-specific rules
+belong in your own files under `.claude/rules/`.
 
 The planner's estate lives in `.ok-planner/` (its embedded `CLAUDE.md` carries
 the full per-directory rules). The short version every session needs:
@@ -10,13 +10,21 @@ the full per-directory rules). The short version every session needs:
 ## The three content kinds
 
 - **`design/` — source of truth, read freely.** Concepts, stories, decisions:
-  the project's durable model, same weight as code. Changed only by applying
-  an approved sprint's corpus deltas — never ad hoc. Code cites it via
-  `@concept:` / `@story:` / `@decision:` annotations.
+  the project's durable model, same weight as code. What it *commits to*
+  changes only by applying an approved sprint's corpus deltas — never ad
+  hoc; how a commitment is *expressed* may be repaired in-cycle by the
+  certification fix loop and `/verify-issues` when the rules determine the
+  compliant text and no commitment changes, each repair surfaced for
+  after-the-fact veto. Code cites it via
+  `@concept:` / `@story:` / `@decision:` annotations — and rollout is
+  incremental: consult an artifact while working on a file and you leave
+  the annotation (kind plus slug, at the load-bearing site) before you
+  are done, so the next agent greps instead of re-deriving.
 - **`issues/` — the issue intake.** One markdown file per question awaiting
   the owner's judgment. Anyone may file one; `/verify-issues` makes each
   ruling-ready — closing it when the corpus already answers it, repairing
-  rules-determined code gaps, and rewriting the rest as a from-the-top
+  rules-determined intent-preserving gaps (code- or corpus-side), and
+  rewriting the rest as a from-the-top
   narrative ending in a marked generated/recommended ruling the owner
   accepts by silence or overrides. Only a `/plan-sprint` session closes
   one, by **promoting** it into that sprint (file stamped with the
@@ -39,10 +47,60 @@ re-discussion, then resolving with the owner the unruled open issues that
 bear on the work and promoting them into it. Executing the sprint is an
 ordinary working session (or an orchestrator's job — same contract either
 way): stage the work items yourself, apply the deltas to `design/`, build,
-`/prove` every touched story and decision, and finish with `/audit`, whose
-judgment findings land back in `issues/` (made ruling-ready by
-`/verify-issues`). The full execution shape is in `.ok-planner/CLAUDE.md`.
-On completion, artifacts move to their same-named folder under `history/`.
+run the project's own test suites, and finish with `/certify-work`
+(change-scoped; its review-fix loop fixes every finding it can — only
+architect-confirmed intent forks and the remainders escalated at its
+cycle cap land back in `issues/`, made ruling-ready by
+`/verify-issues`). Whether the corpus's claims still hold is a separate
+question, asked by `/verify-corpus` on the owner's cadence and never at
+a close. The full execution shape is in `.ok-planner/CLAUDE.md`.
+On completion, artifacts move to their same-named folder under `history/`
+(a sprint together with its `-completion` report — the durable record
+the executor keeps and the certify ceremony finishes and walks).
+
+## Audits
+
+Stories and decisions are verified by the **implementation-audit
+corpus** under `.ok-planner/audits/{stories,decisions}/` — one file per
+artifact, written only by the periodic `/verify-corpus` run, never by
+the implementing session and never hand-edited. An audit is a
+good-faith answer to one question — *is this artifact supported by the
+codebase at this commit?* — in one sentence to one paragraph, with a
+determination of `supported`, `unsupported`, or `unclear`.
+
+**An audit is a statement about a named commit, not a standing
+verdict.** Its frontmatter carries the `commit:` it describes, so
+asking whether it still holds is a git question — how far has `HEAD`
+moved — and not a computation. Nothing tracks staleness, nothing
+invalidates anything, and there are no citations, hashes, or line
+numbers in an audit. The reading list for the next run is the
+`@story:` / `@decision:` annotation grep, which is the one job
+annotations have.
+
+**Every universal comes back as a count and its population.** A
+quantifier is only worth asserting if someone enumerated the members,
+so an audit says "checked all 23 skills under the families plus the
+front door and `/release`" — refutable by a reader in seconds — rather
+than offering a vague assurance.
+
+**The run is two stages and no loop.** Auditors read every live story
+and decision in parallel batches; everything they could not call
+`supported` goes to one second-opinion judge, which confirms it (filing
+an issue), overturns it to `supported`, or calls it undecidable (filing
+an issue for the owner to settle). The judge is terminal, so nothing
+comes back for another pass, and nothing is ever fixed by the run
+itself — a real gap becomes an intake issue and a future sprint's work.
+`.ok-planner/bin/audit-check` enforces the one mechanical invariant:
+no `unsupported` or `unclear` determination stands without an `issue:`
+slug.
+
+**A concrete story does not speak to the qualitative.** Correct, clear,
+helpful, intuitive — these describe how well the product owes
+something, not what it owes, and a story reaching for them has usually
+not finished naming the need. Where a promise genuinely rests on a
+human discipline's judgment, the audit records it as a **referral** —
+the promise, what exists in form, and the discipline that owns it —
+and opines no further.
 
 ## Hard rules
 
@@ -52,4 +110,5 @@ On completion, artifacts move to their same-named folder under `history/`.
   never read the queue to find out what a sprint "really meant".
 - Open issues gate the work they bear on, not all work; the rest stay queued.
 - Design docs are current-state only: no changelogs, no roadmaps, no TODOs.
-- Nothing in the suite runs true-up from a hook; it is always a user action.
+- Suite upkeep is the front door's administration (`/ok`), never a
+  ceremony's job and never run from a hook; it is always a user action.

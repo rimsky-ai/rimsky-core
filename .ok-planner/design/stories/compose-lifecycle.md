@@ -17,14 +17,3 @@ Operator-driven compose lifecycle: up, plan, status, down against a compose mani
 
 Operators drive multi-resource changes as one declarative unit, plan before applying, and tear down cleanly without touching unrelated resources.
 
-## Acceptance
-
-An operator writes a compose manifest declaring multiple templates, tags, and instances; the compose-up verb reconciles them into a running rimsky (each resource visible via the standard list surfaces, each carrying a per-project-prefixed tag bound to the manifest's project); the compose-plan verb reports the diff without applying; the compose-status verb reports current state vs. manifest; the compose-down verb removes the project's resources cleanly without touching unrelated ones. No member operation invokes a container-orchestration substrate and no member operation is stubbed.
-
-## Falsifier
-
-Any compose verb returns without performing its reconcile, OR the compose-down verb touches resources outside the project namespace, OR a compose verb shells out to a container-orchestration substrate.
-
-## Proof
-
-Executable proof.

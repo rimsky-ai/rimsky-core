@@ -17,14 +17,3 @@ Reliable message send into a live instance's bus, with mandatory idempotency, pe
 
 Downstream nodes consume the bus reliably without duplicate processing on retry; cross-sender isolation guarantees one party's emits never replay against another's.
 
-## Acceptance
-
-A sender (operator or publisher) sends a message through the control-api's instance-message-send surface (or its MCP equivalent) carrying a dedup key; the message is persisted and visible in the instance's message history. A second emission with the same key returns the original message identifier and produces no second envelope. A request with no dedup key is refused. Senders with structurally distinct identities (operator vs. publisher; one operator key vs. another) do not replay each other when they happen to choose the same dedup key.
-
-## Falsifier
-
-A second emission with the same key produces a second envelope, OR the no-key request is silently accepted, OR an undeclared `type` request lands in the ledger, OR a publisher named the same as an operator-sender replays the operator's emit.
-
-## Proof
-
-Executable proof.

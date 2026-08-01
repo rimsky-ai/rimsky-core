@@ -17,14 +17,3 @@ Public typed-data mix-in protocol on a claim-producer (see `concept:data-process
 
 Claim-producer authors support typed-data version lifecycle with partition-aware staging — the same lifecycle a non-typed producer offers, plus version history surfaces.
 
-## Acceptance
-
-A claim-producer advertising the typed-data mix-in is referenced from a template's fan-out node; rimsky calls begin-candidate per sub-partition; the executor writes typed data via the returned candidate handle; on leaf success, rimsky calls commit-candidate and the candidate's metadata surfaces in the parent writeback; on leaf failure, rimsky calls abandon-candidate and the candidate is garbage-collected. The list-versions verb exposes finalized versions; the list-partitions verb exposes partitions per version; the get-version-schema verb returns schema bytes.
-
-## Falsifier
-
-Begin-candidate is never called on a fan-out partition, OR commit-candidate is called but the producer's effect is canned, OR abandon-candidate is skipped on leaf failure, OR a declared version doesn't appear in the list-versions surface.
-
-## Proof
-
-Example.

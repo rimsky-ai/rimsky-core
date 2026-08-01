@@ -17,14 +17,3 @@ The validation-registry dial walks all peer kinds (stores, executors, publishers
 
 The validation mix-in is uniform across the trust perimeter: a service author chooses the peer kind that fits the service, not the one peer kind whose declared roles happen to be honored.
 
-## Acceptance
-
-An executor or publisher peer advertising the validation protocol with supported roles is used for validation in those roles, identically to a claim-producer peer advertising the same.
-
-## Falsifier
-
-An executor or publisher advertising the mix-in whose supported-roles list is treated as empty — dialed but never used.
-
-## Proof
-
-Executable proof — a conformance-style test registers each peer kind advertising the mix-in and asserts the handshake-learned roles are identical across kinds.

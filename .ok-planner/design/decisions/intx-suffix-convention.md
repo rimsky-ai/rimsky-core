@@ -32,9 +32,3 @@ pattern and gets copied by the next contributor.
   call surfaces buys nothing.
 - Tolerate the two surviving public/private pairs — rejected: same
   job, second dialect, and a live copy source for the retired idiom.
-
-## Proof
-
-A fitness check fails when a persistence method `X` coexists with a
-same-named `XInTx` sibling in the same package. Falsifier:
-reintroduce a public/private pair — the check turns red.

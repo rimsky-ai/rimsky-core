@@ -17,14 +17,3 @@ Bundled lineage-receiver subscriber: polls the `rimsky_lineage` table (Postgres-
 
 Operators see rimsky's run DAG and data lineage in their governance platform without writing a custom subscriber.
 
-## Acceptance
-
-A running lineage-receiver subscriber configured to post to a real external lineage receiver, pointed at a Postgres-backed rimsky deployment: when a leaf-run record is written (leaf-run terminal), the subscriber emits a job-run event; claim-terminal records translate into lineage events; the receiver actually receives well-formed lineage-event JSON in the external-receiver wire format.
-
-## Falsifier
-
-Subscriber posts to receiver but with malformed lineage-event JSON, OR a `leaf_run` or `claim_terminal` record the subscriber should emit on is skipped, OR the emitted event's IDs don't correspond to the rimsky-side IDs, OR the subscriber implements a `LifecycleSubscriber` RPC it does not actually serve.
-
-## Proof
-
-Executable proof.

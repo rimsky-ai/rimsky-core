@@ -17,14 +17,3 @@ Anonymous-mode-compatible host-agent routing that stays isolated across concurre
 
 Operators dev-loop with host-agent late-binding without minting credentials first; multiple developers on a shared anonymous deployment can each run their own instances against their own agents without displacement or cross-talk.
 
-## Acceptance
-
-With rimsky stack in anonymous mode, the host-agent-proxy deployed (see `concept:host-agent-proxy`), and one or more host-agents connected (see `concept:host-agent`): an anonymous-mode instance dispatches through the proxy and reaches only its target agent — the late-bound child runs and returns the real dispatch outcome. When two anonymous agents are connected concurrently, dispatches for one's instances never reach the other; each agent's dispatch stream is isolated.
-
-## Falsifier
-
-Dispatch terminates with an agent-not-connected error despite the stamped target agent being connected; OR the dispatch reaches a different agent than the stamped target (routing mis-direct); OR two concurrent anonymous agents interfere with each other (a second anonymous agent's registration silently displaces the first, OR a dispatch aimed at one anonymous agent is delivered to another).
-
-## Proof
-
-Executable proof — a deterministic scenario test starts an anonymous-mode rimsky stack, connects two host-agents concurrently as anonymous, asserts each is admitted with a distinct routing identity; creates two anonymous-mode instances each targeting a different one of those agents; dispatches from each instance and asserts each reaches its own target agent (never the other) and returns the real dispatch outcome; disconnects and reconnects one agent and asserts previously-created instances targeting it continue to reach it after the reconnect.

@@ -5,11 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-// Replaced with the plugin version when true-up vendors this file into a
-// project at .ok-plumbline/bin/plumbline. The placeholder below is what the
-// un-vendored plugin-root copy reports — seeing it means you are running the
-// plugin's own copy rather than a project's pinned one.
-const VERSION = '8.1.0';
+const VERSION = '14.1.0';
 
 const DOCSTRING_OPT_IN_MARKER = '@plumbline:allow-docstrings';
 
@@ -37,7 +33,28 @@ const MACHINE_DIRECTIVE_PATTERNS = {
   dualLicensedLine:           /^\s*Dual-licensed\b/i,
   licensedUnderLine:          /^\s*Licensed under\b/i,
   plumblineDirective:         /^\s*@plumbline:/,
+  materializedStamp:          /^\s*(?:Materialized|Vendored) by\s+\S+\s+v/,
 };
+
+const LICENSE_HEADER_PATTERNS = [
+  MACHINE_DIRECTIVE_PATTERNS.spdxLicenseLine,
+  MACHINE_DIRECTIVE_PATTERNS.copyrightLine,
+  MACHINE_DIRECTIVE_PATTERNS.copyrightBanner,
+  MACHINE_DIRECTIVE_PATTERNS.dualLicensedLine,
+  MACHINE_DIRECTIVE_PATTERNS.licensedUnderLine,
+  MACHINE_DIRECTIVE_PATTERNS.generatedFileHeader,
+];
+
+const LICENSE_CONTINUATION_PATTERNS = [
+  /^\s*All rights reserved\b/i,
+  /^\s*(?:Permission is hereby granted|Redistribution and use)\b/i,
+  /^\s*(?:THE SOFTWARE IS PROVIDED|IN NO EVENT SHALL|WITHOUT WARRANTIES|DISCLAIMED)\b/i,
+  /^\s*(?:you may not use this file|You may obtain a copy|Unless required by applicable law)\b/i,
+  /^\s*(?:distributed under the License|limitations under the License|See the License for)\b/i,
+  /^\s*(?:This (?:program|library|file) is (?:free software|part of)|GNU (?:General|Lesser))\b/i,
+  /^\s*(?:DO NOT EDIT|Source: )/i,
+  /^\s*https?:\/\//,
+];
 
 const COMMENT_GRAMMARS = {
   '.go':   { line: '//', block: ['/*', '*/'], strings: ['"', "'", '`'] },
@@ -58,12 +75,57 @@ const COMMENT_GRAMMARS = {
   '.kt':   { line: '//', block: ['/*', '*/'], strings: ['"'] },
   '.sh':   { line: '#',  block: null,         strings: ['"', "'"], shell: true },
   '.bash': { line: '#',  block: null,         strings: ['"', "'"], shell: true },
+  '.zsh':  { line: '#',  block: null,         strings: ['"', "'"], shell: true },
+  '.ksh':  { line: '#',  block: null,         strings: ['"', "'"], shell: true },
   '.rb':   { line: '#',  block: null,         strings: ['"', "'"] },
+  '.pl':   { line: '#',  block: null,         strings: ['"', "'"] },
+  '.pm':   { line: '#',  block: null,         strings: ['"', "'"] },
+  '.php':  { line: '//', block: ['/*', '*/'], strings: ['"', "'"] },
+  '.cs':   { line: '//', block: ['/*', '*/'], strings: ['"'] },
+  '.swift':{ line: '//', block: ['/*', '*/'], strings: ['"'] },
+  '.scala':{ line: '//', block: ['/*', '*/'], strings: ['"'] },
 };
+
+// @story: edit-time-lint-enforcement
+const SHEBANG_GRAMMARS = [
+  [/\b(?:bash|sh|zsh|ksh|dash)\b/, COMMENT_GRAMMARS['.sh']],
+  [/\bpython[0-9.]*\b/,            COMMENT_GRAMMARS['.py']],
+  [/\bnode\b/,                     COMMENT_GRAMMARS['.js']],
+  [/\bruby\b/,                     COMMENT_GRAMMARS['.rb']],
+  [/\bperl\b/,                     COMMENT_GRAMMARS['.pl']],
+];
+
+function shebangGrammar(filePath) {
+  let head;
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(256);
+    const n = fs.readSync(fd, buf, 0, 256, 0);
+    fs.closeSync(fd);
+    head = buf.slice(0, n).toString('utf8').split('\n')[0];
+  } catch (e) {
+    return null;
+  }
+  if (!head.startsWith('#!')) return null;
+  for (const [re, grammar] of SHEBANG_GRAMMARS) {
+    if (re.test(head)) return grammar;
+  }
+  return null;
+}
+
+function grammarFor(filePath) {
+  const ext = path.extname(filePath);
+  if (COMMENT_GRAMMARS[ext]) return COMMENT_GRAMMARS[ext];
+  if (ext !== '') return null;
+  return shebangGrammar(filePath);
+}
 
 const DEFAULT_IGNORE_PATTERNS = [
   'node_modules/',
   'vendor/',
+  '.ok-plumbline/',
+  '.ok-planner/',
+  '.ok-workspaces/',
   'dist/',
   'build/',
   'out/',
@@ -76,21 +138,21 @@ const DEFAULT_IGNORE_PATTERNS = [
 
 function validateCitation(entry, idx) {
   if (!entry || typeof entry !== 'object') {
-    console.error(`error: .plumbline.json: citations[${idx}] must be an object`);
+    console.error(`error: .ok-plumbline/config.json: citations[${idx}] must be an object`);
     process.exit(1);
   }
   if (typeof entry.tag !== 'string' || !entry.tag) {
-    console.error(`error: .plumbline.json: citations[${idx}].tag must be a non-empty string`);
+    console.error(`error: .ok-plumbline/config.json: citations[${idx}].tag must be a non-empty string`);
     process.exit(1);
   }
   const hasFile = typeof entry.file_template === 'string' && entry.file_template.length > 0;
   const hasGlob = typeof entry.appears_in_glob === 'string' && entry.appears_in_glob.length > 0;
   if (hasFile === hasGlob) {
-    console.error(`error: .plumbline.json: citations[${idx}] (tag "${entry.tag}") must set exactly one of file_template or appears_in_glob`);
+    console.error(`error: .ok-plumbline/config.json: citations[${idx}] (tag "${entry.tag}") must set exactly one of file_template or appears_in_glob`);
     process.exit(1);
   }
   if (hasFile && !entry.file_template.includes('{slug}')) {
-    console.error(`error: .plumbline.json: citations[${idx}].file_template must contain the literal {slug}`);
+    console.error(`error: .ok-plumbline/config.json: citations[${idx}].file_template must contain the literal {slug}`);
     process.exit(1);
   }
 }
@@ -127,12 +189,7 @@ function loadConfig(repoRoot) {
       if (typeof p === 'string' && !ignore.includes(p)) ignore.push(p);
     }
   }
-  const checks = {
-    comment_hygiene: true,
-    citation_resolution: true,
-    ...(userConfig.checks || {}),
-  };
-  return { citations, ignore, checks };
+  return { citations, ignore, retiredChecksKey: 'checks' in userConfig };
 }
 
 function findRepoRoot(start) {
@@ -164,7 +221,7 @@ function* walkFiles(target, repoRoot, ignorePatterns) {
   const stat = fs.statSync(target);
   if (stat.isFile()) {
     if (shouldIgnore(target, repoRoot, ignorePatterns)) return;
-    if (COMMENT_GRAMMARS[path.extname(target)]) yield target;
+    if (grammarFor(target)) yield target;
     return;
   }
   const entries = fs.readdirSync(target, { withFileTypes: true });
@@ -173,7 +230,7 @@ function* walkFiles(target, repoRoot, ignorePatterns) {
     if (shouldIgnore(full, repoRoot, ignorePatterns)) continue;
     if (entry.isDirectory()) {
       yield* walkFiles(full, repoRoot, ignorePatterns);
-    } else if (entry.isFile() && COMMENT_GRAMMARS[path.extname(entry.name)]) {
+    } else if (entry.isFile() && grammarFor(full)) {
       yield full;
     }
   }
@@ -399,6 +456,7 @@ function extractRawComments(content, grammar) {
   return comments;
 }
 
+// @decision: comments-forbidden-by-default
 function mergeConsecutiveLineComments(rawComments) {
   const merged = [];
   for (const c of rawComments) {
@@ -434,6 +492,34 @@ function isMachineDirective(firstLine) {
     if (re.test(firstLine)) return true;
   }
   return false;
+}
+
+function significantLines(comment) {
+  const out = [];
+  const lines = comment.text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const text = stripBlockCommentPrefix(lines[i]);
+    if (text.length > 0) out.push({ line: comment.line + i, text });
+  }
+  return out;
+}
+
+function opensLicenseHeader(line) {
+  return LICENSE_HEADER_PATTERNS.some((re) => re.test(line));
+}
+
+// @decision: comments-forbidden-by-default
+function machineDirectiveViolation(comment) {
+  const lines = significantLines(comment);
+  if (lines.length === 0) return null;
+  if (!isMachineDirective(lines[0].text)) return lines[0];
+  const licenseHeader = opensLicenseHeader(lines[0].text);
+  for (const l of lines.slice(1)) {
+    if (isMachineDirective(l.text)) continue;
+    if (licenseHeader && LICENSE_CONTINUATION_PATTERNS.some((re) => re.test(l.text))) continue;
+    return l;
+  }
+  return null;
 }
 
 function hasDocstringOptIn(content) {
@@ -544,6 +630,7 @@ function isGoDocStyle(comment, allLines, grammar) {
   return decls.some((re) => re.test(nextLine));
 }
 
+// @decision: comments-forbidden-by-default
 function checkCommentHygiene(filePath, content, grammar, config) {
   const violations = [];
   const allLines = content.split('\n');
@@ -551,20 +638,21 @@ function checkCommentHygiene(filePath, content, grammar, config) {
   for (const c of extractComments(content, grammar)) {
     const first = firstSignificantLine(c.text);
     if (!first) continue;
-    if (isMachineDirective(first)) continue;
+    const offending = machineDirectiveViolation(c);
+    if (offending === null) continue;
     if (isPureCitationBlock(c, config.citations)) continue;
     if (docstringsAllowed) {
       if (isJsDocStyle(c, allLines, grammar)) continue;
       if (isGoDocStyle(c, allLines, grammar)) continue;
     }
-    const firstIsCitationTag = matchingCitation(first, config.citations) !== null;
+    const firstIsCitationTag = matchingCitation(offending.text, config.citations) !== null;
     const message = firstIsCitationTag
       ? 'citation comment must be slug-only — each line is `@<tag>: <slug>` and nothing else (no em-dash tail, no continuation prose, no trailing punctuation; the design doc holds the explanation)'
       : 'comment is not permitted (not a machine directive, not a configured citation, no docstring opt-in)';
     violations.push({
       file: filePath,
-      line: c.line,
-      code: 'comment-hygiene',
+      line: offending.line,
+      code: CODE_COMMENT_HYGIENE,
       message,
     });
   }
@@ -676,7 +764,7 @@ function checkCitationResolution(repoRoot, files, citations, ignorePatterns) {
         violations.push({
           file: cit.file,
           line: cit.line,
-          code: 'citation-unresolved',
+          code: CODE_CITATION_UNRESOLVED,
           message: `${cit.tag} "${cit.slug}" does not resolve to ${path.relative(repoRoot, target)}`,
         });
       }
@@ -690,7 +778,7 @@ function checkCitationResolution(repoRoot, files, citations, ignorePatterns) {
         violations.push({
           file: cit.file,
           line: cit.line,
-          code: 'citation-unresolved',
+          code: CODE_CITATION_UNRESOLVED,
           message: `${cit.tag} "${cit.slug}" not found in any file matching ${cit.citation.appears_in_glob}`,
         });
       }
@@ -703,37 +791,11 @@ function formatViolation(v) {
   return `${v.file}:${v.line}: plumbline/${v.code}: ${v.message}`;
 }
 
-function slugCmd(prose) {
-  if (!prose || !prose.trim()) {
-    console.error('usage: plumbline slug "<prose description>"');
-    process.exit(1);
-  }
-  console.log(generateSlug(prose));
-  process.exit(0);
-}
+const CODE_COMMENT_HYGIENE = 'comment-hygiene';
+const CODE_CITATION_UNRESOLVED = 'citation-unresolved';
 
-const SLUG_STOP_WORDS = new Set([
-  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'has', 'have', 'had', 'do', 'does', 'did', 'will', 'would', 'should',
-  'may', 'might', 'must', 'shall', 'can', 'could', 'of', 'in', 'on',
-  'at', 'to', 'for', 'with', 'by', 'from', 'and', 'or', 'but', 'not',
-  'no', 'as', 'that', 'this', 'these', 'those', 'it', 'its', 'they',
-  'them', 'their', 'when', 'where', 'how', 'why', 'what', 'which',
-  'who', 'whom', 'so', 'if', 'while', 'until', 'than', 'then', 'into',
-  'about', 'over', 'under', 'between', 'among', 'before', 'after',
-]);
-
-function generateSlug(prose) {
-  const cleaned = prose
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const words = cleaned.split(' ').filter((w) => w.length > 0 && !SLUG_STOP_WORDS.has(w));
-  const significant = words.slice(0, 5);
-  if (significant.length === 0) return 'unnamed';
-  return significant.join('-').replace(/-+/g, '-');
-}
+// @story: explain-lint-rules
+const CHECK_CODES = [CODE_COMMENT_HYGIENE, CODE_CITATION_UNRESOLVED];
 
 const EXPLAIN_TOPICS = {
   'comment-hygiene': `comment-hygiene — comments are not permitted in source files except:
@@ -744,7 +806,7 @@ const EXPLAIN_TOPICS = {
      nolint), build
      tags (go:), generated-file markers, C-pragmas, shebangs.
 
-  2. Project-configured citation tags from .plumbline.json's "citations" array,
+  2. Project-configured citation tags from .ok-plumbline/config.json's "citations" array,
      used in slug-only form. Each entry declares { tag, file_template } or
      { tag, appears_in_glob }. A citation comment block consists of one or more
      adjacent lines, EACH of the form "@<tag>: <slug>" with nothing else after
@@ -762,10 +824,44 @@ const EXPLAIN_TOPICS = {
      are exempt. Without the marker, they are not.
 
   Everything else is residue. Convert the load-bearing information into a
-  name, a type, an assertion, a test, or delete the comment.`,
+  name, a type, an assertion, a test, or delete the comment.
+
+  Worked example. In src/rates.ts:
+
+    // convert the rate to basis points before comparing
+    export function compare(a: number, b: number) {
+      return a * 10000 > b * 10000;
+    }
+
+  the lint reports:
+
+    src/rates.ts:1: plumbline/comment-hygiene: comment is not permitted (not a machine directive, not a configured citation, no docstring opt-in)
+
+  Four fixes satisfy it — three of them the structural exemptions above.
+  Put the information in the name and delete the comment:
+
+    export function compareBasisPoints(a: number, b: number) {
+
+  or make the comment a machine directive (exemption 1), exempt as
+  tooling syntax:
+
+    // SPDX-License-Identifier: Apache-2.0
+
+  or make it a declared citation — slug-only, and the slug must resolve
+  (exemption 2), given a "citations" entry for the tag:
+
+    // @my-concept: basis-points
+
+  or, in a file that documents a public API, add the opt-in marker and
+  write the prose as a JSDoc block adjacent to the declaration
+  (exemption 3):
+
+    // ${DOCSTRING_OPT_IN_MARKER}
+    /** Compares two rates, in basis points. */
+    export function compare(a: number, b: number) {`,
 
   'citation-unresolved': `citation-unresolved — a comment carries a citation tag declared in
-.plumbline.json's "citations" but its slug does not resolve.
+.ok-plumbline/config.json's "citations" but its slug does not resolve.
 
   For file_template citations: the substituted path does not exist on disk.
   Fix by correcting the slug, creating the artifact at the target path, or
@@ -773,9 +869,55 @@ const EXPLAIN_TOPICS = {
 
   For appears_in_glob citations: the slug is not present (word-boundary
   match) in any file matching the glob. Fix by adding a reference to the
-  slug in one of the matching files, or correcting the slug.`,
+  slug in one of the matching files, or correcting the slug.
 
-  citations: `citations — the .plumbline.json mechanism for declaring
+  Worked example — file_template. With this in .ok-plumbline/config.json:
+
+    { "tag": "@my-concept:", "file_template": "design/concepts/{slug}.md" }
+
+  and this in src/scheduler.py:
+
+    # @my-concept: casacde
+
+  the substituted path design/concepts/casacde.md does not exist, so the
+  lint reports:
+
+    src/scheduler.py:1: plumbline/citation-unresolved: @my-concept: "casacde" does not resolve to design/concepts/casacde.md
+
+  Three fixes satisfy it. Correct the slug to one that resolves:
+
+    # @my-concept: cascade
+
+  create the artifact the slug names at design/concepts/casacde.md, or
+  delete the citation line —
+  which drops the link rather than repairing it, so prefer the first two
+  whenever the code really is governed by the artifact.
+
+  Worked example — appears_in_glob. With this in .ok-plumbline/config.json:
+
+    { "tag": "@my-invariant:", "appears_in_glob": "**/*_test.py" }
+
+  and this in src/ledger.py:
+
+    # @my-invariant: no-negative-balances
+
+  the lint reports:
+
+    src/ledger.py:1: plumbline/citation-unresolved: @my-invariant: "no-negative-balances" not found in any file matching **/*_test.py
+
+  Satisfy it by making the slug itself appear in a file the glob matches.
+  The match is on the slug as written, so an identifier derived from it
+  does not count — def test_no_negative_balances() has underscores where
+  the slug has hyphens and satisfies nothing. Carry the slug verbatim, in
+  tests/ledger_test.py:
+
+    # @my-invariant: no-negative-balances
+    def test_ledger_never_goes_negative():
+        ...
+
+  or correct the slug at the code site to one already present.`,
+
+  citations: `citations — the .ok-plumbline/config.json mechanism for declaring
 project-specific structured-tag exemptions.
 
   Each entry takes the shape:
@@ -826,10 +968,24 @@ that enables JSDoc/GoDoc-style documentation comments in the file.
 
 function explainCmd(topic) {
   if (!topic) {
+    const missing = CHECK_CODES.filter((c) => !EXPLAIN_TOPICS[c]);
     console.log('usage: plumbline explain <topic>');
     console.log('');
-    console.log('available topics:');
-    for (const t of Object.keys(EXPLAIN_TOPICS)) console.log(`  ${t}`);
+    console.log('check codes:');
+    for (const c of CHECK_CODES) {
+      console.log(`  ${c}${EXPLAIN_TOPICS[c] ? '' : '   (NO DEFINITION)'}`);
+    }
+    const other = Object.keys(EXPLAIN_TOPICS).filter((t) => !CHECK_CODES.includes(t));
+    if (other.length > 0) {
+      console.log('');
+      console.log('configuration topics:');
+      for (const t of other) console.log(`  ${t}`);
+    }
+    if (missing.length > 0) {
+      console.error('');
+      console.error(`error: ${missing.length} check code(s) the lint can emit have no definition: ${missing.join(', ')}`);
+      process.exit(1);
+    }
     process.exit(0);
   }
   const entry = EXPLAIN_TOPICS[topic];
@@ -839,63 +995,6 @@ function explainCmd(topic) {
     process.exit(1);
   }
   console.log(entry);
-  process.exit(0);
-}
-
-const CI_TEMPLATES = {
-  github: `name: plumbline
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-jobs:
-  plumbline:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: lint
-        run: node .ok-plumbline/bin/plumbline .
-      - name: budget check
-        if: hashFiles('.plumbline-budget.json') != ''
-        run: node .ok-plumbline/bin/plumbline budget check
-`,
-  gitlab: `plumbline:
-  image: node:20
-  stage: test
-  script:
-    - node .ok-plumbline/bin/plumbline .
-    - test -f .plumbline-budget.json && node .ok-plumbline/bin/plumbline budget check || true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-`,
-  'pre-commit': `repos:
-  - repo: local
-    hooks:
-      - id: plumbline
-        name: plumbline
-        entry: node .ok-plumbline/bin/plumbline
-        language: system
-        pass_filenames: true
-        types: [go, javascript, ts, python, rust]
-`,
-};
-
-function ciCmd(platform) {
-  if (!platform || !CI_TEMPLATES[platform]) {
-    console.log('usage: plumbline ci <platform>');
-    console.log('');
-    console.log('available platforms:');
-    for (const p of Object.keys(CI_TEMPLATES)) console.log(`  ${p}`);
-    process.exit(platform ? 1 : 0);
-  }
-  console.log(CI_TEMPLATES[platform]);
   process.exit(0);
 }
 
@@ -913,18 +1012,46 @@ function budgetCmd(action, target) {
   const count = violations.length;
   const byCheck = {};
   for (const v of violations) byCheck[v.code] = (byCheck[v.code] || 0) + 1;
-  const budgetPath = path.join(repoRoot, '.plumbline-budget.json');
+  const canonicalBudget = path.join(repoRoot, '.ok-plumbline', 'budget.json');
+  const preMigrationBudget = path.join(repoRoot, '.plumbline-budget.json');
+  const budgetPath = fs.existsSync(canonicalBudget) ? canonicalBudget
+    : fs.existsSync(preMigrationBudget) ? preMigrationBudget
+    : canonicalBudget;
 
   if (action === 'save') {
+    // @decision: ratchet-over-soft-start
+    if (fs.existsSync(budgetPath)) {
+      let existing = null;
+      try {
+        existing = JSON.parse(fs.readFileSync(budgetPath, 'utf8'));
+      } catch (e) {
+        console.error(`error: unreadable baseline at ${path.relative(repoRoot, budgetPath)}: ${e.message}`);
+        process.exit(1);
+      }
+      const existingCount = existing.count || 0;
+      if (count > existingCount) {
+        console.error(
+          `plumbline budget: refusing to raise the baseline — ${count} violation(s) exceeds the recorded ` +
+          `${existingCount} (+${count - existingCount}). The ratchet only moves down: fix the new violations, ` +
+          `or take the deliberate, reviewable act of editing ${path.relative(repoRoot, budgetPath)} yourself.`
+        );
+        for (const [code, n] of Object.entries(byCheck)) {
+          const base = (existing.by_check && existing.by_check[code]) || 0;
+          if (n > base) console.error(`  ${code}: ${n} (baseline ${base}, +${n - base})`);
+        }
+        process.exit(2);
+      }
+    }
     const payload = { count, by_check: byCheck };
-    fs.writeFileSync(budgetPath, JSON.stringify(payload, null, 2) + '\n');
-    console.log(`saved baseline: ${count} violation(s) at ${path.relative(repoRoot, budgetPath) || '.plumbline-budget.json'}`);
+    fs.mkdirSync(path.dirname(canonicalBudget), { recursive: true });
+    fs.writeFileSync(canonicalBudget, JSON.stringify(payload, null, 2) + '\n');
+    console.log(`saved baseline: ${count} violation(s) at ${path.relative(repoRoot, canonicalBudget)}`);
     for (const [code, n] of Object.entries(byCheck)) console.log(`  ${code}: ${n}`);
     process.exit(0);
   }
 
   if (!fs.existsSync(budgetPath)) {
-    console.error(`error: no baseline at ${path.relative(repoRoot, budgetPath) || '.plumbline-budget.json'} — run 'plumbline budget save' first`);
+    console.error(`error: no baseline at ${path.relative(repoRoot, canonicalBudget)} — run 'plumbline budget save' first`);
     process.exit(1);
   }
   const baseline = JSON.parse(fs.readFileSync(budgetPath, 'utf8'));
@@ -1129,6 +1256,7 @@ function starterCmd(target) {
   }
 
   const citations = [];
+  // @decision: code-cites-design
   if (hasOkPlanner) {
     citations.push({ tag: '@concept:',  file_template: '.ok-planner/design/concepts/{slug}.md' });
     citations.push({ tag: '@story:',    file_template: '.ok-planner/design/stories/{slug}.md' });
@@ -1138,10 +1266,6 @@ function starterCmd(target) {
   const cfg = {
     citations,
     ignore: Array.from(projectIgnores),
-    checks: {
-      comment_hygiene: true,
-      citation_resolution: true,
-    },
   };
   console.log(JSON.stringify(cfg, null, 2));
   console.log('');
@@ -1163,6 +1287,159 @@ function existsSomewhere(root, suffix) {
   }
 }
 
+// @decision: vendored-skills
+const VENDORED_SKILLS = {
+  audit: 'ok-plumbline-audit',
+  budget: 'budget',
+  explain: 'explain',
+  patterns: 'patterns',
+  port: 'port',
+  starter: 'starter',
+  suggest: 'suggest',
+  version: 'version',
+};
+
+const RETIRED_VENDORED_SKILLS = ['slug', 'ci'];
+
+function pluginVersion() {
+  try {
+    const manifest = path.resolve(__dirname, '..', '..', '..', '.claude-plugin', 'plugin.json');
+    return JSON.parse(fs.readFileSync(manifest, 'utf8')).version;
+  } catch (e) {
+    return VERSION;
+  }
+}
+
+function renderVendoredSkill(text, srcName, version) {
+  if (srcName === 'audit') {
+    text = text.replace('name: audit', 'name: ok-plumbline-audit');
+  }
+  text = text.replace(/ok-plumbline:audit/g, 'ok-plumbline-audit');
+  text = text.replace(/ok-plumbline:(budget|explain|patterns|port|starter|suggest|version)/g, '$1');
+  return (
+    text +
+    `\n<!-- Materialized by ok-plumbline v${version} — suite-owned; overwritten on converge; do not hand-edit. -->\n`
+  );
+}
+
+function expectedVendoredSkills(repoRoot) {
+  const skillsSrc = path.resolve(__dirname, '..', 'skills');
+  if (!fs.existsSync(skillsSrc)) return null;
+  const version = pluginVersion();
+  const out = {};
+  for (const [src, name] of Object.entries(VENDORED_SKILLS)) {
+    const body = fs.readFileSync(path.join(skillsSrc, src, 'SKILL.md'), 'utf8');
+    out[path.join(repoRoot, '.claude', 'skills', name, 'SKILL.md')] = renderVendoredSkill(body, src, version);
+  }
+  return out;
+}
+
+const HOOK_ENTRY = {
+  matcher: 'Edit|Write',
+  hooks: [
+    {
+      type: 'command',
+      command: 'node "$CLAUDE_PROJECT_DIR/.ok-plumbline/hooks/post-edit.js"',
+      timeout: 30,
+    },
+  ],
+};
+const HOOK_MARKER = '.ok-plumbline/hooks/post-edit.js';
+
+// @concept: integration-contract
+// @concept: materialized-artifact
+// @decision: per-project-pinning
+const MODULE_MARKER = '{ "type": "commonjs" }\n';
+const MODULE_MARKER_REL = '.ok-plumbline/package.json';
+
+function findHookEntry(settings) {
+  for (const e of ((settings.hooks || {}).PostToolUse || [])) {
+    if ((e.hooks || []).some((h) => (h.command || '').includes(HOOK_MARKER))) return e;
+  }
+  return null;
+}
+
+function wiringFindings(repoRoot) {
+  const settingsPath = path.join(repoRoot, '.claude', 'settings.json');
+  if (!fs.existsSync(settingsPath)) {
+    return ['wiring: no .claude/settings.json — the ok-plumbline PostToolUse entry is not wired'];
+  }
+  let settings;
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  } catch (e) {
+    return ['wiring: .claude/settings.json unparseable — cannot check hook wiring'];
+  }
+  const entry = findHookEntry(settings);
+  if (!entry) return ['wiring: .claude/settings.json lacks the ok-plumbline PostToolUse entry'];
+  if (entry.matcher !== HOOK_ENTRY.matcher) {
+    return [`wiring: the ok-plumbline PostToolUse entry's matcher is ${JSON.stringify(entry.matcher)} — must be ${JSON.stringify(HOOK_ENTRY.matcher)}`];
+  }
+  return [];
+}
+
+function printWiringBlock() {
+  console.log('WIRING NEEDED (ok-plumbline): .claude/settings.json needs the PostToolUse entry below.');
+  console.log(JSON.stringify({ hooks: { PostToolUse: [HOOK_ENTRY] } }, null, 2));
+  console.log(`On the owner's consent run: node "${path.resolve(__filename)}" wire-hooks .`);
+}
+
+// @concept: materialized-artifact
+function moduleMarkerCmd() {
+  process.stdout.write(MODULE_MARKER);
+  process.exit(0);
+}
+
+function vendorSkillsCmd(target) {
+  const repoRoot = findRepoRoot(target || process.cwd());
+  const expected = expectedVendoredSkills(repoRoot);
+  if (expected === null) {
+    console.error('error: vendor-skills must run from the installed plugin copy (skills/ not found beside this binary)');
+    process.exit(1);
+  }
+  for (const [dest, body] of Object.entries(expected)) {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, body);
+  }
+  for (const name of RETIRED_VENDORED_SKILLS) {
+    const dir = path.join(repoRoot, '.claude', 'skills', name);
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(`retired vendored payload removed: .claude/skills/${name}/`);
+    }
+  }
+  console.log(`vendored: ${Object.keys(expected).length} skill files under .claude/skills/ (v${pluginVersion()})`);
+  process.exit(0);
+}
+
+function wireHooksCmd(target) {
+  const repoRoot = findRepoRoot(target || process.cwd());
+  const settingsPath = path.join(repoRoot, '.claude', 'settings.json');
+  let settings = {};
+  if (fs.existsSync(settingsPath)) {
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  }
+  const hooks = (settings.hooks = settings.hooks || {});
+  const post = (hooks.PostToolUse = hooks.PostToolUse || []);
+  const entry = findHookEntry(settings);
+  let wrote = false;
+  if (!entry) {
+    post.push(HOOK_ENTRY);
+    wrote = true;
+  } else if (entry.matcher !== HOOK_ENTRY.matcher) {
+    entry.matcher = HOOK_ENTRY.matcher;
+    wrote = true;
+  }
+  if (wrote) {
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+    console.log('wired: ok-plumbline PostToolUse entry transcribed into .claude/settings.json');
+  } else {
+    console.log('wiring already in place: .claude/settings.json');
+  }
+  process.exit(0);
+}
+
 function diagnoseCmd(target) {
   if (!fs.existsSync(target)) {
     console.error(`error: target not found: ${target}`);
@@ -1178,11 +1455,12 @@ function diagnoseCmd(target) {
     try {
       JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
       const cfg = loadConfig(repoRoot);
-      const enabled = Object.keys(cfg.checks).filter((k) => cfg.checks[k]).length;
-      const total = Object.keys(cfg.checks).length;
-      checks.push(['ok', `${cfgRel} parses (${enabled} of ${total} checks enabled; ${cfg.citations.length} citation tag(s) declared)`]);
+      checks.push(['ok', `${cfgRel} parses (${cfg.citations.length} citation tag(s) declared)`]);
+      if (cfg.retiredChecksKey) {
+        checks.push(['warn', `config carries the retired "checks" key — both checks always run; remove the key`]);
+      }
       if (cfgRel === '.plumbline.json') {
-        checks.push(['warn', `config at pre-migration root location .plumbline.json — run '/ok-plumbline:true-up' to move it to .ok-plumbline/config.json`]);
+        checks.push(['warn', `config at pre-migration root location .plumbline.json — the front door's administration (/ok) moves it to .ok-plumbline/config.json`]);
       }
     } catch (e) {
       checks.push(['fail', `${cfgRel} is malformed: ${e.message}`]);
@@ -1190,42 +1468,94 @@ function diagnoseCmd(target) {
   }
   const cheatsheet = path.join(repoRoot, '.claude', 'rules', 'plumbline-cheatsheet.md');
   if (fs.existsSync(cheatsheet)) checks.push(['ok', `cheatsheet committed at ${path.relative(repoRoot, cheatsheet)}`]);
-  else checks.push(['warn', `no cheatsheet at ${path.relative(repoRoot, cheatsheet)} — run '/ok-plumbline:true-up' to materialize it`]);
+  else checks.push(['warn', `no cheatsheet at ${path.relative(repoRoot, cheatsheet)} — the front door's administration (/ok) materializes it`]);
   const vendored = path.join(repoRoot, '.ok-plumbline', 'bin', 'plumbline');
   if (!fs.existsSync(vendored)) {
-    checks.push(['warn', `no vendored binary at .ok-plumbline/bin/plumbline — run '/ok-plumbline:true-up' to pin one (CI and the edit hook both use it)`]);
+    checks.push(['warn', `no vendored binary at .ok-plumbline/bin/plumbline — the front door's administration (/ok) pins one (the edit hook uses it)`]);
   } else {
     const m = fs.readFileSync(vendored, 'utf8').match(/^const VERSION = '([^']+)';$/m);
     const vendoredVersion = m ? m[1] : 'unknown';
     if (vendoredVersion === VERSION) checks.push(['ok', `vendored binary at .ok-plumbline/bin/plumbline (v${vendoredVersion})`]);
-    else checks.push(['warn', `vendored binary is v${vendoredVersion}, this copy is v${VERSION} — run '/ok-plumbline:true-up' to converge`]);
+    else checks.push(['warn', `vendored binary is v${vendoredVersion}, this copy is v${VERSION} — the front door's administration (/ok) converges it`]);
   }
+  const integrated = fs.existsSync(path.join(repoRoot, '.ok-plumbline'));
   const vendoredHook = path.join(repoRoot, '.ok-plumbline', 'hooks', 'post-edit.js');
   if (fs.existsSync(vendoredHook)) checks.push(['ok', `edit hook materialized at .ok-plumbline/hooks/post-edit.js`]);
-  else checks.push(['warn', `no edit hook at .ok-plumbline/hooks/post-edit.js — the plugin-root hook is a shim and will no-op until true-up materializes it`]);
+  else checks.push(['warn', `no edit hook at .ok-plumbline/hooks/post-edit.js — nothing for the settings entry to run until converge materializes it`]);
 
-  const budget = path.join(repoRoot, '.plumbline-budget.json');
-  if (fs.existsSync(budget)) checks.push(['ok', `budget baseline at ${path.relative(repoRoot, budget)}`]);
-  else checks.push(['info', `no .plumbline-budget.json — optional, used by 'plumbline budget check' in CI`]);
-  const settings = path.join(repoRoot, '.claude', 'settings.json');
-  if (fs.existsSync(settings)) {
+  // @concept: integration-contract
+  // @concept: materialized-artifact
+  // @decision: per-project-pinning
+  const moduleMarker = path.join(repoRoot, MODULE_MARKER_REL);
+  let markerContent = null;
+  if (fs.existsSync(moduleMarker)) {
     try {
-      const s = JSON.parse(fs.readFileSync(settings, 'utf8'));
-      const enabled = (s.enabledPlugins && Object.keys(s.enabledPlugins).some((k) => k.startsWith('ok-plumbline@') || k.startsWith('plumbline@'))) || false;
-      if (enabled) checks.push(['ok', 'plumbline plugin enabled in .claude/settings.json']);
-      else checks.push(['warn', `plumbline plugin not enabled in .claude/settings.json — install via 'claude plugin install ok-plumbline@ok-plugins'`]);
+      markerContent = fs.readFileSync(moduleMarker, 'utf8');
     } catch (e) {
-      checks.push(['warn', `.claude/settings.json present but unparseable`]);
+      markerContent = null;
     }
-  } else {
-    checks.push(['info', `no .claude/settings.json — plugin enablement check skipped`]);
   }
+  if (markerContent === null) {
+    checks.push([integrated ? 'fail' : 'warn', `no module marker at ${MODULE_MARKER_REL} — under a "type": "module" project root the vendored binary and edit hook cannot run; the front door's administration (/ok) materializes it`]);
+  } else if (markerContent === MODULE_MARKER) {
+    checks.push(['ok', `module marker at ${MODULE_MARKER_REL} matches its canonical content byte for byte`]);
+  } else {
+    checks.push(['fail', `module marker at ${MODULE_MARKER_REL} differs from its canonical content ${JSON.stringify(MODULE_MARKER)} — hand-edited or stale; the front door's administration (/ok) converges it`]);
+  }
+
+  let wiringNeeded = false;
+  if (integrated) {
+    const wf = wiringFindings(repoRoot);
+    if (wf.length === 0) {
+      checks.push(['ok', 'PostToolUse entry wired in .claude/settings.json (matcher Edit|Write)']);
+    } else {
+      wiringNeeded = true;
+      for (const w of wf) checks.push(['fail', w]);
+    }
+
+    const expected = expectedVendoredSkills(repoRoot);
+    if (expected !== null) {
+      let stale = 0;
+      for (const [dest, body] of Object.entries(expected)) {
+        const rel = path.relative(repoRoot, dest);
+        if (!fs.existsSync(dest)) {
+          checks.push(['fail', `vendored skill missing: ${rel}`]);
+          stale++;
+        } else if (fs.readFileSync(dest, 'utf8') !== body) {
+          checks.push(['fail', `vendored skill stale or hand-edited: ${rel} differs from the installed v${pluginVersion()} rendering`]);
+          stale++;
+        }
+      }
+      if (stale === 0) checks.push(['ok', `vendored skills match the installed v${pluginVersion()} rendering`]);
+    } else {
+      for (const name of Object.values(VENDORED_SKILLS)) {
+        const dest = path.join(repoRoot, '.claude', 'skills', name, 'SKILL.md');
+        if (!fs.existsSync(dest)) checks.push(['fail', `vendored skill missing: ${path.relative(repoRoot, dest)}`]);
+      }
+      checks.push(['info', 'running outside the plugin copy — vendored skills checked for presence only, not fidelity']);
+    }
+    for (const name of RETIRED_VENDORED_SKILLS) {
+      if (fs.existsSync(path.join(repoRoot, '.claude', 'skills', name))) {
+        checks.push(['fail', `retired vendored payload present: .claude/skills/${name}/ — the front door's administration (/ok) removes it`]);
+      }
+    }
+  }
+
+  const budget = path.join(repoRoot, '.ok-plumbline', 'budget.json');
+  const preBudget = path.join(repoRoot, '.plumbline-budget.json');
+  if (fs.existsSync(budget)) checks.push(['ok', `budget baseline at ${path.relative(repoRoot, budget)}`]);
+  else if (fs.existsSync(preBudget)) checks.push(['warn', `budget baseline at pre-migration root location .plumbline-budget.json — the front door's administration (/ok) moves it to .ok-plumbline/budget.json`]);
+  else checks.push(['info', `no budget baseline at .ok-plumbline/budget.json — optional, used by 'plumbline budget check'`]);
 
   let fails = 0;
   for (const [status, msg] of checks) {
     const symbol = status === 'ok' ? '✓' : status === 'fail' ? '✗' : status === 'warn' ? '!' : '·';
     console.log(`  ${symbol} ${msg}`);
     if (status === 'fail') fails++;
+  }
+  if (wiringNeeded) {
+    console.log('');
+    printWiringBlock();
   }
   console.log('');
   console.log(`plumbline diagnose: ${fails === 0 ? 'healthy' : `${fails} failure(s)`}`);
@@ -1240,16 +1570,13 @@ function runLint(target) {
     files.push(f);
   }
   const violations = [];
-  if (config.checks.comment_hygiene) {
-    for (const file of files) {
-      const content = fs.readFileSync(file, 'utf8');
-      const grammar = COMMENT_GRAMMARS[path.extname(file)];
-      violations.push(...checkCommentHygiene(file, content, grammar, config));
-    }
+  for (const file of files) {
+    const content = fs.readFileSync(file, 'utf8');
+    const grammar = grammarFor(file);
+    if (!grammar) continue;
+    violations.push(...checkCommentHygiene(file, content, grammar, config));
   }
-  if (config.checks.citation_resolution) {
-    violations.push(...checkCitationResolution(repoRoot, files, config.citations, config.ignore));
-  }
+  violations.push(...checkCitationResolution(repoRoot, files, config.citations, config.ignore));
   violations.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
   return { violations, files, repoRoot, config };
 }
@@ -1297,11 +1624,12 @@ const SUBCOMMANDS = {
   patterns: (args) => patternsCmd(args[0] || process.cwd()),
   budget: (args) => budgetCmd(args[0], args[1] || process.cwd()),
   suggest: (args) => suggestCmd(args[0] || process.cwd()),
-  slug: (args) => slugCmd(args.join(' ')),
   starter: (args) => starterCmd(args[0] || process.cwd()),
   diagnose: (args) => diagnoseCmd(args[0] || process.cwd()),
+  'vendor-skills': (args) => vendorSkillsCmd(args[0] || process.cwd()),
+  'module-marker': () => moduleMarkerCmd(),
+  'wire-hooks': (args) => wireHooksCmd(args[0] || process.cwd()),
   explain: (args) => explainCmd(args[0]),
-  ci: (args) => ciCmd(args[0]),
   version: () => { console.log(VERSION); process.exit(0); },
 };
 

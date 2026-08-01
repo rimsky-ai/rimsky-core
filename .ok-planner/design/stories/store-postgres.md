@@ -17,14 +17,3 @@ The bundled postgres store (see `concept:claim-producer`): row-locking claims wi
 
 Operators get a postgres-backed store delivering staged-async semantically — not as a no-op — with declared error classes that route through error-policy and verifier checks that catch out-of-bounds outputs.
 
-## Acceptance
-
-A template referencing the bundled postgres store: an open call with staged write-semantics creates or reserves a staging schema queryable through the store's observability; the executor writes rows to staging; a commit call performs an atomic schema swap; a swap collision emits a swap-failed error class routable through the error-type policy; a verifier check declaring row-count-ratio with bounds compiles and executes as an aggregate-only query, surfacing the per-check verifier-failed error class on out-of-bounds; an empty pick policy queue emits a claim-unavailable error class.
-
-## Falsifier
-
-Atomic-staging schema is created but commit doesn't atomically swap, OR the row-count-ratio check runs a non-aggregate query, OR the swap-failed condition surfaces as a generic error class, OR the claim-unavailable condition doesn't fire on a real empty-queue open.
-
-## Proof
-
-Executable proof.

@@ -17,14 +17,3 @@ A node-run in any in-flight state — `pending`, `stale`, `running`, `held`, `pa
 
 Without this guarantee, an executor cannot rely on the inputs it received at dispatch — they could be rewritten under it by an upstream re-run, breaking continuation primitives (parking, held-claim work, long-running async-callback flows) and any executor that reads its inputs more than once. With this guarantee, "this is a single dispatch" means what an executor author expects: one bag in, one outcome out, no retroactive mutation.
 
-## Acceptance
-
-An author writes a graph A → B where B's executor is long-running (running, held, or mid-async-callback). While B is in-flight, A is invalidated externally (operator action or upstream cascade) and re-runs. B's executor is NOT re-invoked mid-dispatch, B's bag is NOT rewritten, B's state row is NOT mutated. After B settles, a new B'_2 node-run dispatches with the cascade from A's re-run incorporated into its bag. Observable as: B executor invocation count is 2 across both A-runs (not 3 or interrupted), and B'_2's dispatch-time bag contains A's post-rerun value. If B is instead PARKED when A settles, B's parked run wakes early and resumes with its original bag and scratch, then B'_2 dispatches with A's post-rerun value — the cascade round survives the park and still produces its own later dispatch.
-
-## Falsifier
-
-B's executor is re-invoked while running or held, OR B's attribute bag is mutated by the cascade from A's re-run, OR B's state transitions out of running/held without B's own executor terminating, OR a parked B is woken by anything other than its resume-at deadline or a subscribed upstream's settling cascade, OR a cascade wake rewrites the parked run's bag or scratch. Observable by counting B's executor invocations and inspecting B's persisted bag at terminal-handler times.
-
-## Proof
-
-An executable scenario test where B parks (or holds a claim, or is mid-async-callback), A is invalidated and re-runs to settle, the test asserts B is NOT interrupted and B'_1's bag is unchanged, then B settles, B'_2 dispatches with the updated A bag, and the test asserts the cascade was queued (not applied in-flight).
