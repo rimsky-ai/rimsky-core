@@ -6,7 +6,7 @@ aliases: []
 
 # Fan-out
 
-## Definition
+## What it is
 
 Fan-out clones the calling node N times. Each clone runs as the same template node-type, with the same executor and same attribute schema, in its own child run-scope. There is no attribute aggregation across clones — per-partition attribute writebacks stay separate; fan-in happens at the claim-handle level via an author-chosen aggregation policy, not via attribute merging. Fan-out has nothing structurally to do with sub-graph delegation; a cloned node may itself be a sub-graph delegate (composition layers them), but the fan-out machinery operates strictly on the calling node, not on any sub-graph internals.
 

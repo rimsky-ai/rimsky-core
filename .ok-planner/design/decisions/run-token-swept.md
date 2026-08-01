@@ -9,7 +9,7 @@ aliases:
 
 ## Choice
 
-The previously ad-hoc per-call scratch/callback token (`supervisor_id:node_run_id`) and the practice of treating the executor-chosen `async_ack_id` as a credential are both removed. The return leg (the async callback to the supervisor, and services' publish-back-to-control-API calls) is authenticated by the mTLS peer identity under `peer_auth: mtls`, and by the trusted-subnet assumption under `none` (see `concept:peer-auth`, `decision:peer-auth-mtls`). The `async_ack_id` remains purely a CORRELATION key — which run a callback settles — and never an authenticator (see `concept:executor`).
+The previously ad-hoc per-call scratch/callback token (`supervisor_id:node_run_id`) and the practice of treating the executor-chosen `async_ack_id` as a credential are both removed. The return leg (the async callback to the supervisor, and services' publish-back-to-control-API calls) is authenticated by the mTLS peer identity under `peer_auth: mtls`, and by the trusted-subnet assumption under `none` (see `concept:peer-auth`, `decision:peer-auth-mtls`). The `async_ack_id` remains purely a CORRELATION key — which run a callback settles — and never an authenticator (see `concept:executor`). This sweep covers only the one-time terminal callback; the two ongoing mid-dispatch callback channels (keepalive, attribute writeback) keep a separate per-dispatch bearer token layered underneath peer identity, unaffected by this decision (see `concept:executor`).
 
 ## Rationale
 

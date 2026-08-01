@@ -6,23 +6,33 @@ status: verified
 opened: 2026-07-25T21:11:30Z
 ---
 
-# design/intent/ is a finished campaign's dossier still sitting in the live corpus
+# design/intent/ is authoritative in content but illegal in form — archive only after the corpus absorbs it
 
-`design/intent/` holds per-concept dossiers distilled on 2026-07-13 for a drift-remediation campaign, written deliberately without consulting the then-current code. That campaign completed and its results are archived, but the directory stayed under `design/` — where the planner recognizes exactly three live catalog kinds (concepts, stories, decisions) plus one named point-in-time exception. Its content has begun to rot: two dossiers still describe the graph-scheduler import exemption that the corpus has since eliminated. One live reference exists — a fitness test's error message cites `design/intent/claim-scope.md` as the naming-convention source — showing the misplacement actively misleads sessions into treating it as durable.
+`design/intent/` holds 77 per-concept dossiers distilled on 2026-07-13 from session transcripts for a drift-remediation campaign — written deliberately from the recorded design conversations, not from the then-current code. The campaign completed and its results are archived, but the directory stayed under `design/`, where the planner recognizes exactly three live catalog kinds (concepts, stories, decisions) plus one named point-in-time exception. The owner has since stated the fact that changes what resolving this means: the dossiers are redundant with stories and decisions *in principle* — those catalogs are meant to be the authoritative surface — but the dossiers are currently *more accurate and complete in places*, because the corpus drift that motivated the campaign is what made them necessary. Archiving the folder as a stale record would strand authoritative content; declaring it live corpus isn't available, because the planner's model admits no fourth kind.
 
-Because the planner's model doesn't admit a fourth live kind, the "declare it live corpus" reading isn't actually available; the frozen-record reading is forced. The only judgment left is how to handle the one load-bearing citation.
+The one live code reference makes the content gap concrete: a fitness test cites `design/intent/claim-scope.md` in its failure message as the source of canonical naming symbols (`code:test/plumbline/claim_scope_naming_test.go`), and the live `concept:claim-scope` does *not* carry those symbols — so even the narrow "repoint the test" fix requires folding content first. Meanwhile the dossiers have begun to rot at the edges (two still describe an import exemption the corpus has since eliminated), so the reconciliation's value decays with time: every week the dossiers age, distinguishing "intent is right, corpus lags" from "intent is stale, corpus moved on" gets harder.
 
 ## Options
 
-- Move `intent/` to `history/`, first folding the claim-scope naming rationale into the live claim concept and repointing the citing test. Cost: a small sprint pass.
-- Leave it in place — continued rot and continued misleading citations.
+- **Reconcile, then archive** — a dedicated sprint (or a batched sequence) walks each dossier against its live concept/story/decision counterparts, folds in what intent has that the corpus lacks or contradicts, files what needs judgment as issues, then moves `intent/` to `history/` — folding the claim-scope naming symbols into `concept:claim-scope` and repointing the citing test on the way. Real work, sized like the drift-remediation campaign that produced the dossiers.
+- **Archive now, reconcile never** — cheapest; permanently strands whatever the dossiers hold that the corpus lacks, directly against the owner's stated constraint.
+- **Leave in place** — continued rot, continued misleading citations, and the reconciliation only gets harder.
+
+The ruling decides the reconciliation's shape and priority; the archive itself is forced by the three-kind model.
 
 ## Ruling
 
-> Generated ruling (/verify-issues): a sprint moves `design/intent/` to
-> `history/`, after folding the claim-scope naming rationale its one citing test relies
-> on into the live concept and repointing that test. The planner's three-kind model of
-> `design/` forces the frozen-record reading.
+> Generated ruling (/verify-issues): a sprint reconciles the 77
+> dossiers into the live corpus and then archives design/intent/ to
+> history/ — per dossier, fold what intent holds that the live
+> concepts, stories, and decisions lack or contradict (filing
+> genuine judgment calls as intake issues rather than deciding them
+> in the pass), and on the way fold the claim-scope naming symbols
+> into concept:claim-scope and repoint the citing fitness test. The
+> planner's three-kind model forces the archive; the owner's
+> authoritative-in-content constraint forces reconciliation first;
+> the dossiers' ongoing rot argues for scheduling it soon rather
+> than eventually.
 
 <!-- Owner: this is a recommendation, not your decision. Leave it
 as-is to accept — the next /plan-sprint carries it, naming the

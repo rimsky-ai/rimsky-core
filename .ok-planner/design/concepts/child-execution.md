@@ -6,7 +6,7 @@ aliases: []
 
 # Child execution
 
-## Definition
+## What it is
 
 Child execution is the umbrella term covering the two distinct mechanisms by which a parent node-run dispatches work into child execution contexts: **fan-out** (cloning the calling node N times across N partitions, fan-in via claim-handle aggregation) and **sub-graph delegation** (substituting into an absorbed entry and dispatching the sub-graph's distinct internal nodes into one shared child context, fan-in via a designated exit node's writeback). The two mechanisms are structurally different, not variants of one shape — see `decision:fan-out-and-delegation-are-distinct-mechanisms`.
 

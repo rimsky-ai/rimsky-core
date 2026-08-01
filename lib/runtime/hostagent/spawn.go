@@ -32,6 +32,8 @@ import (
 
 const agentPortEnvVar = "RIMSKY_AGENT_PORT"
 
+const agentRoutingLabelEnvVar = "RIMSKY_AGENT_ROUTING_LABEL"
+
 const errClassSpawnFailed = "spawn_failed"
 
 const portDialInterval = 25 * time.Millisecond
@@ -170,6 +172,8 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 	env = setEnvVar(env, enroll.EnvPeerAuth, enroll.PeerAuthMTLS)
 	env = setEnvVar(env, enroll.EnvAPIKey, token)
 	env = setEnvVar(env, enroll.EnvControlAPIURL, a.enrollBaseURL)
+	// @story: host-agent-anonymous-mode
+	env = setEnvVar(env, agentRoutingLabelEnvVar, a.cfg.RoutingLabel)
 
 	spawned, err := SpawnService(ctx, SpawnServiceParams{
 		BinaryPath:   execPath,

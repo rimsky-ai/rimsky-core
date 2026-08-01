@@ -6,7 +6,7 @@ aliases: []
 
 # Validation
 
-## Definition
+## What it is
 
 Cross-cutting service protocol. Any service may advertise membership in this protocol alongside its primary protocol. One method: validate (request → response).
 

@@ -6,7 +6,7 @@ aliases: []
 
 # Message-schema
 
-## Definition
+## What it is
 
 A message-schema is the template-level registry of accepted message types for instances of that template. Declared at template top level, parallel to the per-node attributes block and the template's publishers block. Each entry pairs a message type-path with a body shape declared in JSON Schema. The registry is content-addressed into the template's spec at registration.
 

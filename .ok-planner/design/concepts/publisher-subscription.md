@@ -6,7 +6,7 @@ aliases: [sensor-watch]
 
 # Publisher-subscription
 
-## Definition
+## What it is
 
 A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, type) triple. Created at instance creation when the template declares a publisher entry; lives in a persisted publisher-subscription ledger; carries an opaque subscription identifier; transitions to the stopped state at instance termination and the row is retained, not deleted.
 

@@ -6,7 +6,7 @@ aliases: []
 
 # Claim tree
 
-## Definition
+## What it is
 
 The tree-shaped relationship across claim handle rows, formed by the nullable self-referential parent pointer. A root claim handle has a null parent pointer; a sub-claim points at its parent's id. The structure mirrors the run-tree (which lives at the run-scope layer per `concept:run-scope`, with the parent-child shape on the run-scope ledger) but exists at the claim layer rather than the dispatch layer. Created by fan-out: the parent's split-scope verb returns N sub-scope descriptors and rimsky inserts N child claim-handle rows in the same acquisition transaction.
 

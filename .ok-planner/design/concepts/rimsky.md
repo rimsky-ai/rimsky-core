@@ -33,11 +33,11 @@ Owns: command-line UX, request building, origination of compose-tag-prefixed tag
 
 ## Capability surfaces
 
-The CLI exposes capability surfaces grouped by operator workflow. The durable model is the surfaces themselves; the verbs named below are illustrative of each surface's shape, not an exhaustive or owned contract — the CLI code and its operator-facing reference are authoritative for exact verbs and flags.
+The CLI exposes capability surfaces grouped by operator workflow. The durable model is the surfaces themselves; membership of each surface's verb set is owned by the CLI code and its operator-facing reference, not enumerated here.
 
-- **Dev-loop surface** — interactive bring-up of work against a deployed stack: ephemeral runs, template register / deploy / undeploy, instance instantiate / remove, listing, logs, health, and operator-init.
-- **Compose surface** — manifest-driven project orchestration: compose-family verbs (up, down, plan, status, run) plus a dev shorthand.
-- **Resource surface** — direct access to the control-api's resource families: templates, tags, instances, nodes, admin actions, messages, assets, lineage, parked-state.
+- **Dev-loop surface** — interactive bring-up of work against a deployed stack (e.g. an ephemeral run).
+- **Compose surface** — manifest-driven project orchestration (e.g. compose up).
+- **Resource surface** — direct access to the control-api's resource families (e.g. templates).
 - **Context surface** — switching between configured endpoints + credentials.
-- **Authentication surface** — anonymous-mode bootstrap, login, key creation, listing, detail, revoke, rotate, and status (see `concept:role-template` for the bundled grant templates and `concept:api-key` for the wire-side key model).
-- **Host-agent control surface** — start / status / stop verbs for the embedded `concept:host-agent` daemon.
+- **Authentication surface** — the API-key lifecycle, including anonymous-mode bootstrap (e.g. key creation; see `concept:role-template` for the bundled grant templates and `concept:api-key` for the wire-side key model).
+- **Host-agent control surface** — lifecycle control for the embedded `concept:host-agent` daemon (e.g. starting it).

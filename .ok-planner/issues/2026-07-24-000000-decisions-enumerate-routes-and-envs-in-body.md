@@ -12,35 +12,38 @@ opened: 2026-07-24T00:00:00Z
 
 # Where does "naming the choice" end and "writing a spec" begin?
 
-Three decision documents about rimsky's peer authentication — the mechanism by which a deployment's internal services come to trust each other, via mutual TLS or an API-key scheme — enumerate concrete implementation surface in their prose: HTTP route paths, environment-variable names, an encryption algorithm, a certificate lifetime, an identity-string format. The corpus's authoring rule pulls in both directions: a decision *may* name "the specific artifact picked" when the artifact's identity is the tradeoff (AES-256-GCM over an alternative is a real choice), but must *not* enumerate "implementation steps, schema details, or call sequences" the way a specification would. Route paths and env-var names sit squarely in the ambiguous middle, and no project ruling has ever drawn the line.
+Three decision documents about rimsky's peer authentication — how a deployment's internal services come to trust each other, via mutual TLS or an API-key scheme — enumerate concrete implementation surface in their prose: HTTP route paths (`route:POST /v1/enroll`, `route:GET /v1/auth/whoami`), environment-variable names, an encryption algorithm, a certificate lifetime, an identity-string format. Re-verified today, all three still do. The authoring rules pull in both directions and, notably, the self-containment rule's ban on enumerating implementation instances is textually scoped to *concepts* only — decisions have no equivalent clause, just the tension between "not specs" and "the Choice may name the specific artifact picked when its identity is the tradeoff." Route paths and env-var names sit squarely in that unlegislated middle, and no project ruling has ever drawn the line.
 
-The stakes are drift, not information loss: every flagged detail is already named in code, so stripping it deletes only a duplicate — one that is a liability precisely because the project is pre-v1 and renames routes and env vars freely, meaning each rename silently falsifies a decision document until someone notices. The pattern is concentrated in these three files, with the same shape appearing in one more decision and one concept document — so whatever line gets drawn here has slightly wider blast radius than the three named files.
+The stakes are drift, not information loss: every flagged detail is already named in code, so stripping deletes only a duplicate — one that is a liability precisely because the project is pre-v1 and renames routes and env vars freely, silently falsifying whichever decision quoted them. The corpus already contains one side's precedent: `concept:peer-auth` abstracts this same material to property level, and a sibling decision deliberately abstracts a status code to "a created-resource status code." The same pattern appears in one more decision (`decision:secret-at-rest-posture`) and would be swept by whatever line gets drawn here. This issue is the boundary-question twin of `issue:decisions-spec-altitude-mechanism-detail` — that one applies the "not specs" clause where it clearly bites; this one asks where the clause's edge sits.
 
 ## Options
 
-- **Draw the line at the tradeoff**: keep what carries a real choice (the algorithm, the lifetime, the identity-binds-to-key property); strip routes and env-var names as plumbing that lives in code. Sweep the two adjacent documents in the same pass.
-- **Move the stripped detail to a spec document** — the project maintains no living spec surface, so this means either building one or accepting code as the home anyway.
-- **Leave as-is** — read "artifact picked" broadly enough to cover the whole contract surface; the drift liability stands.
+- **Draw the line at the tradeoff**: a Choice keeps what carries a real decision (the algorithm, the 24-hour lifetime, the identity-binds-to-key property); route paths and env-var names beyond that are plumbing that lives in code. Strip the three files, sweep the two adjacent documents, and let the reading stand as the catalog-wide rule.
+- **Read "artifact picked" broadly** — the whole contract surface counts as the artifact; the drift liability stands and the spec-altitude sweep loses its boundary.
+- **Move stripped detail to a dedicated spec surface** — the project maintains none, so this option first builds one.
 
-The ruling decides where the line falls, which specific elements in the three files survive, and whether the reading becomes a standing rule for the whole catalog.
+The ruling decides where the line falls and whether it becomes the standing catalog-wide reading.
 
 ## Ruling
 
-> Recommended ruling (/recommend-rulings): Standing reading: a Choice
-> may name the artifact whose identity carries the tradeoff
-> (AES-256-GCM, the 24h TTL, SAN-binds-key-id); route paths and env-
-> var names beyond that are spec enumeration — strip them from the
-> three peer-auth files, landing nowhere but code. Sweep the same
-> pattern in decision:secret-at-rest-posture and concept:peer-auth in
-> the same pass.
+> Recommended ruling (/verify-issues): adopt the tradeoff line as the
+> standing reading — a Choice may name the artifact whose identity
+> carries the tradeoff (the algorithm, the lifetime, the
+> identity-binds-to-key property); route paths and env-var names are
+> spec enumeration and strip, landing nowhere but code. Apply it to
+> the three peer-auth files plus decision:secret-at-rest-posture in
+> the same pass as the spec-altitude sweep.
 >
-> Rationale: This draws the exemption line where DECISION-DEFINITION
-> drew it — the tradeoff-bearing artifact, not its plumbing — and
-> pre-v1 renameability is exactly why plumbing shouldn't live in
-> decision bodies.
+> Rationale: this reads the decision rule the way the corpus already
+> behaves at its best — the status-code abstraction precedent and
+> concept:peer-auth's property-level treatment of this exact material
+> — and pre-v1 renameability is the whole argument against quoting
+> plumbing. The flip case: if a route or env name someday becomes a
+> stability commitment the project makes to consumers, that name
+> stops being plumbing and earns its place in a Choice.
 
 <!-- Owner: this is a recommendation, not your decision. Leave it
 as-is to accept — the next /plan-sprint carries it, naming the
-recommended batch at sign-off. Edit the text to redirect, empty
-the section to discuss live, or delete this note to adopt the
-ruling as your own. -->
+generated/recommended batches at sign-off. Edit the text to
+redirect, empty the section to discuss live, or delete this note
+to adopt the ruling as your own. -->

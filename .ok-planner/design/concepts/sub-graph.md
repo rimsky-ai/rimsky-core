@@ -6,7 +6,7 @@ aliases: []
 
 # Sub-graph
 
-## Definition
+## What it is
 
 A sub-graph is a graph with declared entry and exit nodes; invocable from another node via a delegate directive (see `concept:delegation`). The calling node and the sub-graph's entry share runtime identity: the entry is absorbed into the calling node at canonicalization, so the calling node dispatches with the entry's executor as a single run per invocation (see `concept:delegation`); the entry's own template-level node record is never dispatched. The exit node remains a separate child whose writeback flows back to the calling node via the carry-rule.
 

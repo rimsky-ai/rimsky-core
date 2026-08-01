@@ -5,15 +5,10 @@ status: as-is
 
 # Template author gets a registration error for an uncovered substitution ref
 
-## Role
+## Story
 
 As a template author, I get a registration error when a substitution ref has no covering subscription, naming the ref and showing the subscription entry that would cover it.
 
-## Capability
-
 The template-registration validator walks every node's attribute schema, parses the substitution refs, and matches each against the receiver's `subscribes:` block. Any ref with no covering entry produces a structured registration error whose body names the receiver, the literal ref text, the schema path the ref appears in, and a copy-pasteable subscription entry the author can drop in.
 
-## Business value
-
 Template authors — human or LLM agent — get a precise, programmatically-consumable fix suggestion at registration time. No silent acceptance with deferred runtime failure; no orphan reads slipping through to dispatch.
-

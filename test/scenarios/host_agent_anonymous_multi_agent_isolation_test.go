@@ -47,6 +47,10 @@ func TestHostAgentAnonymousModeMultiAgentIsolation(t *testing.T) {
 		agentBeta  = "quiet-otter"
 	)
 
+	t.Setenv("STUBCHILD_EXEC_ENV_KEY", "RIMSKY_AGENT_ROUTING_LABEL")
+	execLogAlpha := t.TempDir() + "/stub-exec-alpha.log"
+	execLogBeta := t.TempDir() + "/stub-exec-beta.log"
+
 	cancelAlpha, doneAlpha, alphaStatus := startAgent(t, proxyAddr, agentStartOptions{RoutingLabel: agentAlpha})
 	t.Cleanup(func() {
 		cancelAlpha()
@@ -67,12 +71,18 @@ func TestHostAgentAnonymousModeMultiAgentIsolation(t *testing.T) {
 
 	iidAlpha := h.CreateInstanceWithServiceBindingsAndTarget(tid, "ck-alpha", "",
 		map[string]any{},
-		map[string]any{lateBindServiceName: map[string]any{"path": stub}},
+		map[string]any{lateBindServiceName: map[string]any{
+			"path": stub,
+			"env":  map[string]any{"STUBCHILD_EXEC_LOG": execLogAlpha},
+		}},
 		agentAlpha,
 	)
 	iidBeta := h.CreateInstanceWithServiceBindingsAndTarget(tid, "ck-beta", "",
 		map[string]any{},
-		map[string]any{lateBindServiceName: map[string]any{"path": stub}},
+		map[string]any{lateBindServiceName: map[string]any{
+			"path": stub,
+			"env":  map[string]any{"STUBCHILD_EXEC_LOG": execLogBeta},
+		}},
 		agentBeta,
 	)
 	require.NotEqual(t, iidAlpha, iidBeta, "the two instances must be distinct")
@@ -82,6 +92,13 @@ func TestHostAgentAnonymousModeMultiAgentIsolation(t *testing.T) {
 
 	require.Equal(t, 1, countWorkerRuns(t, h, iidAlpha), "alpha instance worker must complete on exactly one dispatch (no cross-agent routing)")
 	require.Equal(t, 1, countWorkerRuns(t, h, iidBeta), "beta instance worker must complete on exactly one dispatch (no cross-agent routing)")
+
+	alphaLine := waitForExecLog(t, execLogAlpha)
+	require.Equal(t, agentAlpha, alphaLine.Env,
+		"alpha instance's dispatch must have been spawned by the alpha agent, not a cross-routed one")
+	betaLine := waitForExecLog(t, execLogBeta)
+	require.Equal(t, agentBeta, betaLine.Env,
+		"beta instance's dispatch must have been spawned by the beta agent, not a cross-routed one")
 
 	cancelAlpha()
 	<-doneAlpha

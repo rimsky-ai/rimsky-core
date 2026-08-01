@@ -6,7 +6,7 @@ aliases: []
 
 # Message
 
-## Definition
+## What it is
 
 A typed envelope whose arrival at an instance enqueues on the instance's message queue. When a message is picked up from the queue by the frame engine — either because the instance is idle at pickup time, or once the instance's running frame settles — that message opens the next frame. The envelope's type selects an entry from the instance's template message-schema registry; an undeclared type is refused at receipt with an unknown-type response. Persisted in the message ledger on receipt; delivered to the receiver at frame open, one message per frame. Cascade-sent, operator-sent, and publisher-sent messages traverse the same enqueue-then-pickup path.
 

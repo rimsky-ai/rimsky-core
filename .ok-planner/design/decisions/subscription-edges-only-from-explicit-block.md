@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The subscription-edge map is fed by the explicit `subscribes:` block AND by one specific runtime-injection at template registration: structural-root edges keyed by sender=`""` (one per node whose `subscribes:` block is empty or absent), with `force_upstream_refresh: false`, waking on the runtime-implicit empty-type message-receiver-node's settlement. Substitution refs still do not contribute to the map.
+The subscription-edge map is fed by the explicit `subscribes:` block AND by one specific runtime-injection at template registration: structural-root edges keyed by sender=`""` (one per structural-root node — a node with no upstream of any kind: no non-self subscribes entries, no upstream attribute substitution refs, and no message-body consumption; a self-subscription does not disqualify), with `force_upstream_refresh: false`, waking on the runtime-implicit empty-type message-receiver-node's settlement. Substitution refs still do not contribute to the map.
 
 ## Rationale
 

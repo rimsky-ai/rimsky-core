@@ -28,10 +28,6 @@ Once emitted, the signal feeds two consumers:
    payload is durably preserved. Audit emission is unconditional and
    independent of subscribers.
 
-The signal vocabulary unifies the historical parallel surfaces (run outcome,
-transition reason, subscription's structured-filter fields) into one
-type-path-plus-payload contract.
-
 ## Purpose
 
 Make "what just happened to a node-run" one vocabulary across cascade-fire,
@@ -62,10 +58,14 @@ root; subscribers match it via the exact path or via the `terminal/error/*`
 wildcard, uniform with other error-class signals. See
 `decision:terminal-error-abandoned-as-error-class`.
 
-A held node-run's own `running → held` transition emits NO terminal signal —
-the cascade walk is deferred to the auto-terminal handler, which fires the
-terminal/success or terminal/error/abandoned at the moment the handle is
-promoted (per `decision:held-as-state-not-phase`).
+A held node-run's own `running → held` transition builds and cascades its
+terminal signal (`terminal/success` or `terminal/error/<class>`) immediately,
+filtered to holding-subgraph co-members only — this is how members coordinate
+with each other while the claim is held. Delivery to non-member subscribers,
+and the signal's audit-log write, are both deferred to the auto-terminal
+handler, which re-fires the same signal kind (unfiltered, to non-members) and
+writes the audit-ledger row at the moment the handle is promoted (per
+`decision:held-as-state-not-phase`).
 
 ### `transient/*` — dispatch-internal: dispatch settled, run continues
 
@@ -181,9 +181,16 @@ Does NOT own:
 - The wire executor protocol (signals are emitted on the rimsky side from the
   wire outcomes, not by the executor directly).
 
+A signal's type-path is the only audit-event kind for the transition it
+describes. `concept:transition-reason` is a distinct, narrower vocabulary
+consulted only by the node-state machine's next-state function to validate a
+transition — it is never written as an audit-event kind and carries no
+payload; signal owns audit identity, transition-reason owns state-machine
+validation.
+
 Adjacent: `concept:node-subscription`, `concept:error-policy`,
 `concept:cascade`, `concept:wait-set`, `concept:event-log`,
-`concept:executor`, `concept:terminal-tag`.
+`concept:executor`, `concept:terminal-tag`, `concept:transition-reason`.
 
 ## Invariants
 

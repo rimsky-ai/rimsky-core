@@ -6,7 +6,7 @@ aliases: []
 
 # Replica
 
-## Definition
+## What it is
 
 A replica is one running pod/process of a rimsky-platform binary, behind a deployment-tier load-balancing layer. Replicas are a deployment-tier concern; rimsky's runtime does not model replicas as a first-class concept, does not detect, heartbeat, or individually address them, and provides no generic replica-aware coordination (mutex per work-item, sticky routing, failover) for horizontally scaled binaries. The one exception is the scheduler's own dispatch tick: rimsky's runtime serializes each tick to a single replica via a pinned per-tick advisory lock (`concept:advisory-lock`), so at scale=N the scheduler role is not simply the union of N independent processes. Every other role — supervisor, executor, publisher, sensor — behaves as N independent processes, coordinating only through mechanisms each binary's own implementation chooses.
 
@@ -24,7 +24,7 @@ Does NOT own: the actual replica posture of any individual binary, the deploymen
 
 ## Invariants
 
-- Each binary's v1 contract documents its own replica posture. A single-replica publisher implementation that observes a shared substrate will double-fire across replicas; operators wanting HA must pick a publisher implementation that coordinates internally.
+- Each binary's own contract documents its replica posture. A single-replica publisher implementation that observes a shared substrate will double-fire across replicas; operators wanting HA must pick a publisher implementation that coordinates internally.
 
 - Multi-replica safety across binaries is not a generic service rimsky provides: each role binary owns its own coordination needs. Rimsky's own role binaries draw on the persistence layer's advisory-lock primitives (`concept:advisory-lock`) for the coordination they do need — the scheduler's per-tick lock and the supervisor's claim-handle lock are the two canonical uses. Bundled sensors do NOT attempt similar coordination and honestly fire once per replica per window; externally-authored binaries (publishers, custom sensors, executors) needing HA must coordinate internally, the same way.
 

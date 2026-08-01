@@ -6,7 +6,7 @@ aliases: []
 
 # Message-sender-node
 
-## Definition
+## What it is
 
 A message-sender-node is a node-type whose dispatch mode is "build a message envelope from the node's attributes and insert it into the message ledger." Declared on a node-type as a send-node by naming the destination message type, in place of an executor or delegate reference. The node carries the standard subscription and attribute blocks like any other node; what makes it a send-node is its dispatch field.
 

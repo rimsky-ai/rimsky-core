@@ -9,7 +9,7 @@ aliases:
 
 ## What it is
 
-The operator-dashboard HTTP-route backplane exposed by the control API: a family of read endpoints covering observability summaries, the event feed, frames, per-instance node state, node runs, dispatches, templates, instances, lock holders and claim handles, discovered peer (executor and claim-producer) status, and system health and summary counts. Most of these routes read rimsky's own persisted runtime state (frames, nodes, dispatches, events); the peer-status routes instead read the discovery cache populated by the observability handshake (see `concept:observability`). The per-instance read includes a cascade graph: the instance's nodes joined with their subscription edges, each node's run summary, and its last terminal event. This surface's own frames-read routes list and fetch frame rows filtered by instance id and lifecycle state; they do not join a frame to its triggering message row in either direction (each message triggers at most one frame — see `concept:message` and `concept:frame`).
+The operator-dashboard HTTP-route backplane exposed by the control API: a read-only family of endpoints giving operators visibility into rimsky's own persisted runtime state, and, for discovered peer status, into the discovery cache populated by the observability handshake (see `concept:observability`). Membership of the route family is owned by the control-api code, not enumerated here. The per-instance read includes a cascade graph — the concept's namesake capability: the instance's nodes joined with their subscription edges, each node's run summary, and its last terminal event.
 
 ## Purpose
 
@@ -23,3 +23,4 @@ Owns: the read-route definitions, the per-route handlers, the JSON marshalling, 
 
 - Handlers that read persisted tables open a short fresh transaction per read; handlers backed by the discovery cache or the dispatch queue read those sources directly, outside any table transaction.
 - Read-only: no handler in this surface mutates state.
+- The frames-read routes join each returned frame to its triggering message row, surfacing the message's type, sender, and sender kind alongside the frame (each message triggers at most one frame — see `concept:message` and `concept:frame`).

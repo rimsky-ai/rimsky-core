@@ -6,7 +6,7 @@ aliases: []
 
 # Delegation
 
-## Definition
+## What it is
 
 Delegation is an invocation pattern over `concept:child-execution`: a node targeting a named sub-graph (instead of declaring its own executor) dispatches the sub-graph's internal nodes as one shared child execution context under the **carry** settle primitive (see `concept:child-execution`), with the entry absorbed. The calling node stands in for the sub-graph's entry at dispatch:
 

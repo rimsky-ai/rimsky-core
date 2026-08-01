@@ -6,7 +6,7 @@ aliases: []
 
 # Terminal tag
 
-## Definition
+## What it is
 
 A terminal tag is a string member of the tag set the executor attaches to a settling verdict — a `terminal/success`, a `terminal/error/<class>`, or a park (the audit-only `transient/park`). Tags are deduplicated at decode (set semantics) and serve as the ephemeral discriminator subscribers match on via CEL filters over `payload.tags`; a tag never merges into node-attribute state. The tag name MUST belong to the emitting executor's observability-advertised declared-tag set, enforced in two gates: at template registration, tag literals referenced in a subscription's `payload.tags` filter are checked against the sender's declared-tag set and an undeclared reference is rejected, refusing registration; at runtime, every tag actually carried by a settling verdict is checked against the same declared-tag set.
 

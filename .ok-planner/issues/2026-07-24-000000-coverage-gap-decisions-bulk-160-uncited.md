@@ -8,35 +8,38 @@ status: verified
 opened: 2026-07-24T00:00:00Z
 ---
 
-# Two-thirds of the decision catalog has no link back to the code that enforces it
+# Two-thirds of the decision catalog has no annotation pointing at its enforcement
 
-Rimsky documents its technical decisions in a catalog, and each decision is meant to be linked from the code that enforces it via a citation comment (`@decision: <name>` at the enforcement point). Re-counting finds 166 of 236 live decisions with no such citation anywhere in the tree — up slightly from 160 at filing. The catch that keeps this from being a simple annotate-everything sweep: the citation convention itself scopes tags to "the point of enforcement," so a decision with no enforcing check legitimately has nowhere to put one — and adding a decorative tag anyway would violate the project's own comment rules.
+Rimsky's design corpus records technical decisions in a catalog, and code that enforces a decision is supposed to carry a citation comment (`@decision: <slug>`) at the enforcement site so the next reader can grep instead of re-deriving. Re-counting today finds 165 of 239 live decisions with no such citation anywhere in the tree. Under the current guidance annotations carry exactly one job — navigation — with no coverage floor: rollout is incremental, left by every session as it works, never a bulk pass. So bare non-coverage is no longer a rule violation. What makes the gap still worth ruling on is the audit corpus: the periodic implementation audit (`/verify-corpus`, not yet run here) navigates by exactly these annotations when it decides whether each decision is supported by the codebase. A decision that is enforced but untagged is the case most likely to come back falsely `unsupported` on the first run, generating intake noise about gaps that don't exist.
 
-The 166 split into three buckets. Some already have an obvious enforcement mechanism that just never got tagged (import-boundary lint rules, the license checker, pinned library versions). A larger middle group probably has an enforcement site somewhere, findable only by a per-decision search. And a tail of process/philosophy decisions has no single code site at all — the kind the authoring standard says should either gain a real check or be reclassified, not decorated. This issue is joined at the hip with a separately-filed one about decisions missing their "Proof" section (the written statement of what mechanical check would catch a violation): a citation only makes sense once that check is named, so nearly all of this work naturally sequences inside that sweep.
+The 165 split three ways. A bucket is already enforced by an obvious mechanism that never got tagged — the dependency-boundary lint rules, the license checker, pinned library versions (these overlap with the config-file-enforcement question in `issue:build-file-enforced-decisions-uncitable`, since lint and manifest files can't carry code comments). A middle bucket probably has an enforcement site findable only by per-decision search. A tail has no single code site at all. The disposition this file carried previously — retire into the Proof-section sweep — is void: that sibling closed `answered` when the Proof requirement itself was retired, so nothing sequences this work anymore.
 
 ## Options
 
-- **Retire into the Proof-section sweep** — each citation lands as its Proof is authored; the already-enforced bucket gets tagged in that sweep's first phase. This issue stops existing as separate work.
-- **Tag the already-enforced bucket now** — a cheap same-day pass; leaves the other two buckets untouched.
-- **Full 166-decision search** — most complete, a multi-session project of its own.
-- **Accept permanent partial coverage** — citations required only for new decisions going forward.
+- **Tag the already-enforced bucket, leave the rest to incremental rollout** — one bounded pass over the decisions whose enforcement is known (landing the config-enforced ones via whatever mechanism `issue:build-file-enforced-decisions-uncitable` settles on); the middle and tail buckets accrete annotations as sessions touch them, per the incremental rule. Cost: the first audit run still mislabels some enforced-but-untagged decisions in the middle bucket.
+- **Full 165-decision search-and-tag** — cleanest first audit; a multi-session project for a navigation aid the rules deliberately declined to mandate.
+- **Do nothing** — legal under the no-coverage-floor rule; maximizes false `unsupported` findings on the first audit run.
 
-The ruling decides mainly one thing: does this stand alone, or is it subsumed by the Proof sweep?
+The ruling decides how much tagging happens before the first `/verify-corpus` run.
 
 ## Ruling
 
-> Recommended ruling (/recommend-rulings): retire: subsumed by
-> issue:decisions-corpus-wide-missing-proof-field — annotation lands
-> with each Proof authored, and the already-enforced bucket
-> (depguard-*, license-lint, library pins) gets annotated in that
-> sweep's first phase.
+> Recommended ruling (/verify-issues): tag the already-enforced bucket
+> now — one bounded pass over the decisions whose enforcing mechanism
+> is already known, with the config-enforced subset landing through
+> whatever mechanism the build-file-citability ruling picks — and
+> leave the rest to the incremental leave-the-annotation rule.
 >
-> Rationale: A citation only makes sense once an enforcing check is
-> named, so the ordering is forced; keeping this open would track the
-> same work twice.
+> Rationale: annotations are navigation with no coverage mandate, so
+> a full sweep buys compliance nothing; but the first audit run reads
+> annotations to find enforcement, and the known-enforced bucket is
+> exactly where cheap tags prevent false unsupported findings. The
+> flip case: if the first audit run proves better than expected at
+> finding untagged enforcement on its own, the remaining buckets need
+> no pass at all.
 
 <!-- Owner: this is a recommendation, not your decision. Leave it
 as-is to accept — the next /plan-sprint carries it, naming the
-recommended batch at sign-off. Edit the text to redirect, empty
-the section to discuss live, or delete this note to adopt the
-ruling as your own. -->
+generated/recommended batches at sign-off. Edit the text to
+redirect, empty the section to discuss live, or delete this note
+to adopt the ruling as your own. -->

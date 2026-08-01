@@ -11,35 +11,35 @@ status: verified
 opened: 2026-07-24T00:00:00Z
 ---
 
-# User-promise documents are quoting config keys — and the pattern is spreading
+# User-promise documents are quoting config keys
 
-Rimsky's "story" documents each record a durable user promise, and their governing rule is strict: a story owns the *need* ("operators can bound which tool servers an agent may reach"), never the *mechanism* (which YAML file, which field name). Four stories violate this by naming the main config file (`rimsky.yml`) and specific field paths in their prose — two of them quoting exact config keys (`cli.mcp_servers`, `cli.expose_env`, for a coding-agent executor's per-node tool-server and environment-variable controls) as the core of what they describe. The point of the rule is durability: field paths get renamed freely pre-v1, and every rename silently falsifies whichever story quoted it.
+Rimsky's story documents record durable user promises under a strict rule: a story owns the *need* ("operators can bound which tool servers an agent may reach"), never the *mechanism* (which YAML file, which field name). Two stories about the coding-agent executor's per-node controls still quote exact config keys (`cfg:cli.mcp_servers`, `cfg:cli.expose_env`) and the config file's name in their core statements — mechanism prescription in the one place the form reserves for need. The rule's point is durability: field paths rename freely pre-v1, and every rename silently falsifies whichever story quoted it.
 
-The four aren't equally guilty, and the problem is bigger than four. The two config-key stories clearly prescribe mechanism; the other two only say "no config file needed" — arguably a legitimate user-observable fact. Meanwhile the same pattern recurs in several stories outside this issue's scope (the coding-agent story, service enrollment, mutual-TLS), so a four-file fix just relocates the drift. One practical snag: no decision documents exist yet for the two coding-agent config keys, so stripping those stories without authoring replacements would leave that detail homeless in the corpus. One of them also still describes the executor in terms of an implementation language it was ported away from — bonus rot to clean in the same pass.
+The blocking objection this file previously carried has dissolved: at filing, no decisions existed for the two config keys, so stripping the stories would have left that detail homeless. Three decisions now cover the ground in full (`decision:claude-agent-cli-mcp-servers-inline-only`, `decision:claude-agent-cli-expose-env-field`, `decision:claude-agent-env-passthrough-allowlist`) — the strip has a ready home and is essentially a rewrite-to-cite. What remains is scope judgment, in three layers: the two clear offenders; the softer mentions in other stories ("no config file needed" in the zero-config story — arguably a legitimate user-observable absence, not a mechanism); and how far a catalog-wide sweep goes, which is exactly the territory of two sibling issues (`issue:stories-delivery-surface-named-in-body`, `issue:stories-mechanism-prescription-tail`) covering the same story population for the same class of violation.
 
 ## Options
 
-- **Corpus-wide sweep**: strip mechanism from every story that carries it, cite the config concept and decisions instead, and author the two missing decisions where content needs a home.
-- **Fix only the two clear offenders**, reading absence-mentions ("no config needed") as legitimate observables.
-- **All four, but no wider** — resolves the filing as scoped, leaves known siblings violating the same rule.
+- **Strip the two config-key stories now, sweep the rest as one joint stories pass** with the two sibling issues; absence-mentions read as legitimate observables and stay.
+- **Fix only the two clear offenders**, leaving the catalog-wide question to the siblings — same work, weaker coordination.
+- **Read absence-mentions as violations too** — maximal purity; strips user-observable facts ("works with zero configuration") that are the story's actual value clause.
 
-The ruling decides scope (four files or the catalog), severity treatment (are absence-mentions violations?), and whether the two new decisions get authored.
+The ruling decides scope and the absence-mention reading.
 
 ## Ruling
 
-> Recommended ruling (/recommend-rulings): Expand to a corpus-wide
-> stories sweep (the pattern recurs beyond the four flagged files):
-> strip config field paths and mechanism from story bodies, citing
-> concepts/decisions instead, and author the two missing claude-agent
-> per-node decisions where stripped content currently has no home.
->
-> Rationale: The story rule is unambiguous — stories own the need,
-> decisions own the how — and fixing four files while siblings carry
-> the same violation just moves the drift. Same reading as the
-> decisions-enumeration ruling.
+> Generated ruling (/verify-issues): strip the config-file and
+> config-key mechanism from the two claude-agent stories, citing the
+> three existing decisions that now carry that content, and run the
+> wider mentions as part of the single joint stories sweep with
+> issue:stories-delivery-surface-named-in-body and
+> issue:stories-mechanism-prescription-tail; absence-mentions ("no
+> config file needed") are user-observable facts and stay. The
+> story-form rule — stories own the need, decisions own the how —
+> forces the strip now that the decision homes exist; only the
+> editing is sprint work.
 
 <!-- Owner: this is a recommendation, not your decision. Leave it
 as-is to accept — the next /plan-sprint carries it, naming the
-recommended batch at sign-off. Edit the text to redirect, empty
-the section to discuss live, or delete this note to adopt the
-ruling as your own. -->
+generated/recommended batches at sign-off. Edit the text to
+redirect, empty the section to discuss live, or delete this note
+to adopt the ruling as your own. -->

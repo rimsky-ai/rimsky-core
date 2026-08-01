@@ -22,6 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// @concept: executor
 func (c *CallbackServer) authorizeCancelToken(r *http.Request, runID shared.UUID) bool {
 	auth := r.Header.Get("Authorization")
 	const prefix = "Bearer "

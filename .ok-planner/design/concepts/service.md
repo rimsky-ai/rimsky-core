@@ -6,7 +6,7 @@ aliases: []
 
 # Service
 
-## Definition
+## What it is
 
 A rimsky-orchestrated implementation of one or more of rimsky's service protocols, running either as an out-of-process binary or as an in-process handler within the rimsky all-in-one process. Both forms are dispatched via the same protocol surface.
 

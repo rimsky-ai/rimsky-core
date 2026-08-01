@@ -6,7 +6,7 @@ aliases: []
 
 # Sensor
 
-## Definition
+## What it is
 
 A sensor is a class of `concept:publisher` implementation that observes external state. Sensors poll, listen, or otherwise watch some out-of-rimsky substrate (clock, HTTP endpoint, object-store prefix, webhook port) and publish messages into rimsky when the watched substrate changes.
 
@@ -24,7 +24,7 @@ Owns: the watching loop, the per-substrate dialect, the in-binary per-subscripti
 
 Does NOT own: the wire protocol (that's `concept:publisher`), the message envelope shape (that's `concept:message`), the per-instance binding state (that's `concept:publisher-subscription`, stored in the rimsky-side publisher-subscription ledger), or the deployment-tier replica posture (that's `concept:replica`).
 
-Adjacent: `concept:publisher` (sensors implement it), `concept:publisher-subscription` (sensors hold its publisher-side state in their own per-binary state DB), `concept:message` (sensors send them), `concept:replica` (sensor binaries are single-replica per v1 contract), `concept:peer-auth` (the webhook sensor's inbound-auth requirement realizes the public-web ingress boundary).
+Adjacent: `concept:publisher` (sensors implement it), `concept:publisher-subscription` (sensors hold its publisher-side state in their own per-binary state DB), `concept:message` (sensors send them), `concept:replica` (sensor binaries are single-replica by that concept's posture), `concept:peer-auth` (the webhook sensor's inbound-auth requirement realizes the public-web ingress boundary).
 
 ## Invariants
 

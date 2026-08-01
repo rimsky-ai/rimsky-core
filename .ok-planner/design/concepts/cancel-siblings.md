@@ -6,7 +6,7 @@ aliases: []
 
 # Cancel siblings
 
-## Definition
+## What it is
 
 The proactive sibling cancellation that the strict aggregation policy always performs: when one sub-claim resolves to Abandon — whether the child's own natural abandon or a forced cancel — under a parent whose policy is strict, the runtime unconditionally walks the parent's other in-flight sub-claims and force-Abandons each via recursive claim-handle terminal-resolution calls. This is what "fail fast" means for strict aggregation; it is not a separate, configurable behavior — it is intrinsic to choosing strict. A workflow that wants surviving siblings to keep running despite one failure chooses a different aggregation policy kind instead (see `concept:fan-out`); a threshold policy set to the full child count tolerates any number of failures short of total loss without ever triggering this walk.
 

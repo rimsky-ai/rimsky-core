@@ -6,7 +6,7 @@ aliases: []
 
 # Asset
 
-## Definition
+## What it is
 
 An asset is a documented compound, not a new primitive: a committed claim against a data-processing-capable producer with a durable lifetime. Anything satisfying all three is an asset; anything else isn't. Rimsky does not apply asset semantics to other claims.
 

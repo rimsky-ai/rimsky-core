@@ -6,7 +6,7 @@ aliases: []
 
 # Lineage record
 
-## Definition
+## What it is
 
 An append-only record in the lineage projection (see `concept:lineage`). Two kinds:
 

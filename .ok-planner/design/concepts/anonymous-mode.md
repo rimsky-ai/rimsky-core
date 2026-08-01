@@ -29,16 +29,4 @@ Owns: the active-key-count predicate over the API-key ledger, the synthetic-iden
 - **Revoke-the-last-key guard.** Revoking the last active key refuses unless an explicit intent flag accompanies the request. Operators returning the deployment to anonymous mode must do so explicitly.
 - **Expiring-sole-key guard.** Minting the deployment's first key, or rotating its only active key, with a bounded expiry refuses unless an explicit intent flag accompanies the request — the natural lapse of that expiry would otherwise return the deployment to anonymous mode with no explicit action at the moment it happens. A permanent (never-expiring) key, or a create/rotate while other active keys already exist, is unaffected.
 - **Late-bound services are reachable in anonymous mode.** An instance created in anonymous mode (no owning api-key) is stamped at creation time with the target anonymous agent's routing identity — a per-agent silly-name, per `concept:host-agent-proxy` — and dispatches resolve to that agent via the ordinary uniform routing rule. Multiple anonymous agents may connect concurrently, each with a distinct silly-name; instances created against different agents do not interfere. Anonymous mode and late-binding are not mutually exclusive.
-
-## Bootstrap sequence
-
-1. Operator deploys rimsky; migration runs; the API-key ledger is empty.
-2. Control-api starts; predicate is true; banner WARN fires.
-3. Operator runs the bootstrap key-mint command against the ordinary key-mint endpoint, sending no bearer token.
-4. Server admits the request via the synthetic admin identity; mints the key; returns the plaintext exactly once.
-5. Operator captures the plaintext (env var or flag) for subsequent commands.
-6. Anonymous mode ends — identity-gated requests presenting no credentials are now rejected as unauthorized. Routes that never required authentication (health and status probes) are unaffected.
-
-## Break-glass: lost admin key
-
-If all keys are lost: the operator connects to the database directly and either deletes the key rows or marks them all revoked. With no active key remaining, anonymous mode resumes and the bootstrap key-mint flow works again. Operators with database access can return the deployment to anonymous mode.
+- **No API-mediated recovery from total key loss.** If every active key is lost, no CLI verb or control-API endpoint restores access; an operator with direct database access must delete or revoke the remaining key rows, after which anonymous mode resumes and the ordinary bootstrap mint flow works again.

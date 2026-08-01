@@ -56,7 +56,7 @@ func LoadConfigFromEnv() (Config, error) {
 		TLSEnabled:         envBool("RIMSKY_AGENT_TLS"),
 		TLSCAPath:          os.Getenv("RIMSKY_AGENT_TLS_CA"),
 		StatusFile:         os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
-		RoutingLabel:       os.Getenv("RIMSKY_AGENT_ROUTING_LABEL"),
+		RoutingLabel:       os.Getenv(agentRoutingLabelEnvVar),
 		IdentityFile:       os.Getenv("RIMSKY_AGENT_IDENTITY_FILE"),
 	}, nil
 }

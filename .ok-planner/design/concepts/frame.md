@@ -7,7 +7,7 @@ aliases:
 
 # Frame
 
-## Definition
+## What it is
 
 A frame is one cascade resolution. It is a persisted frame row carrying a triggering-message reference, a non-null root RunScope reference, and a lifecycle state — `running`, `completed`, `failed`, or `terminated` — derived at read time from the frame's owned node_runs together with an `ended_at` mark, stamped by the frame-engine reaper at settlement or by administrative instance termination in the terminate transaction itself (so a killed frame is terminal immediately, not on the next scheduler tick). A frame owns a tree of RunScopes rooted at the frame's root RunScope; every node-run in the frame lives in some RunScope under that root (per `concept:run-scope`), and every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame begins only when a message sits pending in the instance's message queue and the frame engine picks it up on a tick — operator-sent, publisher-sent, or cascade-sent by a message-sender node, all converging on the same pickup path. At the pickup moment the runtime creates the root RunScope and the frame row in one tx; the row is `running` because its `ended_at` mark is unset and its node_runs are not yet all terminal. Frames have no pre-run state. Resuming a parked node — the time-wake at its resume-at — does not begin a frame; it resumes the still-running frame the parked node belongs to.
 

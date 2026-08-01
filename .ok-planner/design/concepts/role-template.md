@@ -9,14 +9,7 @@ aliases:
 
 ## What it is
 
-A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time. The six V1-bundled templates are:
-
-- `admin` — full access (a single `*` action grant)
-- `operator` — operational verbs across the platform; can read auth state but cannot mutate keys
-- `read-only` — a single `*:read` grant
-- `agent-supervisor` — read across the platform + `node:reset`, `message:send` — the writes a supervisor agent realistically needs
-- `publisher-service` — a single `message:send` grant; minimal grant for bundled publisher services
-- `debug-operator` — `*:read` + `instance:pause`, `instance:resume`, `breakpoint:create`, `breakpoint:resume`, `breakpoint:delete` — debugger authority for pausing instances and managing runtime breakpoints
+A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time. Six bundled templates ship with the CLI, spanning full platform access down to a single-action grant: `admin`, `operator`, `read-only`, `agent-supervisor`, `publisher-service`, `debug-operator`. The exact grant strings each name expands to are owned by the compiled-in role files, not enumerated here.
 
 These are compiled into the CLI binary at build time and read on demand when a command needs them. Operators define custom roles as local JSON files and pass them via a role-file flag; the CLI loads a custom role the same way it loads a bundled one.
 

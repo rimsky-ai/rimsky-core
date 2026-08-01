@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-The process-role env marker's blob-config error text — the message shown when the memory blob backend is configured outside single-process mode — names all three paths that set the marker: the entrypoint's no-command all-in-one path, the compose one-shot, and the ephemeral-run verb in self-host mode.
+The process-role env marker's blob-config error text — the message shown when the memory blob backend is configured outside single-process mode — names the three genuine deployment paths that set the marker: the entrypoint's no-command all-in-one path, the compose one-shot, and the ephemeral-run verb in self-host mode. A fourth setter, the conformance runner's in-memory-backend test path, is deliberately left unnamed — it satisfies the same gate but is not a deployment an operator debugging the error is in (see `decision:single-process-mode` for the marker's full setter list).
 
 ## Rationale
 

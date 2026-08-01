@@ -6,7 +6,7 @@ aliases: []
 
 # Claim co-holdership
 
-## Definition
+## What it is
 
 Multiple node-runs holding the same claim handle via the co-hold directive. Distinct from the claim-acquisition directive: the co-hold form adds a co-holder row against an existing handle rather than opening a new one. The co-holdership extends the holding subgraph — auto-terminal fires only after every co-holder row for the handle is non-active.
 

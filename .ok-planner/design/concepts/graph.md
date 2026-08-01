@@ -6,7 +6,7 @@ aliases: []
 
 # Graph
 
-## Definition
+## What it is
 
 A graph is rimsky's unit of node connectivity. A template declares its graphs either explicitly, through the template DSL's graphs surface, or implicitly, by declaring nodes directly at the template's top level; either form constitutes the reserved top-level graph, named `main`. Every instance's root run-scope binds to that top-level graph at creation. Other graphs are **sub-graphs** (see `concept:sub-graph`), invocable from the top-level graph or from each other via the delegation surface.
 

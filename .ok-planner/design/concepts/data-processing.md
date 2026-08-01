@@ -6,7 +6,7 @@ aliases: []
 
 # Data processing
 
-## Definition
+## What it is
 
 Optional mix-in protocol on a claim producer. Advertised in the capabilities handshake by listing the data-processing protocol alongside the claim-producer protocol. The protocol carries control-plane operations for the typed-data version lifecycle: capability advertisement, candidate lifecycle (begin / commit / abandon), and read-side surfaces for version history, partition manifests, and per-version schema lookup.
 

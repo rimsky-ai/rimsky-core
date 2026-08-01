@@ -6,7 +6,7 @@ aliases: []
 
 # Publisher
 
-## Definition
+## What it is
 
 A publisher is a peer service that publishes messages into rimsky. Publishers implement the publisher protocol (four verbs: a capabilities handshake, subscribe, unsubscribe, and list-subscriptions) and POST message envelopes to the universal operator message-send endpoint, identifying themselves as publishers and presenting a per-subscription capability token.
 
@@ -32,5 +32,5 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 - The subscribe verb carries the message type the publisher will stamp on every sent envelope; the subscribe surface carries no receiver-routing field — delivery routes by message type against node-subscription edges. The publisher persists the type and copies it onto each sent message envelope.
 - Send-time messages identify the sender as a publisher and present the per-subscription capability token. Rimsky derives the sender name from the publisher-subscription row; the request's declared sender is ignored for trust.
 - Mounting-to-active reconciliation, its retry cadence, and the failed-state contract are owned by `concept:publisher-subscription`.
-- Replicas are not coordinated by rimsky. Single-replica is the v1 contract per `concept:replica`.
+- Replicas are not coordinated by rimsky. Single-replica is the durable posture per `concept:replica`.
 - invariant: message-inertness — payload bytes flow from publisher → message envelope → consumer's substitution leaf without inspection.

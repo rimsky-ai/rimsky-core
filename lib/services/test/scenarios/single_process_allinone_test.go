@@ -19,6 +19,7 @@ const singleProcessSpillThreshold = 256
 
 var singleProcessPayload = strings.Repeat("rimsky-memory-blob-roundtrip/", 300)
 
+// @story: single-process-all-in-one
 func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -6,7 +6,7 @@ aliases: []
 
 # Lineage
 
-## Definition
+## What it is
 
 A persisted projection of **data lineage** — what each run's output literally depended on, and what each claim-handle resolved to. Two record kinds (`leaf_run`, `claim_terminal`); both append-only. Data dependency is captured via attribute-substitution refs on each leaf-run record (every `{{nodes.X.attribute.Y}}` reference declared in the node's attribute schema becomes a citation to the sender's most recent run), and via the claim-tree linkage on each claim-terminal record. The source of truth is the audit log plus the claim-handle lifecycle (see `concept:event-log`, `concept:claim-handle`); the lineage projection is written forward from those at terminal time, not reconstructed from them.
 
