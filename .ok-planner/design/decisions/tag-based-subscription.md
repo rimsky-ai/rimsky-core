@@ -4,16 +4,16 @@ status: as-is
 aliases: []
 ---
 
-# Subscriptions move to terminal/* + CEL tag filter
+# Named-event subscription is terminal/* plus a CEL tag filter
 
 ## Choice
 
-The `event/<name>` leaf is removed from `concept:signal`'s taxonomy. Subscribers that historically expressed `subscribes: [{node: <sender>, type: event/<name>}]` shift to `subscribes: [{node: <sender>, type: terminal/*, when: "<name>" in payload.tags}]`. The CEL `when:` filter on `payload.tags` (bound to the terminal's tag set) replaces the type-path leaf. The CEL environment for `terminal/*` payloads binds `tags: list<string>` so subscribers can use the `in` predicate.
+The signal taxonomy carries no `event/<name>` leaf. A subscriber matching a named event subscribes to the sender's `terminal/*` type with a CEL `when:` filter over the terminal payload's tag set; the CEL environment for `terminal/*` payloads binds `tags: list<string>` so the membership predicate is expressible.
 
 ## Rationale
 
-With tags collapsing the per-emission ledger into terminal-level metadata, the subscription surface follows. Type-path subscription can no longer express "this specific named event"; it expresses "this terminal kind" plus a CEL filter on the tag set.
+With tags collapsing the per-emission ledger into terminal-level metadata (`decision:terminal-tags`), the subscription surface follows. A type-path leaf cannot express "this specific named event" once events are tags; the honest surface is "this terminal kind" plus a filter on the tag set.
 
 ## Alternatives
 
-Synthesize `event/<name>` as a virtual leaf computed from tag presence — rejected because it adds parser complexity for a taxonomy that no longer matches the persistence.
+- Synthesize `event/<name>` as a virtual leaf computed from tag presence — rejected: adds parser complexity for a taxonomy that no longer matches the persistence.

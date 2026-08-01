@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package config
 
@@ -227,6 +226,7 @@ func parseObservabilityRefreshInterval() (time.Duration, error) {
 	return d, nil
 }
 
+// @decision: peer-auth-mtls
 func ParsePeerAuth(raw string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", peer.PeerAuthNone:
@@ -682,6 +682,7 @@ func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics
 	return deduped, nil
 }
 
+// @decision: tls-mode-validation
 func parseTLSMode(block, name, raw string) (string, error) {
 	switch raw {
 	case "", peer.TLSModeOff:

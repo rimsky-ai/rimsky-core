@@ -30,7 +30,7 @@ One carve-out sits outside the unified engine: the acquire-unavailable handler. 
 |---|---|---|---|
 | Completion | Success terminal | Commit | Commit if all completed |
 | Error | Per-class error terminal (give-up or pass paths) or per-class transient retry signal | Abandon on give-up; preserved on retry | Abandon if any failed |
-| Infra | Per-reason infrastructure terminal | Abandon | mark failed + check |
+| Infra | Per-class transient infra retry signal below the infra retry cap; per-class error terminal at the cap | Abandon on give-up; preserved on retry | mark failed + check |
 | Park | Park terminal (time-wake at resume-at) | none — claims retained | none — claims retained |
 | Await-async-callback (transient) | Await-async transient signal | none — no settling verb on first pass | none — callback's eventual terminal drives verb emission |
 | Acquisition failure (pre-dispatch) | Per-class error terminal (producer-declared class else the synthetic acquisition class) | Abandon partial-acquired (outbox enqueue — the single carve-out outside the unified engine) | n/a |

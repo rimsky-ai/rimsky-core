@@ -16,6 +16,8 @@ A claim is a node's request to access a producer-managed resource: an items-tabl
 
 Claims are how a graph node says "I need exclusive (or coexisting) access to this thing while I run." The producer parses the selector from its own DSL and emits canonical claim scope bytes; rimsky's default conflict predicate is byte-equal comparison of those bytes, and a producer that advertises the scopes-conflict capability supplies its own overlap predicate instead, consulted at acquisition and in the fan-out sub-claim path (see `concept:claim-scope`).
 
+A claim also declares an intent — read or read-write. Intent's only runtime consumer is the coexistence predicate: whether a candidate may coexist with a conflicting-scope holder is decided from the two intents under the holder's realized write semantics (see `concept:write-semantics`). Producers do not branch their own behavior on intent; coexistence is rimsky's layer, not the producer's.
+
 Claims carry three orthogonal extensions:
 
 - **Lifetime** (subgraph or durable, default subgraph): governs auto-terminal behavior. A durable claim's handle row persists past holding-subgraph completion in a committed-durable state, released only by explicit operator action or instance termination. See `concept:claim-lifetime`, `concept:asset`.

@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-The dispatch row carries an `async_ack_id` and an `async_ack_registered_at` timestamp; the `async_ack_id` is indexed for the callback handler's lookup. On AwaitAsyncCallback the supervisor writes the registration in the same transaction as the dispatch-state mutation; on callback the handler looks up the dispatch row by `async_ack_id`.
+The async-callback registration is persisted on the dispatch row itself — an acknowledgement id and registration timestamp, written in the same transaction as the dispatch-state mutation — and the callback handler resolves an arriving callback to its dispatch by that id.
 
 ## Rationale
 
@@ -16,4 +16,5 @@ With AwaitAsyncCallback as a primary dispatch mode, the in-memory registry's res
 
 ## Alternatives
 
-Separate `rimsky_async_callbacks` table — rejected because a column on the dispatch row is sufficient and avoids a cross-table join on the hot lookup path.
+- An in-memory registration map — rejected: does not survive supervisor restart, so late callbacks orphan.
+- A separate callback-registry table — rejected: columns on the dispatch row are sufficient and avoid a cross-table join on the hot lookup path.

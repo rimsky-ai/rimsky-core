@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package node
 
@@ -26,6 +25,7 @@ type ValidationWarning struct {
 	Msg  string
 }
 
+// @decision: validation-errors-additive-not-uniform
 type ValidationResult struct {
 	Errors           []ValidationError
 	Warnings         []ValidationWarning
@@ -284,6 +284,7 @@ func ApplyFrameResolutionDefaults(*TemplateSpec) {
 
 // @concept: error-policy
 // @concept: signal
+// @decision: validator-learns-producer-classes
 func validateErrorTypes(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	validActions := map[string]bool{
 		spec.ActionPass:              true,
@@ -399,6 +400,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
 		refreshKnown := s.ForceUpstreamRefresh != nil
+		// @decision: cascade-flags-required-no-defaults
 		if !refreshKnown {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase + ".force_upstream_refresh",

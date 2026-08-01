@@ -12,3 +12,8 @@ The driver-parity suite (the cross-driver test library run against both persiste
 ## Rationale
 
 The claimant-guard helper (see `decision:claimant-guard-helper`) cannot catch a future function that bypasses it; the behavioral proof can. Together they close each other's blind spot.
+
+## Alternatives
+
+- Rely on the claimant-guard helper alone — rejected: a helper enforces nothing on a mutation path that bypasses it.
+- Duplicate wrong-claimant tests per persistence driver — rejected: the copies drift, and a driver-specific gap hides until it bites.

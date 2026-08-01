@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @decision: launch-integration
 package launch
@@ -43,6 +42,7 @@ var (
 	runControlAPIFn = RunControlAPI
 )
 
+// @decision: single-process-mode
 func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (*UnifiedStack, error) {
 	blobBackend, err := config.OpenBlobBackend(cfg.Blob, driver, cfg.Topology)
 	if err != nil {

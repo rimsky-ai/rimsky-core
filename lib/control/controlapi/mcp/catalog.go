@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package mcp
 
@@ -66,6 +65,7 @@ func (c *Catalog) Filtered(r *http.Request) []Tool {
 	return out
 }
 
+// @decision: mcp-http-parity
 func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (any, bool, *Error) {
 	entry, ok := c.Registry.EntryForTool(name)
 	if !ok {

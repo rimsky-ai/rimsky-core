@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @concept: service
 package bundled
@@ -51,6 +50,7 @@ type Opts struct {
 	Logger *slog.Logger
 }
 
+// @decision: handler-package-in-service-directory
 func RegisterAll(ctx context.Context, execReg ExecutorRegistry, cpReg ClaimProducerRegistry, aliases ExecutorAliasSink, discovery DiscoverySink, opts Opts) error {
 	if execReg == nil {
 		return errors.New("bundled.RegisterAll: executor registry required")
@@ -149,6 +149,7 @@ func executorEntries() []executorEntry {
 
 var errExecutorSkipped = errors.New("executor not configured")
 
+// @decision: per-service-load-opts-from-env
 func registerExecutors(execReg ExecutorRegistry, aliases ExecutorAliasSink, discovery DiscoverySink, logger *slog.Logger) error {
 	for _, e := range executorEntries() {
 		h, err := e.construct(logger)

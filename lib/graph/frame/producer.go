@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package frame
 
@@ -16,11 +15,13 @@ import (
 )
 
 // @decision: empty-message-as-root-trigger
+// @decision: single-frame-creation-path
 func openRunningFrameForMessage(
 	ctx context.Context, store persistence.Tables, instanceID, triggeringMessageID uuid.UUID, tx persistence.Tx,
 ) (uuid.UUID, error) {
 
 	// @concept: run-scope
+	// @decision: run-scope-is-per-frame
 	rootRunScopeID := shared.UUID(uuid.New())
 	if err := store.RunScopes().Create(ctx, persistence.RunScopeRow{
 		ID:           rootRunScopeID,

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package runtime
 
@@ -146,6 +145,7 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 		c.Logger = shared.SilentLogger{}
 	}
 	r := chi.NewRouter()
+	// @decision: async-callback-post-json
 	r.Post("/v1/callback/{async_ack_id}", c.handleCallback)
 	if c.Persist != nil && c.Queue != nil {
 		r.Post("/v1/runs/{run_id}/keepalive", c.handleKeepalive)
@@ -232,6 +232,7 @@ type asyncCallbackPark struct {
 	Scratch []byte `json:"scratch,omitempty"`
 }
 
+// @decision: run-token-swept
 func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if err := c.authorizePeer(r); err != nil {
 		c.Logger.Warn("callback: unauthorized peer", "error", err.Error())
@@ -562,6 +563,7 @@ func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncCon
 	return successor
 }
 
+// @decision: async-callback-outcome-oneof
 func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 	var body asyncCallbackBody
 	if err := json.Unmarshal(raw, &body); err != nil {

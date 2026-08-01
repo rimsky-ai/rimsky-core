@@ -12,3 +12,8 @@ The shared entrypoint binary with no command → all roles; single role command 
 ## Rationale
 
 One image, many topologies.
+
+## Alternatives
+
+- One image per role binary — rejected: multiplies the build and publish surface for binaries that ship together anyway.
+- A mandatory dedicated migration job in every topology — rejected: forces an extra deployment step on the smallest setups; deriving migrate ownership from role selection covers single-container and split topologies without racing or missing runs.

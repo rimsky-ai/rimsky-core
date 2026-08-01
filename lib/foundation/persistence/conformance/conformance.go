@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package conformance
 
@@ -12,6 +11,7 @@ import (
 
 type RawQueryRow = map[string]any
 
+// @decision: parity-expansion
 func Suite(
 	t *testing.T,
 	factory func(*testing.T) persistence.Database,
@@ -141,6 +141,7 @@ func Suite(
 	t.Run("WaitSetGateEvaluatorMethods", func(t *testing.T) { testWaitSetGateEvaluatorMethods(t, factory(t)) })
 	t.Run("WaitSetFrameIsolation", func(t *testing.T) { testWaitSetFrameIsolation(t, factory(t)) })
 	// @decision: claimant-guard-helper
+	// @decision: guard-conformance-suite
 	t.Run("ClaimantGuard", func(t *testing.T) {
 		t.Run("HandleUpdates", func(t *testing.T) { testClaimantGuardHandleUpdates(t, factory(t)) })
 		t.Run("HandleCounterBumps", func(t *testing.T) { testClaimantGuardHandleCounterBumps(t, factory(t)) })

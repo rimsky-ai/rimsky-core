@@ -12,3 +12,8 @@ A receiver-keyed map of upstream node-types is built at registration from every 
 ## Rationale
 
 Keeping the upstream-refresh edge map separate from the per-edge subscription map keeps the cascade walker's consumption path linear in receivers and lets cycle detection run once at registration rather than per dispatch.
+
+## Alternatives
+
+- Fold the refresh edges into the per-edge subscription map behind a flag — rejected: the cascade walker's consumption path stops being linear in receivers.
+- Detect refresh cycles per dispatch instead of at registration — rejected: repeats a whole-graph check on every invalidation for a property fixed at registration time.

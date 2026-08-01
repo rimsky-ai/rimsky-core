@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package persistence
 
@@ -71,6 +70,7 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 		if hasByFile[filename] {
 			continue
 		}
+		// @decision: migrations-append-only-numbered
 		if maxApplied != "" && filename < maxApplied {
 			return fmt.Errorf("persistence.Migrator: %s sorts before already-applied %s; migrations are append-only and must sort after every applied file", filename, maxApplied)
 		}

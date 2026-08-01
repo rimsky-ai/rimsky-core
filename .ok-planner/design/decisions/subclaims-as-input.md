@@ -12,3 +12,7 @@ Sub-claim acquisition is owned by fan-out's partition-split mechanics (see `conc
 ## Rationale
 
 Keeps acquisition concerns in `concept:fan-out` and run-side dispatch concerns in the dispatch primitive; the two surfaces compose without coupling.
+
+## Alternatives
+
+- The dispatch primitive calls the producer's partition-split itself — rejected: entangles run-side dispatch with the acquisition mechanics fan-out owns, coupling the two surfaces.

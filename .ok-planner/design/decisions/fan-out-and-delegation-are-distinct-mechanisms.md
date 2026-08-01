@@ -17,7 +17,7 @@ Settlement is intentionally split: the two settle primitives stay separate becau
 
 ## Rationale
 
-An earlier unification attempt framed delegation as "fan-out with N=1" and asserted a single dispatch + single settle primitive for both. Neither holds. Delegation does not clone its calling node; it dispatches the sub-graph's distinct internal nodes. Settle was never unified — the delegation settle carries a single exit's writeback and closes a run-scope; the fan-out settle updates a claim-handle holder set and runs an author-policy aggregation. These are not duplicated logic that should collapse; they are different operations.
+The unified framing — delegation as "fan-out with N=1" behind a single dispatch + single settle primitive — does not hold. Delegation does not clone its calling node; it dispatches the sub-graph's distinct internal nodes. Settle cannot unify — the delegation settle carries a single exit's writeback and closes a run-scope; the fan-out settle updates a claim-handle holder set and runs an author-policy aggregation. These are not duplicated logic that should collapse; they are different operations.
 
 Conflating the two also hides the no-attribute-aggregation property of fan-out: because all N clones share the same template node and attribute schema, any rimsky-side merge across them would collide on every key. Authors needing per-fan-out aggregation route it through the claim producer's data-processing protocol surface — not through an inferred attribute merger. Treating fan-out as "delegation with more N" obscures that this is the correct shape, not an omission.
 
@@ -27,6 +27,6 @@ The shared dispatch helper is real but thin. It accepts a partitions × children
 
 Unify the two by collapsing settle into one primitive that switches on a "shape" discriminator — rejected. The two settle paths have almost no shared logic; a single function would be a long switch statement with two disjoint arms, not a real abstraction.
 
-Keep the prior unification framing and patch its rationale — rejected. The "delegation is fan-out with N=1" framing is load-bearing for the original decision; correcting it leaves nothing the decision is actually deciding. A retirement is cleaner.
+Frame delegation as fan-out's N=1 special case — rejected. Delegation dispatches distinct internal nodes rather than cloning the caller, so nothing real survives the framing; there is no decision left for it to carry.
 
 Drop the umbrella `concept:child-execution` entirely and let `concept:fan-out` and `concept:delegation` stand alone — rejected. The umbrella concept still earns its place by naming the thin shared dispatch helper and the two settlement-mode names (carry, aggregate) so callers and reviewers can refer to the shapes by stable names. The decision here just clarifies that the two mechanisms are distinct, not that the umbrella is wrong.

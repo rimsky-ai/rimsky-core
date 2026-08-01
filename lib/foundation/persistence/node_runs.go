@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package persistence
 
@@ -155,6 +154,7 @@ type Queue interface {
 	LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx Tx) (inline []byte, handle, handleBackend string, err error)
 
 	// @concept: executor
+	// @decision: scratch-column
 	WriteScratch(ctx context.Context, nodeRunID shared.UUID, inline []byte, handle, handleBackend string, tx Tx) error
 }
 

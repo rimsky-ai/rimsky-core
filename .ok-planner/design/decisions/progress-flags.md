@@ -3,7 +3,7 @@ decision: progress-flags
 status: adopted
 ---
 
-# progress-flags
+# Progress output has three composable flags
 
 ## Choice
 
@@ -12,3 +12,7 @@ status: adopted
 ## Rationale
 
 Three operating modes cover CI logs (quiet), live debugging (verbose), and structured pipelines (json). They compose: `--quiet --json` is the structured CI shape.
+
+## Alternatives
+
+- A single numeric verbosity level — rejected: format (JSON) and volume (quiet/verbose) are orthogonal axes that must compose.

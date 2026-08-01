@@ -7,8 +7,12 @@ status: as-is
 
 ## Choice
 
-The all-peer-kind validation-registry dial (which walks stores, executors, and publishers) plumbs the declared validation-supported roles from the publisher capability surface (where the field already existed) and from the executor side via a validation-supported-roles field on the executor-observability capabilities message, wiring both identically to claim-producer peers (see `story:validation-mixin-uniform`).
+The validation-registry dial walks every peer kind — stores, executors, and publishers alongside claim producers — and honors the declared validation-supported roles identically for each: publishers declare them on their capability surface, executors on the executor-observability capabilities message (see `story:validation-mixin-uniform`).
 
 ## Rationale
 
-The wire contract implies all peer kinds; two of three silently ignoring the field is a gap, not a design. The executor-side proto addition follows the same compatible-extension pattern as `decision:producer-declared-classes-capability`.
+The wire contract implies all peer kinds; two of three silently ignoring the field is a gap, not a design. The executor-side declaration is a compatible proto extension of the same shape as `decision:producer-declared-classes-capability`.
+
+## Alternatives
+
+- Validation roles honored only for claim-producer peers, with the field ignored on the other kinds — rejected: a declared capability two peer kinds silently drop advertises a contract the runtime does not honor.

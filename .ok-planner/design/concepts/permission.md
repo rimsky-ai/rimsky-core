@@ -24,6 +24,7 @@ Owns: the grant entry shape, a boundary-only wildcard matcher over the action gr
 
 ## Invariants
 
+- **Closed action grammar.** An action is a noun:verb pair joined by a single separator, and the wildcard vocabulary is exactly three forms: the full wildcard, a noun-scoped wildcard (every verb of one noun), and a verb-scoped wildcard (one verb across every noun). The separator is part of the match boundary — a noun-scoped wildcard never matches a longer noun — and no other wildcard shape (infix, pattern) exists; an invalid form is rejected at key creation.
 - **Set-membership evaluation.** A request is allowed iff some entry's action matches AND that entry's scope (if present) is satisfied by the request's target resource; otherwise denied. Iteration order is irrelevant — any matching, in-scope entry allows, so there is no first-match-wins rule.
 - **Scoped entries are least-privilege.** A scope-bearing entry allows ONLY requests whose target resource satisfies the selector; an out-of-scope request of the same action is denied unless another entry independently allows it.
 - **Grant mode is a floor.** The matched entry's mode (full execution by default) is the most permissive mode the request may run at; the dry-run flag may restrict further but never escalate (see `concept:dry-run`).

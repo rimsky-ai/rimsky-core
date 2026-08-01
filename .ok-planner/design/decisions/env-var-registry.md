@@ -10,19 +10,19 @@ status: as-is
 Every `RIMSKY_*` environment variable read by live code appears in a
 generated registry table, backed by a fitness test that fails when a
 read site references a variable missing from the registry. Endpoint
-variables name their target service: the control API's endpoint is
-`RIMSKY_CONTROL_API_URL` everywhere — the CLI included — and the
-host-agent's proxy endpoint is `RIMSKY_HOST_AGENT_PROXY_URL`.
+variables name their target service: the control API's endpoint
+variable and the host-agent proxy's endpoint variable each carry the
+service they point at, everywhere — the CLI included.
 
 ## Rationale
 
-Live code reads roughly 58 `RIMSKY_*` variables and only 15 were
-documented anywhere — the gap grows because nothing fails when a new
-variable ships unlisted. Three look-alike endpoint names pointing at
-two different services made misconfiguration silent (set the wrong
-one and things quietly don't connect); naming the target service
-removes the collision at the root, and the pre-v1 break-freely stance
-makes the renames cheap now in a way they never will be again.
+Live code reads several dozen `RIMSKY_*` variables, and without a
+fitness test nothing fails when a new one ships unlisted — an
+undocumented majority is the steady state a hand-maintained list
+decays to. Look-alike endpoint names pointing at different services
+make misconfiguration silent (set the wrong one and things quietly
+don't connect); naming the target service removes the collision at
+the root.
 
 ## Alternatives
 

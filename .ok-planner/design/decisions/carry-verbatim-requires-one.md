@@ -12,3 +12,8 @@ The carry-verbatim aggregation policy requires exactly one child, enforced at te
 ## Rationale
 
 Makes the delegation degenerate case a checked invariant instead of an assumption.
+
+## Alternatives
+
+- Enforce the single-child shape at settle time instead of template validation — rejected: fails late, after dispatch, on a shape knowable statically.
+- Accept multiple children and carry one child's result — rejected: silently discards the rest; "verbatim" would no longer name a guarantee.

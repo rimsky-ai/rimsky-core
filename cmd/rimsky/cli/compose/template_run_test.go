@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package compose
 
@@ -165,6 +164,7 @@ nodes:
 	}
 }
 
+// @decision: env-var-convention-across-modes
 func TestSnapshotAndSetEnvPreservesOperatorServiceEnv(t *testing.T) {
 	t.Setenv("RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST", "docs,search")
 	t.Setenv("RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST", "GITHUB_TOKEN")

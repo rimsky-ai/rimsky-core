@@ -12,3 +12,7 @@ Delegation's entry absorption is an entry-absorbed boolean carried on the dispat
 ## Rationale
 
 One primitive, one call site; a pre-step would reintroduce a second dispatch shape.
+
+## Alternatives
+
+- An absorption pre-step run before dispatch — rejected: reintroduces a second dispatch shape alongside the one dispatch-children primitive.

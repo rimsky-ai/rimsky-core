@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// SPDX-License-Identifier: Apache-2.0
 
 package serverkit
 
@@ -291,6 +290,7 @@ func decodeOptional(body []byte, v any) error {
 	return nil
 }
 
+// @decision: protojson-gateway
 func writeJSON(w http.ResponseWriter, v proto.Message) {
 	w.Header().Set("Content-Type", "application/json")
 	data, err := protojson.Marshal(v)

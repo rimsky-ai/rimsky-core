@@ -4,16 +4,16 @@ status: as-is
 aliases: []
 ---
 
-# event/<name> substitution path removed
+# No event-payload substitution path
 
 ## Choice
 
-The `nodes.<emitter>.event.<name>.<json_path>` substitution path is removed entirely. Per-emission data lives in `attributes_delta`, available via the existing `nodes.<emitter>.attribute.<key>` substitution path.
+The substitution grammar has no per-emission event path: per-emission data lives in the attributes delta and is read through the node-attribute substitution path.
 
 ## Rationale
 
-With named events collapsed and the named-event ledger removed, the substitution path has nothing to read from. Per-emission data was always more honestly attribute data.
+There is no named-event ledger for an event substitution path to read from, and per-emission data is honestly attribute data; a second substitution channel for the same bytes would duplicate the attribute path.
 
 ## Alternatives
 
-None — fully redundant once the ledger is removed.
+- A dedicated per-emission substitution path backed by a named-event ledger — rejected: redundant with the attribute path once per-emission data lands in the attributes delta, at the cost of a ledger maintained solely to serve it.

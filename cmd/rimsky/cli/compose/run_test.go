@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package compose
 
@@ -208,10 +207,6 @@ func TestSpawnServices_BareNameAliasResolvesPastGate(t *testing.T) {
 	}
 }
 
-// global `~/.rimsky/aliases.yml` — matches cli.LoadServiceAliases.
-// Observed via the spawn-stage error referencing the project-local
-// path rather than the global path.
-//
 // @decision: service-spawn-flag
 func TestSpawnServices_ProjectLocalAliasOverlaysGlobal(t *testing.T) {
 	home := t.TempDir()

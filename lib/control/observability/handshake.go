@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package observability
 
@@ -216,6 +215,7 @@ func probeExecutorEntry(ctx context.Context, prober Prober, e PeerSpec, log *slo
 	return entry
 }
 
+// @decision: producer-declared-classes-capability
 func probeClaimProducerEntry(ctx context.Context, prober Prober, s PeerSpec, log *slog.Logger) PeerEntry {
 	probe := chooseObsEndpoint(s.ObservabilityEndpoint, s.Endpoint)
 	entry := PeerEntry{

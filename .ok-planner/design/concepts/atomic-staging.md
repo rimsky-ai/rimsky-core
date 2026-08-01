@@ -19,6 +19,8 @@ Owns: the producer-side discipline, the documented pattern, the per-substrate at
 
 ## Invariants
 
+- Release of a claim whose staging was never committed is equivalent to Abandon: the staging is dropped and the canonical view is untouched.
+- The canonical view must be an atomically-replaceable unit: internal dependents (objects inside the canonical depending on other objects inside it) are carried into staging, but an object outside the canonical that depends on objects inside it would be destroyed by the swap rather than replaced. A write-intent open against a canonical with such an external dependent fails fast at open with a declared error — before any staging is created — and the swap re-checks as a backstop against a dependent appearing mid-flight, surfacing the producer's swap-failure error class. Read-intent opens are unaffected.
 - A transactional-store substrate swaps atomically via its transaction.
 - A metadata-pointer-flip substrate swaps atomically if the pointer write itself is atomic.
 - A rename-within-a-single-volume substrate swaps atomically within that volume.

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @story: one-shot-to-terminal
 // @story: audit-artifact
@@ -51,6 +50,8 @@ type composeRunFlags struct {
 }
 
 // @story: one-shot-to-terminal
+// @decision: rimsky-compose-run-scope
+// @decision: exposure-no-config
 func RunComposeRun(ctx context.Context, args []string) int {
 	if err := ctx.Err(); err != nil {
 		return 130
@@ -93,6 +94,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return 2
 	}
 
+	// @decision: run-name
 	name := flags.name
 	if name == "" {
 		name = m.Project
@@ -194,6 +196,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	if flags.json {
 		applyLogger = io.Discard
 	}
+	// @decision: compose-engine-reuse
 	created, _, err := ApplyPlan(bootCtx, c, plan, ApplyOpts{Logger: applyLogger})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: apply:", err)

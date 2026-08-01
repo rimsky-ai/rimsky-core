@@ -11,4 +11,9 @@ The claim-producer capabilities response carries a declared-error-classes field,
 
 ## Rationale
 
-The validator can only range-check vocabularies that are declared somewhere; the runtime already routes producer-declared classes, so the declaration surface is the missing half of an existing contract.
+The validator can only range-check vocabularies that are declared somewhere; the runtime routes producer-declared classes, so the declaration surface is the other half of that contract.
+
+## Alternatives
+
+- Executor-only vocabulary declaration — rejected: producer-class policy keys go silently unvalidated because the validator has nothing to range-check them against.
+- Mandatory declaration — rejected: breaks producers with no error vocabulary; declaring nothing must stay legal.

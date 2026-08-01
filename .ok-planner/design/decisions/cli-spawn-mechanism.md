@@ -8,12 +8,13 @@ aliases: []
 
 ## Choice
 
-The claude-agent handler shells to the `claude` binary via the Go standard-library subprocess mechanism, with argument and env composition mirroring the retired TypeScript implementation's behavior (print/stream-json output, per-run session id, system-prompt and MCP-config temp files, allowed-tools union over the callback surface).
+The claude-agent handler shells to the `claude` binary as a direct child via the Go standard-library subprocess mechanism, composing arguments and environment per dispatch, with no intermediate runtime layer.
 
 ## Rationale
 
-The retired TypeScript version was itself a subprocess spawner around the same CLI; the Go port replaces the Node runtime with the standard-library primitive and drops one process layer. The CLI owns the session protocol, tool loop, and provider surface; the handler owns dispatch lifecycle, callbacks, and teardown.
+The CLI owns the session protocol, tool loop, and provider surface; the handler owns dispatch lifecycle, callbacks, and teardown. Spawning the CLI as a direct child of the handler process keeps that split with the fewest process layers.
 
 ## Alternatives
 
-Reimplement the agent's session protocol against the raw HTTP API — rejected: reinvents wheels the CLI already handles and diverges from the CLI's evolving surface.
+- Reimplement the agent's session protocol against the raw HTTP API — rejected: reinvents wheels the CLI already handles and diverges from the CLI's evolving surface.
+- Drive the CLI through an embedding agent-SDK runtime on a separate language runtime — rejected: an extra process layer and runtime dependency for the same subprocess job.

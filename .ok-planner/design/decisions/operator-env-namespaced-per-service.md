@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-Operator env vars introduced for a bundled service carry a per-service prefix of the form RIMSKY_<SERVICE>_*. For claude-agent these are RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST (replacing the retired catalog-file and inline-allow envs) and RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST (renaming and reshaping the retired container-wide exposure env). Pre-existing generic per-executor env vars (host, ports, CLI binary override, declared tags, timeouts, stub mode) survive unchanged — they are relevant only to standalone deployment; an in-process handler binds no ports and reads no transport envs, so cross-service collision does not materialize there.
+Operator env vars introduced for a bundled service carry a per-service prefix of the form RIMSKY_<SERVICE>_*. The generic per-executor env vars (host, ports, binary override, declared tags, timeouts, stub mode) stay unprefixed — they are relevant only to standalone deployment; an in-process handler binds no ports and reads no transport envs, so cross-service collision does not materialize there.
 
 ## Rationale
 

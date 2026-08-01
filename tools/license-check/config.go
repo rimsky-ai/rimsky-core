@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package main
 
@@ -70,6 +69,7 @@ func normalizePrefixes(in []string) []string {
 	return out
 }
 
+// @decision: licensing-dual-apache-agpl
 func (c *licensingConfig) classify(relPath string) classification {
 	relPath = strings.TrimPrefix(relPath, "./")
 	exempt, exemptLen := matchPrefix(c.exemptEntries, relPath)

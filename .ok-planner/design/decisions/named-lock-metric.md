@@ -12,3 +12,8 @@ The named-lock acquisition surface increments the acquisition metric family, lab
 ## Rationale
 
 Lock saturation is an operational condition; events are forensics, metrics are monitoring.
+
+## Alternatives
+
+- Record acquisitions as event-log rows instead — rejected: events answer "what happened here" after the fact; saturation monitoring needs a scrapeable counter.
+- A new dedicated metric family for named locks — rejected: the existing acquisition family with a distinguishing label keeps one naming convention and lets dashboards compare lock kinds directly.

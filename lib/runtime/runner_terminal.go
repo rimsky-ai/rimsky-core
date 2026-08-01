@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package runtime
 
@@ -94,6 +93,7 @@ func applyTerminal(
 	}, nil
 }
 
+// @decision: emit-work-completed
 func emitWorkCompleted(ctx context.Context, args RunArgs, acq *acquisition, kind terminalKind) {
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -576,6 +576,7 @@ func pullForceRefreshUpstreams(
 				return fmt.Errorf("pullForceRefreshUpstreams: probe upstream %s: %w", upstreamType, err)
 			}
 			if !hasInFlight {
+				// @decision: hard-dep-settled-guard
 				settledThisFrame, err := args.Persist.Nodes().HasRunForNodeInFrame(
 					ctx, upstreamNode.ID, senderFrameID, tx,
 				)
@@ -791,6 +792,7 @@ func upsertFinalAttributesTx(
 	return args.Persist.NodeAttributes().Upsert(ctx, acq.NodeRunID, acq.NodeID, final, tx)
 }
 
+// @decision: uniform-attributes-delta
 func mergeAttributesDelta(base, delta map[string]any) map[string]any {
 	out := make(map[string]any, len(base)+len(delta))
 	for k, v := range base {
@@ -802,6 +804,7 @@ func mergeAttributesDelta(base, delta map[string]any) map[string]any {
 	return out
 }
 
+// @decision: wait-set-topic-kind-taxonomy
 func waitSetTopicKindFor(pattern signalpkg.TypePath) string {
 	switch pattern.TopLevel() {
 	case signalpkg.KindTerminal:

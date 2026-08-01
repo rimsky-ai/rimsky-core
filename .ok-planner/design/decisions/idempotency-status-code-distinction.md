@@ -12,3 +12,7 @@ A created-resource status code on fresh insert versus an OK status code on repla
 ## Rationale
 
 Distinguish fresh vs. replayed without body inspection.
+
+## Alternatives
+
+- One success status for both, with a replay marker in the body — rejected: forces callers to parse the body to detect a replay.

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package compose
 
@@ -28,6 +27,7 @@ type RoleStack struct {
 
 type RoleFailure = launch.RoleFailure
 
+// @decision: migration-direct
 func MigratePersistence(ctx context.Context, logger *slog.Logger, configPath string) (persistence.Database, config.RimskyConfig, error) {
 	cfg, err := config.LoadRimskyConfigYAML(configPath)
 	if err != nil {

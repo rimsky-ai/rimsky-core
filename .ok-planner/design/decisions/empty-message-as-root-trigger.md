@@ -11,8 +11,9 @@ Every template's declared-types set carries an implicit empty-string type-path e
 
 ## Rationale
 
-Collapses the prior runtime-synthetic envelope types onto the typed-message path. The receipt handler stays uniform with no branch named for the empty case; the cascade walker, substitution validator, and dead-letter audit treat the empty type identically with any other declared type.
+Root triggering rides the typed-message path rather than any runtime-synthetic envelope type. The receipt handler stays uniform with no branch named for the empty case; the cascade walker, substitution validator, and dead-letter audit treat the empty type identically with any other declared type.
 
-## Alternatives considered
+## Alternatives
 
-A dedicated wake control endpoint — would re-introduce a parallel non-message wake path; a receipt-handler special-case branch on the empty type — the runtime branch named for a specific case is the asymmetry the spec is otherwise trying to retire.
+- A dedicated wake control endpoint — rejected: re-introduces a parallel non-message wake path.
+- A receipt-handler special-case branch on the empty type — rejected: a runtime branch named for one specific case is exactly the asymmetry the implicit declared-types entry removes.

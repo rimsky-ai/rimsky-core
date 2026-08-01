@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package plumbline
 
@@ -15,6 +14,7 @@ import (
 )
 
 // @story: clean-lint
+// @decision: coding-style
 func TestPlumblineClean(t *testing.T) {
 	repoRoot := findRepoRoot(t)
 	assertAllChecksActive(t, repoRoot)
@@ -99,12 +99,9 @@ func assertAllChecksActive(t *testing.T, repoRoot string) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("parse %s: %v", cfgPath, err)
 	}
-	if len(cfg.Checks) == 0 {
-		t.Fatalf(".ok-plumbline/config.json checks is empty; expected at least one configured check")
-	}
 	for name, v := range cfg.Checks {
 		if !v {
-			t.Fatalf(".ok-plumbline/config.json checks.%s = false; expected true", name)
+			t.Fatalf(".ok-plumbline/config.json checks.%s = false; expected true — with the retired checks key absent both lint checks always run, and a reintroduced key may never disable one", name)
 		}
 	}
 }

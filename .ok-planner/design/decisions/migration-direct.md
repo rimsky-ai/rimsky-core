@@ -3,12 +3,16 @@ decision: migration-direct
 status: adopted
 ---
 
-# migration-direct
+# One-shot runs migrate in-process
 
 ## Choice
 
-The verb calls the persistence driver's migrate operation directly against the freshly-created sqlite database before starting any role runner. No separate migrate-binary subprocess.
+A one-shot self-hosting run calls the persistence driver's migrate operation directly, in-process, against its freshly-created SQLite database before starting any role runner — no separate migrate-binary subprocess.
 
 ## Rationale
 
-A one-shot run owns its database top-to-bottom; the existing migrate-binary subprocess exists to coordinate migrations across multi-process deployments, a coordination this verb does not need. Migrating in-process keeps the verb self-contained — no second process to fork, no extra runtime-environment dependencies, no extra path for failures to take.
+A one-shot run owns its database top-to-bottom; the migrate-binary subprocess exists to coordinate migrations across multi-process deployments, a coordination this path does not need. Migrating in-process keeps the verb self-contained — no second process to fork, no extra runtime-environment dependencies, no extra path for failures to take.
+
+## Alternatives
+
+- Fork the migrate binary as a subprocess, as multi-process deployments do — rejected: buys cross-process coordination the single-process case cannot need, at the cost of a second process to fork and a second failure path.

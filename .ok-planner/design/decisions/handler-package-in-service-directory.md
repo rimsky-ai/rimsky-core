@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-Each bundled service directory exposes its handler code as importable Go packages alongside a thin standalone `main`. The standalone binary constructs a handler and serves it over gRPC (unchanged operational shape); the all-in-one entrypoint constructs the same handler and registers it into the in-process dispatch pool. Physical layout varies per service — executors keep their handler code flat in one package with a small `cmd` main; claim producers keep their existing `cmd` main plus server/store/lifecycle subpackage split. The invariant is that a handler package (or coherent set of packages) is importable and reusable across both surfaces; both modes run the same handler code.
+Each bundled service directory exposes its handler code as importable Go packages alongside a thin standalone `main`. The standalone binary constructs a handler and serves it over gRPC; the all-in-one entrypoint constructs the same handler and registers it into the in-process dispatch pool. Physical layout varies per service; the invariant is that the handler package (or coherent set of packages) is importable and reusable across both surfaces, so both modes run the same handler code.
 
 ## Rationale
 

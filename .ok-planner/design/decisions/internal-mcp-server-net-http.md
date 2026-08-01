@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-The per-dispatch MCP callback endpoint the CLI child reports through is a standard-library HTTP server speaking the JSON-RPC subset the CLI uses today (initialize with session-id assignment, tools/list, tools/call, notifications, session delete), shut down gracefully so an in-flight terminal report's response always reaches the child before the endpoint closes.
+The per-dispatch MCP callback endpoint the CLI child reports through is a standard-library HTTP server speaking the small JSON-RPC subset the CLI uses, shut down gracefully so an in-flight terminal report's response always reaches the child before the endpoint closes.
 
 ## Rationale
 

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package node
 
@@ -39,6 +38,7 @@ func (m *KindAliasMap) Resolve(kind string) (string, bool) {
 }
 
 // @concept: node
+// @decision: kind-sugar-resolver
 func CanonicalizeKindSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
 	if tspec == nil || aliases == nil {
 		return
@@ -57,6 +57,7 @@ func CanonicalizeKindSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
 
 // @concept: message-sender-node
 // @concept: node
+// @decision: send-as-node-kind
 func CanonicalizeSendMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) error {
 	if tspec == nil || aliases == nil {
 		return nil

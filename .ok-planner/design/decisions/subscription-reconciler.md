@@ -12,3 +12,8 @@ A reconciliation worker performs Subscribe RPCs for mounting subscription rows a
 ## Rationale
 
 Retry-forever matches desired-state semantics; bounded retry budgets convert contention spikes into silent failures.
+
+## Alternatives
+
+- A bounded retry budget that lands exhausted rows in failed — rejected: converts contention spikes into silent failures; failed then stops meaning "non-retryable".
+- No worker, relying on the startup resync pass alone — rejected: a mounting row would wait for a process restart to mount.

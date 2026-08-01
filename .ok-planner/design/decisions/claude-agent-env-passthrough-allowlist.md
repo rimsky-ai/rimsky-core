@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-The claude-agent handler reads an operator allowlist of env-variable names from its own process environment (the same env-var name across containerized and all-in-one modes), plus a per-dispatch expose-env list from each node's config. The intersection governs exposure: on CLI spawn (and resume), the handler looks up each node-declared, operator-allowed variable from its own process environment and adds it to that node's CLI child env, alongside the fixed rimsky-callback plumbing already passed to the child. A node declaring a name outside the operator allowlist fails that dispatch with an error naming the disallowed variable, the template instance, and the node. Unset operator allowlist plus unset per-node list is the safe default: only callback plumbing and Claude auth reach the child. The security invariant survives — rimsky never sees the plaintext env values; the mechanism moves off a single container-wide exposure list onto a per-node declaration in the template guarded by the operator allowlist.
+The claude-agent handler reads an operator allowlist of env-variable names from its own process environment (the same env-var name across containerized and all-in-one modes), plus a per-dispatch expose-env list from each node's config. The intersection governs exposure: on CLI spawn (and resume), the handler looks up each node-declared, operator-allowed variable from its own process environment and adds it to that node's CLI child env, alongside the fixed rimsky-callback plumbing already passed to the child. A node declaring a name outside the operator allowlist fails that dispatch with an error naming the disallowed variable, the template instance, and the node. Unset operator allowlist plus unset per-node list is the safe default: only callback plumbing and Claude auth reach the child. The security invariant: rimsky never sees the plaintext env values — exposure is a per-node declaration in the template, guarded by the operator allowlist.
 
 ## Rationale
 
@@ -20,10 +20,7 @@ The split gives each party the control that belongs to it: the operator allowlis
 
 ## Alternatives
 
-Whole `process.env` spread into the CLI child — rejected. Simpler code, but exposes every executor-container env variable — auth tokens, rimsky-callback tokens, unrelated ops env — to the agent CLI. The allowlist is a small amount of code (one config parse, one env-var-name loop) for a large audit-and-blast-radius benefit.
-
-Per-template allowlist declared in node config WITHOUT an operator allowlist safeguard — rejected. Template authors would gain unilateral control over which secrets the CLI child sees; the operator-declared allowlist is what preserves the "operator owns which secrets are visible at all" property. The adopted shape is the guarded version: per-node declaration in node config, intersected with the operator's allowlist.
-
-Preserve rimsky-side `{{env.VAR}}` substitution as the secret path (drop this executor-side allowlist) — rejected. That path lands plaintext in rimsky's persisted attribute bag and makes rimsky a secret handler. The trade-off is deliberate: rimsky's substitution grammar handles non-secret template configuration; secrets stay executor-side and travel through the pass-through allowlist to the agent.
-
-Reintroduce executor-side `${env:VAR}` in-config substitution (the retired shape) — rejected. Two substitution dialects on the same template surface violate one-idiom-per-job. The pass-through mechanism doesn't add a dialect; it exposes plain env vars to the agent, which the CLI reads via its ordinary environment access.
+- Whole `process.env` spread into the CLI child — rejected: exposes every executor-container env variable (auth tokens, rimsky-callback tokens, unrelated ops env) to the agent CLI; the allowlist is a small amount of code for a large audit-and-blast-radius benefit.
+- Per-node declaration in node config WITHOUT an operator allowlist safeguard — rejected: template authors would gain unilateral control over which secrets the CLI child sees; the intersection preserves the "operator owns which secrets are visible at all" property.
+- Rimsky-side `{{env.VAR}}` substitution as the secret path — rejected: lands plaintext in rimsky's persisted attribute bag and makes rimsky a secret handler; the substitution grammar stays for non-secret template configuration only.
+- Executor-side `${env:VAR}` in-config substitution — rejected: a second substitution dialect on the same template surface violates one-idiom-per-job; the pass-through exposes plain env vars the CLI reads via ordinary environment access.

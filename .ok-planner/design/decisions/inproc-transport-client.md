@@ -8,8 +8,12 @@ aliases: []
 
 ## Choice
 
-Add an in-process case as a third transport on the executor client pool's factory, alongside the existing gRPC and HTTP-bridge transports. A new in-process client constructor takes an executor endpoint, an in-process registry, and a factory for building the per-dispatch handler-context struct (per `decision:inproc-handler-interface`), and returns a client whose execute method looks up the handler in the registry by the in-process executor identity (the endpoint URL, e.g. the canonical in-process URL for the loop-counter kind). The pool keys clients by transport, TLS mode, and URL as today — the TLS-mode key segment is unused for the in-process transport but slots cleanly into the key.
+The in-process executor client is a third transport on the executor client pool's factory, alongside the gRPC and HTTP-bridge transports. Its client resolves handlers from the in-process registry by the canonical in-process executor identity, building the per-dispatch handler context per `decision:inproc-handler-interface`.
 
 ## Rationale
 
-The existing executor-client interface and pool factory were designed for multiple transports (gRPC and HTTP-bridge are the existing pair). Inproc is a third instance of the same pattern. The runtime's dispatch call site is unchanged — transport stays opaque to dispatch.
+The executor-client interface and pool factory were designed for multiple transports (gRPC and HTTP-bridge are the existing pair). Inproc is a third instance of the same pattern. The runtime's dispatch call site is unchanged — transport stays opaque to dispatch.
+
+## Alternatives
+
+- Special-case in-process dispatch at the runtime's dispatch call site, bypassing the client pool — rejected: breaks transport opacity, adding a branch every dispatch-path change must then reason about.

@@ -3,11 +3,11 @@ decision: launch-config-injection
 status: adopted
 ---
 
-# launch-config-injection
+# Synthetic config files injected through standard discovery
 
 ## Choice
 
-The verb writes two synthetic YAML files to the run directory and points the role runners at them via the standard config-discovery surfaces — a unified config file matching the `concept:rimsky-yml` shape (persistence driver, blob backend, executors block, claim-producers block) and a separate supervisor-tuning file (concurrency, heartbeat, callback host/port, advertise host). Config-path environment variables are set on the in-process environment before the runners start. The synthetic files persist alongside the SQL state and the blob root as part of the run artifact (see `decision:artifact-layout`).
+The compose verb writes two synthetic YAML files to the run directory — a unified config file matching the `concept:rimsky-yml` shape and a separate supervisor-tuning file — and points the role runners at them through the standard config-discovery surfaces before the runners start. The synthetic files persist alongside the SQL state and the blob root as part of the run artifact (see `decision:artifact-layout`).
 
 ## Rationale
 

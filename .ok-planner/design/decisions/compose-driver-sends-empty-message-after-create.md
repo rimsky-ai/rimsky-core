@@ -7,12 +7,13 @@ status: as-is
 
 ## Choice
 
-The compose driver sends an empty wake message after creating an instance, via the same HTTP client path it already uses for instance-create, with a deterministic idempotency key derived from the instance key — but only for instances whose template declares at least one structural root; an instance whose template has no structural root receives no wake message, since there is nothing for the empty message to wake. The wake send precedes the wait-for-terminal loop.
+After creating an instance whose template declares at least one structural root, the compose driver sends an empty wake message with a deterministic idempotency key derived from the instance key. An instance whose template has no structural root receives no wake message, since there is nothing for the empty message to wake.
 
 ## Rationale
 
-The compose driver's user-facing contract (`story:one-shot-to-terminal`) is unchanged. The implementation absorbs the now-explicit wake step internally so operators do not have to add wake messages to their compose manifests.
+The compose driver's user-facing contract (`story:one-shot-to-terminal`) requires created instances to run to terminal, and instance-create alone leaves an instance idle. The driver absorbs the wake step internally so operators do not have to add wake messages to their compose manifests, and the deterministic key makes a retried create-plus-wake idempotent.
 
-## Alternatives considered
+## Alternatives
 
-Require operator-authored wake messages in the manifest — breaks the compose UX; add a convenience flag at instance-create that bundles the wake — rejected per `story:instance-create-is-idle`: instance-create is strictly two-step.
+- Operator-authored wake messages in the compose manifest — rejected: breaks the compose UX; the wake is part of the driver's contract, not operator content.
+- A convenience flag at instance-create that bundles the wake — rejected per `story:instance-create-is-idle`: instance-create is strictly two-step.

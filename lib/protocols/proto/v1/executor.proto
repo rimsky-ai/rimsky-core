@@ -18,12 +18,14 @@ option go_package = "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen
 // to a later HTTP POST callback. See concept:executor for the full
 // contract (transports, async handoff, attributes, claim_producers, deadlines,
 // auth).
+// @decision: grpc-internal-protocols
 service Executor {
   // Execute is called by the rimsky supervisor when dispatching a node.
   // The executor returns exactly one Outcome. There is no stream, no
   // heartbeats, and no named events; per-dispatch liveness for async
   // dispatches travels over the HTTP keepalive / attribute-writeback
   // callbacks (see concept:executor liveness sections).
+  // @decision: executor-unary-rpc
   rpc Execute(ExecuteRequest) returns (Outcome);
 }
 

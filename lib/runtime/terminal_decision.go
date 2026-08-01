@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package runtime
 
@@ -138,6 +137,7 @@ func ResolveClaimHandleTerminal(
 		}
 		post = chainPostCommit(post, pc)
 	}
+	// @decision: fold-ownership-bail
 	if td.Source == OwnershipBail {
 		if err := args.ClaimHandles.Delete(ctx, td.ClaimHandleID, td.SupervisorID, tx); err != nil {
 			return nil, fmt.Errorf("ResolveClaimHandleTerminal: ownership-bail Delete: %w", err)

@@ -3,7 +3,7 @@ decision: exit-codes
 status: adopted
 ---
 
-# exit-codes
+# Exit-code classes
 
 ## Choice
 
@@ -12,3 +12,8 @@ Zero for all-instances-success; one for at-least-one-failure (including park-tim
 ## Rationale
 
 Three distinguishable classes for script-friendly branching, plus the conventional shell-signaled-exit code for interrupt.
+
+## Alternatives
+
+- A single nonzero failure code — rejected: scripts cannot branch run-timeout expiry apart from instance failure.
+- A distinct code per failure kind — rejected: proliferates codes beyond what shell branching uses; the run's own output carries the detail.

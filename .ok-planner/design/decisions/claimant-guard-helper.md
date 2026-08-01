@@ -15,4 +15,5 @@ A predicate written once per driver cannot be inconsistently copied.
 
 ## Alternatives
 
-A cross-driver query builder (rejected: heavier than the codebase's explicit-SQL idiom).
+- A cross-driver query builder — rejected: heavier than the codebase's explicit-SQL idiom.
+- Hand-writing the guard predicate at each mutation site — rejected: copies of a load-bearing predicate drift.

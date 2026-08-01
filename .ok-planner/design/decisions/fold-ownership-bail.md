@@ -12,3 +12,7 @@ The verify-before-run ownership-bail path resolves through the unified claim-han
 ## Rationale
 
 The path has rows and performs the engine's exact sequence; routing it outside the engine would duplicate the engine's shape, which is the duplicated-path disease this decision excludes.
+
+## Alternatives
+
+- A caller-owned per-claim Abandon plus claimant-guarded delete outside the engine — rejected: duplicates the engine's exact resolution sequence as a second path that must be kept in lockstep.

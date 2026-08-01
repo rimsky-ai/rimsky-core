@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package scenarios
 
@@ -27,6 +26,7 @@ import (
 )
 
 // @story: host-agent-anonymous-mode
+// @story: anonymous-agents-isolated
 func TestHostAgentAnonymousModeMultiAgentIsolation(t *testing.T) {
 	stub := buildBinary(t, "lib/runtime/hostagent/testdata/stubchild")
 	proxyPort := freePort(t)

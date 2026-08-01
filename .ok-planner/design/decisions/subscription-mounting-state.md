@@ -11,4 +11,8 @@ The publisher-subscription state set covers mounting / active / failed / stopped
 
 ## Rationale
 
-The row set is already documented as the source of truth that publisher-side state reconciles against; an observable mounting state is robust against contention and matches the desired-state row-set discipline, while a synchronous inline Subscribe at instance-create would force a failure mode the row-set already absorbs. Failing on a timeout is arbitrary.
+The row set is already documented as the source of truth that publisher-side state reconciles against; an observable mounting state is robust against contention and matches the desired-state row-set discipline.
+
+## Alternatives
+
+- Synchronous inline Subscribe at instance-create — rejected: blocks instance-create on publisher availability and forces a timeout-based failure mode whose cutoff is arbitrary, a failure the desired-state row set absorbs instead.

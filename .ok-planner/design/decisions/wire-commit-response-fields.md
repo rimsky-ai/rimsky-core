@@ -12,3 +12,7 @@ The producer client returns the base Commit response body; the unified claim-han
 ## Rationale
 
 Contract-vs-runtime gaps close in the contract's favor when the contract is sensible; both sites sit on the claim-spine and child-execution seams that this decision's siblings already own.
+
+## Alternatives
+
+- Close the gap the other way — retract the documented promise that the base Commit response's fields are honored — rejected: version-id persistence and producer-metadata surfacing are those fields' whole purpose, and a documented-but-dropped response field teaches producer authors that the protocol's contract lies.

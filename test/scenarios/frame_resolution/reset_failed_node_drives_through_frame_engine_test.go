@@ -1,9 +1,8 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @story: node-admin
-// @decision: node-reset-as-pure-retry-budget-clear
+// @decision: node-reset-clears-failure-marker
 package frame_resolution
 
 import (
@@ -59,7 +58,7 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// @story: node-admin
-	// @decision: node-reset-as-pure-retry-budget-clear
+	// @decision: node-reset-clears-failure-marker
 	h.PostInstanceMessage(iid, "", nil, "reset-followup-wake-"+iid.String())
 
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)

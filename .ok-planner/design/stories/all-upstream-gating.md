@@ -8,7 +8,3 @@ status: as-is
 ## Story
 
 As a template author building a fan-in shape (a node subscribing to several upstream siblings), I can rely on the receiver dispatching only after all of its in-flight upstreams in the frame have resolved — regardless of how their staleness arrived — so that the receiver never runs against a half-settled upstream set.
-
-The dispatch-eligibility predicate carries a propagation-path-independent condition: a stale run is not eligible while any subscribed upstream has an in-flight run in the same frame, whether the staleness arrived by invalidation walk or by sender settlement. The wait-set ledger's drained-rows role continues to feed substitution; self-edge and cycle idioms are first-class under the present-state predicate (see `concept:wait-set`, `concept:cascade`, `decision:upstream-gating-at-eligibility`).
-
-Fan-in topologies (diamonds, N-parent receivers) compute from the full upstream set, not whichever subset happened to settle first — and the guarantee cannot be forgotten by a new staleness-propagation path, because it lives in the eligibility predicate rather than in per-path bookkeeping.

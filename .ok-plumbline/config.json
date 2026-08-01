@@ -5,6 +5,7 @@
     { "tag": "@decision:", "file_template": ".ok-planner/design/decisions/{slug}.md" }
   ],
   "ignore": [
+    "tools/image-src-tag.sh",
     "lib/protocols/proto/v1/gen/",
     ".ok-planner/history/",
     ".ok-planner/workbench/",

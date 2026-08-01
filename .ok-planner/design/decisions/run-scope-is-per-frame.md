@@ -4,7 +4,7 @@ status: as-is
 aliases: []
 ---
 
-# RunScope lives inside exactly one frame; rejected the per-instance main RunScope alternative
+# RunScope lives inside exactly one frame
 
 ## Choice
 

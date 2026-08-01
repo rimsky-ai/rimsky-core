@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package eventwait
 
@@ -60,6 +59,7 @@ func (m Matcher) kindMatches(kind string) bool {
 
 const pollInterval = 50 * time.Millisecond
 
+// @decision: polling-audit
 func WaitForEvent(ctx context.Context, t testing.TB, db persistence.Tables, m Matcher) []persistence.EventRow {
 	t.Helper()
 	for {

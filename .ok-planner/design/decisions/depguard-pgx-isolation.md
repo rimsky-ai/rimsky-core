@@ -7,8 +7,12 @@ status: as-is
 
 ## Choice
 
-Only the foundation module's postgres persistence driver, the services module, the cmd group, the test-support package, and the scenario harness in the test group.
+The Postgres driver is imported only by the foundation module's postgres persistence packages, the postgres-backed bundled services, the cmd group, and the test-support and scenario-harness packages; everything else consumes the persistence interfaces. Enforced by dependency lint.
 
 ## Rationale
 
-Keep Postgres driver specifics out of the graph, runtime, and control layers.
+Driver-specific types carry backend assumptions. Keeping them out of the graph, runtime, and control layers keeps those layers backend-neutral, so the persistence interfaces remain the only seam and a second backend serves the same interfaces.
+
+## Alternatives
+
+- Allowing driver imports anywhere behind a convention — rejected: driver types creep into backend-neutral layers, and the interface seam erodes until a second backend is unimplementable.

@@ -16,4 +16,4 @@ Zero-config local dev works out of the box; operators wanting policy set the env
 
 ## Alternatives
 
-Default closed — rejected: breaks zero-config local use, where no operator config exists at all.
+- Default closed — rejected: breaks zero-config local use, where no operator config exists at all.

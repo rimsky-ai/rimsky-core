@@ -10,7 +10,7 @@ aliases:
 
 ## Choice
 
-There is no new "join token" credential type and no new table. A join token, as originally conceived, reduces exactly to a `concept:api-key` carrying a new `service:enroll` permission (see `concept:permission`). A service holding such a key calls `route:POST /v1/enroll` and receives a short-lived leaf certificate, its private key, and the CA root. The layering is: the api-key is the standing secret (authorization to OBTAIN an identity); the certificate is the derived, short-lived identity that proves it. The cert's SAN carries a SPIFFE-style principal `spiffe://rimsky/<key-id>`, so the api-key row IS the service principal; revoking the key stops renewal and the cert ages out within its TTL (see `concept:peer-auth`).
+There is no separate "join token" credential type and no separate table. The enrollment credential reduces exactly to a `concept:api-key` carrying an enrollment permission (see `concept:permission`). A service holding such a key exchanges it at the control API's enrollment surface for a short-lived leaf certificate, its private key, and the CA root. The layering is: the api-key is the standing secret (authorization to OBTAIN an identity); the certificate is the derived, short-lived identity that proves it. The certificate carries a SPIFFE-style principal naming the key id, so the api-key row IS the service principal; revoking the key stops renewal and the cert ages out within its TTL (see `concept:peer-auth`).
 
 ## Rationale
 

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package runtime
 
@@ -189,6 +188,7 @@ func Start(cfg Config) (*Handle, error) {
 	}
 
 	// @concept: executor
+	// @decision: inproc-registry
 	inprocReg := executor.NewInProcessRegistry()
 	if err := builtin.RegisterAllInProcessHandlers(inprocReg); err != nil {
 		_ = callbackSrv.Close(context.Background())

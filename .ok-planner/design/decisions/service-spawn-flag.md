@@ -3,12 +3,17 @@ decision: service-spawn-flag
 status: adopted
 ---
 
-# service-spawn-flag
+# Compose-run mirrors the run verb's service-spawn flag
 
 ## Choice
 
-The compose-run verb accepts a per-service spawn flag mapping a service name to a local binary (with bare-name aliases), mirroring the standalone run verb's service-spawn flag. The verb spawns binaries directly using the same exec-and-ready-poll mechanism the host-agent uses, registers each spawned endpoint in the synthetic unified config's executors block, and dispatches to the spawned port directly via the in-process supervisor. The host-agent proxy chain (per `concept:host-agent-proxy`) is not used here because the supervisor is in-process and dials the spawned endpoint directly (see `concept:host-agent`, `concept:supervisor`).
+The compose-run verb accepts the same per-service spawn flag shape as the standalone run verb, mapping a service name to a local binary. It spawns binaries through the same exec-and-ready-poll primitive the host-agent uses and dispatches to each spawned endpoint directly from the in-process supervisor; the host-agent proxy chain (per `concept:host-agent-proxy`) is not in the path (see `concept:host-agent`, `concept:supervisor`).
 
 ## Rationale
 
-The spawning primitive (port-pick + ready-environment injection + ready-poll + child-process supervision) is a shared primitive called by both the host-agent and the compose-run verb (see `concept:host-agent`). The familiar flag shape on the verb means consumers and operators don't relearn the spawn surface.
+The spawning primitive (port-pick + ready-environment injection + ready-poll + child-process supervision) is one shared primitive called by both the host-agent and the compose-run verb (see `concept:host-agent`). The familiar flag shape means consumers and operators don't relearn the spawn surface.
+
+## Alternatives
+
+- Route compose-run's spawned services through the host-agent proxy chain — rejected: the supervisor is in-process and can dial the spawned endpoint directly; the proxy hop buys nothing here.
+- A compose-specific spawn flag shape — rejected: operators would relearn a surface the standalone run verb already established.

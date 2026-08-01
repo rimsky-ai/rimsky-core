@@ -1,15 +1,18 @@
 ---
 decision: scratch-recovery
 status: as-is
-aliases: []
 ---
 
 # Per-row scratch survives stale-recovery
 
 ## Choice
 
-Per-dispatch row. The single enqueue path that creates a new dispatch row carrying a prior-dispatch reference is the cascade-driven recalculate enqueue: it copies scratch from the prior run's row to the new row at row creation, and the next dispatch reads scratch from its (new) row via the normal execute-request hydration path. Dead-supervisor recovery does not create a new row: the sweep releases the orphaned claim on the same row — keyed on `last_progress_at` quiet-period for async dispatches, or RPC connection state for sync dispatches, never heartbeat-loss — and the row re-enters the normal pending-queue claim path for another supervisor to pick up; since it is the same row, its already-persisted scratch needs no copy. Policy retry does not enter either path: under `decision:in-place-retry`, retries loop in-process on the same dispatch row — the failed attempt's terminal scratch is copied in-memory into the retry's next acquisition, with no row read, since it is the same row throughout.
+Scratch is a property of the dispatch row. The one enqueue path that creates a new row carrying a prior-dispatch reference — the cascade-driven recalculate enqueue — copies scratch from the prior run's row at row creation, and the next dispatch hydrates from its new row normally. Dead-supervisor recovery creates no new row: the sweep releases the orphaned claim on the same row, which re-enters the pending-queue claim path, so its already-persisted scratch needs no copy. Policy retry loops in-process on the same row (per `decision:in-place-retry`), carrying the failed attempt's terminal scratch directly into the next acquisition.
 
 ## Rationale
 
-`story:opaque-executor-scratch`'s acceptance pins the round-trip across any re-dispatch that preserves the prior-dispatch lineage. The recalculate enqueue path is the natural copy point since it already creates the new row and stamps the prior-dispatch reference. No new sweep, no new column linkage beyond the prior-dispatch reference (which already exists). Dead-supervisor recovery needs no copy because it never creates a new row — reusing the stale row is what keeps its accumulated scratch intact for the next claimant.
+`story:opaque-executor-scratch` pins the round-trip across any re-dispatch that preserves the prior-dispatch lineage. The recalculate enqueue is the natural copy point since it already creates the new row and stamps the prior-dispatch reference — no new sweep, no new column linkage. Recovery reusing the stale row is what keeps its accumulated scratch intact for the next claimant.
+
+## Alternatives
+
+- A node-scoped scratch store independent of dispatch rows — rejected: needs its own table, sweep, and lifecycle, and divorces scratch from the dispatch lineage the story pins the round-trip to.

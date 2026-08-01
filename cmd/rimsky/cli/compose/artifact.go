@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package compose
 
@@ -45,12 +44,14 @@ func DiscoverArtifactRoot(cwd string, workdirOverride string) (string, error) {
 	return abs, nil
 }
 
+// @decision: timestamp-format
 func FormatRunTimestamp(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15-04-05Z")
 }
 
 const maxRunDirCollisionSuffix = 999
 
+// @decision: artifact-layout
 func EnsureRunDir(root, timestamp, name string) (string, error) {
 	runsRoot := filepath.Join(root, ".rimsky", "runs")
 	if err := os.MkdirAll(runsRoot, 0o700); err != nil {

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package runtime
 
@@ -37,6 +36,7 @@ func applyTerminalPark(
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	// @concept: executor
+	// @decision: no-resume-context
 	if err := applyTerminalScratchInTx(ctx, args, acq, t.Scratch, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}

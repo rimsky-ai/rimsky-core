@@ -8,11 +8,11 @@ aliases: []
 
 ## Choice
 
-`rimsky run <template>` boots an in-process all-in-one stack when no target endpoint is present — reusing the same self-host machinery the compose one-shot uses: run directory with synthetic config, bundled handler registration, role stack in-process, control-api readiness wait. It then registers, deploys, and instantiates the template against the local control-api, streams events until the instance reaches terminal, and exits, tearing the stack down. Passing `--endpoint <url>` (or having one configured via the CLI context) suppresses self-hosting and keeps the existing dev-loop dispatch against a remote rimsky. A user with a configured context endpoint who wants explicit self-host passes `--self-host`, which bypasses the context endpoint; combining `--self-host` with an explicit `--endpoint` is a usage error. Self-host is inherently one-shot: the process exits once the instance reaches terminal, tearing the stack down; the instance row and its history don't survive the process so `--keep` is a usage error there. `--template <name>` (an already-registered template) is likewise a usage error under self-host — a freshly booted stack has no registry to look the name up in.
+The ephemeral-run verb, given a template file and no target endpoint, boots an in-process all-in-one stack — reusing the compose one-shot's self-host machinery — drives the template to terminal against the local control-api, then exits and tears the stack down. A target endpoint, whether passed explicitly or configured via the CLI context, suppresses self-hosting and keeps the dev-loop dispatch against a remote rimsky; an explicit self-host flag bypasses a configured context endpoint, and combining it with an explicit endpoint is a usage error. Self-host is inherently one-shot — nothing survives the process — so options that presuppose a surviving instance row or a pre-existing template registry are usage errors under it.
 
 ## Rationale
 
-Presence of a target endpoint is a natural discriminator for the common case: a user with nothing configured gets a working local run out of the box, and a user pointed at a real deployment keeps today's behavior untouched. `--self-host` is the explicit escape hatch for stale context configs.
+Presence of a target endpoint is a natural discriminator for the common case: a user with nothing configured gets a working local run out of the box, and a user pointed at a real deployment keeps the remote dispatch behavior untouched. The explicit self-host flag is the escape hatch for stale context configs.
 
 ## Alternatives
 

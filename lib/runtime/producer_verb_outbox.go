@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @concept: terminal-resolution
 // @concept: claim-producer
@@ -298,6 +297,7 @@ func deliverProducerVerb(
 	return fmt.Errorf("unknown producer verb %q (seq=%d)", string(row.Verb), row.Seq)
 }
 
+// @decision: wire-commit-response-fields
 func applyDeferredCommitResult(
 	ctx context.Context, args RunArgs, row persistence.ProducerVerbOutboxRow, res claimproducer.CommitResult, tx persistence.Tx,
 ) {

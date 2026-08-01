@@ -12,3 +12,8 @@ Policy lookup for acquisition failures falls back from the exact producer-declar
 ## Rationale
 
 An operator declaring only the generic policy should not silently lose coverage the moment a producer starts naming classes.
+
+## Alternatives
+
+- Exact-match only, straight to the unknown-class default when no class-specific policy exists — rejected: a producer adding class names silently strips the operator's generic acquire coverage.
+- Fall back through every prefix level of the class name — rejected: one family level covers the real case; deeper hierarchy invites policy shadowing nobody declared.

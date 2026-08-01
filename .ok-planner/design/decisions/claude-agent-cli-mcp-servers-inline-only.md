@@ -8,12 +8,13 @@ aliases: []
 
 ## Choice
 
-The per-node MCP server list in claude-agent node config carries inline entries only, each with a required transport discriminator: an HTTP entry (name, url, optional headers and allowed-tools), a stdio entry (name, command, optional args, env, allowed-tools), or a module entry (name, module specifier, optional allowed-tools) — where "http-loopback" is accepted as a transport alias for module, both resolving to the same module-loopback runtime path. The named-reference shape pointing into an operator-side startup catalog is deleted, and with it the catalog file env and the inline-allow policy env; the handler validates transport-appropriate fields per entry.
+The per-node MCP server list in claude-agent node config carries inline entries only, each with a required transport discriminator covering three transports — http, stdio, and module, with "http-loopback" accepted as a transport alias for module, both resolving to the same module-loopback runtime path. The handler validates transport-appropriate fields per entry. There is no named-reference shape and no operator-side startup catalog.
 
 ## Rationale
 
-The previous inline schema was HTTP-only; the catalog reachable via named references was the only way to declare stdio or module transports. Extending inline declarations to cover all three transports (with the module alias preserved) closes that surface asymmetry, and per-node declarations put the MCP surface where it belongs — in the template, guarded by the operator's allowlist (per `decision:policies-service-side-enforcement`).
+Inline declarations covering all three transports keep the whole MCP surface in one shape and one place — the template, guarded by the operator's allowlist (per `decision:policies-service-side-enforcement`). A catalog reachable by named reference would split one job across two declaration shapes and add an operator-side registration step for what is a template-author concern.
 
 ## Alternatives
 
-Keep both shapes with an operator catalog — rejected: pre-v1 break-freely; one idiom per job.
+- Inline entries plus an operator-side catalog reachable by named reference — rejected: pre-v1 break-freely; one idiom per job.
+- Inline entries for HTTP only, with other transports catalog-only — rejected: a template author's transport choice would dictate which declaration shape they use.

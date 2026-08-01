@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package node
 
@@ -219,6 +218,7 @@ func validateFanOut(n TemplateNodeDef, base string, spec *TemplateSpec, declared
 
 	switch fo.ErrorPolicy.Kind {
 	case "", "strict", "threshold", "best_effort", "first":
+	// @decision: carry-verbatim-requires-one
 	case "carry_verbatim":
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fbase + ".error_policy.kind",

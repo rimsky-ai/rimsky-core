@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @concept: api-key
 // @concept: permission
@@ -52,6 +51,7 @@ type anonCacheEntry struct {
 
 const anonCacheTTL = 1 * time.Second
 
+// @decision: auth-anonymous-via-empty-key-ledger
 func (s *AuthState) IsAnonymousMode(ctx context.Context) (bool, error) {
 	now := s.Clock.Now()
 	gen := s.anonGen.Load()
@@ -106,6 +106,7 @@ func (s *AuthState) IdentityResolver() func(http.Handler) http.Handler {
 	}
 }
 
+// @decision: auth-api-key-bearer
 func (s *AuthState) resolveIdentity(ctx context.Context, r *http.Request) (auth.Identity, auth.DenialReason, error) {
 	h := r.Header.Get("Authorization")
 	if h == "" {
@@ -214,6 +215,7 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 				paramsInvalid = true
 			}
 		}
+		// @decision: auth-dry-run-request-flag
 		requestedMode := auth.ModeExecute
 		if dryRunRaw == "true" {
 			requestedMode = auth.ModeDryRun
@@ -223,6 +225,7 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "permission denied"})
 			return
 		}
+		// @decision: auth-dry-run-mode-floor-on-key
 		mode := requestedMode
 		if res.Mode == auth.ModeDryRun {
 			mode = auth.ModeDryRun

@@ -12,3 +12,8 @@ Per `concept:module-layout`, dual-track licensing across two surfaces: a permiss
 ## Rationale
 
 Permissive surface for everything an external implementer is meant to copy, modify, or link against; copyleft for the orchestrator itself, with a commercial alternative so organizations that prefer not to take on copyleft obligations on modified or derivative work, or on network-delivered services, can use the orchestrator under negotiated terms.
+
+## Alternatives
+
+- One permissive license across the whole repo — rejected: forfeits the copyleft lever on the orchestrator core and with it the commercial-licensing alternative.
+- Copyleft across the whole repo — rejected: external implementers could not copy the protocol definitions or the reference examples without taking on copyleft obligations, defeating the integration surface's purpose.

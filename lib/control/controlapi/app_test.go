@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package controlapi
 
@@ -572,7 +571,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	_ = loaded
 
 	// @story: node-admin
-	// @decision: node-reset-as-pure-retry-budget-clear
+	// @decision: node-reset-clears-failure-marker
 	var resetFrameCount int
 	pgdbtest.QueryRowForTest(ctx, t, h.driver, `
 		SELECT count(*) FROM rimsky_frames f

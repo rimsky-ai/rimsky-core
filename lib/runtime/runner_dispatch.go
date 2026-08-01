@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package runtime
 
@@ -258,6 +257,7 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck, peerPrincipal string) bo
 	})
 }
 
+// @decision: terminal-tags
 func readExecutorOutcome(
 	ctx context.Context, dctx dispatchContext, outcome *genv1.Outcome,
 ) (terminalEvent, string) {
@@ -571,6 +571,7 @@ func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
 }
 
 // @concept: attribute
+// @decision: attribute-carry-forward
 func substituteAttributesSchemaWith(
 	schema map[string]any, rctx attributes.ResolveContext, carryForward map[string]any,
 	deferClaimRefs bool,
@@ -807,6 +808,7 @@ func loadDispatchBag(ctx context.Context, args RunArgs, acq *acquisition) (map[s
 }
 
 // @concept: run-scope
+// @decision: prior-stale-recovery-rename
 func priorDispositionFromStorageForm(s string) genv1.PriorDispatchDisposition {
 	switch s {
 	case "stale_recovery":

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package events_test
 
@@ -12,6 +11,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+// @decision: event-log-payload-shapes
 func TestEventPayloadOneof_NeverCarriesASignalClassKind(t *testing.T) {
 	desc := (&genv1.Event{}).ProtoReflect().Descriptor()
 	oneof := desc.Oneofs().ByName("payload")

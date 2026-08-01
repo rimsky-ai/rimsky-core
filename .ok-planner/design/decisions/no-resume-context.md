@@ -4,11 +4,11 @@ status: as-is
 aliases: []
 ---
 
-# Resume context channel removed
+# No resume-context channel
 
 ## Choice
 
-Remove `Park.payload`, `Park.session_token`. Remove the `ExecuteRequest.resume_context` field and the `ResumeContext` message. Executors that need to thread executor-managed state across a park-and-resume use scratch: the parker writes opaque bytes to the Park outcome's scratch field, which the supervisor persists on the parked row's scratch slot. The same row re-dispatches at time-wake (no row-copy step — the parked row IS the resume row), so the resumed executor reads its scratch from `ExecuteRequest.scratch` on the same dispatch. Attribute writeback is not available on Park — Park is dispatch-internal and writes no attributes (per `decision:uniform-attributes-delta`).
+The executor wire carries no dedicated resume-context channel — no park payload, no session token, no resume-context field on the dispatch request. Executor-managed state that crosses a park-and-resume rides scratch: the parker writes opaque bytes to the Park outcome's scratch field, the supervisor persists them on the parked row's scratch slot, and the same row re-dispatches at time-wake (no row-copy step — the parked row IS the resume row), so the resumed executor reads them back from the dispatch's scratch field. Attribute writeback is not available on Park — Park is dispatch-internal and writes no attributes (per `decision:uniform-attributes-delta`).
 
 ## Rationale
 

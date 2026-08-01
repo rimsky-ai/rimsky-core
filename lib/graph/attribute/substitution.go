@@ -1,9 +1,8 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @plumbline:allow-docstrings
-//
+
 // Six recognized source kinds:
 //
 //   - {{claim.<alias>.<address|claim_scope|payload[.<field>]>}}
@@ -144,6 +143,7 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 	return stringifyAny(val), nil
 }
 
+// @decision: substitution-grammar-fallback-routing
 func resolveDirectiveValue(directive string, ctx ResolveContext) (any, error) {
 	shape := ParseDirectiveShape(directive)
 	if shape.MultiPipe {
@@ -232,6 +232,7 @@ func ParseLenientMarker(body string) (lenient bool, stripped string) {
 	return false, body
 }
 
+// @decision: no-event-substitution
 func resolveDirectiveValueRaw(directive string, ctx ResolveContext) (any, error) {
 	parts := strings.Split(directive, ".")
 	if len(parts) < 2 {

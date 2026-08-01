@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package scheduler
 
@@ -136,6 +135,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	// @concept: advisory-lock
 	if cfg.AdvisoryLocker != nil {
 		held, release, err := cfg.AdvisoryLocker.TrySchedulerTick(ctx)
+		// @decision: sweep-lock-skip-on-error
 		if err != nil {
 			log.Warn("tick: TrySchedulerTick failed; skipping sweep pass",
 				"error", err.Error())

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @concept: sensor
 package main
@@ -55,6 +54,7 @@ type AuthConfig struct {
 	Header              string `json:"header,omitempty"`
 }
 
+// @decision: webhook-auth-required
 func validateAuthConfig(auth *AuthConfig) error {
 	if auth == nil {
 		return errors.New("resolved_config.auth required (set mode to hmac, secret_header, or none)")

@@ -8,14 +8,7 @@ aliases: []
 
 ## Choice
 
-The per-template cascade-mode configuration defaults to `most-recent`, and the mode is a single per-node setting applied uniformly to every upstream feeding the node. The four legal values:
-
-- **`most-recent`** (default): the gate evaluator deletes any prior cascade-driven stale-not-claimed run for the same (node, run-scope) at pending→stale transition; the new run takes its place. Cascade-stale depth ≤ 1 per (node, run-scope). M cascade rounds during a single in-flight period collapse to one post-settle dispatch with the latest view.
-- **`sequenced`** (opt-in): no delete, no dedup. Multiple cascade-driven stales coexist; the dispatcher claims them in `sequence` order. M cascade rounds produce M dispatches.
-- **`idempotent-queue`** (opt-in): drop the new run if its JCS-canonical input bag equals the prior cascade-stale's. Otherwise behaves like `sequenced`.
-- **`idempotent-settled`** (opt-in): same as `idempotent-queue` but also compares against the most recent fresh-settled predecessor when no cascade-stale exists.
-
-Non-cascade rows (`operator_invalidate`, `recalculate`, `message_delivery`) are immune to all mode rules regardless of the configured mode.
+The per-template cascade-mode configuration defaults to `most-recent`, and the mode is a single per-node setting applied uniformly to every upstream feeding the node. The four legal values: `most-recent` (default — intermediate cascade rounds arriving while a run is in flight coalesce, so at most one cascade-driven stale run waits per node and run-scope, dispatched with the latest view), `sequenced` (opt-in — every cascade round dispatches, in order), `idempotent-queue` (opt-in — like `sequenced`, but a round whose canonical input bag equals the queued predecessor's is dropped), and `idempotent-settled` (opt-in — like `idempotent-queue`, also comparing against the most recent settled predecessor when none is queued). Non-cascade runs (operator-invalidate, recalculate, message-delivery) are immune to all mode rules regardless of the configured mode.
 
 A node that needs different policies for different upstreams — a chatty feed to coalesce and an audit feed to keep in full — splits into one node per policy. That split is the supported pattern for mixed-cadence subscriptions, not a workaround.
 

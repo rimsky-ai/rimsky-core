@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package plumbline
 
@@ -15,6 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
+// @concept: claim-scope
 func TestClaimScopeCanonicalNamingSymbols(t *testing.T) {
 	if got, want := string(persistence.LockKindScope), "claim_scope"; got != want {
 		t.Fatalf("persistence.LockKindScope = %q, want %q", got, want)
@@ -32,6 +32,7 @@ func TestClaimScopeCanonicalNamingSymbols(t *testing.T) {
 	var _ func(a, b []byte) bool = locks.ClaimScopesByteEqual
 }
 
+// @concept: claim-scope
 func TestClaimScopeRetiredVocabularyAbsent(t *testing.T) {
 	repoRoot := findRepoRoot(t)
 
@@ -55,7 +56,7 @@ func TestClaimScopeRetiredVocabularyAbsent(t *testing.T) {
 	scanRepoForForbiddenVocabulary(t, repoRoot, forbidden, nonTestOnlyForbidden, allowedFiles,
 		"retired claim-scope vocabulary %q found in %s; the concept is named ClaimScope everywhere "+
 			"(claim_scope_data, lock_kind claim_scope, ClaimScopesByteEqual) per "+
-			".ok-planner/design/intent/claim-scope.md")
+			"concept:claim-scope")
 }
 
 func scanRepoForForbiddenVocabulary(

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package executor
 
@@ -106,6 +105,7 @@ func (p *ClientPool) GetOrCreate(ep Endpoint) (Client, error) {
 		c, err = NewGRPCClient(ep)
 	case "http":
 		c, err = NewHTTPClient(ep)
+	// @decision: inproc-transport-client
 	case "inproc":
 		if p.registry == nil {
 			return nil, fmt.Errorf("ClientPool: inproc transport requested but registry is nil")

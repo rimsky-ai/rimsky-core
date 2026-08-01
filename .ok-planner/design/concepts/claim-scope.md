@@ -38,6 +38,7 @@ Owns: the conflict-check comparison, the schema column, inertness discipline at 
 - Claim scope comparison is byte-equality by default; empty byte streams never conflict under the default predicate. A producer that advertises the scopes-conflict capability supplies its own overlap predicate instead, consulted at acquisition and in the fan-out sub-claim path — rimsky imposes no byte-equality or empty-never-conflicts guarantee on that path; the producer owns the emptiness/overlap semantics for its own predicate.
 - Producers maintain the byte-equal-claim-scope **uniformity invariant**: two open calls with byte-equal claim scope MUST return the same realized write semantics. Rimsky relies on this; does not verify it.
 - Claim scope content is inert in rimsky (invariant 20).
+- **Canonical naming vocabulary.** The concept's noun is ClaimScope, qualified everywhere it appears: the persisted claim-handle ledger names its scope bytes `claim_scope_data`, the per-scope advisory-lock kind is `claim_scope`, and the byte-equality helper carries the `ClaimScopes` prefix. The retired vocabulary — `region`, bare `scope_data`, a bare `Scope`-prefixed helper, lock kind `scope` — never returns; a repo-wide fitness test enforces the boundary.
 
 ## Common pitfalls
 

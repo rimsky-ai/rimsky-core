@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 //	@concept: child-execution
 //	@concept: sub-graph
@@ -43,9 +42,10 @@ type ChildExecutionInput struct {
 	FrameID           shared.UUID
 	ChildGraphName    string
 	AggregationPolicy spec.AggregationPolicy
-	EntryAbsorbed     bool
-	Partitions        []PartitionDescriptor
-	Children          []ChildRunSpec
+	// @decision: entry-absorption-flag
+	EntryAbsorbed bool
+	Partitions    []PartitionDescriptor
+	Children      []ChildRunSpec
 }
 
 type DispatchedChild struct {
@@ -58,6 +58,8 @@ type DispatchedChild struct {
 // @concept: child-execution
 // @concept: run-scope
 // @decision: fan-out-and-delegation-are-distinct-mechanisms
+// @decision: child-execution-naming
+// @decision: subclaims-as-input
 func DispatchChildren(
 	ctx context.Context, args RunArgs, in ChildExecutionInput, tx persistence.Tx,
 ) ([]DispatchedChild, error) {
@@ -259,6 +261,7 @@ func SettleFromDelegate(
 		return nil, fmt.Errorf("SettleFromDelegate: resolve calling node's own claims: %w", err)
 	}
 	// @concept: cascade
+	// @decision: cascade-inside-settlement
 	if args.Persist.Nodes() == nil {
 		return nil, fmt.Errorf("SettleFromDelegate: Nodes table is required for the parent-settlement cascade bridge")
 	}

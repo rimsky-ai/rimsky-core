@@ -15,4 +15,4 @@ Plumbline's thesis — comprehension is cheap for current agents, verification i
 
 ## Alternatives
 
-Inlining the style docs in this repo (the prior arrangement): rejected — the methodology evolves per model generation; shipping it as a plugin lets that evolution arrive once for every consuming project.
+- Inlining the style docs in this repo — rejected: the methodology evolves per model generation; shipping it as a plugin lets that evolution arrive once for every consuming project.

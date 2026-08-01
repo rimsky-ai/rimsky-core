@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package main
 
@@ -23,23 +22,19 @@ const (
 )
 
 const apacheHeaderGo = `// Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// SPDX-License-Identifier: Apache-2.0
 `
 
 const agplHeaderGo = `// Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 `
 
 const apacheHeaderTS = `// Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0.
-// See LICENSE.apache at the repo root.
+// SPDX-License-Identifier: Apache-2.0
 `
 
 const agplHeaderTS = `// Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 `
 
 const apacheHeaderProto = `// Copyright © 2026 Fall Guy Consulting.
@@ -47,28 +42,23 @@ const apacheHeaderProto = `// Copyright © 2026 Fall Guy Consulting.
 `
 
 const agplHeaderProto = `// Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 `
 
 const apacheHeaderSQL = `-- Copyright © 2026 Fall Guy Consulting.
--- Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
--- repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+-- SPDX-License-Identifier: Apache-2.0
 `
 
 const agplHeaderSQL = `-- Copyright © 2026 Fall Guy Consulting.
--- Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
--- license. See LICENSE.agpl and COPYRIGHT at the repo root.
+-- SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 `
 
 const apacheHeaderShell = `# Copyright © 2026 Fall Guy Consulting.
-# Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-# repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+# SPDX-License-Identifier: Apache-2.0
 `
 
 const agplHeaderShell = `# Copyright © 2026 Fall Guy Consulting.
-# Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-# license. See LICENSE.agpl and COPYRIGHT at the repo root.
+# SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 `
 
 type violation struct {

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @concept: publisher
 // @concept: publisher-subscription
@@ -55,8 +54,9 @@ func StartPublisherSubscriptionsForInstance(
 			Kind:           p.Kind,
 			ResolvedConfig: resolvedConfig,
 			MessageType:    p.MessageType,
-			State:          persistence.PublisherSubscriptionStateMounting,
-			StartedAt:      now,
+			// @decision: subscription-mounting-state
+			State:     persistence.PublisherSubscriptionStateMounting,
+			StartedAt: now,
 		}
 		_, registered := publisherFromRegistry(deps, p.Name)
 		switch {
@@ -110,6 +110,7 @@ const DefaultPublisherSubscriptionReconcileInterval = 5 * time.Second
 
 const subscribeAttemptTimeout = 10 * time.Second
 
+// @decision: subscription-reconciler
 func RunPublisherSubscriptionReconciler(ctx context.Context, deps PublisherLifecycleDeps, interval time.Duration) {
 	if interval <= 0 {
 		interval = DefaultPublisherSubscriptionReconcileInterval

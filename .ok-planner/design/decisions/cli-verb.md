@@ -12,3 +12,7 @@ The ephemeral-run capability is exposed as a sub-verb under the compose dispatch
 ## Rationale
 
 Sits naturally alongside the existing compose family. The verb operates on the same manifest format with the same engine; verb-naming consistency makes the surface scannable.
+
+## Alternatives
+
+- A new top-level verb — rejected: the capability operates on the compose manifest with the compose engine; a second top-level family would split one surface in two.

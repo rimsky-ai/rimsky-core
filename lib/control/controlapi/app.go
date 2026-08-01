@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package controlapi
 
@@ -82,6 +81,7 @@ func NewApp(deps AppDeps) http.Handler {
 	r.Use(chimiddleware.Recoverer)
 	r.Use(accessLog(deps.Logger))
 
+	// @decision: protocol-version-v1-namespaced
 	r.Route("/v1", func(v1 chi.Router) {
 		registerHealthRoutes(v1, deps)
 
@@ -207,6 +207,7 @@ func writeError(w http.ResponseWriter, err error) {
 	writeJSON(w, status, map[string]any{"error": err.Error()})
 }
 
+// @decision: producer-error-passthrough
 func writeProducerError(w http.ResponseWriter, pcErr *peer.ProducerCallError) {
 	httpStatus := http.StatusBadGateway
 	switch grpcstatus.Code(pcErr.Underlying) {

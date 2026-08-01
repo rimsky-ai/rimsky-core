@@ -7,8 +7,12 @@ status: as-is
 
 ## Choice
 
-Per-instance, per-sender-kind, per-sender, per-sender-subject, per-idempotency-key (see `concept:message`).
+The message-idempotency dedup key is the full tuple: instance, sender kind, sender, sender subject, idempotency key (see `concept:message`).
 
 ## Rationale
 
-Prevent cross-tenant + cross-kind replay collisions.
+Scoping dedup to the full sender identity prevents cross-tenant and cross-kind replay collisions: one sender's idempotency key can never suppress another sender's message.
+
+## Alternatives
+
+- Dedup on instance + idempotency key alone — rejected: keys chosen independently by different senders (or by the same actor through different kinds) collide, letting one sender's replay silently swallow another's message.

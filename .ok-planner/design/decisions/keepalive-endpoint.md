@@ -8,7 +8,7 @@ aliases: []
 
 ## Choice
 
-A keepalive route on the supervisor at `/v1/runs/{run_id}/keepalive`. Authenticated via the existing `cancel_token`. No request body. Returns 204 No Content on success (matching the attribute-writeback callback's convention), 401 on auth failure, 404 on unknown run. Side effect: bumps `last_progress_at` on the dispatch row.
+A dedicated keepalive route on the supervisor, keyed by run id and authenticated with the dispatch's existing cancel token. A call carries no body, answers with the same no-content convention as the attribute-writeback callback, and has one side effect: bumping the dispatch's last-progress timestamp.
 
 ## Rationale
 

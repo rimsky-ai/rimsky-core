@@ -13,6 +13,6 @@ The control-API debug-override endpoint is legal iff the instance is paused (the
 
 The override is a debug feature, not a general operator capability. Both legal states are operator-engineered — the operator deliberately paused or set a breakpoint — so the override is contextually expected. Healthy frames have no override path; the operator must opt in to debug mode first.
 
-## Alternatives considered
+## Alternatives
 
-Include "frame held by parked node-run" in the gate. Rejected: that is a normal-operation degraded state, not an error; the project's pre-v1 rule is to investigate and fix the underlying issue rather than engineer around it with an override.
+- Including "frame held by parked node-run" in the gate — rejected: that is a normal-operation degraded state, not an error; the project's pre-v1 rule is to investigate and fix the underlying issue rather than engineer around it with an override.

@@ -8,11 +8,11 @@ aliases: []
 
 ## Choice
 
-Add a new optional kind field on the template node definition (alongside the existing required routing-key field, which is unchanged). At registration, a resolver maps the declared kind value to a pre-registered executor entry whose transport is the in-process transport and whose endpoint identity is the canonical in-process executor URL for that kind. The resolver consults a static kind-alias map populated alongside the in-process registry. A node may declare the kind field OR an explicit executor field but not both — mixing is a registration error. A node with neither falls through to the existing executor-resolution path (some nodes have no executor today, that path stays). Unknown kind values are rejected at registration with the same error class as unknown executors.
+An optional kind field on the template node definition, distinct from the required routing-key field. At registration, a resolver consults a static kind-alias map (populated alongside the in-process registry) to map the declared kind to a pre-registered in-process executor entry. The kind field and an explicit executor declaration are mutually exclusive, unknown kinds are rejected at registration like unknown executors, and a node declaring neither follows the ordinary executor-resolution path.
 
 ## Rationale
 
-Ergonomic shorthand — template authors writing a kind value like loop-counter skip the executor-identity vocabulary. Picked the kind field name to avoid collision with the existing required routing-key field. Static map keeps registration deterministic; same authoring surface as the existing executor system.
+Ergonomic shorthand — template authors writing a kind value like loop-counter skip the executor-identity vocabulary. The kind field name avoids collision with the existing required routing-key field. A static map keeps registration deterministic; same authoring surface as the existing executor system.
 
 ## Alternatives
 

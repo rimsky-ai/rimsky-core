@@ -22,6 +22,8 @@ A uniform discipline applied across two overlapping lists.
 
 Rimsky is a project-agnostic substrate. Logging, normalizing, or otherwise inspecting carrier bytes would couple rimsky to the carrier's semantics. The discipline keeps rimsky narrow: the bytes go in one side and come out the other unchanged, except at the precisely-named substitution leaf and transport boundary.
 
+The same leveling discipline extends beyond bytes to vocabulary: anything executor-specific lives behind the executor protocol, and rimsky's core, scheduler, and persistence surfaces carry no executor-specific fields, tables, or terms — executor-private state (session material, resume context, checkpoints) rides the generic opaque carriers, chiefly scratch (see `concept:executor`).
+
 ## Boundaries
 
 Owns: the cross-cutting "don't inspect" rule, the enumerated sanctioned read sites, the per-stream invariant annotations, and the two-sub-discipline taxonomy. Does NOT own: any one of the streams individually (each has its own concept and schema home). Adjacent: `concept:claim`, `concept:claim-scope`, `concept:blob-backend`, `concept:attribute` (substitution is the sanctioned exception), `concept:message`, `concept:executor`.
@@ -34,7 +36,7 @@ Three invariants codify the discipline:
 - **§21** — blob content (carried by the blob-backend interface) is byte-opaque inert; executor error payloads are structurally inert.
 - **§24 (message-inertness)** — message payloads are inert. Read only at the substitution leaf (resolving the trigger message), at persistence-layer fetches that surface message rows (single or list), and at delivery time, when the message-receiver-node's attribute bag is populated from the message body under the same structural-inertness discipline that governs attribute values. The message delivery path also touches envelope routing fields (type, sender, sender_kind, frame_id, instance_id, cancelled, delivered_at, received_at).
 
-Sanctioned read sites are precisely enumerated by the per-stream owning concepts: each owner concept names the sites where the discipline permits a read. Read shapes vary by site — verbatim extraction (a substitution-leaf read returns the resolved value unchanged), equality comparison (the claim-scope conflict predicate, the shared matcher evaluator), or wire transport (executor dispatch) — but no site inspects a value for a purpose beyond its own narrow contract, and no site logs, formats, or includes the value in an error message. The scratch carrier permits persistence and copy on mid-dispatch posting and on subsequent re-dispatch; bytes remain opaque throughout.
+Sanctioned read sites are precisely enumerated by the per-stream owning concepts: each owner concept names the sites where the discipline permits a read. Read shapes vary by site — verbatim extraction (a substitution-leaf read returns the resolved value unchanged), equality comparison (the claim-scope conflict predicate, the shared matcher evaluator), or wire transport (executor dispatch) — but no site inspects a value for a purpose beyond its own narrow contract, and no site logs, formats, or includes the value in an error message. The scratch carrier permits persistence when scratch arrives attached to a settling outcome and copy onto the subsequent re-dispatch (there is no mid-dispatch scratch write channel, per `concept:executor`); bytes remain opaque throughout.
 
 ## Auth audit log: verbatim request bodies
 

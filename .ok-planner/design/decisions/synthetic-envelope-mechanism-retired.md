@@ -4,16 +4,17 @@ status: as-is
 aliases: []
 ---
 
-# Synthetic-envelope mechanism retired
+# No synthetic-envelope wake mechanism
 
 ## Choice
 
-The four runtime-internal type-paths and the chokepoint helper that synthesized them all retire. The wake-node-id and wait-set-pair payload fields disappear from the wire. The receipt-side reserved-field check and the registration-side reserved-property check both retire. The frame engine's wake-node-id reader at promotion retires. Receivers wake exclusively via the subscriber-side cascade walker consulting the augmented inverse-edge map.
+Receivers wake exclusively via the subscriber-side cascade walker consulting the augmented inverse-edge map. There is no synthetic-envelope chokepoint: no runtime-internal type-paths, no wake-node-id or wait-set-pair payload fields on the wire, no receipt-side reserved-field or registration-side reserved-property checks guarding them, and no frame-engine wake-node-id reader at promotion.
 
 ## Rationale
 
-The chokepoint exists only to serve callers that bypass the subscriber-side cascade. With all four callers retired (instance-create becomes idle; the asset-materialize endpoint retires; the node-reset endpoint trims to no-wake; the test-harness invalidate helper migrates to debug-channel), the chokepoint has no remaining role. Keeping it would be dead code with structural surface, including the load-bearing reserved-field and reserved-property checks.
+A synthetic-envelope chokepoint exists only to serve callers that bypass the subscriber-side cascade, and no such caller exists: instance creation is idle, there is no asset-materialize endpoint (`decision:asset-materialize-endpoint-retired`), node reset does not wake, and the test harness drives wakes through legitimate triggers. A chokepoint kept anyway would be dead code with structural surface, dragging along the reserved-field and reserved-property checks as standing obligations.
 
-## Alternatives considered
+## Alternatives
 
-Keep the chokepoint for future use — dead code; keep it specifically for asset-materialize — rejected per `decision:asset-materialize-endpoint-retired`.
+- Keep the chokepoint for future callers — rejected: dead code with structural surface and two reserved-name checks nobody exercises.
+- Keep it solely for asset materialization — rejected per `decision:asset-materialize-endpoint-retired`.

@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package loop_counter
 
@@ -21,6 +20,7 @@ type Handler struct{}
 
 func New() *Handler { return &Handler{} }
 
+// @decision: loop-counter-shape
 func (h *Handler) Execute(ctx context.Context, req *genv1.ExecuteRequest, _ executor.HandlerContext) (*genv1.Outcome, error) {
 	attrs := map[string]any{}
 	if req.Attributes != nil {

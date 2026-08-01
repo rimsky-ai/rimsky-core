@@ -16,4 +16,4 @@ Matches `decision:executor-unary-rpc`: the executor protocol's Execute call is u
 
 ## Alternatives
 
-A goroutine-plus-channel event stream mirroring a server-streaming Execute call — rejected: the executor protocol itself is unary, so a streaming in-process transport would need to fabricate a receive loop the other two transports don't have, reintroducing exactly the concurrency and error-surfacing complexity the move to a unary protocol was meant to remove.
+A goroutine-plus-channel event stream mirroring a server-streaming Execute call — rejected: the executor protocol itself is unary, so a streaming in-process transport would need to fabricate a receive loop the other two transports don't have, reintroducing exactly the concurrency and error-surfacing complexity a unary protocol avoids.

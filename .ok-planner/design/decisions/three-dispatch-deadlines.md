@@ -8,15 +8,7 @@ aliases: []
 
 ## Choice
 
-Three independent deadlines per dispatch:
-
-- `sync_rpc_deadline` — per-node, default 30s. Cancels the unary `Execute` RPC if exceeded.
-- `max_quiet_period` — per-node, default 0 (disabled). Maximum time between liveness signals during an async dispatch.
-- `max_runtime` — per-node, default 0 (disabled). Absolute upper bound on dispatch wall-clock runtime.
-
-All three are node-template fields with deployment-config-supplied defaults; there is no separate executor-level declaration layer for deadlines. The per-node `sync_rpc_deadline` is the **sole** bound on a synchronous dispatch's outbound call: no executor-internal client timeout may sit beneath it, and the deployment-wide lever is the deadline's deployment-config default, not a per-executor timeout knob.
-
-Each is independently enforced by the supervisor and scheduler sweeps. `0` is the disable sentinel; the deadline is not applied when the value is zero.
+Three independent deadlines govern each dispatch: `sync_rpc_deadline` (bounds a synchronous dispatch's outbound call), `max_quiet_period` (maximum time between liveness signals during an async dispatch), and `max_runtime` (absolute wall-clock bound on the dispatch). All three are node-template fields with deployment-config-supplied defaults; there is no separate executor-level declaration layer for deadlines, and `0` is the disable sentinel — a zero-valued deadline is not applied. The per-node `sync_rpc_deadline` is the **sole** bound on a synchronous dispatch's outbound call: no executor-internal client timeout may sit beneath it, and the deployment-wide lever is the deadline's deployment-config default, not a per-executor timeout knob.
 
 ## Rationale
 

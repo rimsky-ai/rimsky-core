@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @concept: message
 package controlapi
@@ -51,6 +50,7 @@ func registerMessagesRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/messages/{id}", gate(deps, "message:read", handleGetMessage(deps)))
 }
 
+// @decision: envelope-type-discriminator
 type postMessageRequest struct {
 	Type                    string          `json:"type"`
 	Payload                 json.RawMessage `json:"payload,omitempty"`
@@ -130,6 +130,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			senderKind = runtime.SenderKindPublisher
 		}
 		sender := "operator"
+		// @decision: idempotency-key-header-universal
 		idempotencyKey := strings.TrimSpace(req.Header.Get("Idempotency-Key"))
 		if idempotencyKey == "" {
 			badRequest(w, "Idempotency-Key header is required")
@@ -281,6 +282,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		// @decision: idempotency-status-code-distinction
 		status := http.StatusCreated
 		if replayed {
 			status = http.StatusOK

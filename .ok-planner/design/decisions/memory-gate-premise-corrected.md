@@ -12,3 +12,8 @@ The in-memory blob backend is startup-rejected outside the single-process unifie
 ## Rationale
 
 Cross-process memory blobs are broken by physics, not policy. The asymmetry with ungated SQLite reflects that SQLite multi-process is made safe (see `decision:sqlite-multiproc-safety`); memory multi-process cannot be.
+
+## Alternatives
+
+- Leave the memory backend ungated and document the single-process restriction — rejected: cross-role blob reads fail confusingly at runtime instead of loudly at startup.
+- Drop the memory backend entirely — rejected: it legitimately serves the single-process mode's zero-dependency dev and test deployments.

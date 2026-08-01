@@ -7,12 +7,13 @@ status: as-is
 
 ## Choice
 
-A lightweight net/http-native HTTP router, pinned to a stable major-line.
+The go-chi/chi router, pinned to a stable major line.
 
 ## Rationale
 
-Lightweight, net/http-native.
+Lightweight and net/http-native: chi composes with standard `http.Handler` middleware and adds no framework abstractions.
 
 ## Alternatives
 
-Heavier opinionated web frameworks (rejected: pull in middleware stacks and abstractions the project does not need).
+- Heavier opinionated web frameworks — rejected: pull in middleware stacks and abstractions the project does not need.
+- The stdlib mux alone — rejected: lacks the route grouping and middleware composition the control surface needs.

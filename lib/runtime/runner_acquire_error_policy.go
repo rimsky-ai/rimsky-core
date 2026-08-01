@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 package runtime
 
@@ -146,6 +145,7 @@ func handleAcquireLockSpecSubstitutionFailed(ctx context.Context, args RunArgs, 
 	return runAcquireErrorPolicy(ctx, args, &acq, spec.ErrorClassTemplateResolutionFailed, spec.ErrorClassTemplateResolutionFailed, payload, "handleAcquireLockSpecSubstitutionFailed")
 }
 
+// @decision: acquire-unavailable-carveout
 func runAcquireErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass, fallbackClass string, payload map[string]any, site string,

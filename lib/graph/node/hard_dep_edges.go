@@ -1,6 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @concept: attribute
 // @concept: cascade
@@ -17,6 +16,7 @@ import (
 
 type HardDepEdgeMap map[string][]string
 
+// @decision: force-upstream-refresh-via-receiver-keyed-map
 func BuildHardDepEdges(tmpl spec.TemplateSpec) (HardDepEdgeMap, error) {
 	fanoutTypes := make(map[string]struct{})
 	for _, n := range tmpl.Nodes {
@@ -52,6 +52,7 @@ func BuildHardDepEdges(tmpl spec.TemplateSpec) (HardDepEdgeMap, error) {
 
 // @concept: cascade
 // @concept: node-subscription
+// @decision: hard-dep-field-no-special-case
 func hardDepSendersOf(n TemplateNodeDef) []string {
 	if len(n.Subscribes) == 0 {
 		return nil
