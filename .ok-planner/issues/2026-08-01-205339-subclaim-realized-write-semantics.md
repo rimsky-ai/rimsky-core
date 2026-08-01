@@ -5,7 +5,8 @@ category: conflicting
 artifacts:
   - concept:claim
   - concept:claim-tree
-status: verified
+status: promoted
+sprint: 2026-08-01-intent-ingestion.md
 opened: 2026-08-01T20:53:39Z
 ---
 

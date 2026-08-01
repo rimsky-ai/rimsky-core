@@ -4,7 +4,8 @@ kind: sprint
 category: inconsistent
 artifacts:
   - decision:release-distribution
-status: verified
+status: promoted
+sprint: 2026-08-01-intent-ingestion.md
 opened: 2026-08-01T08:41:46Z
 ---
 

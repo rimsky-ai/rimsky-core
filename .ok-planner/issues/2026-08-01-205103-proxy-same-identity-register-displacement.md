@@ -5,7 +5,8 @@ category: unspecified
 artifacts:
   - concept:host-agent-proxy
   - concept:host-agent
-status: verified
+status: promoted
+sprint: 2026-08-01-intent-ingestion.md
 opened: 2026-08-01T20:51:03Z
 ---
 
@@ -44,6 +45,11 @@ The ruling decides whether — and where — the takeover rule becomes a corpus 
 > under one key more likely signals a leaked credential than a
 > restart — then it is a real choice and deserves the decision form
 > instead.
+
+> Owner (live, 2026-08-01 planning): scope the invariant to
+> api-key-identified routing identities. Anonymous label collisions
+> keep reject-on-collision per the existing silly-name invariant —
+> the takeover rule never applies to anonymous agents.
 
 <!-- Owner: this is a recommendation, not your decision. Leave it
 as-is to accept — the next /plan-sprint carries it, naming the

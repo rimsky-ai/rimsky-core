@@ -4,7 +4,8 @@ kind: human
 category: other
 artifacts:
   - decision:coding-style
-status: verified
+status: promoted
+sprint: 2026-08-01-intent-ingestion.md
 opened: 2026-08-01T21:30:00Z
 ---
 

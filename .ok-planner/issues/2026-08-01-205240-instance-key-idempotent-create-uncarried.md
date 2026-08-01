@@ -4,7 +4,8 @@ kind: human
 category: unspecified
 artifacts:
   - concept:instance
-status: verified
+status: promoted
+sprint: 2026-08-01-intent-ingestion.md
 opened: 2026-08-01T20:52:40Z
 ---
 

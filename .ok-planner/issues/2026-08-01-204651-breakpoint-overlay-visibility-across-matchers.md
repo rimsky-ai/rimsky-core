@@ -4,7 +4,8 @@ kind: human
 category: conflicting
 artifacts:
   - concept:breakpoint
-status: verified
+status: promoted
+sprint: 2026-08-01-intent-ingestion.md
 opened: 2026-08-01T20:46:51Z
 ---
 
