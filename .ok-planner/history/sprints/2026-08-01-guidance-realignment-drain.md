@@ -1,3 +1,6 @@
+---
+closed: 058c2fa7193d94792ac86adb66fe904d4be6a0c7
+---
 # Sprint: Guidance-realignment drain
 
 ## Intent
