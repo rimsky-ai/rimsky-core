@@ -1,6 +1,5 @@
 ---
 decision: enroll-token-is-api-key
-status: as-is
 aliases:
   - join-token-is-an-api-key
   - service-enroll-grant

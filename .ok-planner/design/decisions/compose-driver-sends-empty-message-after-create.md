@@ -1,6 +1,5 @@
 ---
 decision: compose-driver-sends-empty-message-after-create
-status: as-is
 ---
 
 # Compose driver sends an empty message after each instance create

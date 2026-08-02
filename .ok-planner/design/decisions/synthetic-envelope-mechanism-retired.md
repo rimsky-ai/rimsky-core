@@ -1,7 +1,5 @@
 ---
 decision: synthetic-envelope-mechanism-retired
-status: as-is
-aliases: []
 ---
 
 # No synthetic-envelope wake mechanism

@@ -32,3 +32,7 @@ For a finding on concept X, read X's dossier and rule:
 - the dossier itself lists it under conflicts → escalate for a human ruling
 
 These dossiers record intent history only. They were deliberately written without consulting current code or the concept docs, so they can be compared against both without circularity. Where a dossier and a concept doc disagree, the disagreement is itself a finding to adjudicate — the dossier does not automatically win, but the transcript quotes inside it do.
+
+---
+
+Ingested: dispositioned in full by sprint 2026-08-01-intent-ingestion (all 76 dossiers; per-dossier counts in that sprint's completion report) — this ledger is consumed history, not an unprocessed queue.

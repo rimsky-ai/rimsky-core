@@ -1,6 +1,5 @@
 ---
 decision: blob-backends-pluggable
-status: as-is
 ---
 
 # Blob storage abstraction

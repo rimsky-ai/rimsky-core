@@ -1,6 +1,5 @@
 ---
 decision: uncovered-substitution-error-shape
-status: as-is
 ---
 
 # Uncovered-substitution registration error carries a structured envelope entry

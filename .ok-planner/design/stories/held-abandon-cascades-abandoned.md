@@ -1,6 +1,5 @@
 ---
 story: held-abandon-cascades-abandoned
-status: as-is
 ---
 
 # Downstream hears an abandoned signal when held work rolls back

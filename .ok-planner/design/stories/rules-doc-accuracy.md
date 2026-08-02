@@ -1,6 +1,5 @@
 ---
 story: rules-doc-accuracy
-status: as-is
 ---
 
 # Contributor trusts rules citations

@@ -1,6 +1,5 @@
 ---
 decision: depguard-consumption-isolation
-status: as-is
 ---
 
 # Services module import surface

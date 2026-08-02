@@ -1,7 +1,5 @@
 ---
 concept: lineage-record
-status: as-is
-aliases: []
 ---
 
 # Lineage record

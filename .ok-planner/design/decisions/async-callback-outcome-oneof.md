@@ -1,6 +1,5 @@
 ---
 decision: async-callback-outcome-oneof
-status: as-is
 ---
 
 # Async-callback body shape

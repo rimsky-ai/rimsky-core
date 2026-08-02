@@ -1,6 +1,5 @@
 ---
 decision: protocol-version-v1-namespaced
-status: as-is
 ---
 
 # Protocol versioning

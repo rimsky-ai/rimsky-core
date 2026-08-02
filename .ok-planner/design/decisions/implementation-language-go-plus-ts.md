@@ -1,6 +1,5 @@
 ---
 decision: implementation-language-go-plus-ts
-status: as-is
 ---
 
 # Implementation languages

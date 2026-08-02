@@ -1,7 +1,5 @@
 ---
 concept: advisory-lock
-status: as-is
-aliases: []
 ---
 
 # Advisory lock

@@ -1,6 +1,5 @@
 ---
 decision: image-tagging-version-and-channel
-status: as-is
 ---
 
 # Image tag scheme

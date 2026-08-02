@@ -1,6 +1,5 @@
 ---
 decision: pre-v1-pure-removal-for-retired-surfaces
-status: as-is
 ---
 
 # Pre-v1 pure removal for retired surfaces

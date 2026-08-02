@@ -1,6 +1,5 @@
 ---
 decision: module-split
-status: as-is
 ---
 
 # Five-module Go workspace

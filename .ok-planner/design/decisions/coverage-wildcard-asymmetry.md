@@ -1,6 +1,5 @@
 ---
 decision: coverage-wildcard-asymmetry
-status: as-is
 ---
 
 # Wildcard subscriptions cover per-field reads; per-field subscriptions do not cover whole-pull reads

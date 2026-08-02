@@ -1,6 +1,5 @@
 ---
 story: node-admin
-status: as-is
 ---
 
 # Operator inspects and resets nodes

@@ -1,6 +1,5 @@
 ---
 decision: secret-at-rest-posture
-status: as-is
 aliases:
   - secrets-at-rest
   - config-secret-delegation

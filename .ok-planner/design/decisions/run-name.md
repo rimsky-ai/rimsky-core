@@ -1,6 +1,5 @@
 ---
 decision: run-name
-status: adopted
 ---
 
 # Run name defaults from the manifest's project field

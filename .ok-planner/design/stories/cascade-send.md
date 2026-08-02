@@ -1,6 +1,5 @@
 ---
 story: cascade-send
-status: as-is
 ---
 
 # Template author declares a message-sender node-type

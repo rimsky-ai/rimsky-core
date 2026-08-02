@@ -1,7 +1,5 @@
 ---
 decision: env-var-convention-across-modes
-status: as-is
-aliases: []
 ---
 
 # Bundled handlers read the same operator env vars in both modes

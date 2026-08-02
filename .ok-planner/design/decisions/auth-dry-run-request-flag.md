@@ -1,6 +1,5 @@
 ---
 decision: auth-dry-run-request-flag
-status: as-is
 ---
 
 # Per-request dry-run

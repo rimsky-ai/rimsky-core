@@ -1,7 +1,5 @@
 ---
 decision: message-queue-mode-per-instance
-status: as-is
-aliases: []
 ---
 
 # Message-queue coalesce mode is per-instance, not per-message-type

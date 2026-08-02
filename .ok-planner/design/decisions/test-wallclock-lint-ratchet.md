@@ -1,6 +1,5 @@
 ---
 decision: test-wallclock-lint-ratchet
-status: as-is
 ---
 
 # Wall-clock verdict idioms in tests are lint-gated with a ratchet

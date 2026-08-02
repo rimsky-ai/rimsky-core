@@ -1,6 +1,5 @@
 ---
 decision: cron-robfig-v3
-status: as-is
 ---
 
 # Cron expression parser

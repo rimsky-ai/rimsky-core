@@ -1,6 +1,5 @@
 ---
 story: event-log-read
-status: as-is
 ---
 
 # Operator reads unified chronological event feed

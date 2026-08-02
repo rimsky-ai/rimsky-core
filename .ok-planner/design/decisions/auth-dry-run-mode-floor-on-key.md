@@ -1,6 +1,5 @@
 ---
 decision: auth-dry-run-mode-floor-on-key
-status: as-is
 ---
 
 # Identity-bound dry-run

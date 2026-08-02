@@ -1,6 +1,5 @@
 ---
 decision: depguard-foundation-purity
-status: as-is
 ---
 
 # Foundation module import surface

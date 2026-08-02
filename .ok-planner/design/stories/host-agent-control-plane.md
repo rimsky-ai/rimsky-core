@@ -1,6 +1,5 @@
 ---
 story: host-agent-control-plane
-status: as-is
 ---
 
 # Operator manages agent lifecycle via CLI

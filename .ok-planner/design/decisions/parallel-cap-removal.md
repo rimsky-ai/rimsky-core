@@ -1,6 +1,5 @@
 ---
 decision: parallel-cap-removal
-status: as-is
 ---
 
 # Test parallelism is uncapped except where a named contention bounds it

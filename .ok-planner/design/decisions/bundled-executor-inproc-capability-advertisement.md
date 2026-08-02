@@ -1,7 +1,5 @@
 ---
 decision: bundled-executor-inproc-capability-advertisement
-status: as-is
-aliases: []
 ---
 
 # Bundled in-proc handlers advertise capabilities into the discovery cache at registration time

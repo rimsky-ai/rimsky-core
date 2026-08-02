@@ -1,6 +1,5 @@
 ---
 decision: progress-default
-status: adopted
 ---
 
 # Default progress output is per-node lifecycle

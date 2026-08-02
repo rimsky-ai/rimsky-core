@@ -1,6 +1,5 @@
 ---
 story: cascade-defers-during-flight
-status: as-is
 ---
 
 # In-flight node-runs are sealed against cascade-driven invalidation

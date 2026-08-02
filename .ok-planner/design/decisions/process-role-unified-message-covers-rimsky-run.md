@@ -1,7 +1,5 @@
 ---
 decision: process-role-unified-message-covers-rimsky-run
-status: as-is
-aliases: []
 ---
 
 # The unified-marker error text names all three setters

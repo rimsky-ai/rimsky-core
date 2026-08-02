@@ -1,7 +1,5 @@
 ---
 decision: test-harness-invalidate-node-retired
-status: as-is
-aliases: []
 ---
 
 # Test harness has no invalidate-node helper

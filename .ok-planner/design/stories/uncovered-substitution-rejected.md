@@ -1,6 +1,5 @@
 ---
 story: uncovered-substitution-rejected
-status: as-is
 ---
 
 # Template author gets a registration error for an uncovered substitution ref

@@ -1,7 +1,5 @@
 ---
 decision: inproc-eventstream
-status: as-is
-aliases: []
 ---
 
 # Unary in-process executor call

@@ -1,7 +1,5 @@
 ---
 decision: claude-agent-session-attribute
-status: as-is
-aliases: []
 ---
 
 # claude-agent CLI session token rides attributes on Success, scratch on Park

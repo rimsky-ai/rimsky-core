@@ -32,10 +32,11 @@ type AcquireSubClaimsInput struct {
 	LivenessInterval    time.Duration
 	PartitionRequest    []byte
 	// @concept: claim-lifetime
-	Lifetime          spec.ClaimLifetime
-	ParentIsHeld      bool
-	AggregationPolicy spec.AggregationPolicy
-	ParentIntent      string
+	Lifetime                     spec.ClaimLifetime
+	ParentIsHeld                 bool
+	AggregationPolicy            spec.AggregationPolicy
+	ParentIntent                 string
+	ParentRealizedWriteSemantics string
 }
 
 type SubClaim struct {
@@ -188,6 +189,7 @@ func AcquireSubClaims(
 			ParentClaimHandleID:     &parentID,
 			Lifetime:                lifetime,
 			IsHeld:                  in.ParentIsHeld,
+			RealizedWriteSemantics:  in.ParentRealizedWriteSemantics,
 			ProducerCandidateHandle: candidateHandle,
 			ProducerLeaseToken:      desc.LeaseToken,
 		}

@@ -1,6 +1,5 @@
 ---
 decision: intx-suffix-convention
-status: as-is
 ---
 
 # The InTx suffix means "requires an open transaction"

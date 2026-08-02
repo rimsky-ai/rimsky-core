@@ -1,7 +1,5 @@
 ---
 concept: write-semantics
-status: as-is
-aliases: []
 ---
 
 # Write semantics

@@ -1,6 +1,5 @@
 ---
 decision: frame-isolation-is-structural
-status: as-is
 aliases:
   - frame-isolation
 ---

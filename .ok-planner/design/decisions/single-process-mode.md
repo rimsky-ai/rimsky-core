@@ -1,6 +1,5 @@
 ---
 decision: single-process-mode
-status: as-is
 ---
 
 # The all-in-one runs all three roles in one process

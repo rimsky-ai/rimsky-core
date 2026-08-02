@@ -1,6 +1,5 @@
 ---
 decision: deposit-detection-watermark
-status: as-is
 ---
 
 # Deposit detection is polling with a durable watermark, at-least-once

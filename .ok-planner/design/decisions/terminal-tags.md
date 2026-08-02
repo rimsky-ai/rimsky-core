@@ -1,7 +1,5 @@
 ---
 decision: terminal-tags
-status: as-is
-aliases: []
 ---
 
 # Terminal tags instead of named events

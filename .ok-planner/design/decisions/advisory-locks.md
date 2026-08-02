@@ -1,6 +1,5 @@
 ---
 decision: advisory-locks
-status: as-is
 ---
 
 # Named cross-process coordination

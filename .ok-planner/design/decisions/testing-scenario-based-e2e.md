@@ -1,6 +1,5 @@
 ---
 decision: testing-scenario-based-e2e
-status: as-is
 ---
 
 # Testing discipline

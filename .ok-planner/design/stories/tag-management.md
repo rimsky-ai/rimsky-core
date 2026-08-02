@@ -1,6 +1,5 @@
 ---
 story: tag-management
-status: as-is
 ---
 
 # Operator manages movable template-hash names

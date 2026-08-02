@@ -1,6 +1,5 @@
 ---
 decision: persistence-driver
-status: adopted
 ---
 
 # persistence-driver

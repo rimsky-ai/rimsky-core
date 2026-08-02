@@ -1,7 +1,5 @@
 ---
 decision: writeback-bumps-progress
-status: as-is
-aliases: []
 ---
 
 # Attribute writeback bumps the progress timestamp

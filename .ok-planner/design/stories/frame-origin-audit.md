@@ -1,6 +1,5 @@
 ---
 story: frame-origin-audit
-status: as-is
 ---
 
 # Operator sees the triggering message for every frame

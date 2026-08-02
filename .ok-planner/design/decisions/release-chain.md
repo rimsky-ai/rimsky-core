@@ -1,6 +1,5 @@
 ---
 decision: release-chain
-status: as-is
 ---
 
 # Shared release chain

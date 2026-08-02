@@ -1,6 +1,5 @@
 ---
 decision: services-source
-status: adopted
 ---
 
 # Compose manifest mirrors the unified-config service blocks

@@ -1,7 +1,5 @@
 ---
 decision: executor-unary-rpc
-status: as-is
-aliases: []
 ---
 
 # Execute is unary

@@ -1,6 +1,5 @@
 ---
 story: message-queue-coalesces-pending
-status: as-is
 ---
 
 # Coalesce-mode instances drop stale wakes from the message queue

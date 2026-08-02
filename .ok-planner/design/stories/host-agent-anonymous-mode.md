@@ -1,6 +1,5 @@
 ---
 story: host-agent-anonymous-mode
-status: as-is
 ---
 
 # Late-bind works under anonymous mode

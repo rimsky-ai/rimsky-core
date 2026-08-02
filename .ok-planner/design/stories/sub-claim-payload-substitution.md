@@ -1,6 +1,5 @@
 ---
 story: sub-claim-payload-substitution
-status: as-is
 ---
 
 # Template author reads per-sub-claim payload through the standard claim directive

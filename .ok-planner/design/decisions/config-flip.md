@@ -1,6 +1,5 @@
 ---
 decision: config-flip
-status: as-is
 ---
 
 # Plumbline check activation follows clean state

@@ -1,6 +1,5 @@
 ---
 decision: migrations-no-compat-shims
-status: as-is
 ---
 
 # Pre-v1 migration freedom

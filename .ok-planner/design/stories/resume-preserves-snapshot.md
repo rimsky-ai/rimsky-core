@@ -1,6 +1,5 @@
 ---
 story: resume-preserves-snapshot
-status: as-is
 ---
 
 # Parked node-run resumes against its dispatch-time inputs

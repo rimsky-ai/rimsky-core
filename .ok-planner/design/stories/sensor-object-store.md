@@ -1,6 +1,5 @@
 ---
 story: sensor-object-store
-status: as-is
 ---
 
 # Workflow reacts to deposited content

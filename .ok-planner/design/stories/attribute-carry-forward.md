@@ -1,7 +1,5 @@
 ---
 story: attribute-carry-forward
-status: as-is
-aliases: []
 ---
 
 # Stateful attribute carry-forward within a RunScope

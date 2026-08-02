@@ -1,6 +1,5 @@
 ---
 story: iterative-workflows-converge
-status: as-is
 ---
 
 # Template author expresses iterative workflows as first-class graph cycles

@@ -1,7 +1,5 @@
 ---
 decision: async-callback-persistent-registry
-status: as-is
-aliases: []
 ---
 
 # Async-callback registry persists across supervisor restart

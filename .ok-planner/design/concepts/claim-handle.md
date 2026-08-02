@@ -1,7 +1,5 @@
 ---
 concept: claim-handle
-status: as-is
-aliases: []
 ---
 
 # Claim handle

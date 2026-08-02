@@ -1,6 +1,5 @@
 ---
 decision: config-enforced-fitness-tests
-status: as-is
 ---
 
 # Config-enforced decisions are proven by grouped fitness tests

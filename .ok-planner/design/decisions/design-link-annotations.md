@@ -1,6 +1,5 @@
 ---
 decision: design-link-annotations
-status: as-is
 ---
 
 # Code → design citation

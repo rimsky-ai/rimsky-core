@@ -1,7 +1,5 @@
 ---
 concept: attribute
-status: as-is
-aliases: []
 ---
 
 # Attribute

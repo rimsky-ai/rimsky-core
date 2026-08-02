@@ -1,6 +1,5 @@
 ---
 decision: pre-v1-break-freely
-status: as-is
 ---
 
 # Pre-v1 stance

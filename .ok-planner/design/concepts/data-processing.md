@@ -1,7 +1,5 @@
 ---
 concept: data-processing
-status: as-is
-aliases: []
 ---
 
 # Data processing

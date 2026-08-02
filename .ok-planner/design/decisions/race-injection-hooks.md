@@ -1,6 +1,5 @@
 ---
 decision: race-injection-hooks
-status: as-is
 ---
 
 # Deterministic race injection at defended seams

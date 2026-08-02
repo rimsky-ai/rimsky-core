@@ -1,7 +1,5 @@
 ---
 decision: parallel-inproc-claim-producer-registry
-status: as-is
-aliases: []
 ---
 
 # Claim producers get an in-process registry parallel to the executor one

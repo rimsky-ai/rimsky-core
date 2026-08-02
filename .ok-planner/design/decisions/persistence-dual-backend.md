@@ -1,6 +1,5 @@
 ---
 decision: persistence-dual-backend
-status: as-is
 ---
 
 # Backend support

@@ -1,6 +1,5 @@
 ---
 decision: release-semver-from-diff
-status: as-is
 ---
 
 # SemVer bump source

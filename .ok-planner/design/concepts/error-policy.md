@@ -1,6 +1,5 @@
 ---
 concept: error-policy
-status: as-is
 aliases:
   - error-types policy chain
 ---

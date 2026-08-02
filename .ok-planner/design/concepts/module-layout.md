@@ -1,6 +1,5 @@
 ---
 concept: module-layout
-status: as-is
 aliases:
   - workspace-layout
 ---

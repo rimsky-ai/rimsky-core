@@ -1,7 +1,5 @@
 ---
 decision: inproc-transport-client
-status: as-is
-aliases: []
 ---
 
 # In-process executor client as a third transport on the client pool

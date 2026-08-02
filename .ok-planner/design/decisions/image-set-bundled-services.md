@@ -1,6 +1,5 @@
 ---
 decision: image-set-bundled-services
-status: as-is
 ---
 
 # Bundled-service image set

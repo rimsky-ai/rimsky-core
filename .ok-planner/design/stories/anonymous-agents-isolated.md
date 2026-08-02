@@ -1,6 +1,5 @@
 ---
 story: anonymous-agents-isolated
-status: as-is
 ---
 
 # Concurrent anonymous agents stay isolated

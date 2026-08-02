@@ -1,7 +1,5 @@
 ---
 concept: child-execution
-status: as-is
-aliases: []
 ---
 
 # Child execution

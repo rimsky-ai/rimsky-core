@@ -1,6 +1,5 @@
 ---
 concept: service-address-book
-status: as-is
 ---
 
 # Service address book

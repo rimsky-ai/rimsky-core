@@ -1,6 +1,5 @@
 ---
 decision: metrics-prometheus-client
-status: as-is
 ---
 
 # Metrics export

@@ -1,7 +1,5 @@
 ---
 decision: loop-counter-shape
-status: as-is
-aliases: []
 ---
 
 # Loop-counter shape

@@ -1,7 +1,5 @@
 ---
 concept: observability
-status: as-is
-aliases: []
 ---
 
 # Observability

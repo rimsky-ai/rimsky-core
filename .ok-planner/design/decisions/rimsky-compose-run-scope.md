@@ -1,7 +1,5 @@
 ---
 decision: rimsky-compose-run-scope
-status: as-is
-aliases: []
 ---
 
 # The compose one-shot stays manifest-only

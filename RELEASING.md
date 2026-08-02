@@ -140,6 +140,13 @@ tagged commit, and uses the curated `releases/vX.Y.Z.md` as the release
 body (`goreleaser release --clean --release-notes=…`). Verify the config
 any time without publishing via `make cli-snapshot`.
 
+Each platform archive is accompanied by a published SBOM
+(`<archive>.sbom.json`, syft-generated via goreleaser's `sboms` step,
+uploaded to the GitHub Release beside the archive) — the CLI channel's
+counterpart to the image channel's SBOM attestations. `syft` must be on
+PATH (`brew install syft`); goreleaser fails the release without it,
+and `make cli-snapshot` exercises the SBOM step too.
+
 Supported install paths, in order:
 
 1. **Prebuilt archive** — download `rimsky_X.Y.Z_<os>_<arch>.tar.gz`

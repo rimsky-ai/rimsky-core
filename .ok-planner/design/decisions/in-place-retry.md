@@ -1,7 +1,5 @@
 ---
 decision: in-place-retry
-status: as-is
-aliases: []
 ---
 
 # Executor and acquire retries are both in-place on the existing node-run row

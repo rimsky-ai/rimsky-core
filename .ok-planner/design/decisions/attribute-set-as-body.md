@@ -1,6 +1,5 @@
 ---
 decision: attribute-set-as-body
-status: as-is
 ---
 
 # Attribute set as body

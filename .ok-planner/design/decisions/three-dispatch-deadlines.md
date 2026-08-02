@@ -1,7 +1,5 @@
 ---
 decision: three-dispatch-deadlines
-status: as-is
-aliases: []
 ---
 
 # Three orthogonal dispatch deadlines

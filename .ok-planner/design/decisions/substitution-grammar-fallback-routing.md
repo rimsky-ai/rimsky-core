@@ -1,6 +1,5 @@
 ---
 decision: substitution-grammar-fallback-routing
-status: as-is
 ---
 
 # Substitution-grammar fallback routing

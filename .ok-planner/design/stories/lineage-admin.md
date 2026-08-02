@@ -1,6 +1,5 @@
 ---
 story: lineage-admin
-status: as-is
 ---
 
 # Operator prunes lineage records

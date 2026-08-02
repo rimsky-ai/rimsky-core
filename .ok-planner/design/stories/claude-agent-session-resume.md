@@ -1,7 +1,5 @@
 ---
 story: claude-agent-session-resume
-status: as-is
-aliases: []
 ---
 
 # CLI session continues within one frame's RunScope, fresh in a sub-graph

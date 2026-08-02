@@ -1,7 +1,5 @@
 ---
 story: opaque-executor-scratch
-status: as-is
-aliases: []
 ---
 
 # Opaque bytes carried across recovery re-dispatch of the same node-run

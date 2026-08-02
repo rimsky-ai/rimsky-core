@@ -1,6 +1,5 @@
 ---
 decision: sequence-scope-monotonic
-status: as-is
 ---
 
 # Node-run sequence is monotonic per (node, run-scope)

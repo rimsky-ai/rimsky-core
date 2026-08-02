@@ -1,7 +1,5 @@
 ---
 concept: lifecycle-subscriber
-status: as-is
-aliases: []
 ---
 
 # Lifecycle subscriber

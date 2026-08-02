@@ -1,6 +1,5 @@
 ---
 concept: parked-state
-status: as-is
 aliases:
   - park
   - parked node

@@ -1,6 +1,5 @@
 ---
 decision: blob-backend
-status: adopted
 ---
 
 # blob-backend

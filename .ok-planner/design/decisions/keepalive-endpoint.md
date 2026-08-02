@@ -1,7 +1,5 @@
 ---
 decision: keepalive-endpoint
-status: as-is
-aliases: []
 ---
 
 # Dedicated keepalive endpoint

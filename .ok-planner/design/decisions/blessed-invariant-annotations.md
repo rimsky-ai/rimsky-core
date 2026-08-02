@@ -1,6 +1,5 @@
 ---
 decision: blessed-invariant-annotations
-status: as-is
 ---
 
 # Safety properties are named in concept docs, not tagged by number

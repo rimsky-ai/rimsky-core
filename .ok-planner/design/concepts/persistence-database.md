@@ -1,6 +1,5 @@
 ---
 concept: persistence-database
-status: as-is
 aliases: [persistence-driver]
 ---
 

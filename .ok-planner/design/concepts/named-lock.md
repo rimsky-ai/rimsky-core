@@ -1,7 +1,5 @@
 ---
 concept: named-lock
-status: as-is
-aliases: []
 ---
 
 # Named lock

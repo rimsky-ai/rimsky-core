@@ -1,6 +1,5 @@
 ---
 decision: layer-ordering
-status: as-is
 ---
 
 # Four-layer ordered code split under the root module

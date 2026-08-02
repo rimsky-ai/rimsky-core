@@ -1,7 +1,5 @@
 ---
 story: inproc-utility-executor
-status: as-is
-aliases: []
 ---
 
 # Utility node types dispatched without external service deployment

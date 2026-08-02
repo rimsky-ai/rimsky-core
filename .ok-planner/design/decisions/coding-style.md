@@ -1,6 +1,5 @@
 ---
 decision: coding-style
-status: as-is
 ---
 
 # Coding style

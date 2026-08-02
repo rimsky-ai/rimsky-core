@@ -1,6 +1,5 @@
 ---
 decision: subscription-mounting-state
-status: as-is
 ---
 
 # Publisher subscriptions are desired-state rows with a visible lifecycle

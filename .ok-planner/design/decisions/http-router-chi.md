@@ -1,6 +1,5 @@
 ---
 decision: http-router-chi
-status: as-is
 ---
 
 # HTTP routing

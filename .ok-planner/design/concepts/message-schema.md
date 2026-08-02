@@ -1,7 +1,5 @@
 ---
 concept: message-schema
-status: as-is
-aliases: []
 ---
 
 # Message-schema

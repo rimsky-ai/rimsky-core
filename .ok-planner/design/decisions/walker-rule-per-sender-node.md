@@ -1,7 +1,5 @@
 ---
 decision: walker-rule-per-sender-node
-status: as-is
-aliases: []
 ---
 
 # Cascade walker accumulates by sender-node identity, not by pending-existence

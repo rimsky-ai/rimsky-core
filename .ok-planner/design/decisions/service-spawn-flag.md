@@ -1,6 +1,5 @@
 ---
 decision: service-spawn-flag
-status: adopted
 ---
 
 # Compose-run mirrors the run verb's service-spawn flag

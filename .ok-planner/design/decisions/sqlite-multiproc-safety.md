@@ -1,6 +1,5 @@
 ---
 decision: sqlite-multiproc-safety
-status: as-is
 ---
 
 # The SQLite driver is safe for processes sharing one local file

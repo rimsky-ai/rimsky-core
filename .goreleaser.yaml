@@ -40,6 +40,10 @@ archives:
       - COPYRIGHT
       - COPYING.md
 
+sboms:
+  - id: archive-sboms
+    artifacts: archive
+
 checksum:
   name_template: checksums.txt
 

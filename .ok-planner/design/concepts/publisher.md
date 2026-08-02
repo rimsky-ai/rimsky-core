@@ -1,7 +1,5 @@
 ---
 concept: publisher
-status: as-is
-aliases: []
 ---
 
 # Publisher

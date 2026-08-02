@@ -1,7 +1,5 @@
 ---
 concept: supervisor
-status: as-is
-aliases: []
 ---
 
 # Supervisor

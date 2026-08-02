@@ -1,6 +1,5 @@
 ---
 decision: toplevel-dirs
-status: as-is
 ---
 
 # Idiomatic top-level code directories

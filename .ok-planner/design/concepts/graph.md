@@ -1,7 +1,5 @@
 ---
 concept: graph
-status: as-is
-aliases: []
 ---
 
 # Graph

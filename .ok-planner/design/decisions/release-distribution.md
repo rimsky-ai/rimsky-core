@@ -1,13 +1,12 @@
 ---
 decision: release-distribution
-status: as-is
 ---
 
 # Distribution channels
 
 ## Choice
 
-Four channels: container-registry images with SBOM and provenance attestations, the protocols npm package, Go modules consumed from a full checkout, and GitHub Releases carrying prebuilt CLI archives built by goreleaser for Linux and macOS on Intel and ARM. The CLI ships as prebuilt archives only: Windows is unsupported (the CLI transitively embeds Unix-only system calls), and network `go install` is unsupported (the workspace's modules are wired with local-path redirects that resolve only inside a full checkout).
+Four channels: container-registry images with SBOM and provenance attestations, the protocols npm package, Go modules consumed from a full checkout, and GitHub Releases carrying prebuilt CLI archives built by goreleaser for Linux and macOS on Intel and ARM, each archive accompanied by a published SBOM. The CLI ships as prebuilt archives only: Windows is unsupported (the CLI transitively embeds Unix-only system calls), and network `go install` is unsupported (the workspace's modules are wired with local-path redirects that resolve only inside a full checkout).
 
 ## Rationale
 

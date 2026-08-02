@@ -1,7 +1,5 @@
 ---
 concept: host-agent
-status: as-is
-aliases: []
 ---
 
 # Host agent

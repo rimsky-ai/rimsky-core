@@ -1,6 +1,5 @@
 ---
 decision: mcp-http-parity
-status: as-is
 ---
 
 # The MCP tool surface mirrors the HTTP control surface

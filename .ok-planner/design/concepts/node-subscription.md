@@ -1,6 +1,5 @@
 ---
 concept: node-subscription
-status: as-is
 aliases: [subscription]
 ---
 

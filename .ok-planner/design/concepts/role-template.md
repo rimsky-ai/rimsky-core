@@ -1,6 +1,5 @@
 ---
 concept: role-template
-status: as-is
 aliases:
   - bundled role
 ---

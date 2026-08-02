@@ -1,6 +1,5 @@
 ---
 decision: build-tool-makefile
-status: as-is
 ---
 
 # Build orchestration

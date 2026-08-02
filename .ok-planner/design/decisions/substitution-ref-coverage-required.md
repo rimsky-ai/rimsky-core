@@ -1,6 +1,5 @@
 ---
 decision: substitution-ref-coverage-required
-status: as-is
 ---
 
 # Every substitution ref must be covered by a subscription entry

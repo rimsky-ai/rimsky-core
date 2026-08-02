@@ -1,6 +1,5 @@
 ---
 story: multi-hard-dep-rendezvous
-status: as-is
 ---
 
 # Template author relies on multi-hard-dep rendezvous

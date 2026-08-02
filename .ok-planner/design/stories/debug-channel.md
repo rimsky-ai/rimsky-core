@@ -1,6 +1,5 @@
 ---
 story: debug-channel
-status: as-is
 ---
 
 # Operator overrides node state and attribute values in debug mode

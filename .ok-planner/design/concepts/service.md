@@ -1,7 +1,5 @@
 ---
 concept: service
-status: as-is
-aliases: []
 ---
 
 # Service

@@ -1,6 +1,5 @@
 ---
 story: typed-message-substitution
-status: as-is
 ---
 
 # Template author reads message bodies through the typed-message substitution grammar

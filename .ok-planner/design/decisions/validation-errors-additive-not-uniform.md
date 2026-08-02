@@ -1,6 +1,5 @@
 ---
 decision: validation-errors-additive-not-uniform
-status: as-is
 ---
 
 # Validation-error envelopes admit two coexisting entry shapes

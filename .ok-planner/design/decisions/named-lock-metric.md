@@ -1,6 +1,5 @@
 ---
 decision: named-lock-metric
-status: as-is
 ---
 
 # Named-lock acquisitions are countable

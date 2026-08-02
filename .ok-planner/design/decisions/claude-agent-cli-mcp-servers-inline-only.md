@@ -1,7 +1,5 @@
 ---
 decision: claude-agent-cli-mcp-servers-inline-only
-status: as-is
-aliases: []
 ---
 
 # Per-node MCP servers are declared inline only, across three transports

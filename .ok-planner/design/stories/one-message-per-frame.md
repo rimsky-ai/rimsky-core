@@ -1,6 +1,5 @@
 ---
 story: one-message-per-frame
-status: as-is
 ---
 
 # Template author relies on one message per frame for well-defined substitution

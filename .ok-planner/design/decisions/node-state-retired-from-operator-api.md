@@ -1,7 +1,5 @@
 ---
 decision: node-state-retired-from-operator-api
-status: as-is
-aliases: []
 ---
 
 # Operator surfaces do not expose a synthesized node-level state field

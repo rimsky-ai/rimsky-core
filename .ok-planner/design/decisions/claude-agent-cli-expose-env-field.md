@@ -1,7 +1,5 @@
 ---
 decision: claude-agent-cli-expose-env-field
-status: as-is
-aliases: []
 ---
 
 # Per-node expose-env is a node-config field

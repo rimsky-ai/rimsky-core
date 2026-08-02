@@ -1,6 +1,5 @@
 ---
 decision: exposure-no-config
-status: adopted
 ---
 
 # One-shot mode exposed only through its verb

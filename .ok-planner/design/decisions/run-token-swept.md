@@ -1,6 +1,5 @@
 ---
 decision: run-token-swept
-status: as-is
 aliases:
   - async-ack-id-correlation-only
 ---

@@ -1,7 +1,5 @@
 ---
 decision: node-config-schema-format-go
-status: as-is
-aliases: []
 ---
 
 # claude-agent carries its node-config schema as an embedded JSON Schema

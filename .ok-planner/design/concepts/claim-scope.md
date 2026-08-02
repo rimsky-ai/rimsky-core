@@ -1,7 +1,5 @@
 ---
 concept: claim-scope
-status: as-is
-aliases: []
 ---
 
 # Claim Scope

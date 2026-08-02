@@ -1,6 +1,5 @@
 ---
 story: upstream-pull-on-invalidate
-status: as-is
 ---
 
 # Template author pulls an upstream fresh when the receiver is invalidated

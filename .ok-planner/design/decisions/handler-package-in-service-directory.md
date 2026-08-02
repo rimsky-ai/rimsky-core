@@ -1,7 +1,5 @@
 ---
 decision: handler-package-in-service-directory
-status: as-is
-aliases: []
 ---
 
 # Bundled service handler code lives in importable packages inside each service directory

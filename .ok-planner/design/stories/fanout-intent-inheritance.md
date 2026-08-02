@@ -1,6 +1,5 @@
 ---
 story: fanout-intent-inheritance
-status: as-is
 ---
 
 # Template author trusts fan-out claim intent applies to sub-claims

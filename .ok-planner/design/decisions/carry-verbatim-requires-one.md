@@ -1,6 +1,5 @@
 ---
 decision: carry-verbatim-requires-one
-status: as-is
 ---
 
 # Carry-verbatim requires exactly one child

@@ -1,6 +1,5 @@
 ---
 concept: inertness
-status: as-is
 aliases:
   - inert bytes
 ---

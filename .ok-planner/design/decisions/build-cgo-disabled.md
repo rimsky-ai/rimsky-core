@@ -1,6 +1,5 @@
 ---
 decision: build-cgo-disabled
-status: as-is
 ---
 
 # CGO posture

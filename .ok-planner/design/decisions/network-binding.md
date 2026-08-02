@@ -1,6 +1,5 @@
 ---
 decision: network-binding
-status: adopted
 ---
 
 # network-binding

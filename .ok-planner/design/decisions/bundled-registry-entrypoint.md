@@ -1,7 +1,5 @@
 ---
 decision: bundled-registry-entrypoint
-status: as-is
-aliases: []
 ---
 
 # A single bundled registration entrypoint registers every bundled handler across the in-proc registries

@@ -1,6 +1,5 @@
 ---
 decision: substitution-grammar-closed
-status: as-is
 ---
 
 # Substitution grammar is closed to cascade-shape tokens

@@ -1,6 +1,5 @@
 ---
 decision: tls-mode-validation
-status: as-is
 ---
 
 # The tls value is a validated enum

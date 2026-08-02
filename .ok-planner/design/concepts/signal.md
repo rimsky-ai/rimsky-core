@@ -1,7 +1,5 @@
 ---
 concept: signal
-status: as-is
-aliases: []
 ---
 
 # Signal

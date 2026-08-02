@@ -1,6 +1,5 @@
 ---
 decision: image-entrypoint-role-selection
-status: as-is
 ---
 
 # Single-binary multi-role entrypoint

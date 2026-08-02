@@ -1,6 +1,5 @@
 ---
 story: instance-lifecycle
-status: as-is
 ---
 
 # Operator manages instance runtime lifecycle

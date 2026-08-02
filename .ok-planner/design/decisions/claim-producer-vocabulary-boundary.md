@@ -1,6 +1,5 @@
 ---
 decision: claim-producer-vocabulary-boundary
-status: as-is
 ---
 
 # The claim-producer rename stops at the shipped surface

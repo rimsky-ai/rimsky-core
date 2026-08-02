@@ -1,6 +1,5 @@
 ---
 story: messages-as-nodes-substitution
-status: as-is
 ---
 
 # Template author treats messages as nodes for substitution

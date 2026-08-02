@@ -1,6 +1,5 @@
 ---
 decision: event-log-payload-shapes
-status: as-is
 ---
 
 # Event log payload shape

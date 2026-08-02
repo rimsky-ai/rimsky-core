@@ -1,7 +1,5 @@
 ---
 decision: allowlist-defaults-open
-status: as-is
-aliases: []
 ---
 
 # Bundled-service allowlists default open when operator config is absent

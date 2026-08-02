@@ -1,6 +1,5 @@
 ---
 story: held-commit-cascades-success
-status: as-is
 ---
 
 # Downstream sees held work's success only on commit

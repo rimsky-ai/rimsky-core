@@ -1,6 +1,5 @@
 ---
 decision: upstream-gating-at-eligibility
-status: as-is
 ---
 
 # The all-upstreams guarantee is enforced at dispatch eligibility

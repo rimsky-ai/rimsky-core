@@ -1,7 +1,5 @@
 ---
 concept: message-sender-node
-status: as-is
-aliases: []
 ---
 
 # Message-sender-node

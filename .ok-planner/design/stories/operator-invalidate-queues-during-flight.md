@@ -1,6 +1,5 @@
 ---
 story: operator-invalidate-queues-during-flight
-status: as-is
 ---
 
 # Operator-invalidate during in-flight queues rather than drops

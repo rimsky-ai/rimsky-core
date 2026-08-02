@@ -1,6 +1,5 @@
 ---
 story: spawned-local-services
-status: as-is
 ---
 
 # Operator declares local executor binaries spawned for a single run

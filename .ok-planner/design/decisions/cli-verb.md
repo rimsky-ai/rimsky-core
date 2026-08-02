@@ -1,6 +1,5 @@
 ---
 decision: cli-verb
-status: adopted
 ---
 
 # cli-verb

@@ -1,6 +1,5 @@
 ---
 decision: env-var-registry
-status: as-is
 ---
 
 # Enforced registry of operator env vars

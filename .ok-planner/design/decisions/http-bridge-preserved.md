@@ -1,7 +1,5 @@
 ---
 decision: http-bridge-preserved
-status: as-is
-aliases: []
 ---
 
 # The claude-agent carries an HTTP-JSON bridge alongside gRPC

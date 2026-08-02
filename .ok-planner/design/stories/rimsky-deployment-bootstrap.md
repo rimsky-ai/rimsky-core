@@ -1,6 +1,5 @@
 ---
 story: rimsky-deployment-bootstrap
-status: as-is
 ---
 
 # Entrypoint role selection + migrate discipline

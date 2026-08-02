@@ -1,6 +1,5 @@
 ---
 story: idempotent-mode-dedupes
-status: as-is
 ---
 
 # Idempotent modes drop re-runs whose inputs equal a predecessor

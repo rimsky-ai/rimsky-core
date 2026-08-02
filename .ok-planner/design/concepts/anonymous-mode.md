@@ -1,6 +1,5 @@
 ---
 concept: anonymous-mode
-status: as-is
 aliases:
   - implicit anonymous mode
 ---

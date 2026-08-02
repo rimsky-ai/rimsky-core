@@ -1,6 +1,5 @@
 ---
 decision: guard-conformance-suite
-status: as-is
 ---
 
 # Wrong-claimant is a provable no-op

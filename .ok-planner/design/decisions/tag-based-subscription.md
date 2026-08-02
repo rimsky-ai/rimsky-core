@@ -1,7 +1,5 @@
 ---
 decision: tag-based-subscription
-status: as-is
-aliases: []
 ---
 
 # Named-event subscription is terminal/* plus a CEL tag filter

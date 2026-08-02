@@ -1,6 +1,5 @@
 ---
 decision: deposit-settle-window
-status: as-is
 ---
 
 # Mid-write deposits are held by an mtime-quiescence settle window

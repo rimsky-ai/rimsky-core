@@ -1,7 +1,5 @@
 ---
 decision: kind-sugar-resolver
-status: as-is
-aliases: []
 ---
 
 # Kind-field sugar at template registration

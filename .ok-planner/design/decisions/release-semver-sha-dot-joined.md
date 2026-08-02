@@ -1,6 +1,5 @@
 ---
 decision: release-semver-sha-dot-joined
-status: as-is
 ---
 
 # Pre-release SHA encoding

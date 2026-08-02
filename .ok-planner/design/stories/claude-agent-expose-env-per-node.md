@@ -1,6 +1,5 @@
 ---
 story: claude-agent-expose-env-per-node
-status: as-is
 ---
 
 # Template authors declare per-node expose-env; operators bound them

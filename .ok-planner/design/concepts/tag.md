@@ -1,6 +1,5 @@
 ---
 concept: tag
-status: as-is
 aliases:
   - template-tag
 ---

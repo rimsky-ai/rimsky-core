@@ -1,6 +1,5 @@
 ---
 decision: scratch-protocol
-status: as-is
 ---
 
 # Scratch rides settling terminal outcomes only

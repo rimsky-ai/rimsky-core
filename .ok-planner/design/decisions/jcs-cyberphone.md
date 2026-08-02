@@ -1,6 +1,5 @@
 ---
 decision: jcs-cyberphone
-status: as-is
 ---
 
 # JSON canonicalization for spec hashing

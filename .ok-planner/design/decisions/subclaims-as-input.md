@@ -1,6 +1,5 @@
 ---
 decision: subclaims-as-input
-status: as-is
 ---
 
 # The dispatch primitive accepts acquired sub-claims

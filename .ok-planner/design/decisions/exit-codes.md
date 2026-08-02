@@ -1,6 +1,5 @@
 ---
 decision: exit-codes
-status: adopted
 ---
 
 # Exit-code classes

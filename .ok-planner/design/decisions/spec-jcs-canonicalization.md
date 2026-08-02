@@ -1,6 +1,5 @@
 ---
 decision: spec-jcs-canonicalization
-status: as-is
 ---
 
 # Template-spec hashing canonicalizes with RFC 8785 JCS

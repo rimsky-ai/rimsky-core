@@ -1,6 +1,5 @@
 ---
 concept: template
-status: as-is
 aliases:
   - canonical-spec
 ---

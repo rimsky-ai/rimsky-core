@@ -1,6 +1,5 @@
 ---
 decision: cascade-inside-settlement
-status: as-is
 ---
 
 # The parent-settlement cascade fires inside settlement

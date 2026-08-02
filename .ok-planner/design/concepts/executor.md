@@ -1,7 +1,5 @@
 ---
 concept: executor
-status: as-is
-aliases: []
 ---
 
 # Executor

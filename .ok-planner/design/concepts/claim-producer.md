@@ -1,6 +1,5 @@
 ---
 concept: claim-producer
-status: as-is
 aliases:
   - claim-store
 ---

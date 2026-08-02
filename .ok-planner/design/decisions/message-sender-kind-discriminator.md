@@ -1,6 +1,5 @@
 ---
 decision: message-sender-kind-discriminator
-status: as-is
 ---
 
 # Message envelope sender

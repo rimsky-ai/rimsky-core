@@ -1,6 +1,5 @@
 ---
 decision: wire-commit-response-fields
-status: as-is
 ---
 
 # Base Commit responses are read

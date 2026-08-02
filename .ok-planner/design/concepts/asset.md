@@ -1,7 +1,5 @@
 ---
 concept: asset
-status: as-is
-aliases: []
 ---
 
 # Asset

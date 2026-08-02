@@ -1,6 +1,5 @@
 ---
 decision: depguard-runtime-purity
-status: as-is
 ---
 
 # Runtime layer import surface

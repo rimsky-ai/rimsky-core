@@ -1,6 +1,5 @@
 ---
 concept: frame
-status: as-is
 aliases:
   - cascade-frame
 ---

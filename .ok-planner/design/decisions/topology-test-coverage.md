@@ -1,6 +1,5 @@
 ---
 decision: topology-test-coverage
-status: as-is
 ---
 
 # Both deployment topologies are integration-tested

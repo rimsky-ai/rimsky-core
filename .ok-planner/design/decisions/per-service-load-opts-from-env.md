@@ -1,7 +1,5 @@
 ---
 decision: per-service-load-opts-from-env
-status: as-is
-aliases: []
 ---
 
 # Each bundled service owns one shared env-options loader

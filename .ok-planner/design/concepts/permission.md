@@ -1,6 +1,5 @@
 ---
 concept: permission
-status: as-is
 aliases:
   - grant
   - action

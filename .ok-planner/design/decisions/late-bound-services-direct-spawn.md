@@ -1,7 +1,5 @@
 ---
 decision: late-bound-services-direct-spawn
-status: as-is
-aliases: []
 ---
 
 # Late-bound services under self-host are spawned directly on loopback ports

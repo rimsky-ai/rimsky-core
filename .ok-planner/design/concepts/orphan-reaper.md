@@ -1,7 +1,5 @@
 ---
 concept: orphan-reaper
-status: as-is
-aliases: []
 ---
 
 # Orphan reaper

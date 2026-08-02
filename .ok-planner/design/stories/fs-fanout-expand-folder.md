@@ -1,6 +1,5 @@
 ---
 story: fs-fanout-expand-folder
-status: as-is
 ---
 
 # Template author fans out over picked-folder contents against the filesystem store

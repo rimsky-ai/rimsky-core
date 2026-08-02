@@ -1,6 +1,5 @@
 ---
 decision: auth-api-key-bearer
-status: as-is
 ---
 
 # Authentication model

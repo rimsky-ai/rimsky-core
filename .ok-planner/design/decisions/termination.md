@@ -1,6 +1,5 @@
 ---
 decision: termination
-status: adopted
 ---
 
 # Run-to-terminal verbs exit at instance-terminal

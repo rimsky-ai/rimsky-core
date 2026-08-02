@@ -1,6 +1,5 @@
 ---
 decision: blob-spill-threshold-config
-status: as-is
 ---
 
 # Spill threshold control

@@ -1,6 +1,5 @@
 ---
 decision: structural-root-edge-injection-at-registration
-status: as-is
 ---
 
 # Structural-root edge injection at template registration

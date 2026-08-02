@@ -1,6 +1,5 @@
 ---
 story: publisher-protocol
-status: as-is
 ---
 
 # Service author writes custom publisher

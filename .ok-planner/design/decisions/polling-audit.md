@@ -1,6 +1,5 @@
 ---
 decision: polling-audit
-status: as-is
 ---
 
 # Event-driven waits where polling masks ordering

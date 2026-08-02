@@ -1,7 +1,5 @@
 ---
 decision: orphan-reaper-connection-state
-status: as-is
-aliases: []
 ---
 
 # Orphan reaper keys on connection state / quiet-period

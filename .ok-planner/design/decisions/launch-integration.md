@@ -1,6 +1,5 @@
 ---
 decision: launch-integration
-status: adopted
 ---
 
 # Compose verb mirrors the entrypoint's role orchestration

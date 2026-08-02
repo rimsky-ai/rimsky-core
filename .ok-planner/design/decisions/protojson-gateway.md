@@ -1,6 +1,5 @@
 ---
 decision: protojson-gateway
-status: as-is
 ---
 
 # HTTP+JSON bridge for gRPC

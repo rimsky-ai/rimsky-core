@@ -1,6 +1,5 @@
 ---
 decision: doc-residue-reshape-pass
-status: as-is
 ---
 
 # Doc-residue comments resolve reshape-first

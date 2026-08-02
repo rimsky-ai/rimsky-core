@@ -1,6 +1,5 @@
 ---
 decision: asset-materialize-endpoint-retired
-status: as-is
 ---
 
 # No asset-materialize verb; re-materialization goes through messages

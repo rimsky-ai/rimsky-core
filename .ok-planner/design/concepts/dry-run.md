@@ -1,7 +1,5 @@
 ---
 concept: dry-run
-status: as-is
-aliases: []
 ---
 
 # Dry-run

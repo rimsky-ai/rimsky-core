@@ -1,6 +1,5 @@
 ---
 decision: depguard-protocols-purity
-status: as-is
 ---
 
 # Protocols module import surface

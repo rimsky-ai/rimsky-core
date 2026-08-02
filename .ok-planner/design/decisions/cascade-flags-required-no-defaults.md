@@ -1,6 +1,5 @@
 ---
 decision: cascade-flags-required-no-defaults
-status: as-is
 ---
 
 # Cascade-shape flag is required on every subscription entry

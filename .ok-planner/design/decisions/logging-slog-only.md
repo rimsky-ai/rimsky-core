@@ -1,6 +1,5 @@
 ---
 decision: logging-slog-only
-status: as-is
 ---
 
 # Logging library

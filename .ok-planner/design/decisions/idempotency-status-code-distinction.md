@@ -1,6 +1,5 @@
 ---
 decision: idempotency-status-code-distinction
-status: as-is
 ---
 
 # Operator-visible replay marker

@@ -1,6 +1,5 @@
 ---
 decision: release-formal-skill
-status: as-is
 ---
 
 # Formal release flow

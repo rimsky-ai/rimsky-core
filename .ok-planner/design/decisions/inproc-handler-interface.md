@@ -1,7 +1,5 @@
 ---
 decision: inproc-handler-interface
-status: as-is
-aliases: []
 ---
 
 # What in-process utility executors implement

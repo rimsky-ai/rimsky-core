@@ -1,6 +1,5 @@
 ---
 decision: compose-engine-reuse
-status: adopted
 ---
 
 # One-shot verb reuses the compose engine

@@ -1,6 +1,5 @@
 ---
 decision: artifact-root-discovery
-status: adopted
 ---
 
 # artifact-root-discovery

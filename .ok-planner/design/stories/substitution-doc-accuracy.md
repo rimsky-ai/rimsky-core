@@ -1,6 +1,5 @@
 ---
 story: substitution-doc-accuracy
-status: as-is
 ---
 
 # Substitution doc matches resolver

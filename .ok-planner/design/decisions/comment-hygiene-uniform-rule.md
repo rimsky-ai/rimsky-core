@@ -1,6 +1,5 @@
 ---
 decision: comment-hygiene-uniform-rule
-status: as-is
 ---
 
 # Comment-hygiene uniform tag-or-delete rule

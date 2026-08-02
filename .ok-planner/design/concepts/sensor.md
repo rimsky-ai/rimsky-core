@@ -1,7 +1,5 @@
 ---
 concept: sensor
-status: as-is
-aliases: []
 ---
 
 # Sensor

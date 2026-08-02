@@ -64,10 +64,11 @@ func acquireFanOutIfDeclared(
 		LivenessInterval:    livenessInterval,
 		PartitionRequest:    partitionRequest,
 		// @concept: claim-lifetime
-		Lifetime:          parent.Lifetime,
-		ParentIsHeld:      parent.IsHeld,
-		AggregationPolicy: nodeDef.FanOut.ErrorPolicy,
-		ParentIntent:      parent.Intent,
+		Lifetime:                     parent.Lifetime,
+		ParentIsHeld:                 parent.IsHeld,
+		AggregationPolicy:            nodeDef.FanOut.ErrorPolicy,
+		ParentIntent:                 parent.Intent,
+		ParentRealizedWriteSemantics: parent.RealizedWriteSemantics,
 	}, tx)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out sub-claim acquisition failed",
@@ -83,12 +84,13 @@ func acquireFanOutIfDeclared(
 // @concept: fan-out
 // @concept: claim-co-holdership
 type fanOutParentClaim struct {
-	ClaimHandleID shared.UUID
-	ClaimScope    json.RawMessage
-	ProducerName  string
-	Lifetime      spec.ClaimLifetime
-	IsHeld        bool
-	Intent        string
+	ClaimHandleID          shared.UUID
+	ClaimScope             json.RawMessage
+	ProducerName           string
+	Lifetime               spec.ClaimLifetime
+	IsHeld                 bool
+	Intent                 string
+	RealizedWriteSemantics string
 }
 
 // @concept: fan-out
@@ -108,12 +110,13 @@ func resolveFanOutParentClaim(
 			return nil, nil
 		}
 		return &fanOutParentClaim{
-			ClaimHandleID: acquiredLocks[i].ClaimHandleID,
-			ClaimScope:    acquiredLocks[i].ClaimResult.ClaimScope,
-			ProducerName:  parentClaimSpec.ProducerName,
-			Lifetime:      spec.ClaimLifetime(parentClaimSpec.Lifetime),
-			IsHeld:        acquiredLocks[i].IsHeld,
-			Intent:        string(parentClaimSpec.Intent),
+			ClaimHandleID:          acquiredLocks[i].ClaimHandleID,
+			ClaimScope:             acquiredLocks[i].ClaimResult.ClaimScope,
+			ProducerName:           parentClaimSpec.ProducerName,
+			Lifetime:               spec.ClaimLifetime(parentClaimSpec.Lifetime),
+			IsHeld:                 acquiredLocks[i].IsHeld,
+			Intent:                 string(parentClaimSpec.Intent),
+			RealizedWriteSemantics: string(acquiredLocks[i].ClaimResult.RealizedWriteSemantics),
 		}, nil
 	}
 	binding, ok := nodeDef.Holds[alias]
@@ -150,12 +153,13 @@ func resolveFanOutParentClaim(
 		intent = *lh.Intent
 	}
 	return &fanOutParentClaim{
-		ClaimHandleID: lh.ID,
-		ClaimScope:    lh.ClaimScopeData,
-		ProducerName:  producerName,
-		Lifetime:      lh.Lifetime,
-		IsHeld:        lh.IsHeld,
-		Intent:        intent,
+		ClaimHandleID:          lh.ID,
+		ClaimScope:             lh.ClaimScopeData,
+		ProducerName:           producerName,
+		Lifetime:               lh.Lifetime,
+		IsHeld:                 lh.IsHeld,
+		Intent:                 intent,
+		RealizedWriteSemantics: lh.RealizedWriteSemantics,
 	}, nil
 }
 

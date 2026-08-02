@@ -1,7 +1,5 @@
 ---
 decision: env-as-substitution-source-kind
-status: as-is
-aliases: []
 ---
 
 # Host-environment variables ride the substitution grammar as a sixth source kind

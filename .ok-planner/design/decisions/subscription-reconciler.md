@@ -1,6 +1,5 @@
 ---
 decision: subscription-reconciler
-status: as-is
 ---
 
 # A reconciliation worker drives publisher Subscribe

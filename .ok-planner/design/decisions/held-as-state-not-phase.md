@@ -1,7 +1,5 @@
 ---
 decision: held-as-state-not-phase
-status: as-is
-aliases: []
 ---
 
 # Held is a node-run state with cascade-defer until auto-terminal commit/abandon

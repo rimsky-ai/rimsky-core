@@ -1,6 +1,5 @@
 ---
 decision: artifact-layout
-status: adopted
 ---
 
 # artifact-layout

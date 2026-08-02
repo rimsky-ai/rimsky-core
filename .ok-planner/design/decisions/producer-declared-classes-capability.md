@@ -1,6 +1,5 @@
 ---
 decision: producer-declared-classes-capability
-status: as-is
 ---
 
 # Producers can declare an error-class vocabulary

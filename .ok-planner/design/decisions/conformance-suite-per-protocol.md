@@ -1,6 +1,5 @@
 ---
 decision: conformance-suite-per-protocol
-status: as-is
 ---
 
 # Conformance discipline

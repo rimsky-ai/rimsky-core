@@ -1,6 +1,5 @@
 ---
 decision: hard-dep-settled-guard
-status: as-is
 ---
 
 # The hard-dep pull carries a settled-this-frame guard

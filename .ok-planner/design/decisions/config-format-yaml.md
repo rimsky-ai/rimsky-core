@@ -1,6 +1,5 @@
 ---
 decision: config-format-yaml
-status: as-is
 ---
 
 # Configuration format is YAML

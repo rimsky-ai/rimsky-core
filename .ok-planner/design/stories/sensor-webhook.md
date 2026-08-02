@@ -1,6 +1,5 @@
 ---
 story: sensor-webhook
-status: as-is
 ---
 
 # Operator wires inbound-webhook message

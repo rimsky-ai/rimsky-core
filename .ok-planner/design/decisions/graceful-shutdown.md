@@ -1,6 +1,5 @@
 ---
 decision: graceful-shutdown
-status: adopted
 ---
 
 # Graceful shutdown with a hardcoded grace

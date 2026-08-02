@@ -1,6 +1,5 @@
 ---
 decision: peer-tls-enforcement
-status: as-is
 ---
 
 # The tls key works, for every peer kind

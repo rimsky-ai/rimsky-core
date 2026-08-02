@@ -1,6 +1,5 @@
 ---
 story: rimsky-health-check
-status: as-is
 ---
 
 # Health probe surface for LBs and k8s

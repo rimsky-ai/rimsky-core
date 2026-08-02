@@ -1,6 +1,5 @@
 ---
 story: audit-artifact
-status: as-is
 ---
 
 # Operator inspects the durable record of a completed one-shot run

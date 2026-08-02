@@ -1,7 +1,5 @@
 ---
 concept: terminal-tag
-status: as-is
-aliases: []
 ---
 
 # Terminal tag

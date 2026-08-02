@@ -1,6 +1,5 @@
 ---
 decision: release-dev-mechanical
-status: as-is
 ---
 
 # Dev-release flow

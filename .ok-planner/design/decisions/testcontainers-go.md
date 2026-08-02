@@ -1,6 +1,5 @@
 ---
 decision: testcontainers-go
-status: as-is
 ---
 
 # Integration-test container management

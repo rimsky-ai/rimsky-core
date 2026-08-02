@@ -1,7 +1,5 @@
 ---
 story: loop-counter-cap
-status: as-is
-aliases: []
 ---
 
 # Bounded iteration via the loop-counter utility node

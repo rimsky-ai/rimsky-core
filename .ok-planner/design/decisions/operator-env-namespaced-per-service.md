@@ -1,7 +1,5 @@
 ---
 decision: operator-env-namespaced-per-service
-status: as-is
-aliases: []
 ---
 
 # New bundled-service operator env vars are namespaced per service

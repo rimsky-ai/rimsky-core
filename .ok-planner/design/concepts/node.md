@@ -1,6 +1,5 @@
 ---
 concept: node
-status: as-is
 aliases:
   - graph-node
 ---

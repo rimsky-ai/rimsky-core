@@ -1,6 +1,5 @@
 ---
 story: sequenced-preserves-cascade-rounds
-status: as-is
 ---
 
 # Sequenced mode dispatches once per cascade round

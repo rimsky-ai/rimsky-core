@@ -1,6 +1,5 @@
 ---
 decision: plumb-validation-roles
-status: as-is
 ---
 
 # The validation mix-in works for every peer kind

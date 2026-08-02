@@ -1,6 +1,5 @@
 ---
 decision: force-upstream-refresh-via-receiver-keyed-map
-status: as-is
 ---
 
 # Force-upstream-refresh reuses the receiver-keyed edge map with subscription-flag input

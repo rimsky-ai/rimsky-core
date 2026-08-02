@@ -1,6 +1,5 @@
 ---
 concept: api-key
-status: as-is
 aliases:
   - bearer token
 ---

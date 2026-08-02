@@ -1,6 +1,5 @@
 ---
 story: one-shot-to-terminal
-status: as-is
 ---
 
 # Operator drives a compose manifest to terminal in one invocation

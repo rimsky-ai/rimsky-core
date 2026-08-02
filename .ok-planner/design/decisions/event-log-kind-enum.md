@@ -1,6 +1,5 @@
 ---
 decision: event-log-kind-enum
-status: as-is
 ---
 
 # Event-log kind discriminator typing

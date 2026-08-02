@@ -1,6 +1,5 @@
 ---
 decision: scratch-recovery
-status: as-is
 ---
 
 # Per-row scratch survives stale-recovery

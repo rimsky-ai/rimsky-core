@@ -1,7 +1,5 @@
 ---
 decision: attribute-carry-forward
-status: as-is
-aliases: []
 ---
 
 # Pre-substitution carry-forward step in attribute hydration

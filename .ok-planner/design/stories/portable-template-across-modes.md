@@ -1,6 +1,5 @@
 ---
 story: portable-template-across-modes
-status: as-is
 ---
 
 # The same template file runs in both modes without edits

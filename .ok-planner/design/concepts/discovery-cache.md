@@ -1,6 +1,5 @@
 ---
 concept: discovery-cache
-status: as-is
 aliases:
   - capabilities cache
 ---

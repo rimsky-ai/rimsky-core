@@ -1,7 +1,5 @@
 ---
 concept: run-scope
-status: as-is
-aliases: []
 ---
 
 # RunScope

@@ -1,7 +1,5 @@
 ---
 concept: node-run
-status: as-is
-aliases: []
 ---
 
 # Node-run

@@ -1,6 +1,5 @@
 ---
 decision: async-callback-post-json
-status: as-is
 ---
 
 # Async-callback transport

@@ -1,6 +1,5 @@
 ---
 story: fs-fanout-list-array
-status: as-is
 ---
 
 # Template author fans out over an upstream list against the filesystem store

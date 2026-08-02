@@ -1,6 +1,5 @@
 ---
 concept: cascade
-status: as-is
 aliases:
   - reactive-cascade
 ---

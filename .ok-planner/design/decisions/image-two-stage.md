@@ -1,6 +1,5 @@
 ---
 decision: image-two-stage
-status: as-is
 ---
 
 # Docker image structure

@@ -1,6 +1,5 @@
 ---
 decision: idempotency-key-header-universal
-status: as-is
 ---
 
 # Idempotency on message send

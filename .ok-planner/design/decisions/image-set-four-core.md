@@ -1,6 +1,5 @@
 ---
 decision: image-set-four-core
-status: as-is
 ---
 
 # Distributed core image set

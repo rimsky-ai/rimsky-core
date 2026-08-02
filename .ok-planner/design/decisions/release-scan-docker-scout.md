@@ -1,6 +1,5 @@
 ---
 decision: release-scan-docker-scout
-status: as-is
 ---
 
 # CVE scanning gate

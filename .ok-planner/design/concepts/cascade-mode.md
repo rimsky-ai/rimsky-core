@@ -1,7 +1,5 @@
 ---
 concept: cascade-mode
-status: as-is
-aliases: []
 ---
 
 # Cascade mode

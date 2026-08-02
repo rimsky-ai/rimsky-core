@@ -1,6 +1,5 @@
 ---
 decision: release-attestations
-status: as-is
 ---
 
 # Supply-chain attestations on push

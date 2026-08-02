@@ -1,6 +1,5 @@
 ---
 story: mcp-transport
-status: as-is
 ---
 
 # Operator/agent drives rimsky entirely via MCP

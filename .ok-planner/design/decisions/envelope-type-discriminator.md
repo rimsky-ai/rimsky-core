@@ -1,6 +1,5 @@
 ---
 decision: envelope-type-discriminator
-status: as-is
 ---
 
 # Envelope type discriminator

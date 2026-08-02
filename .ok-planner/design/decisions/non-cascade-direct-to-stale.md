@@ -1,7 +1,5 @@
 ---
 decision: non-cascade-direct-to-stale
-status: as-is
-aliases: []
 ---
 
 # Non-cascade re-run paths skip pending entirely

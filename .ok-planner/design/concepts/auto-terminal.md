@@ -1,6 +1,5 @@
 ---
 concept: auto-terminal
-status: as-is
 aliases:
   - held-claim resolution
 ---

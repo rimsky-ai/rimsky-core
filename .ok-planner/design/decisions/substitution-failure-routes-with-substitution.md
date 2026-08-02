@@ -1,7 +1,5 @@
 ---
 decision: substitution-failure-routes-with-substitution
-status: as-is
-aliases: []
 ---
 
 # Attribute substitution failures route in the same transaction where substitution runs

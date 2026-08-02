@@ -1,6 +1,5 @@
 ---
 decision: signoff-crypto-ed25519
-status: as-is
 ---
 
 # Sign-off validation uses the standard-library ed25519 primitive

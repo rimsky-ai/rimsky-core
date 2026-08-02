@@ -1,7 +1,5 @@
 ---
 decision: internal-mcp-server-net-http
-status: as-is
-aliases: []
 ---
 
 # claude-agent's internal MCP server uses the standard-library HTTP stack

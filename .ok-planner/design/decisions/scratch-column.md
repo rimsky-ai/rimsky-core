@@ -1,6 +1,5 @@
 ---
 decision: scratch-column
-status: as-is
 ---
 
 # Executor scratch persists on the node-run row

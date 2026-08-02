@@ -1,6 +1,5 @@
 ---
 decision: licensing-dual-apache-agpl
-status: as-is
 ---
 
 # License split

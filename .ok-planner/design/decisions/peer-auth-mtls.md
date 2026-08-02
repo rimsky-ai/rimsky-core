@@ -1,6 +1,5 @@
 ---
 decision: peer-auth-mtls
-status: as-is
 aliases:
   - peer-auth-switch
 ---

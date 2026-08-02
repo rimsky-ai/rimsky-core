@@ -1,7 +1,5 @@
 ---
 decision: fan-out-and-delegation-are-distinct-mechanisms
-status: as-is
-aliases: []
 ---
 
 # Fan-out and sub-graph delegation are distinct mechanisms, not variants of one shape

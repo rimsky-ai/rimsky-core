@@ -1,6 +1,5 @@
 ---
 concept: cascade-graph
-status: as-is
 aliases:
   - operator dashboard backplane
 ---

@@ -1,6 +1,5 @@
 ---
 decision: producer-error-passthrough
-status: as-is
 ---
 
 # Producer errors cross the HTTP boundary intact

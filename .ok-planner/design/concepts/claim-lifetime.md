@@ -1,7 +1,5 @@
 ---
 concept: claim-lifetime
-status: as-is
-aliases: []
 ---
 
 # Claim lifetime

@@ -1,6 +1,5 @@
 ---
 decision: timestamp-format
-status: adopted
 ---
 
 # Filesystem-safe ISO 8601 timestamp format

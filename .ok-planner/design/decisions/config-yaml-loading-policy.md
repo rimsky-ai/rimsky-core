@@ -1,6 +1,5 @@
 ---
 decision: config-yaml-loading-policy
-status: as-is
 ---
 
 # Config YAML loading policy

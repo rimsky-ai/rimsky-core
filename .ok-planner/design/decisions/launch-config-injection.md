@@ -1,6 +1,5 @@
 ---
 decision: launch-config-injection
-status: adopted
 ---
 
 # Synthetic config files injected through standard discovery

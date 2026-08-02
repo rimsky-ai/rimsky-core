@@ -1,6 +1,5 @@
 ---
 decision: timeout-flag
-status: adopted
 ---
 
 # Wall-clock timeout is opt-in

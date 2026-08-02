@@ -1,6 +1,5 @@
 ---
 decision: hard-dep-field-no-special-case
-status: as-is
 ---
 
 # Attribute-field hard-dep flag gets no special-case treatment

@@ -1,6 +1,5 @@
 ---
 story: host-agent-per-binding-overrides
-status: as-is
 ---
 
 # Per-binding env/args/cwd/timeout honored

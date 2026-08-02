@@ -1,6 +1,5 @@
 ---
 decision: grpc-google-official
-status: as-is
 ---
 
 # gRPC + protobuf libraries

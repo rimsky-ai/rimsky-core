@@ -1,6 +1,5 @@
 ---
 story: claim-producer-filesystem
-status: as-is
 ---
 
 # Operator uses filesystem-backed claim-producer

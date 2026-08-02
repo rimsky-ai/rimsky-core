@@ -1,6 +1,5 @@
 ---
 decision: progress-flags
-status: adopted
 ---
 
 # Progress output has three composable flags

@@ -1,6 +1,5 @@
 ---
 story: local-orchestrator-zero-config
-status: as-is
 ---
 
 # Local user runs an ad-hoc template with zero config

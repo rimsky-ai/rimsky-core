@@ -1,7 +1,5 @@
 ---
 concept: wait-set
-status: as-is
-aliases: []
 ---
 
 # Wait-set

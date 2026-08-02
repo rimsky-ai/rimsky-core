@@ -1,6 +1,5 @@
 ---
 decision: claimant-guard-helper
-status: as-is
 ---
 
 # One written claimant-guard predicate per driver

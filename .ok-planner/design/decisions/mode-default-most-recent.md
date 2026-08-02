@@ -1,7 +1,5 @@
 ---
 decision: mode-default-most-recent
-status: as-is
-aliases: []
 ---
 
 # Default cascade mode is `most-recent` (coalesce intermediate cascades)

@@ -1,6 +1,5 @@
 ---
 decision: sqlite-modernc-pure-go
-status: as-is
 ---
 
 # SQLite driver is modernc.org/sqlite, pure Go

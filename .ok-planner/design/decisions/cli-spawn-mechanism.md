@@ -1,7 +1,5 @@
 ---
 decision: cli-spawn-mechanism
-status: as-is
-aliases: []
 ---
 
 # claude-agent spawns the agent CLI via the standard subprocess mechanism

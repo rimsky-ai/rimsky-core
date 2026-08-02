@@ -1,7 +1,5 @@
 ---
 decision: no-resume-context
-status: as-is
-aliases: []
 ---
 
 # No resume-context channel

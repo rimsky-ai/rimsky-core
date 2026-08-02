@@ -1,7 +1,5 @@
 ---
 concept: atomic-staging
-status: as-is
-aliases: []
 ---
 
 # Atomic staging

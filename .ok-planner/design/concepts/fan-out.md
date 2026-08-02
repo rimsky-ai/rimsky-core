@@ -1,7 +1,5 @@
 ---
 concept: fan-out
-status: as-is
-aliases: []
 ---
 
 # Fan-out

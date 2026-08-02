@@ -1,7 +1,5 @@
 ---
 concept: conformance
-status: as-is
-aliases: []
 ---
 
 # Conformance

@@ -1,6 +1,5 @@
 ---
 story: asset-management
-status: as-is
 ---
 
 # Operator manages instance-produced data assets

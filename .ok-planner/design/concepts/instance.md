@@ -1,7 +1,5 @@
 ---
 concept: instance
-status: as-is
-aliases: []
 ---
 
 # Instance
@@ -22,6 +20,7 @@ Owns: the per-deployment runtime state, params, attribute overrides (including m
 
 - The template binding is a foreign key to the template hash, fixed at creation.
 - `instance_key` is nullable; canonical identity is the UUID.
+- `instance_key` uniqueness is scoped per template: the same key string is legal under two different templates, and under one template at most one instance carries it. Creating an instance whose key already exists under that template is idempotent — the create returns the existing instance and ignores the rest of the request — so a deployment path that derives deterministic keys can re-apply its manifest as a no-op rather than a duplicate-instance factory.
 - Attribute-overrides validation inspects only routing keys (the per-executor / per-node selectors and, for match-based overlays, the matcher key names plus cross-checked discriminators); overlay fragment values are never inspected (preserves structural-inertness for attribute values). Matcher attribute paths are shape-validated (primitive equality) but not schema-cross-checked — unused matchers surface via event-derived per-entry match counts, aggregated at read time from `concept:event-log` rather than persisted on the instance row.
 - Candidate selection by the supervisor skips paused instances (the candidate query filters out paused rows).
 - The late-bound service-binding catalog is opaque, set at instance creation and consumed by the `concept:host-agent-proxy` at dispatch time to resolve a late-bound service name to a dev-machine binary.

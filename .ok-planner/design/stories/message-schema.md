@@ -1,6 +1,5 @@
 ---
 story: message-schema
-status: as-is
 ---
 
 # Template author declares accepted message types

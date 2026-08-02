@@ -1,7 +1,5 @@
 ---
 decision: uniform-attributes-delta
-status: as-is
-aliases: []
 ---
 
 # attributes_delta is a feature of run-terminating verdicts only

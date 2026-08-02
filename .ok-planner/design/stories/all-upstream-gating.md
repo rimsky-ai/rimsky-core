@@ -1,6 +1,5 @@
 ---
 story: all-upstream-gating
-status: as-is
 ---
 
 # Template author relies on all-upstream gating for fan-in shapes

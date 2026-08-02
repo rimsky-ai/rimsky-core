@@ -1,6 +1,5 @@
 ---
 decision: parity-expansion
-status: as-is
 ---
 
 # The driver-parity suite covers what the runtime depends on

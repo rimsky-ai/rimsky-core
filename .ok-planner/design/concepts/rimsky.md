@@ -1,6 +1,5 @@
 ---
 concept: rimsky
-status: as-is
 aliases:
   - rimsky-cli
 ---

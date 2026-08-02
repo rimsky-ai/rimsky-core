@@ -1,6 +1,5 @@
 ---
 story: bundled-park-resume-recipe
-status: as-is
 ---
 
 # Operator demonstrates park-then-resume on the bundled stack

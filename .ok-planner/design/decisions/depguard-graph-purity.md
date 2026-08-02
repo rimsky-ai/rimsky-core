@@ -1,6 +1,5 @@
 ---
 decision: depguard-graph-purity
-status: as-is
 ---
 
 # Graph layer import surface

@@ -1,6 +1,5 @@
 ---
 decision: fold-ownership-bail
-status: as-is
 ---
 
 # The verify-before-run bail path resolves through the unified engine

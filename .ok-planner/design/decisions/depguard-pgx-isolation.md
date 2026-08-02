@@ -1,6 +1,5 @@
 ---
 decision: depguard-pgx-isolation
-status: as-is
 ---
 
 # Confine the Postgres driver imports

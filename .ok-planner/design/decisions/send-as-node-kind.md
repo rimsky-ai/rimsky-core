@@ -1,6 +1,5 @@
 ---
 decision: send-as-node-kind
-status: as-is
 ---
 
 # Emit-as-node-kind

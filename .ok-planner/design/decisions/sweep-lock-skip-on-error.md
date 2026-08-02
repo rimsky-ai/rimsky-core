@@ -1,6 +1,5 @@
 ---
 decision: sweep-lock-skip-on-error
-status: as-is
 ---
 
 # A scheduler-tick lock error skips the sweep pass

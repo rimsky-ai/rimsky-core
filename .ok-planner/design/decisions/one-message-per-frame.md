@@ -1,6 +1,5 @@
 ---
 decision: one-message-per-frame
-status: as-is
 ---
 
 # One message per frame

@@ -1,6 +1,5 @@
 ---
 story: script-friendly-outcome
-status: as-is
 ---
 
 # Operator branches on the run's outcome class

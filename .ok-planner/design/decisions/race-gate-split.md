@@ -1,6 +1,5 @@
 ---
 decision: race-gate-split
-status: as-is
 ---
 
 # Race detection split between everyday gate and release gate

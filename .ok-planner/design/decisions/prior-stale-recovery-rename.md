@@ -1,7 +1,5 @@
 ---
 decision: prior-stale-recovery-rename
-status: as-is
-aliases: []
 ---
 
 # Stale-recovery prior-dispatch disposition

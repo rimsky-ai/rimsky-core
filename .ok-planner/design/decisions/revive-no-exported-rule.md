@@ -1,6 +1,5 @@
 ---
 decision: revive-no-exported-rule
-status: as-is
 ---
 
 # Revive lint config

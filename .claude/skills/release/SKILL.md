@@ -76,6 +76,9 @@ specific missing prereq:
 - `npm whoami` returns a username with publish rights to the
   `@rimsky-ai` scope.
 - `gh auth status` returns logged in.
+- `goreleaser --version` exits 0, and `syft version` exits 0 (the
+  goreleaser `sboms` step catalogs each CLI archive with syft; the
+  release fails without it — `brew install syft`).
 
 Any failure aborts the run with the specific missing prereq and a
 remediation hint (e.g. "run `docker login docker.io`").

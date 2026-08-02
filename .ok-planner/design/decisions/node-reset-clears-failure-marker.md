@@ -1,6 +1,5 @@
 ---
 decision: node-reset-clears-failure-marker
-status: as-is
 ---
 
 # Node reset clears the failed run's settling-signal marker

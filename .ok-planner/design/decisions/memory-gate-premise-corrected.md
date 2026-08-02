@@ -1,6 +1,5 @@
 ---
 decision: memory-gate-premise-corrected
-status: as-is
 ---
 
 # In-memory blob backend is gated to single-process mode

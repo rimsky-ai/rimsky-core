@@ -1,7 +1,5 @@
 ---
 concept: validation
-status: as-is
-aliases: []
 ---
 
 # Validation

@@ -1,6 +1,5 @@
 ---
 decision: message-idempotencies-dedup-tuple
-status: as-is
 ---
 
 # Message dedup discriminator

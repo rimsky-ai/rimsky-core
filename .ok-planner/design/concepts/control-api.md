@@ -1,7 +1,5 @@
 ---
 concept: control-api
-status: as-is
-aliases: []
 ---
 
 # Control API

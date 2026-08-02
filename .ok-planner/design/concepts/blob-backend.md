@@ -1,7 +1,5 @@
 ---
 concept: blob-backend
-status: as-is
-aliases: []
 ---
 
 # Blob backend

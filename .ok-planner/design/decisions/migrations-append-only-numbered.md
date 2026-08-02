@@ -1,6 +1,5 @@
 ---
 decision: migrations-append-only-numbered
-status: as-is
 ---
 
 # Migration discipline

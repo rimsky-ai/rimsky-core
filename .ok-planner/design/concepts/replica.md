@@ -1,7 +1,5 @@
 ---
 concept: replica
-status: as-is
-aliases: []
 ---
 
 # Replica

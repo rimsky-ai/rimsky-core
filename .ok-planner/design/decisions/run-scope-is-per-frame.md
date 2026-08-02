@@ -1,7 +1,5 @@
 ---
 decision: run-scope-is-per-frame
-status: as-is
-aliases: []
 ---
 
 # RunScope lives inside exactly one frame

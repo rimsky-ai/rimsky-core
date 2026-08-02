@@ -1,6 +1,5 @@
 ---
 decision: cascade-flags-on-subscribes
-status: as-is
 ---
 
 # Cascade-behavior flags live on subscription entries

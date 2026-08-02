@@ -1,6 +1,5 @@
 ---
 story: service-enrollment
-status: as-is
 ---
 
 # Standing service enrolls and obtains rotating credentials

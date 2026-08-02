@@ -1,7 +1,5 @@
 ---
 concept: sub-graph
-status: as-is
-aliases: []
 ---
 
 # Sub-graph

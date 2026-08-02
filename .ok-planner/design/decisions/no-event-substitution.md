@@ -1,7 +1,5 @@
 ---
 decision: no-event-substitution
-status: as-is
-aliases: []
 ---
 
 # No event-payload substitution path

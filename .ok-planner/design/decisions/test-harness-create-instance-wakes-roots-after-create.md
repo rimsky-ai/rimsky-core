@@ -1,7 +1,5 @@
 ---
 decision: test-harness-create-instance-wakes-roots-after-create
-status: as-is
-aliases: []
 ---
 
 # Test-harness create-instance wakes roots after create

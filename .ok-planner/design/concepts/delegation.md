@@ -1,7 +1,5 @@
 ---
 concept: delegation
-status: as-is
-aliases: []
 ---
 
 # Delegation

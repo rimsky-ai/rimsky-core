@@ -1,7 +1,5 @@
 ---
 story: executor-reads-dispatch-context
-status: as-is
-aliases: []
 ---
 
 # Agent reads its dispatch identity and disposition at runtime

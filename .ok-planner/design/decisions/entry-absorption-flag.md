@@ -1,6 +1,5 @@
 ---
 decision: entry-absorption-flag
-status: as-is
 ---
 
 # Entry absorption is a flag on the dispatch input

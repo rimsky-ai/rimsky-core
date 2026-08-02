@@ -1,6 +1,5 @@
 ---
 decision: validator-learns-producer-classes
-status: as-is
 ---
 
 # Error-type policy accepts producer vocabularies

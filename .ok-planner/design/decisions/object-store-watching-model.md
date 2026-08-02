@@ -1,6 +1,5 @@
 ---
 decision: object-store-watching-model
-status: as-is
 ---
 
 # Deposits are watched through one object-store abstraction

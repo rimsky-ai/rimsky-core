@@ -1,7 +1,5 @@
 ---
 concept: message
-status: as-is
-aliases: []
 ---
 
 # Message

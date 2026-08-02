@@ -1,7 +1,5 @@
 ---
 concept: transition-reason
-status: as-is
-aliases: []
 ---
 
 # Transition reason

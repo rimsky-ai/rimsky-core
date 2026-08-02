@@ -1,7 +1,5 @@
 ---
 decision: inproc-registry
-status: as-is
-aliases: []
 ---
 
 # Explicit in-process handler registry at supervisor startup

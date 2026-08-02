@@ -1,6 +1,5 @@
 ---
 decision: postgres-pgx-v5
-status: as-is
 ---
 
 # Postgres driver is pgx v5

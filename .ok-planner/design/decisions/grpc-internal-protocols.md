@@ -1,6 +1,5 @@
 ---
 decision: grpc-internal-protocols
-status: as-is
 ---
 
 # Inter-service transport

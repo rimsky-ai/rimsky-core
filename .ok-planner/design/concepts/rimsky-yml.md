@@ -1,6 +1,5 @@
 ---
 concept: rimsky-yml
-status: as-is
 aliases:
   - unified config
 ---

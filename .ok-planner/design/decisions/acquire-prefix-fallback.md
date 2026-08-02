@@ -1,6 +1,5 @@
 ---
 decision: acquire-prefix-fallback
-status: as-is
 ---
 
 # Generic acquire keys still catch classified failures

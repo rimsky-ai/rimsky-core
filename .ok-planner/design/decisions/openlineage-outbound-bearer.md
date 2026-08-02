@@ -1,6 +1,5 @@
 ---
 decision: openlineage-outbound-bearer
-status: as-is
 aliases:
   - outbound-bearer-token
 ---

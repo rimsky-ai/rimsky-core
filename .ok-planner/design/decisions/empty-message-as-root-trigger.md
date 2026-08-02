@@ -1,6 +1,5 @@
 ---
 decision: empty-message-as-root-trigger
-status: as-is
 ---
 
 # Empty message as the universal root trigger

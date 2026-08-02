@@ -1,6 +1,5 @@
 ---
 decision: untagged-prose-by-module
-status: as-is
 ---
 
 # Untagged-prose sweep decomposes by module root

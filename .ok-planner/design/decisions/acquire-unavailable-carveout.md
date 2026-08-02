@@ -1,6 +1,5 @@
 ---
 decision: acquire-unavailable-carveout
-status: as-is
 ---
 
 # The acquire-phase error handlers are named carve-outs outside the resolution engine

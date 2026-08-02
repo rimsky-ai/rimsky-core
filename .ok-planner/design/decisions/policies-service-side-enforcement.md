@@ -1,7 +1,5 @@
 ---
 decision: policies-service-side-enforcement
-status: as-is
-aliases: []
 ---
 
 # Bundled-service policy enforcement lives entirely inside the service

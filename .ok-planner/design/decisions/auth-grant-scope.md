@@ -1,6 +1,5 @@
 ---
 decision: auth-grant-scope
-status: as-is
 ---
 
 # Per-grant scope dimensions

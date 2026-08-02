@@ -1,7 +1,5 @@
 ---
 decision: terminal-error-abandoned-as-error-class
-status: as-is
-aliases: []
 ---
 
 # `terminal/error/abandoned` is an error-class signal, not a new root signal

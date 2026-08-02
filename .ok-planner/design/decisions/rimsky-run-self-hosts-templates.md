@@ -1,7 +1,5 @@
 ---
 decision: rimsky-run-self-hosts-templates
-status: as-is
-aliases: []
 ---
 
 # The ephemeral-run verb self-hosts an all-in-one stack when no target endpoint is present

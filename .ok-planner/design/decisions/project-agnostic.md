@@ -1,6 +1,5 @@
 ---
 decision: project-agnostic
-status: as-is
 ---
 
 # Consumer neutrality

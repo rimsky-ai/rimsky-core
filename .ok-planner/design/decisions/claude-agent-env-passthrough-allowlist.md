@@ -1,7 +1,5 @@
 ---
 decision: claude-agent-env-passthrough-allowlist
-status: as-is
-aliases: []
 ---
 
 # claude-agent exposes executor-container env to the CLI child via a declared allowlist

@@ -1,6 +1,5 @@
 ---
 concept: peer-auth
-status: as-is
 aliases:
   - internal-service-auth
   - mtls

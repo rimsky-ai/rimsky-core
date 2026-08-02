@@ -1,6 +1,5 @@
 ---
 concept: terminal-resolution
-status: as-is
 aliases:
   - executor-terminal-spine
 ---

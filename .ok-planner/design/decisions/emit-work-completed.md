@@ -1,6 +1,5 @@
 ---
 decision: emit-work-completed
-status: as-is
 ---
 
 # The ledger speaks both halves of work

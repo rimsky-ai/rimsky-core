@@ -1,6 +1,5 @@
 ---
 decision: proxy-single-spawn-multiplexing
-status: as-is
 ---
 
 # Concurrent dispatches multiplex over one spawn

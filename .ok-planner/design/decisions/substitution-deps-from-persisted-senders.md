@@ -1,6 +1,5 @@
 ---
 decision: substitution-deps-from-persisted-senders
-status: as-is
 ---
 
 # Substitution-context deps read from subscribed senders' persisted attribute stores

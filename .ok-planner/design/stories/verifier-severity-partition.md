@@ -1,6 +1,5 @@
 ---
 story: verifier-severity-partition
-status: as-is
 ---
 
 # Template author distinguishes warning vs error

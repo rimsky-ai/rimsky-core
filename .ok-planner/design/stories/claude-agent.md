@@ -1,6 +1,5 @@
 ---
 story: claude-agent
-status: as-is
 ---
 
 # Operator wires agentic node with full controls

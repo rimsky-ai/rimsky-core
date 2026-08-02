@@ -1,6 +1,5 @@
 ---
 decision: subscription-edges-only-from-explicit-block
-status: as-is
 ---
 
 # Subscription edges come only from the explicit subscription block

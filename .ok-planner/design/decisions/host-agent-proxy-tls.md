@@ -1,6 +1,5 @@
 ---
 decision: host-agent-proxy-tls
-status: as-is
 aliases:
   - agent-proxy-tls
   - agent-child-loopback-mtls

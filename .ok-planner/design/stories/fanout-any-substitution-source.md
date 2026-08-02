@@ -1,6 +1,5 @@
 ---
 story: fanout-any-substitution-source
-status: as-is
 ---
 
 # Template author substitutes a fan-out partition_request from any standard source

@@ -1,6 +1,5 @@
 ---
 decision: webhook-auth-required
-status: as-is
 aliases:
   - webhook-auth-fail-loud
 ---

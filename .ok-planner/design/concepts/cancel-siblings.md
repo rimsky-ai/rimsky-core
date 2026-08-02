@@ -1,7 +1,5 @@
 ---
 concept: cancel-siblings
-status: as-is
-aliases: []
 ---
 
 # Cancel siblings

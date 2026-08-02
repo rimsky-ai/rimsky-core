@@ -1,6 +1,5 @@
 ---
 decision: registry-hub-rimskyai-namespace
-status: as-is
 ---
 
 # Container-registry namespace

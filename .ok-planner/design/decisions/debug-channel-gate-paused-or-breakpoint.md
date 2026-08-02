@@ -1,6 +1,5 @@
 ---
 decision: debug-channel-gate-paused-or-breakpoint
-status: as-is
 ---
 
 # Debug-channel gate: paused or breakpoint

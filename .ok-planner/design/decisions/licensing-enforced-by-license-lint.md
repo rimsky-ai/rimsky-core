@@ -1,6 +1,5 @@
 ---
 decision: licensing-enforced-by-license-lint
-status: as-is
 ---
 
 # License-import discipline

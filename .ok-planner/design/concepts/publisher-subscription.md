@@ -1,6 +1,5 @@
 ---
 concept: publisher-subscription
-status: as-is
 aliases: [sensor-watch]
 ---
 

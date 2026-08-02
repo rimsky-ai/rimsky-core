@@ -1,6 +1,5 @@
 ---
 decision: wait-set-topic-kind-taxonomy
-status: as-is
 ---
 
 # Wait-set topic discriminator

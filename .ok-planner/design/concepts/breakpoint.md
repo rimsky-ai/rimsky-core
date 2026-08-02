@@ -1,7 +1,5 @@
 ---
 concept: breakpoint
-status: as-is
-aliases: []
 ---
 
 # Breakpoint
@@ -32,6 +30,7 @@ Adjacent: `concept:supervisor`, `concept:control-api`, `concept:attribute`, `con
 - Pause-mode hits combined with a silently-dropping overflow policy are rejected at registration (pause-mode hits cannot be silently dropped).
 - Notify-only mode combined with a blocking overflow policy is rejected at registration (the policy contradicts the mode's non-blocking semantics).
 - The L6 resume overlay applies only to the single dispatch that hit the breakpoint; it never persists into the instance's stored attribute-overrides.
+- A resume overlay joins the dispatch's effective attribute bag the moment it is applied: when several breakpoints pause the same dispatch and resume in sequence, each later breakpoint's matcher evaluates against — and each later hit's snapshot records — the bag as amended by every earlier resume's overlay, so what the operator inspects at a pause is what the dispatch will actually run with.
 - An L6 resume overlay on a post-terminal hit is rejected at the resume API as an invalid-overlay error — the dispatch the breakpoint observed has already committed, so the overlay can never feed back into the run; accepting it would silently no-op.
 - Cascade-deletion of a breakpoint (the hit rows are deleted with their parent breakpoint) unblocks any paused runner waiting on a hit of that breakpoint, treating the missing-row case as auto-resume with no overlay.
 - Pause-mode breakpoint evaluation fails closed: an infrastructure error while evaluating or persisting a pause-mode hit blocks the dispatch rather than silently skipping the pause — a pause is an operator-requested gate, and the dispatch does not proceed past it on error. After-terminal (observation-only) evaluation fails open: failures are logged, never blocking settlement.

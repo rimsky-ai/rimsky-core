@@ -1,6 +1,5 @@
 ---
 story: template-lifecycle
-status: as-is
 ---
 
 # Operator manages template catalog

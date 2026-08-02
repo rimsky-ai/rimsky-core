@@ -1,6 +1,5 @@
 ---
 decision: single-frame-creation-path
-status: as-is
 ---
 
 # Single frame-creation path

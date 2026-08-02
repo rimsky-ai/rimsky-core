@@ -1,6 +1,5 @@
 ---
 decision: release-notes-template
-status: as-is
 ---
 
 # Notes shape

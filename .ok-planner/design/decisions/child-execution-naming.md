@@ -1,6 +1,5 @@
 ---
 decision: child-execution-naming
-status: as-is
 ---
 
 # The child-execution primitives carry plain names

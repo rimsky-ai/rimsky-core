@@ -1,6 +1,5 @@
 ---
 story: runtime-diagnostics
-status: as-is
 ---
 
 # Operator inspects runtime wedge state

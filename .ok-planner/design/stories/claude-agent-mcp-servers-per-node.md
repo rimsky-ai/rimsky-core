@@ -1,6 +1,5 @@
 ---
 story: claude-agent-mcp-servers-per-node
-status: as-is
 ---
 
 # Template authors declare per-node MCP servers; operators bound them

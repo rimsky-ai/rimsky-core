@@ -1,6 +1,5 @@
 ---
 story: single-process-all-in-one
-status: as-is
 ---
 
 # Operator runs the all-in-one deployment as one process

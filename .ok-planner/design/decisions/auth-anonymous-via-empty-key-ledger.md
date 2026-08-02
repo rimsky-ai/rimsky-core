@@ -1,6 +1,5 @@
 ---
 decision: auth-anonymous-via-empty-key-ledger
-status: adopted
 ---
 
 # auth-anonymous-via-empty-key-ledger

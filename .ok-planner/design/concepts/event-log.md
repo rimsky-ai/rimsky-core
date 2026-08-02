@@ -1,6 +1,5 @@
 ---
 concept: event-log
-status: as-is
 aliases:
   - audit log
 ---

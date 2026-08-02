@@ -1,7 +1,5 @@
 ---
 story: uniform-attributes-delta-subscription
-status: as-is
-aliases: []
 ---
 
 # Subscriber predicates on verdict attributes across terminal kinds

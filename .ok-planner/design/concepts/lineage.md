@@ -1,7 +1,5 @@
 ---
 concept: lineage
-status: as-is
-aliases: []
 ---
 
 # Lineage

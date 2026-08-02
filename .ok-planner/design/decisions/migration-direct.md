@@ -1,6 +1,5 @@
 ---
 decision: migration-direct
-status: adopted
 ---
 
 # One-shot runs migrate in-process
