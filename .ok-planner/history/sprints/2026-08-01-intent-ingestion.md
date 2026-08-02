@@ -1,3 +1,6 @@
+---
+closed: 0ad82e295b79e98f56b54269a74db29d25cad2e9
+---
 # Sprint: Intent-ledger disposition and corpus normalization
 
 ## Intent
