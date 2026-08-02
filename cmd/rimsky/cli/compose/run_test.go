@@ -5,6 +5,7 @@ package compose
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -253,6 +254,46 @@ func TestSpawnServices_ExplicitEmptyPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "path is empty") {
 		t.Errorf("error %q should mention `path is empty`", err.Error())
+	}
+}
+
+// @decision: service-spawn-flag
+// @decision: late-bound-services-direct-spawn
+func TestRunComposeRun_ServiceFlagSpawnsBinaryAndDispatchesToTerminal(t *testing.T) {
+	stubBinary := buildStubchildBinary(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workDir := t.TempDir()
+	chdirT(t, workDir)
+
+	templatePath := filepath.Join(workDir, "template.yml")
+	template := "name: compose-run-spawn-service\nversion: \"1\"\nnodes:\n  - type: worker\n    executor: codegen\n"
+	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `project: compose-run-spawn-service
+templates:
+  - path: ./template.yml
+    tag: t
+    state: deployed
+instances:
+  - template: t
+    name: worker-instance
+`
+	manifestPath := filepath.Join(workDir, "manifest.yml")
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := RunComposeRun(context.Background(), []string{
+		"--service", fmt.Sprintf("codegen=%s", stubBinary),
+		manifestPath,
+	})
+	if got != 0 {
+		t.Fatalf("rimsky compose run --service exited %d, want 0 — the instance's node names the "+
+			"--service-spawned binary directly, so success requires the in-process supervisor to dispatch "+
+			"to the loopback-spawned endpoint (per decision:service-spawn-flag) to a terminal state", got)
 	}
 }
 

@@ -158,6 +158,38 @@ func TestReleaseScanGatesOnCriticalAndHigh(t *testing.T) {
 	}
 }
 
+// @decision: release-dev-mechanical
+// @decision: release-semver-sha-dot-joined
+func TestDevReleaseVersionIsMechanicalNextMinorDotJoinedSha(t *testing.T) {
+	script := readBuildFile(t, "tools/dev-release.sh")
+	if !regexp.MustCompile(`NEXT_MINOR_BASE="v\$\{MAJOR\}\.\$\(\(MINOR \+ 1\)\)\.0"`).MatchString(script) {
+		t.Errorf("dev-release.sh no longer derives the next-minor base version — the mechanical, no-SemVer-judgment version derivation is gone")
+	}
+	if !regexp.MustCompile(`DEV_VERSION="\$\{NEXT_MINOR_BASE\}-dev\.\$\{DATE\}\.g\$\{SHA\}"`).MatchString(script) {
+		t.Errorf("dev-release.sh no longer dot-joins the date and commit SHA into the pre-release segment")
+	}
+	if strings.Contains(script, "+g${SHA}") || strings.Contains(script, "+${SHA}") {
+		t.Errorf("dev-release.sh appends the SHA as SemVer build metadata (`+`) instead of dot-joining it into the pre-release segment")
+	}
+}
+
+// @decision: release-distribution
+func TestGoreleaserCLIArchiveChannelMatchesDecision(t *testing.T) {
+	cfg := readBuildFile(t, ".goreleaser.yaml")
+	if !regexp.MustCompile(`(?s)goos:\s*\n\s*-\s*linux\s*\n\s*-\s*darwin`).MatchString(cfg) {
+		t.Errorf(".goreleaser.yaml no longer builds exactly linux+darwin — the decided CLI-archive platform set changed")
+	}
+	if regexp.MustCompile(`(?m)^\s*-\s*windows\s*$`).MatchString(cfg) {
+		t.Errorf(".goreleaser.yaml now builds windows — the decision names Windows as a deliberate non-channel")
+	}
+	if !regexp.MustCompile(`(?s)goarch:\s*\n\s*-\s*amd64\s*\n\s*-\s*arm64`).MatchString(cfg) {
+		t.Errorf(".goreleaser.yaml no longer builds exactly amd64+arm64 — the decided CLI-archive arch set changed")
+	}
+	if !regexp.MustCompile(`(?s)sboms:\s*\n\s*-.*\n\s*artifacts:\s*archive`).MatchString(cfg) {
+		t.Errorf(".goreleaser.yaml no longer publishes a per-archive SBOM")
+	}
+}
+
 // @decision: race-gate-split
 func TestRaceGateSplit(t *testing.T) {
 	makefile := readBuildFile(t, "Makefile")

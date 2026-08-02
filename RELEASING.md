@@ -215,6 +215,12 @@ go get github.com/rimsky-ai/rimsky-core/lib/protocols@vX.Y.Z
 ```
 npm install @rimsky-ai/protocols@X.Y.Z
 ```
+
+## CLI
+
+Prebuilt archives (`linux`/`darwin`, `amd64`/`arm64`, each with a
+published SBOM) attached to this GitHub Release. See
+[`RELEASING.md`](../RELEASING.md) for install paths.
 ````
 
 Section rules: empty sections are omitted; every entry references a

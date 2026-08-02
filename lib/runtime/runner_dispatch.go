@@ -377,7 +377,7 @@ func resolveAttributesCore(ctx context.Context, args RunArgs, acq *acquisition) 
 		}
 		paramsRaw = b
 	}
-	scope := resolveAcqScope(ctx, args, acq)
+	scope := resolveAcqScope(ctx, args, acq, nil)
 	rctx := attributes.ResolveContext{
 		Claim:             claimsMapFromAcq(acq),
 		Params:            paramsRaw,

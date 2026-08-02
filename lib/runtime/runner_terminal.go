@@ -248,7 +248,7 @@ func applyTerminalComplete(
 		nodeRunID := acq.NodeRunID
 		post := func(ctx context.Context) {
 			fanoutRecalculate(ctx, args, acq)
-			scope := resolveAcqScope(ctx, args, acq)
+			scope := resolveAcqScope(ctx, args, acq, nil)
 			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 				InstanceID:         acq.InstanceID,
 				FrameID:            acq.FrameID,
@@ -311,7 +311,7 @@ func applyTerminalComplete(
 	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		fanoutRecalculate(ctx, args, acq)
-		scope := resolveAcqScope(ctx, args, acq)
+		scope := resolveAcqScope(ctx, args, acq, nil)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
@@ -379,7 +379,7 @@ func applyTerminalCompletePoisoned(
 	}
 	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
-		scope := resolveAcqScope(ctx, args, acq)
+		scope := resolveAcqScope(ctx, args, acq, nil)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,

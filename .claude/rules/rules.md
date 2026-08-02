@@ -59,5 +59,5 @@ Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `l
 ## Writing & Analysis
 - Save project-specific notes to project-local paths (e.g. `./CLAUDE.md`), not external memory.
 - When writing analysis or design documents, cross-check the written output against your findings before finishing — don't omit sections discussed verbally.
-- Design proposals go in `.ok-planner/sketches/` with a YYYY-MM-DD prefix (via `/sketch`); design questions go into the issue queue (`.ok-planner/issues.jsonl`, append-only `open` rows) to be drained at `/sprint`; ad-hoc working documents live in `.ok-planner/workbench/` with a YYYY-MM-DD prefix.
+- Design proposals go in `.ok-planner/sketches/` with a YYYY-MM-DD prefix (via `/sketch`); design questions go into the issue intake (`.ok-planner/issues/`, one file per question) to be resolved via `/plan-sprint`; ad-hoc working documents live in `.ok-planner/workbench/` with a YYYY-MM-DD prefix.
 - When writing prose to a human in an interactive session — status updates, review findings, items surfaced into notes files — use the citation grammar in `.claude/rules/citation-grammar.md` to make artifact kinds explicit (code, tables, protos, concepts, invariants, etc.). The grammar applies to live agent ↔ user prose only; it is **not** a convention for source code, repo docs, or commit messages.

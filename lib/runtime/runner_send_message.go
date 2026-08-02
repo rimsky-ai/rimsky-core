@@ -18,39 +18,42 @@ import (
 
 // @story: cascade-send
 // @concept: message-sender-node
+// @decision: intx-suffix-convention
 func sendCascadeMessage(
 	ctx context.Context,
 	tables persistence.Tables,
 	instanceID, nodeID, frameID shared.UUID,
 	sendMessageType string,
 	body []byte,
+	tx persistence.Tx,
 ) (shared.UUID, bool, error) {
+	if tx != nil {
+		return sendCascadeMessageRow(ctx, tables, instanceID, nodeID, frameID, sendMessageType, body, tx)
+	}
 	var messageID shared.UUID
 	var replayed bool
 	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var ierr error
-		messageID, replayed, ierr = sendCascadeMessageInTx(ctx, tables, instanceID, nodeID, frameID, sendMessageType, body, tx)
+		messageID, replayed, ierr = sendCascadeMessageRow(ctx, tables, instanceID, nodeID, frameID, sendMessageType, body, tx)
 		return ierr
 	})
 	return messageID, replayed, err
 }
 
-// @story: cascade-send
-// @concept: message-sender-node
-func sendCascadeMessageInTx(
+func sendCascadeMessageRow(
 	ctx context.Context, tables persistence.Tables, instanceID, nodeID, frameID shared.UUID, sendMessageType string, body []byte, tx persistence.Tx,
 ) (shared.UUID, bool, error) {
 	if instanceID == (shared.UUID{}) {
-		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: instance_id required")
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessage: instance_id required")
 	}
 	if nodeID == (shared.UUID{}) {
-		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: node_id required")
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessage: node_id required")
 	}
 	if frameID == (shared.UUID{}) {
-		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: frame_id required")
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessage: frame_id required")
 	}
 	if sendMessageType == "" {
-		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: sends_message type required")
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessage: sends_message type required")
 	}
 	if len(body) == 0 {
 		body = []byte(`{}`)
@@ -71,7 +74,7 @@ func sendCascadeMessageInTx(
 		MessageID:      candidateID,
 	}, tx)
 	if err != nil {
-		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: idempotency upsert: %w", err)
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessage: idempotency upsert: %w", err)
 	}
 	if !inserted {
 		return dedupRow.MessageID, true, nil
@@ -86,7 +89,7 @@ func sendCascadeMessageInTx(
 		Payload:    body,
 	}
 	if err := EnqueueMessage(ctx, tables, enqueueReq, tx); err != nil {
-		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessageInTx: insert envelope: %w", err)
+		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessage: insert envelope: %w", err)
 	}
 	return candidateID, false, nil
 }

@@ -107,7 +107,7 @@ func fanOutParallelismSemaphore(ctx context.Context, dctx dispatchContext) *FanO
 	if dctx.Args.FanOutSemaphores == nil {
 		return nil
 	}
-	scope := resolveAcqScope(ctx, dctx.Args, acq)
+	scope := resolveAcqScope(ctx, dctx.Args, acq, nil)
 	if scope.ParentNodeRunID == nil {
 		return nil
 	}

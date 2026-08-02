@@ -100,6 +100,28 @@ func registerDeployStaticGateTemplate(t *testing.T, h *scenario.Harness, name st
 	return tplID
 }
 
+func staticGateDefaultsOnlyTemplate(name string, count int) map[string]any {
+	return map[string]any{
+		"name":    name,
+		"version": "v1",
+		"defaults": map[string]any{
+			"attributes": map[string]any{
+				"by_executor": map[string]any{
+					"constrained": map[string]any{
+						"count": count,
+					},
+				},
+			},
+		},
+		"nodes": []map[string]any{
+			{
+				"type":     "root",
+				"executor": "constrained",
+			},
+		},
+	}
+}
+
 func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 	t.Run("rejects: static count:-1 violates the executor schema's minimum:0 at registration", func(t *testing.T) {
 		t.Parallel()
@@ -143,5 +165,38 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		root := h.FindNode(shared.UUID(instanceID), "root")
 		require.NotNil(t, root, "the instance must materialize its root node")
 		h.WaitForNodeState(root.ID, cascade.NodeStateFresh)
+	})
+
+	// @story: mandatory-instantiation-gate
+	t.Run("rejects: create-time gate catches a schema-violating defaults.attributes.by_executor value on a node with no node-level attributes.schema", func(t *testing.T) {
+		t.Parallel()
+		h := startStaticGateHarness(t)
+
+		tplName := "static-gate-defaults-only-" + uuid.NewString()
+		status, out := postTemplate(t, h, staticGateDefaultsOnlyTemplate(tplName, -1))
+		require.Equal(t, http.StatusCreated, status,
+			"registration must succeed: the node declares no attributes.schema, so the registration-time "+
+				"composition-against-executor check never runs for it; body: %v", out)
+		tplID, _ := out["template_id"].(string)
+		require.NotEmpty(t, tplID, "register must return a template_id; body: %v", out)
+
+		deployStatus, deployOut := postJSON(t, h, "/v1/templates/"+tplID+"/deploy", map[string]any{})
+		require.Equal(t, http.StatusOK, deployStatus, "deploy must succeed; body: %v", deployOut)
+
+		status, out = postJSON(t, h, "/v1/instances", map[string]any{
+			"template":     tplID,
+			"instance_key": "ck-defaults-only-" + uuid.NewString(),
+			"target_agent": "scenario-default-agent",
+		})
+		require.Equal(t, http.StatusBadRequest, status,
+			"the create-time static-config gate must catch the schema-violating by_executor-only "+
+				"default that registration's composition check never saw; body: %v", out)
+
+		errs, ok := out["validation_errors"].([]any)
+		require.True(t, ok, "rejection must carry validation_errors; body: %v", out)
+		require.NotEmpty(t, errs, "validation_errors must name the schema violation")
+		errText := lowerJoin(errs)
+		require.Contains(t, errText, "count",
+			"rejection must name the offending attribute `count`; body: %v", out)
 	})
 }

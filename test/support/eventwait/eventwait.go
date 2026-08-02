@@ -60,12 +60,18 @@ func (m Matcher) kindMatches(kind string) bool {
 const pollInterval = 50 * time.Millisecond
 
 // @decision: polling-audit
+// @decision: testing-scenario-based-e2e
 func WaitForEvent(ctx context.Context, t testing.TB, db persistence.Tables, m Matcher) []persistence.EventRow {
 	t.Helper()
-	for {
+	for poll := 1; ; poll++ {
 		matched, _, err := read(ctx, db, m)
 		if err == nil && len(matched) >= m.minCount() {
 			return matched
+		}
+		if poll%40 == 0 {
+			t.Logf("eventwait.WaitForEvent: still polling for matcher {%s} (observed: %d matched, last err=%v) — "+
+				"blocks until the event appears; the suite-level timeout is the only backstop",
+				m, len(matched), err)
 		}
 		time.Sleep(pollInterval)
 	}

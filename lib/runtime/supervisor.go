@@ -241,7 +241,7 @@ func Start(cfg Config) (*Handle, error) {
 			instanceID := extras.InstanceID
 			frameID := extras.FrameID
 			hctx.SendCascadeMessage = func(ctx context.Context, body []byte) (shared.UUID, bool, error) {
-				return sendCascadeMessage(ctx, persistCap, instanceID, nodeID, frameID, msgType, body)
+				return sendCascadeMessage(ctx, persistCap, instanceID, nodeID, frameID, msgType, body, nil)
 			}
 		}
 		return hctx

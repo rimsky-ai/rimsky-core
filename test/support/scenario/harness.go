@@ -6,6 +6,7 @@ package scenario
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"testing"
@@ -626,7 +627,7 @@ func (h *Harness) templateHasStructuralRoot(templateHash string) bool {
 
 func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 	h.T.Helper()
-	for {
+	for poll := 1; ; poll++ {
 		var count int
 		err := h.Pool.QueryRow(h.Ctx, `
             SELECT count(*) FROM rimsky_node_runs d
@@ -638,6 +639,10 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 			h.T.Logf("waitForRootDispatch: dispatch-count probe failed; retrying next tick: %v", err)
 		} else if count > 0 {
 			return
+		}
+		if poll%100 == 0 {
+			h.T.Logf("waitForRootDispatch: still polling instance %s for a root dispatch row (want >0, last count=%d, last err=%v) — "+
+				"blocks until the state appears; the suite-level timeout is the only backstop", instanceID, count, err)
 		}
 		if h.Scheduler == nil {
 			h.driveFrameAndEnqueue(instanceID)
@@ -741,7 +746,7 @@ func (h *Harness) requiredClaimProducersForNodeType(instanceID shared.UUID, node
 }
 
 // @concept: node-run
-func (h *Harness) nodeReachedState(nodeID shared.UUID, state cascade.NodeState) bool {
+func (h *Harness) nodeReachedState(nodeID shared.UUID, state cascade.NodeState) (bool, string) {
 	var latest *persistence.NodeRunLatest
 	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		l, err := h.Persist.Nodes().GetLatestRunForNode(ctx, nodeID, tx)
@@ -749,19 +754,38 @@ func (h *Harness) nodeReachedState(nodeID shared.UUID, state cascade.NodeState) 
 		return err
 	}); err != nil && h.T != nil {
 		h.T.Logf("WaitForNodeState: latest-run probe for %s failed; retrying next poll: %v", nodeID.String(), err)
+		return false, fmt.Sprintf("probe error: %v", err)
 	}
-	if latest == nil || latest.State != state {
-		return false
+	if latest == nil {
+		return false, "no run yet"
+	}
+	if latest.State != state {
+		return false, fmt.Sprintf("state=%s", latest.State)
 	}
 	if state != cascade.NodeStateFresh {
-		return true
+		return true, fmt.Sprintf("state=%s", latest.State)
 	}
-	return latest.SettlingSignalType != nil && *latest.SettlingSignalType == "terminal/success"
+	reached := latest.SettlingSignalType != nil && *latest.SettlingSignalType == "terminal/success"
+	signal := "none"
+	if latest.SettlingSignalType != nil {
+		signal = *latest.SettlingSignalType
+	}
+	return reached, fmt.Sprintf("state=%s settling_signal=%s", latest.State, signal)
 }
 
+// @decision: testing-scenario-based-e2e
 func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState) {
 	h.T.Helper()
-	for !h.nodeReachedState(nodeID, state) {
+	for poll := 1; ; poll++ {
+		reached, observed := h.nodeReachedState(nodeID, state)
+		if reached {
+			return
+		}
+		if poll%40 == 0 {
+			h.T.Logf("WaitForNodeState: still polling node %s for state=%s (observed: %s) — "+
+				"blocks until the state appears; the suite-level timeout is the only backstop",
+				nodeID.String(), state, observed)
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -776,9 +800,19 @@ func (h *Harness) EventCount(nodeID shared.UUID, kind string) int {
 	return count
 }
 
+// @decision: testing-scenario-based-e2e
 func (h *Harness) WaitForEventCount(nodeID shared.UUID, kind string, want int) {
 	h.T.Helper()
-	for h.EventCount(nodeID, kind) < want {
+	for poll := 1; ; poll++ {
+		got := h.EventCount(nodeID, kind)
+		if got >= want {
+			return
+		}
+		if poll%40 == 0 {
+			h.T.Logf("WaitForEventCount: still polling node %s for %d events of kind %q (observed: %d) — "+
+				"blocks until the count appears; the suite-level timeout is the only backstop",
+				nodeID.String(), want, kind, got)
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -797,16 +831,27 @@ func (h *Harness) DispatchCount(nodeID shared.UUID) int {
 	return count
 }
 
+// @decision: testing-scenario-based-e2e
 func (h *Harness) WaitForDispatchCount(nodeID shared.UUID, want int) {
 	h.T.Helper()
-	for h.DispatchCount(nodeID) < want {
+	for poll := 1; ; poll++ {
+		got := h.DispatchCount(nodeID)
+		if got >= want {
+			return
+		}
+		if poll%40 == 0 {
+			h.T.Logf("WaitForDispatchCount: still polling node %s for %d dispatches (observed: %d) — "+
+				"blocks until the count appears; the suite-level timeout is the only backstop",
+				nodeID.String(), want, got)
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 }
 
+// @decision: testing-scenario-based-e2e
 func (h *Harness) WaitForLeafRunLineageCount(nodeID shared.UUID, want int) {
 	h.T.Helper()
-	for {
+	for poll := 1; ; poll++ {
 		var count int
 		_ = h.Pool.QueryRow(h.Ctx, `
 			SELECT count(*) FROM rimsky_lineage
@@ -815,14 +860,20 @@ func (h *Harness) WaitForLeafRunLineageCount(nodeID shared.UUID, want int) {
 		if count >= want {
 			return
 		}
+		if poll%40 == 0 {
+			h.T.Logf("WaitForLeafRunLineageCount: still polling node %s for %d leaf_run lineage records (observed: %d) — "+
+				"blocks until the count appears; the suite-level timeout is the only backstop",
+				nodeID.String(), want, count)
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 }
 
 // @concept: node-run
+// @decision: testing-scenario-based-e2e
 func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID) {
 	h.T.Helper()
-	for {
+	for poll := 1; ; poll++ {
 		var total int
 		err := h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`, nodeID,
@@ -837,6 +888,11 @@ func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID) {
 		}
 		if err == nil && total > 0 && inFlight == 0 {
 			return
+		}
+		if poll%40 == 0 {
+			h.T.Logf("WaitForAllRunsTerminal: still polling node %s for all runs terminal (total=%d, in_flight=%d, last err=%v) — "+
+				"blocks until the state appears; the suite-level timeout is the only backstop",
+				nodeID.String(), total, inFlight, err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

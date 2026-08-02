@@ -63,6 +63,8 @@ func dispatchConformance(args []string) int {
 		return runConformanceDataProcessing(rest)
 	case "blob-backend":
 		return runConformanceBlobBackend(rest)
+	case "lifecycle-subscriber":
+		return runConformanceLifecycleSubscriber(rest)
 	case "probe":
 		return runConformanceProbe(rest)
 	case "help", "--help", "-h":
@@ -74,7 +76,39 @@ func dispatchConformance(args []string) int {
 }
 
 func printConformanceUsage(w *os.File) {
-	fmt.Fprintln(w, "usage: rimsky conformance <executor|claim-producer|publisher|validation|data-processing|blob-backend|probe> ...")
+	fmt.Fprintln(w, "usage: rimsky conformance <executor|claim-producer|publisher|validation|data-processing|blob-backend|lifecycle-subscriber|probe> ...")
+}
+
+// @decision: conformance-suite-per-protocol
+func runConformanceLifecycleSubscriber(args []string) int {
+	fs := flag.NewFlagSet("rimsky conformance lifecycle-subscriber", flag.ContinueOnError)
+	endpoint := fs.String("endpoint", "", "lifecycle-subscriber gRPC endpoint (e.g. grpc://localhost:9097)")
+	transport := fs.String("transport", "grpc", "transport: grpc")
+	timeout := fs.Duration("timeout", 30*time.Second, "suite timeout")
+	tlsMode := fs.String("tls", "off", "off|required — dial the endpoint with verified TLS against system roots")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *endpoint == "" {
+		fmt.Fprintln(os.Stderr, "rimsky conformance lifecycle-subscriber: --endpoint required")
+		return 2
+	}
+	if *transport != "grpc" {
+		fmt.Fprintf(os.Stderr, "rimsky conformance lifecycle-subscriber: --transport %q not supported; use grpc\n", *transport)
+		return 2
+	}
+	if *tlsMode != "off" && *tlsMode != "required" {
+		fmt.Fprintf(os.Stderr, "rimsky conformance lifecycle-subscriber: --tls must be off or required, got %q\n", *tlsMode)
+		return 2
+	}
+
+	ctx := context.Background()
+	if err := conformance.RunLifecycleCheck(ctx, *endpoint, *tlsMode, *timeout); err != nil {
+		fmt.Fprintf(os.Stderr, "lifecycle-subscriber: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(os.Stdout, "lifecycle-subscriber: ok")
+	return 0
 }
 
 func runConformanceExecutor(args []string) int {
@@ -87,7 +121,7 @@ func runConformanceExecutor(args []string) int {
 	timeout := fs.Duration("timeout", 30*time.Second, "per-scenario timeout")
 	checkObs := fs.Bool("check-observability", false, "additionally probe ExecutorObservability per spec §6")
 	retentionSec := fs.Int("retention-test-seconds", 0, "if >0, drive a canned dispatch then sleep this long and verify GetTrace returns evicted=true (spec §6 retention check)")
-	checkLifecycle := fs.Bool("check-lifecycle", false, "probe LifecycleSubscriber six-RPC sanity instead of running executor scenarios")
+	checkLifecycle := fs.Bool("check-lifecycle", false, "deprecated alias for `rimsky conformance lifecycle-subscriber`: probe LifecycleSubscriber six-RPC sanity instead of running executor scenarios")
 	callbackBind := fs.String("callback-bind", "127.0.0.1", "interface for the conformance callback receiver to bind (use 0.0.0.0 when the executor runs in a container)")
 	callbackHost := fs.String("callback-host", "", "host the executor should reach the callback receiver at (default: same as --callback-bind; for containerized executors set to host.docker.internal or a routable host IP)")
 	tlsMode := fs.String("tls", "off", "off|required — dial the executor with verified TLS against system roots (gRPC transport only; applies to the scenario suite, the observability probe, and the lifecycle probe alike)")

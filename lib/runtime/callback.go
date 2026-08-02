@@ -682,7 +682,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		return outcome, nil
 	}
 
-	scope := resolveAcqScope(ctx, args, acq)
+	scope := resolveAcqScope(ctx, args, acq, nil)
 	terminalSig := signalForTerminal(args, acq, t)
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,

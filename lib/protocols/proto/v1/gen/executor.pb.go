@@ -34,9 +34,9 @@ type PriorDispatchDisposition int32
 const (
 	// PRIOR_NONE is the wire default. Equivalent to the field being unset.
 	PriorDispatchDisposition_PRIOR_NONE PriorDispatchDisposition = 0
-	// PRIOR_STALE_RECOVERY: the supervisor's stale-recovery sweep reaped
-	// the prior run (sync RPC connection broken in-band, or async dispatch
-	// exceeded `max_quiet_period`); this dispatch is the re-enqueue.
+	// PRIOR_STALE_RECOVERY: the supervisor's async deadline sweep reaped
+	// the prior run (quiet period or max runtime exceeded); this dispatch
+	// is the re-enqueue.
 	PriorDispatchDisposition_PRIOR_STALE_RECOVERY PriorDispatchDisposition = 1
 	// PRIOR_RETRY_AFTER_ERROR: the prior dispatch reported an Error
 	// terminal that the error-policy resolved to retry; this dispatch

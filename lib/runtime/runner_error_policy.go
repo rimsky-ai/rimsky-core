@@ -199,7 +199,7 @@ func applyErrorPolicyWithScratchAndSettleHook(
 			terminalKind = "errored"
 			errClass = errorClass
 		}
-		scope := resolveAcqScope(ctx, args, acq)
+		scope := resolveAcqScope(ctx, args, acq, nil)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
@@ -262,7 +262,7 @@ func applyErrorPolicyGiveUpHeld(
 	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		fanoutRecalculate(ctx, args, acq)
-		scope := resolveAcqScope(ctx, args, acq)
+		scope := resolveAcqScope(ctx, args, acq, nil)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:       acq.InstanceID,
 			FrameID:          acq.FrameID,
@@ -403,7 +403,7 @@ func applyInfraGiveUp(
 	}
 	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
-		scope := resolveAcqScope(ctx, args, acq)
+		scope := resolveAcqScope(ctx, args, acq, nil)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,

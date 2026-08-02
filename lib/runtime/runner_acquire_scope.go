@@ -18,7 +18,8 @@ type acqScopeTuple struct {
 	PartitionKey    string
 }
 
-func resolveAcqScope(ctx context.Context, args RunArgs, acq *acquisition) acqScopeTuple {
+// @decision: intx-suffix-convention
+func resolveAcqScope(ctx context.Context, args RunArgs, acq *acquisition, tx persistence.Tx) acqScopeTuple {
 	if acq == nil || acq.RunScopeID == (shared.UUID{}) || args.Persist == nil {
 		return acqScopeTuple{}
 	}
@@ -27,11 +28,17 @@ func resolveAcqScope(ctx context.Context, args RunArgs, acq *acquisition) acqSco
 		return acqScopeTuple{}
 	}
 	var out acqScopeTuple
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		t, err := resolveAcqScopeInTx(ctx, scopes, acq, tx)
-		out = t
-		return err
-	}); err != nil {
+	var err error
+	if tx != nil {
+		out, err = resolveAcqScopeRow(ctx, scopes, acq, tx)
+	} else {
+		err = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			var ierr error
+			out, ierr = resolveAcqScopeRow(ctx, scopes, acq, tx)
+			return ierr
+		})
+	}
+	if err != nil {
 		if args.Logger != nil {
 			args.Logger.Warn("resolveAcqScope: run-scope GetByID failed; downstream will omit parent_run_id/partition_key",
 				"run_scope_id", acq.RunScopeID.String(),
@@ -42,7 +49,7 @@ func resolveAcqScope(ctx context.Context, args RunArgs, acq *acquisition) acqSco
 	return out
 }
 
-func resolveAcqScopeInTx(
+func resolveAcqScopeRow(
 	ctx context.Context, scopes persistence.RunScopeTable, acq *acquisition, tx persistence.Tx,
 ) (acqScopeTuple, error) {
 	if acq == nil || acq.RunScopeID == (shared.UUID{}) || scopes == nil {
@@ -50,7 +57,7 @@ func resolveAcqScopeInTx(
 	}
 	rs, err := scopes.GetByID(ctx, acq.RunScopeID, tx)
 	if err != nil {
-		return acqScopeTuple{}, fmt.Errorf("resolveAcqScopeInTx: load run scope %s: %w", acq.RunScopeID, err)
+		return acqScopeTuple{}, fmt.Errorf("resolveAcqScope: load run scope %s: %w", acq.RunScopeID, err)
 	}
 	if rs == nil {
 		return acqScopeTuple{}, nil

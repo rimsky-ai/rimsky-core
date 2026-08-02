@@ -156,6 +156,13 @@ var conformanceSubcommands = []struct {
 		reqMsg:  "--endpoint required",
 		reqExit: 2,
 	},
+	{
+		name:    "lifecycle-subscriber",
+		run:     runConformanceLifecycleSubscriber,
+		flags:   []string{"endpoint", "transport", "timeout", "tls"},
+		reqMsg:  "--endpoint required",
+		reqExit: 2,
+	},
 }
 
 func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {

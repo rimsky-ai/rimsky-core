@@ -66,6 +66,7 @@ func TestLooksLikeRepoPath(t *testing.T) {
 		{"lib/protocols/proto/v1/*.proto", false},
 		{"deploy/values.json", true},
 		{"deploy/values.toml", true},
+		{".ok-planner/issues.jsonl", true},
 		{"CLAUDE.md", true},
 		{"./CLAUDE.md", true},
 		{"RELEASING.md", true},
@@ -121,7 +122,7 @@ func looksLikeRepoPath(tok string) bool {
 		return true
 	}
 	hasRepoExt := false
-	for _, ext := range []string{".sh", ".yml", ".yaml", ".md", ".go", ".proto", ".ts", ".json", ".toml"} {
+	for _, ext := range []string{".sh", ".yml", ".yaml", ".md", ".go", ".proto", ".ts", ".json", ".jsonl", ".toml"} {
 		if strings.HasSuffix(tok, ext) {
 			hasRepoExt = true
 			break

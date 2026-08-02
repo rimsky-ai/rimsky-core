@@ -5,11 +5,44 @@ package compose
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func repoRootForTest(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, statErr := os.Stat(filepath.Join(dir, "go.work")); statErr == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("repoRootForTest: go.work not found walking up from working dir")
+		}
+		dir = parent
+	}
+}
+
+func buildStubchildBinary(t *testing.T) string {
+	t.Helper()
+	root := repoRootForTest(t)
+	out := filepath.Join(t.TempDir(), "stubchild")
+	cmd := exec.Command("go", "build", "-o", out, "./lib/runtime/hostagent/testdata/stubchild")
+	cmd.Dir = root
+	cmd.Env = os.Environ()
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build stubchild: %v\n%s", err, combined)
+	}
+	return out
+}
 
 func isolateEndpointEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -181,6 +214,40 @@ func TestSnapshotAndSetEnvPreservesOperatorServiceEnv(t *testing.T) {
 	}
 	if got := os.Getenv("RIMSKY_PROCESS_ROLE"); got != "unified" {
 		t.Fatalf("snapshot did not set the unified marker: %q", got)
+	}
+}
+
+// @decision: late-bound-services-direct-spawn
+// @decision: service-spawn-flag
+func TestRunTemplateRun_SelfHostServiceFlagSpawnsBinaryAndDispatchesToTerminal(t *testing.T) {
+	stubBinary := buildStubchildBinary(t)
+	isolateEndpointEnv(t)
+
+	workDir := t.TempDir()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+
+	specPath := filepath.Join(workDir, "spec.yml")
+	spec := "name: selfhost-spawn-service\nversion: \"1\"\nnodes:\n  - type: worker\n    executor: codegen\n"
+	if err := os.WriteFile(specPath, []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := RunTemplateRun(context.Background(), []string{
+		"--timeout", "90s",
+		"--service", fmt.Sprintf("codegen=%s", stubBinary),
+		specPath,
+	})
+	if got != 0 {
+		t.Fatalf("rimsky run --service (self-host) exited %d, want 0 — the node's executor names the "+
+			"--service-spawned binary directly, so success requires the runtime to dispatch to the "+
+			"loopback-spawned endpoint (per decision:late-bound-services-direct-spawn) to a terminal state", got)
 	}
 }
 

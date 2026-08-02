@@ -225,7 +225,7 @@ func applyTerminalCompleteSubgraphCaller(
 	}
 	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
-		scope := resolveAcqScope(ctx, args, acq)
+		scope := resolveAcqScope(ctx, args, acq, nil)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,

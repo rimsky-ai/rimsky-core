@@ -12,7 +12,7 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 **Concept-to-code links** — `grep -rn '@concept:' .` in source.
 
-**Open / unresolved design questions** — `.ok-planner/issues.jsonl` (append-only issue queue; an issue's state is the fold of its rows by id; drained at `/sprint`). The former `design/tensions/` directory is migrated: live tensions became issue rows, the files are archived under `.ok-planner/history/tensions/`.
+**Open / unresolved design questions** — `.ok-planner/issues/` (one markdown file per question, ruling-ready via `/verify-issues`; promoted or retired via `/plan-sprint`). The former `design/tensions/` directory is migrated: live tensions became issue rows, the files are archived under `.ok-planner/history/tensions/`.
 
 **Build commands** — `Makefile`. Standard targets: `make build-all`, `make test-all`, `make lint`, `make tidy`, `make proto-gen`. `make build-all` / `test-all` / `lint` now also cover the `lib/services` module. `make service-images` builds the bundled-service images (one per claim_producer / sensor / subscriber / executor under `lib/services/`). Scenario and storage tests under `test/scenarios/...` and `lib/foundation/persistence/...` use testcontainers-go and require a working Docker socket.
 
