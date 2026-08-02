@@ -12,11 +12,11 @@ Cascade is the engine that turns one node-state transition into the set of downs
 
 | Word | Meaning |
 |---|---|
-| **walk** | The scheduler-tick-driven traversal of the graph (topology-ordered). The mechanism. |
-| **propagation** | Cascade-of-stale on a subscription-edge match (sender node-type × emitted settling signal type) whose `when:` predicate evaluates true. Mark dependents stale and recurse. |
-| **fallthrough** | No-dispatch fresh-roll for a node with no executor. Roll fresh state forward without running the node; detected per-node (executor unset) and executed by the scheduler's pure-cascade sweep, which records the transition-reason `pure_cascade`. |
+| **walk** | The event-driven traversal of the graph, fired inline inside the transaction that settles the triggering `terminal/success`, `terminal/error/<class>`, or `attribute/<key>/changed` signal — not a separate topology-ordered pass. The mechanism. |
+| **propagation** | Cascade-of-stale on a subscription-edge match (sender node-type × emitted settling signal type) whose `when:` predicate evaluates true. Mark dependents stale, insert wait-set rows, and recurse; the gate evaluator advances a receiver from pending to stale once its wait-set drains. |
+| **fallthrough** | No-dispatch fresh-roll for a node with no executor. Roll fresh state forward without running the node; detected per-node (executor unset) and executed by the scheduler's tick-driven pure-cascade sweep, which records the transition-reason `pure_cascade`. |
 
-One walk; two node-level behaviors (propagation, fallthrough).
+One walk; two node-level behaviors (propagation, fallthrough). The walk itself is event-driven, firing inside the settling terminal's own transaction; only the fallthrough behavior's actual node advancement runs off a scheduler tick, via the pure-cascade sweep.
 
 ## Purpose
 
