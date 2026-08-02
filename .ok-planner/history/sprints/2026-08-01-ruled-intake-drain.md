@@ -1,3 +1,7 @@
+---
+closed: 07dd4e48b5d5e777e01304b4b0978935358e9a5f
+---
+
 # Sprint: Ruled-intake drain — story reductions, stray-commitment homes, and the carry-verbatim erasure
 
 ## Intent
