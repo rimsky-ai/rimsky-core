@@ -6,7 +6,8 @@ artifacts:
   - story:fs-fanout-expand-folder
   - story:fs-fanout-list-array
   - story:pg-fanout-list-array
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:31:00Z
 ---
 

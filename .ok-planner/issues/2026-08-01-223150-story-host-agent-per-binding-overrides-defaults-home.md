@@ -5,7 +5,8 @@ category: stories-prescriptive
 artifacts:
   - story:host-agent-per-binding-overrides
   - concept:host-agent
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:31:50Z
 ---
 

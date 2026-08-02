@@ -4,7 +4,8 @@ kind: sprint
 category: stories-prescriptive
 artifacts:
   - story:bundled-park-resume-recipe
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:31:30Z
 ---
 

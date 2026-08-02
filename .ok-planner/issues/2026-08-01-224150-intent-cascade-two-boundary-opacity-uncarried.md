@@ -5,7 +5,8 @@ category: intent-ledger
 artifacts:
   - concept:cascade
   - concept:run-scope
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:41:50Z
 ---
 

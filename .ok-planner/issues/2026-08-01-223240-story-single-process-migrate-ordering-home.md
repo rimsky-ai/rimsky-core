@@ -5,7 +5,8 @@ category: stories-prescriptive
 artifacts:
   - story:single-process-all-in-one
   - decision:single-process-mode
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:32:40Z
 ---
 

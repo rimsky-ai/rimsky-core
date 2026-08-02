@@ -4,7 +4,7 @@ kind: sprint
 category: stories-splits
 artifacts:
   - story:runtime-diagnostics
-status: verified
+status: retired
 opened: 2026-08-01T22:30:50Z
 ---
 
@@ -27,8 +27,4 @@ The ruling decides whether a diagnostic workflow spanning several read surfaces 
 >
 > Rationale: a per-surface split optimizes for enumerability at the cost of the checkable promise — an owner can verify "I can diagnose a wedge end-to-end," but has no independent acceptance test for "I can list claim holders" divorced from that workflow. Flip case: if one surface acquires its own persona — say claim-holder listing becomes a capacity-planning tool rather than a wedge-diagnosis step — that surface then earns its own story.
 
-<!-- Owner: this is a recommendation, not your decision. Leave it
-as-is to accept — the next /plan-sprint carries it, naming the
-generated/recommended batches at sign-off. Edit the text to
-redirect, empty the section to discuss live, or delete this note
-to adopt the ruling as your own. -->
+Retired at /plan-sprint 2026-08-01-ruled-intake-drain: the accepted ruling is keep-bundled — no corpus change, so nothing to promote.

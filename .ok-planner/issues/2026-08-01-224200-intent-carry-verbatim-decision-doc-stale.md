@@ -5,7 +5,8 @@ category: intent-ledger
 artifacts:
   - decision:carry-verbatim-requires-one
   - concept:child-execution
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:42:00Z
 ---
 

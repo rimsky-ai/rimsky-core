@@ -4,7 +4,7 @@ kind: sprint
 category: stories-splits
 artifacts:
   - story:http-node
-status: verified
+status: retired
 opened: 2026-08-01T22:30:10Z
 ---
 
@@ -27,8 +27,4 @@ The ruling decides whether a bundled executor's capability set is one story or s
 >
 > Rationale: the split creates artifacts whose acceptance can't be judged independently — 429 parking is meaningless without the executor around it — which defeats the checkability the story catalog exists for. Flip case: if any facet grows its own separately-adoptable surface (say, the parking behavior becomes a general policy any executor declares), that facet then earns its own story.
 
-<!-- Owner: this is a recommendation, not your decision. Leave it
-as-is to accept — the next /plan-sprint carries it, naming the
-generated/recommended batches at sign-off. Edit the text to
-redirect, empty the section to discuss live, or delete this note
-to adopt the ruling as your own. -->
+Retired at /plan-sprint 2026-08-01-ruled-intake-drain: the accepted ruling is keep-bundled — no corpus change, so nothing to promote.

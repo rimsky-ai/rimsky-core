@@ -7,7 +7,8 @@ artifacts:
   - decision:cli-spawn-mechanism
   - decision:signoff-crypto-ed25519
   - concept:error-policy
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:30:40Z
 ---
 

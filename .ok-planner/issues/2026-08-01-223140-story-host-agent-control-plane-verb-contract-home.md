@@ -5,7 +5,8 @@ category: stories-prescriptive
 artifacts:
   - story:host-agent-control-plane
   - concept:rimsky
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:31:40Z
 ---
 

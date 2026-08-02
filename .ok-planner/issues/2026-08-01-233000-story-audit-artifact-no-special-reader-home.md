@@ -6,7 +6,8 @@ artifacts:
   - story:audit-artifact
   - decision:artifact-layout
   - decision:persistence-driver
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T23:30:00Z
 ---
 

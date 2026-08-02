@@ -4,7 +4,7 @@ kind: sprint
 category: stories-splits
 artifacts:
   - story:instance-lifecycle
-status: verified
+status: retired
 opened: 2026-08-01T22:30:30Z
 ---
 
@@ -28,8 +28,4 @@ The ruling decides whether the umbrella survives and what happens to its create 
 >
 > Rationale: stripping the create clause leaves a lifecycle story that mysteriously starts at "watch", which misleads more than the redundancy costs; a five-way split fails the same test as the sibling split issues, since no single verb is an independently adoptable outcome. Flip case: if the two stories' create language ever drifts into stating the same guarantee twice — both claiming side-effect behavior — the overlap stops being harmless and the clause should move to one home.
 
-<!-- Owner: this is a recommendation, not your decision. Leave it
-as-is to accept — the next /plan-sprint carries it, naming the
-generated/recommended batches at sign-off. Edit the text to
-redirect, empty the section to discuss live, or delete this note
-to adopt the ruling as your own. -->
+Retired at /plan-sprint 2026-08-01-ruled-intake-drain: the accepted ruling keeps the umbrella story whole with the overlap ruled harmless — no corpus change, so nothing to promote.

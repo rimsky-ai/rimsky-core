@@ -6,7 +6,8 @@ artifacts:
   - story:publisher-protocol
   - concept:publisher
   - concept:publisher-subscription
-status: verified
+status: promoted
+sprint: 2026-08-01-ruled-intake-drain.md
 opened: 2026-08-01T22:32:00Z
 ---
 

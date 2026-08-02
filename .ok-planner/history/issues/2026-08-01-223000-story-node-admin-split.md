@@ -4,7 +4,7 @@ kind: sprint
 category: stories-splits
 artifacts:
   - story:node-admin
-status: verified
+status: retired
 opened: 2026-08-01T22:30:00Z
 ---
 
@@ -27,8 +27,4 @@ The ruling decides whether one operator workflow may carry two verbs in one stor
 >
 > Rationale: the split buys nothing — no reader checks "can I inspect?" apart from "can I intervene?" — and the catalog already treats multi-verb personas as single stories, so splitting here would make the granularity policy less consistent, not cleaner. Flip case: if a future consumer ships the read surface without the reset verb, or gates them behind different roles, the outcomes become independently deliverable and the split becomes real.
 
-<!-- Owner: this is a recommendation, not your decision. Leave it
-as-is to accept — the next /plan-sprint carries it, naming the
-generated/recommended batches at sign-off. Edit the text to
-redirect, empty the section to discuss live, or delete this note
-to adopt the ruling as your own. -->
+Retired at /plan-sprint 2026-08-01-ruled-intake-drain: the accepted ruling is keep-bundled — no corpus change, so nothing to promote.
