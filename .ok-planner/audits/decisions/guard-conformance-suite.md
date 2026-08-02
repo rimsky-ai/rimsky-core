@@ -2,7 +2,7 @@
 audit: guard-conformance-suite
 artifact: decision:guard-conformance-suite
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:35:26Z
 ---
 

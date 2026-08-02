@@ -2,7 +2,7 @@
 audit: auth-api-key-bearer
 artifact: decision:auth-api-key-bearer
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:38:16Z
 ---
 

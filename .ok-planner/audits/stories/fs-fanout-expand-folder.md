@@ -2,7 +2,7 @@
 audit: fs-fanout-expand-folder
 artifact: story:fs-fanout-expand-folder
 determination: unsupported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:58:10Z
 issue: 2026-08-02-095806-expand-folder-fanout-e2e-coverage-missing
 ---

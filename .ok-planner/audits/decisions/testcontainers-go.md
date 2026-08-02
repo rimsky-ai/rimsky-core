@@ -2,7 +2,7 @@
 audit: testcontainers-go
 artifact: decision:testcontainers-go
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:36:46Z
 ---
 

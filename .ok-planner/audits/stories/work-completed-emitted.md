@@ -2,7 +2,7 @@
 audit: work-completed-emitted
 artifact: story:work-completed-emitted
 determination: unsupported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:58:10Z
 issue: 2026-08-02-095808-stale-recovery-duplicate-work-started-events
 ---

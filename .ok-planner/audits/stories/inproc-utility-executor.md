@@ -2,7 +2,7 @@
 audit: inproc-utility-executor
 artifact: story:inproc-utility-executor
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:28:52Z
 ---
 

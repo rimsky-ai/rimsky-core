@@ -2,7 +2,7 @@
 audit: host-agent-anonymous-mode
 artifact: story:host-agent-anonymous-mode
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:40:12Z
 ---
 

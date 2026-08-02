@@ -2,7 +2,7 @@
 audit: auth-dry-run-mode-floor-on-key
 artifact: decision:auth-dry-run-mode-floor-on-key
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:36:49Z
 ---
 

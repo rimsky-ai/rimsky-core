@@ -2,7 +2,7 @@
 audit: handler-package-in-service-directory
 artifact: decision:handler-package-in-service-directory
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:28:52Z
 ---
 

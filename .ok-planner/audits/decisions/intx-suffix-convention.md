@@ -2,7 +2,7 @@
 audit: intx-suffix-convention
 artifact: decision:intx-suffix-convention
 determination: unsupported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:58:10Z
 issue: 2026-08-02-095822-intx-suffix-live-wrapper-pairs-exist
 ---

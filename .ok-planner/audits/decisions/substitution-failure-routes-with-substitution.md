@@ -2,7 +2,7 @@
 audit: substitution-failure-routes-with-substitution
 artifact: decision:substitution-failure-routes-with-substitution
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:32:02Z
 ---
 

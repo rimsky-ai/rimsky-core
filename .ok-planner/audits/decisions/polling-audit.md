@@ -2,7 +2,7 @@
 audit: polling-audit
 artifact: decision:polling-audit
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:29:02Z
 ---
 

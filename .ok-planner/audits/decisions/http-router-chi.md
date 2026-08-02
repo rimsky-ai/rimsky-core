@@ -2,7 +2,7 @@
 audit: http-router-chi
 artifact: decision:http-router-chi
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:44:46Z
 ---
 

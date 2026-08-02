@@ -2,7 +2,7 @@
 audit: hard-dep-settled-guard
 artifact: decision:hard-dep-settled-guard
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:28:34Z
 ---
 

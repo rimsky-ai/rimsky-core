@@ -2,7 +2,7 @@
 audit: advisory-locks
 artifact: decision:advisory-locks
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:43:58Z
 ---
 

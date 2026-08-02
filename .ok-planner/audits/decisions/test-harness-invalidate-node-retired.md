@@ -2,7 +2,7 @@
 audit: test-harness-invalidate-node-retired
 artifact: decision:test-harness-invalidate-node-retired
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:36:46Z
 ---
 

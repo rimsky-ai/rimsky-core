@@ -2,7 +2,7 @@
 audit: launch-integration
 artifact: decision:launch-integration
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:34:08Z
 ---
 

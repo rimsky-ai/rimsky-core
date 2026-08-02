@@ -2,7 +2,7 @@
 audit: claimant-guard-helper
 artifact: decision:claimant-guard-helper
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:28:18Z
 ---
 

@@ -2,7 +2,7 @@
 audit: testing-scenario-based-e2e
 artifact: decision:testing-scenario-based-e2e
 determination: unsupported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:58:10Z
 issue: 2026-08-02-095819-scenario-harness-waiters-lack-descriptive-reporting
 ---

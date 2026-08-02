@@ -2,7 +2,7 @@
 audit: proxy-single-spawn-multiplexing
 artifact: decision:proxy-single-spawn-multiplexing
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:40:12Z
 ---
 

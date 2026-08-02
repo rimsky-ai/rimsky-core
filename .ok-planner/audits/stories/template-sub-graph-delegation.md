@@ -2,7 +2,7 @@
 audit: template-sub-graph-delegation
 artifact: story:template-sub-graph-delegation
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:34:15Z
 ---
 

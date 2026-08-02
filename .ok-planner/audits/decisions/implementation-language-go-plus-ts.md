@@ -2,7 +2,7 @@
 audit: implementation-language-go-plus-ts
 artifact: decision:implementation-language-go-plus-ts
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:39:17Z
 ---
 

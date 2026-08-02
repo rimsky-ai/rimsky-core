@@ -2,7 +2,7 @@
 audit: run-scope-is-per-frame
 artifact: decision:run-scope-is-per-frame
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:28:34Z
 ---
 

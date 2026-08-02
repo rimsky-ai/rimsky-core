@@ -2,7 +2,7 @@
 audit: release-notes-template
 artifact: decision:release-notes-template
 determination: unsupported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:58:10Z
 issue: 2026-08-02-095817-release-notes-template-missing-cli-channel-section
 ---

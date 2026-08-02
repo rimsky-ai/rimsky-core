@@ -2,7 +2,7 @@
 audit: service-spawn-flag
 artifact: decision:service-spawn-flag
 determination: unsupported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:58:10Z
 issue: 2026-08-02-095818-service-spawn-dispatch-path-has-no-e2e-test
 ---

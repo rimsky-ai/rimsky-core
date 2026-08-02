@@ -2,7 +2,7 @@
 audit: host-agent-proxy-tls
 artifact: decision:host-agent-proxy-tls
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:38:16Z
 ---
 

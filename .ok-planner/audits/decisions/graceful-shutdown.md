@@ -2,7 +2,7 @@
 audit: graceful-shutdown
 artifact: decision:graceful-shutdown
 determination: unsupported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:58:10Z
 issue: 2026-08-02-095824-production-shutdown-grace-is-30s-not-5s
 ---

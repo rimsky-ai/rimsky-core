@@ -2,7 +2,7 @@
 audit: env-as-substitution-source-kind
 artifact: decision:env-as-substitution-source-kind
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:33:40Z
 ---
 

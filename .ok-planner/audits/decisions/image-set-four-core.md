@@ -2,7 +2,7 @@
 audit: image-set-four-core
 artifact: decision:image-set-four-core
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:34:08Z
 ---
 

@@ -2,7 +2,7 @@
 audit: force-upstream-refresh-via-receiver-keyed-map
 artifact: decision:force-upstream-refresh-via-receiver-keyed-map
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:33:46Z
 ---
 

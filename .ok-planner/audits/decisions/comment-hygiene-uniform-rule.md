@@ -2,7 +2,7 @@
 audit: comment-hygiene-uniform-rule
 artifact: decision:comment-hygiene-uniform-rule
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:39:17Z
 ---
 

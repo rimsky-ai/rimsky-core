@@ -2,7 +2,7 @@
 audit: host-agent-per-binding-overrides
 artifact: story:host-agent-per-binding-overrides
 determination: supported
-commit: 3918d24e
+commit: b767a27d
 audited: 2026-08-02T09:40:12Z
 ---
 
