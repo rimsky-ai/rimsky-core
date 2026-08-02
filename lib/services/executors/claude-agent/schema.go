@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// @decision: claude-agent-error-classes-closed
 func errorClassDeclared(class string) bool {
 	for _, declared := range DeclaredErrorClasses() {
 		if declared == class {

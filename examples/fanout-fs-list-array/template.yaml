@@ -1,4 +1,4 @@
-# fanout-fs-list-array template — STORY-fs-fanout-list-array proof.
+# fanout-fs-list-array template — STORY-fanout-list-array proof, filesystem backend.
 #
 # A template author declares a fan-out node whose parent claim is held
 # against the bundled filesystem store, with partition_request
@@ -26,7 +26,7 @@
 name: fanout-fs-list-array
 version: "1"
 description: |
-  STORY-fs-fanout-list-array proof: a fan-out node whose parent claim
+  STORY-fanout-list-array proof, filesystem backend: a fan-out node whose parent claim
   is filesystem-store-backed; partition_request substitutes a list of
   {key, payload} items from an operator message; three children
   dispatch, each carrying its own partition_key and per-sub-claim

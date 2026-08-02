@@ -22,6 +22,7 @@ func newRateLimitOnce(retryAfterSeconds int) *rateLimitOnce {
 	return &rateLimitOnce{attempts: make(map[string]int), retryAfter: retryAfterSeconds}
 }
 
+// @decision: bundled-recipes-production-paths
 func (h *rateLimitOnce) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	h.attempts[r.URL.Path]++

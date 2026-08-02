@@ -6,7 +6,7 @@ decision: subscription-reconciler
 
 ## Choice
 
-A reconciliation worker performs Subscribe RPCs for mounting subscription rows at a fixed reconcile interval with no attempt cap; the failed state is reserved for non-retryable errors (e.g. an unknown publisher name); the startup resync pass remains the durable safety net.
+A reconciliation worker performs Subscribe RPCs for mounting subscription rows at a fixed reconcile interval with no attempt cap; the failed state is reserved for non-retryable errors (e.g. an unknown publisher name); the startup resync pass remains the durable safety net — it lists each publisher's live subscriptions and issues only the rows missing from that set, never re-issuing an already-active subscription.
 
 ## Rationale
 

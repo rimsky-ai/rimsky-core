@@ -218,14 +218,6 @@ func validateFanOut(n TemplateNodeDef, base string, spec *TemplateSpec, declared
 
 	switch fo.ErrorPolicy.Kind {
 	case "", "strict", "threshold", "best_effort", "first":
-	// @decision: carry-verbatim-requires-one
-	case "carry_verbatim":
-		res.Errors = append(res.Errors, ValidationError{
-			Path: fbase + ".error_policy.kind",
-			Msg: fmt.Sprintf(
-				"carry_verbatim_requires_single_child: node %q declares fan_out with error_policy.kind = carry_verbatim; carry-verbatim settlement requires exactly one child and fan_out declares many (use strict, threshold, best_effort, or first)",
-				n.Type),
-		})
 	default:
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fbase + ".error_policy.kind",

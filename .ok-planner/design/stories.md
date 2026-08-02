@@ -46,10 +46,10 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `executor-trace-observability` — Operator queries/streams executor traces.
 - `fanout-any-substitution-source` — Template author substitutes a fan-out partition_request from any standard source.
 - `fanout-intent-inheritance` — Template author trusts fan-out claim intent applies to sub-claims.
+- `fanout-list-array` — Template author fans out over an upstream list.
 - `forensic-last-attribute` — Operator reads node's latest attribute bag.
 - `frame-origin-audit` — Operator sees the triggering message for every frame through the existing observability surface.
 - `fs-fanout-expand-folder` — Template author fans out over picked-folder contents against the filesystem store.
-- `fs-fanout-list-array` — Template author fans out over an upstream list against the filesystem store.
 - `grant-scope-enforcement` — Least-privilege delegation across lifecycle.
 - `held-abandon-cascades-abandoned` — Downstream hears an abandoned-error signal at the moment upstream held work is rolled back.
 - `held-commit-cascades-success` — Downstream sees held work's success signal only when the work commits, never at the provisional held moment.
@@ -87,7 +87,6 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `operator-onboarding` — New operator runs first dev-loop end-to-end.
 - `peer-auth-mtls-mutual` — Operator enables mutual TLS on internal service traffic.
 - `peer-tls-enforced` — Operator enforces TLS on peer connections.
-- `pg-fanout-list-array` — Template author fans out over an upstream list against the postgres store.
 - `portable-template-across-modes` — The same template file runs in both modes without edits.
 - `producer-class-routing` — Template author routes producer-declared error classes.
 - `producer-error-passthrough` — Operator reads producer errors in API responses.
@@ -125,5 +124,6 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `validation-warnings-surfaced` — Template author sees validator advisories in responses.
 - `verifier-http` — Template author validates via external check service.
 - `verifier-severity-partition` — Template author distinguishes warning vs error.
+- `verifier-shape-checks` — Template author validates data shape with built-in checks.
 - `work-completed-emitted` — Operator pairs every work-started event with a work-completed event.
 

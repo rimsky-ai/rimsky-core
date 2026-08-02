@@ -1,4 +1,4 @@
-# fanout-pg-list-array template — STORY-pg-fanout-list-array proof.
+# fanout-pg-list-array template — STORY-fanout-list-array proof, postgres backend.
 #
 # Same shape as the filesystem claim-producer list-array story, but the
 # parent claim is held against the bundled postgres claim producer. The
@@ -20,7 +20,7 @@
 name: fanout-pg-list-array
 version: "1"
 description: |
-  STORY-pg-fanout-list-array proof: a fan-out node whose parent claim
+  STORY-fanout-list-array proof, postgres backend: a fan-out node whose parent claim
   is postgres claim-producer-backed; partition_request is a list of items
   substituted from an operator-posted message; three children
   dispatch, each carrying its own partition_key and per-sub-claim

@@ -4,11 +4,14 @@
 package node
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func TestValidateHolds_FromUndeclared(t *testing.T) {
@@ -514,38 +517,43 @@ func TestValidateFanOut_RejectsThresholdWithoutMaxFailures(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.max_failures")
 }
 
-func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:    "demo",
-		Version: "1.0.0",
-		Nodes: []TemplateNodeDef{
-			{
-				Type:     "fan",
-				Executor: "handler.fan",
-				ClaimProducers: []NodeClaimProducerRef{
-					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
-				},
-				FanOut: &FanOutSpec{
-					Claim:            "items",
-					PartitionRequest: `{"list":[{"key":"a"}]}`,
-					ErrorPolicy: AggregationPolicy{
-						Kind: "carry_verbatim",
+func TestValidateFanOut_RejectsUnknownAggregationPolicyKind(t *testing.T) {
+	for _, kind := range []string{"carry_verbatim", "not_a_policy"} {
+		ts := &TemplateSpec{
+			Name:    "demo",
+			Version: "1.0.0",
+			Nodes: []TemplateNodeDef{
+				{
+					Type:     "fan",
+					Executor: "handler.fan",
+					ClaimProducers: []NodeClaimProducerRef{
+						{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
+					},
+					FanOut: &FanOutSpec{
+						Claim:            "items",
+						PartitionRequest: `{"list":[{"key":"a"}]}`,
+						ErrorPolicy: AggregationPolicy{
+							Kind: spec.AggregationKind(kind),
+						},
 					},
 				},
 			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.kind")
-	found := false
-	for _, e := range res.Errors {
-		if strings.HasPrefix(e.Msg, "carry_verbatim_requires_single_child:") {
-			found = true
-			require.Contains(t, e.Msg, `"fan"`, "rejection must name the violating node")
 		}
+		res := ValidateTemplate(ts, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownClaimProducers)})
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].fan_out.error_policy.kind")
+		found := false
+		for _, e := range res.Errors {
+			if strings.Contains(e.Msg, "is not valid (one of: strict, threshold, best_effort, first)") {
+				found = true
+				require.Contains(t, e.Msg, fmt.Sprintf("%q", kind),
+					"generic rejection must name the offending value")
+			}
+		}
+		require.True(t, found,
+			"kind %q must hit the generic unknown-value rejection and nothing value-specific, got %+v",
+			kind, res.Errors)
 	}
-	require.True(t, found, "expected carry_verbatim_requires_single_child rejection, got %+v", res.Errors)
 }
 
 func TestValidateFanOut_AcceptsDelegateCombo(t *testing.T) {

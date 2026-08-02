@@ -15,6 +15,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
+// @story: verifier-shape-checks
+// @story: verifier-severity-partition
 func TestVerifierSeverityPartition(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

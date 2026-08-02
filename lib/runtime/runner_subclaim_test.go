@@ -1095,7 +1095,7 @@ func TestAcquireSubClaims_RejectsNonJSONPayload(t *testing.T) {
 }
 
 // @story: sub-claim-payload-substitution
-// @story: fs-fanout-list-array
+// @story: fanout-list-array
 func TestReuseLinkedSubClaim_ChildRunAttachesWithoutReOpen(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

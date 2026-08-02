@@ -280,6 +280,7 @@ func (s *Subscriber) toEvent(r LineageRow) (Event, error) {
 	}
 }
 
+// @decision: lineage-subscriber-poller
 func (s *Subscriber) Run(ctx context.Context) {
 	t := time.NewTicker(s.cfg.PollInterval)
 	defer t.Stop()

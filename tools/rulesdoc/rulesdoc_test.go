@@ -12,6 +12,7 @@ import (
 )
 
 // @story: rules-doc-accuracy
+// @decision: doc-accuracy-gates
 func TestRulesDoc_CitedPathsExist(t *testing.T) {
 	root := repoRoot(t)
 	rulesPath := filepath.Join(root, ".claude", "rules", "rules.md")

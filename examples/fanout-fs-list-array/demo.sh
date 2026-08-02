@@ -2,7 +2,7 @@
 # Copyright © 2026 Fall Guy Consulting.
 # SPDX-License-Identifier: Apache-2.0
 
-# @story: fs-fanout-list-array
+# @story: fanout-list-array
 
 set -euo pipefail
 

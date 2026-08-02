@@ -1,4 +1,4 @@
-# Postgres claim-producer config for STORY-pg-fanout-list-array. The
+# Postgres claim-producer config for STORY-fanout-list-array. The
 # operator mounts this at /etc/store/config.yml when running the postgres
 # bundled claim-producer image; the items table schema and seed are
 # described in the demo.sh prerequisites.

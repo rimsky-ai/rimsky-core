@@ -290,6 +290,7 @@ func (s *Server) SplitScope(ctx context.Context, req *genv1.SplitScopeRequest) (
 	return &genv1.SplitScopeResponse{SubScopes: descs}, nil
 }
 
+// @decision: fanout-list-array-store-agnostic
 func (s *Server) splitListArrayPg(_ context.Context, parent parentClaimInfo, partitionRequest []byte) ([]*genv1.SubScopeDescriptor, error) {
 	req, err := listarray.Unmarshal(partitionRequest)
 	if err != nil {

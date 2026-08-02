@@ -18,6 +18,7 @@ const resolverDispatchFunc = "resolveDirectiveValueRaw"
 var docKindPattern = regexp.MustCompile(`\{\{(\w+)\.`)
 
 // @story: substitution-doc-accuracy
+// @decision: doc-accuracy-gates
 func TestSubstitutionDocMatchesResolverDispatchSet(t *testing.T) {
 	t.Parallel()
 
