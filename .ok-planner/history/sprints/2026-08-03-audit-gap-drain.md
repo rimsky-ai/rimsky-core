@@ -1,3 +1,7 @@
+---
+closed: 56387131
+---
+
 # Sprint: Audit gap drain
 
 ## Intent
