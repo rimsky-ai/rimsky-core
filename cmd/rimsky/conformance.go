@@ -121,10 +121,9 @@ func runConformanceExecutor(args []string) int {
 	timeout := fs.Duration("timeout", 30*time.Second, "per-scenario timeout")
 	checkObs := fs.Bool("check-observability", false, "additionally probe ExecutorObservability per spec §6")
 	retentionSec := fs.Int("retention-test-seconds", 0, "if >0, drive a canned dispatch then sleep this long and verify GetTrace returns evicted=true (spec §6 retention check)")
-	checkLifecycle := fs.Bool("check-lifecycle", false, "deprecated alias for `rimsky conformance lifecycle-subscriber`: probe LifecycleSubscriber six-RPC sanity instead of running executor scenarios")
 	callbackBind := fs.String("callback-bind", "127.0.0.1", "interface for the conformance callback receiver to bind (use 0.0.0.0 when the executor runs in a container)")
 	callbackHost := fs.String("callback-host", "", "host the executor should reach the callback receiver at (default: same as --callback-bind; for containerized executors set to host.docker.internal or a routable host IP)")
-	tlsMode := fs.String("tls", "off", "off|required — dial the executor with verified TLS against system roots (gRPC transport only; applies to the scenario suite, the observability probe, and the lifecycle probe alike)")
+	tlsMode := fs.String("tls", "off", "off|required — dial the executor with verified TLS against system roots (gRPC transport only; applies to the scenario suite and the observability probe alike)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -143,15 +142,6 @@ func runConformanceExecutor(args []string) int {
 	}
 
 	ctx := context.Background()
-
-	if *checkLifecycle {
-		if err := conformance.RunLifecycleCheck(ctx, *endpoint, *tlsMode, *timeout); err != nil {
-			fmt.Fprintf(os.Stderr, "lifecycle: %v\n", err)
-			return 1
-		}
-		fmt.Fprintln(os.Stdout, "lifecycle: ok")
-		return 0
-	}
 
 	ep := conformance.Endpoint{Transport: *transport, URL: *endpoint, TLS: *tlsMode}
 

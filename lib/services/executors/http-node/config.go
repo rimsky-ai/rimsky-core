@@ -26,13 +26,13 @@ type Opts struct {
 const DefaultErrorClassField = "error_class"
 
 func LoadOptsFromEnv() (Opts, error) {
-	opts := Opts{Host: envOr("RIMSKY_EXECUTOR_HTTP_NODE_HOST", "0.0.0.0")}
-	grpcPort, err := agentport.Resolve("RIMSKY_EXECUTOR_HTTP_NODE_PORT", 9091)
+	opts := Opts{Host: envOr("RIMSKY_EXECUTOR_HOST", "0.0.0.0")}
+	grpcPort, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", 9091)
 	if err != nil {
 		return Opts{}, err
 	}
 	opts.GRPCPort = grpcPort
-	if opts.HTTPPort, err = atoi(envOr("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT", strconv.Itoa(opts.GRPCPort+1)), "RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT"); err != nil {
+	if opts.HTTPPort, err = atoi(envOr("RIMSKY_EXECUTOR_PORT_HTTP", strconv.Itoa(opts.GRPCPort+1)), "RIMSKY_EXECUTOR_PORT_HTTP"); err != nil {
 		return Opts{}, err
 	}
 	if opts.MaxBodyBytes, err = atoi(envOr("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", "10485760"), "RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES"); err != nil {

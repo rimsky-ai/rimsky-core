@@ -16,12 +16,12 @@ type Opts struct {
 }
 
 func LoadOptsFromEnv() (Opts, error) {
-	port, err := agentport.Resolve("RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT", 9095)
+	port, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", 9095)
 	if err != nil {
 		return Opts{}, err
 	}
 	return Opts{
-		Host:     envOr("RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST", "0.0.0.0"),
+		Host:     envOr("RIMSKY_EXECUTOR_HOST", "0.0.0.0"),
 		Port:     port,
 		StubMode: os.Getenv("RIMSKY_EXECUTOR_STUB_MODE") == "1",
 	}, nil

@@ -40,12 +40,8 @@ func main() {
 
 	svc := NewSensorService(rimskyEndpoint, slogAdapter{l: slog.Default()})
 
-	svc.SetBackend("memory", NewMemoryLister())
-
-	// @story: sensor-object-store
-	if fsRoot := os.Getenv("RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT"); fsRoot != "" {
-		svc.SetBackend("filesystem", NewFilesystemLister(fsRoot))
-		slog.Info("sensor-object-store filesystem backend registered", "root", fsRoot)
+	for _, name := range registerBackendsFromEnv(svc) {
+		slog.Info("sensor-object-store backend registered", "backend", name)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -95,4 +91,19 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// @decision: object-store-watching-model
+// @story: sensor-object-store
+func registerBackendsFromEnv(svc *SensorService) []string {
+	var registered []string
+	if fsRoot := os.Getenv("RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT"); fsRoot != "" {
+		svc.SetBackend("filesystem", NewFilesystemLister(fsRoot))
+		registered = append(registered, "filesystem")
+	}
+	if os.Getenv("RIMSKY_SENSOR_OBJECT_STORE_ENABLE_MEMORY_BACKEND") == "1" {
+		svc.SetBackend("memory", NewMemoryLister())
+		registered = append(registered, "memory")
+	}
+	return registered
 }

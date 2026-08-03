@@ -12,7 +12,7 @@
 | `RIMSKY_AGENT_PORT` | `lib/runtime/hostagent/spawn.go` |
 | `RIMSKY_AGENT_REAP_GRACE_SEC` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_REGISTER_ACK_TIMEOUT_SEC` | `lib/runtime/hostagent/config.go` |
-| `RIMSKY_AGENT_ROUTING_LABEL` | `lib/runtime/hostagent/config.go` |
+| `RIMSKY_AGENT_ROUTING_LABEL` | `lib/runtime/hostagent/spawn.go` |
 | `RIMSKY_AGENT_STATUS_FILE` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_TLS` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_TLS_CA` | `lib/runtime/hostagent/config.go` |
@@ -27,6 +27,7 @@
 | `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_CONFIG` | `cmd/rimsky/cli/compose/run.go` |
 | `RIMSKY_CONTEXT` | `cmd/rimsky/cli/auth_login.go` |
+| `RIMSKY_CONTROL_API_CA` | `lib/protocols/enroll/trust.go` |
 | `RIMSKY_CONTROL_API_HOST` | `cmd/rimsky/cli/compose/run.go` |
 | `RIMSKY_CONTROL_API_PORT` | `cmd/rimsky/cli/compose/run.go` |
 | `RIMSKY_CONTROL_API_TOKEN` | `cmd/rimsky-host-agent-proxy/config.go` |
@@ -38,21 +39,14 @@
 | `RIMSKY_EXECUTOR_HOST` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST` | `lib/services/executors/http-node/config.go` |
 | `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` | `lib/services/executors/http-node/config.go` |
-| `RIMSKY_EXECUTOR_HTTP_NODE_HOST` | `lib/services/executors/http-node/config.go` |
 | `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL` | `lib/services/executors/http-node/config.go` |
-| `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT` | `lib/services/executors/http-node/config.go` |
 | `RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES` | `lib/services/executors/http-node/config.go` |
-| `RIMSKY_EXECUTOR_HTTP_NODE_PORT` | `lib/services/executors/http-node/config.go` |
 | `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_PORT_GRPC` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_PORT_HTTP` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_SILENCE_MS` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_STUB_MODE` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` | `lib/services/executors/claude-agent/opts.go` |
-| `RIMSKY_EXECUTOR_VERIFIER_HTTP_HOST` | `lib/services/executors/verifier-http/opts.go` |
-| `RIMSKY_EXECUTOR_VERIFIER_HTTP_PORT` | `lib/services/executors/verifier-http/opts.go` |
-| `RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST` | `lib/services/executors/verifier-shape-checks/opts.go` |
-| `RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT` | `lib/services/executors/verifier-shape-checks/opts.go` |
 | `RIMSKY_HOST_AGENT_PROXY_URL` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_LISTEN_ADDR` | `examples/atomic-staging-fs-producer/cmd/main.go` |
 | `RIMSKY_LOG_BINARY` | `cmd/internal/roleboot/roleboot.go` |
@@ -85,6 +79,7 @@
 | `RIMSKY_SENSOR_HTTP_HOST` | `lib/services/sensors/sensor-http/main.go` |
 | `RIMSKY_SENSOR_HTTP_PORT` | `lib/services/sensors/sensor-http/main.go` |
 | `RIMSKY_SENSOR_HTTP_STATE_DSN` | `lib/services/sensors/sensor-http/state_db.go` |
+| `RIMSKY_SENSOR_OBJECT_STORE_ENABLE_MEMORY_BACKEND` | `lib/services/sensors/sensor-object-store/main.go` |
 | `RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT` | `lib/services/sensors/sensor-object-store/main.go` |
 | `RIMSKY_SENSOR_OBJECT_STORE_HOST` | `lib/services/sensors/sensor-object-store/main.go` |
 | `RIMSKY_SENSOR_OBJECT_STORE_PORT` | `lib/services/sensors/sensor-object-store/main.go` |

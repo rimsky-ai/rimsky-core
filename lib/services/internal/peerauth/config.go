@@ -18,15 +18,17 @@ const (
 	EnvPeerAuth      = enroll.EnvPeerAuth
 	EnvControlAPIURL = enroll.EnvControlAPIURL
 	EnvAPIKey        = enroll.EnvAPIKey
+	EnvControlAPICA  = enroll.EnvControlAPICA
 )
 
 const DefaultRenewCheckInterval = time.Minute
 
 type Config struct {
-	Mode          string
-	ControlAPIURL string
-	APIKey        string
-	Label         string
+	Mode             string
+	ControlAPIURL    string
+	APIKey           string
+	Label            string
+	ControlAPICARoot string
 }
 
 func LoadConfigFromEnv(label string) (Config, error) {
@@ -39,10 +41,11 @@ func LoadConfigFromEnv(label string) (Config, error) {
 	}
 	controlURL := os.Getenv(EnvControlAPIURL)
 	return Config{
-		Mode:          mode,
-		ControlAPIURL: strings.TrimSpace(controlURL),
-		APIKey:        strings.TrimSpace(os.Getenv(EnvAPIKey)),
-		Label:         label,
+		Mode:             mode,
+		ControlAPIURL:    strings.TrimSpace(controlURL),
+		APIKey:           strings.TrimSpace(os.Getenv(EnvAPIKey)),
+		Label:            label,
+		ControlAPICARoot: strings.TrimSpace(os.Getenv(EnvControlAPICA)),
 	}, nil
 }
 
@@ -57,7 +60,11 @@ func Load(ctx context.Context, cfg Config, httpClient *http.Client, now func() t
 		return nil, fmt.Errorf("peerauth: %s=%s requires %s and %s to be set", EnvPeerAuth, enroll.PeerAuthMTLS, EnvControlAPIURL, EnvAPIKey)
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		var err error
+		httpClient, err = enrollHTTPClient(cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	id := &Identity{
 		mode: enroll.PeerAuthMTLS,
@@ -70,6 +77,31 @@ func Load(ctx context.Context, cfg Config, httpClient *http.Client, now func() t
 		return nil, fmt.Errorf("peerauth: initial enroll for %q failed (fail-closed): %w", cfg.Label, err)
 	}
 	return id, nil
+}
+
+const enrollHTTPTimeout = 30 * time.Second
+
+// @concept: peer-auth
+func enrollHTTPClient(cfg Config) (*http.Client, error) {
+	if !strings.HasPrefix(cfg.ControlAPIURL, "https://") {
+		if cfg.ControlAPICARoot != "" {
+			return nil, fmt.Errorf("peerauth: %s is set but %s=%q is not https — a pinned CA root cannot secure a plaintext enrollment hop",
+				EnvControlAPICA, EnvControlAPIURL, cfg.ControlAPIURL)
+		}
+		return &http.Client{Timeout: enrollHTTPTimeout}, nil
+	}
+	if cfg.ControlAPICARoot == "" {
+		return nil, fmt.Errorf("peerauth: %s=%q is https under %s=%s, so %s must name the deployment CA root PEM the control API's certificate is verified against — the api-key crosses this hop and an unverified server would receive it",
+			EnvControlAPIURL, cfg.ControlAPIURL, EnvPeerAuth, enroll.PeerAuthMTLS, EnvControlAPICA)
+	}
+	pool, err := enroll.CAPoolFromFile(cfg.ControlAPICARoot)
+	if err != nil {
+		return nil, fmt.Errorf("peerauth: %s: %w", EnvControlAPICA, err)
+	}
+	return &http.Client{
+		Timeout:   enrollHTTPTimeout,
+		Transport: &http.Transport{TLSClientConfig: enroll.PinnedTLSConfig(pool)},
+	}, nil
 }
 
 func LoadFromEnv(ctx context.Context, label string) (*Identity, error) {

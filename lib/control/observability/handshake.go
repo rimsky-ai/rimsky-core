@@ -263,6 +263,13 @@ func probeClaimProducerEntry(ctx context.Context, prober Prober, s PeerSpec, log
 	return entry
 }
 
+func (d *Discovery) Refresh(ctx context.Context, log *slog.Logger) {
+	if log == nil {
+		log = slog.Default()
+	}
+	d.refreshAll(ctx, log)
+}
+
 func (d *Discovery) RefreshLoop(ctx context.Context, interval time.Duration, log *slog.Logger) {
 	if interval <= 0 {
 		interval = 60 * time.Second

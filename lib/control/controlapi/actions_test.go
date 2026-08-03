@@ -246,6 +246,8 @@ func TestV1Registry(t *testing.T) {
 		// @story: debug-channel
 		"instance:debug-override": true,
 		"service:enroll":          true,
+		// @decision: node-state-retired-from-operator-api
+		"run:read": true,
 	}
 	for _, a := range surplus {
 		if !allowed[a] {
@@ -302,6 +304,7 @@ func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
 		composeOriginAction:       0,
 		"mcp:read":                3,
 		"service:enroll":          1,
+		"run:read":                1,
 	}
 	got := r.AllActions()
 	if len(got) != len(wantRouteCount) {

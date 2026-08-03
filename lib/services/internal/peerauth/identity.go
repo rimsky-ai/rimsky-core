@@ -101,15 +101,14 @@ func (id *Identity) ServerTLSConfig() *tls.Config {
 	}
 }
 
+// @concept: peer-auth
 func (id *Identity) ClientTLSConfig() *tls.Config {
 	if !id.Enabled() {
 		return nil
 	}
-	return &tls.Config{
-		MinVersion:           tls.VersionTLS12,
-		GetClientCertificate: id.getClientCertificate,
-		RootCAs:              id.pool(),
-	}
+	cfg := enroll.PinnedTLSConfig(id.pool())
+	cfg.GetClientCertificate = id.getClientCertificate
+	return cfg
 }
 
 func (id *Identity) GRPCServerOptions() []grpc.ServerOption {

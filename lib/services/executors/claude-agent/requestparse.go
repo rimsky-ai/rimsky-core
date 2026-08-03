@@ -16,17 +16,6 @@ func SessionTokenFromScratch(scratch []byte) string {
 	return string(scratch)
 }
 
-func SessionTokenFromScratchBase64(scratch string) string {
-	if scratch == "" {
-		return ""
-	}
-	decoded, err := base64.StdEncoding.DecodeString(scratch)
-	if err != nil {
-		return ""
-	}
-	return string(decoded)
-}
-
 func SessionTokenToScratchBase64(token string) string {
 	return base64.StdEncoding.EncodeToString([]byte(token))
 }
@@ -84,26 +73,6 @@ func unwrapClaimProducersProto(claimProducers map[string]*genv1.ClaimProducerHan
 		}
 		out[k] = map[string]any{
 			"kind":   v.GetKind(),
-			"handle": handle,
-		}
-	}
-	return out
-}
-
-func unwrapClaimProducersJSON(claimProducers map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, v := range claimProducers {
-		entry, ok := v.(map[string]any)
-		if !ok {
-			out[k] = v
-			continue
-		}
-		handle, _ := entry["handle"].(map[string]any)
-		if handle == nil {
-			handle = map[string]any{}
-		}
-		out[k] = map[string]any{
-			"kind":   entry["kind"],
 			"handle": handle,
 		}
 	}

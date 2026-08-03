@@ -15,6 +15,8 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 )
 
 const (
@@ -58,6 +60,8 @@ func TLSClientConfig() *tls.Config {
 	return clientTLSConfig()
 }
 
+// @concept: peer-auth
+// @decision: peer-auth-mtls
 func clientTLSConfig() *tls.Config {
 	tlsRootCAsMu.RLock()
 	pool := tlsRootCAs
@@ -65,6 +69,9 @@ func clientTLSConfig() *tls.Config {
 	cfg := &tls.Config{
 		RootCAs:    pool,
 		MinVersion: tls.VersionTLS12,
+	}
+	if pool != nil {
+		cfg.ServerName = enroll.PeerServerName
 	}
 	clientIdentityMu.RLock()
 	h := clientIdentity

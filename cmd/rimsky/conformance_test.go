@@ -110,7 +110,7 @@ var conformanceSubcommands = []struct {
 	{
 		name:    "executor",
 		run:     runConformanceExecutor,
-		flags:   []string{"endpoint", "transport", "allow-live", "scenarios", "skip", "timeout", "check-observability", "retention-test-seconds", "check-lifecycle", "callback-bind", "callback-host", "tls"},
+		flags:   []string{"endpoint", "transport", "allow-live", "scenarios", "skip", "timeout", "check-observability", "retention-test-seconds", "callback-bind", "callback-host", "tls"},
 		reqMsg:  "--endpoint required",
 		reqExit: 2,
 	},
@@ -185,6 +185,31 @@ func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {
 				}
 				if !containsString(sc.flags, name) {
 					t.Errorf("subcommand %q: undocumented flag -%s present in usage (update the test table or the handler)", sc.name, name)
+				}
+			}
+		})
+	}
+}
+
+// @concept: conformance
+func TestNoProtocolSuiteHangsOffAnotherProtocolsSubcommand(t *testing.T) {
+	protocols := []string{"executor", "claim-producer", "publisher", "validation", "data-processing", "blob-backend", "lifecycle-subscriber"}
+	for _, sc := range conformanceSubcommands {
+		t.Run(sc.name, func(t *testing.T) {
+			_, usage := runCapt(t, sc.run, []string{"-h"})
+			for _, line := range strings.Split(usage, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if !strings.HasPrefix(trimmed, "-") {
+					continue
+				}
+				name := strings.SplitN(strings.TrimPrefix(trimmed, "-"), " ", 2)[0]
+				for _, p := range protocols {
+					if p == sc.name {
+						continue
+					}
+					if strings.Contains(name, p) {
+						t.Errorf("subcommand %q registers flag -%s naming the %q protocol: each protocol's suite is reachable through its own subcommand only", sc.name, name, p)
+					}
 				}
 			}
 		})

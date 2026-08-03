@@ -661,6 +661,15 @@ func (q *queueImpl) CountParked(ctx context.Context) (int, error) {
 }
 
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
+	return q.getDispatchRow(ctx, id, ` AND d.state IN (`+inFlightNodeRunStates+`)`)
+}
+
+// @decision: node-state-retired-from-operator-api
+func (q *queueImpl) GetAnyByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
+	return q.getDispatchRow(ctx, id, "")
+}
+
+func (q *queueImpl) getDispatchRow(ctx context.Context, id shared.UUID, stateFilter string) (*persistence.DispatchRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.state, d.executor_name, d.required_claim_producers, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
@@ -668,8 +677,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds,
 	        d.async_ack_principal, d.async_callback_url
 		   FROM rimsky_node_runs d
-		  WHERE d.id = ?
-		    AND d.state IN (`+inFlightNodeRunStates+`)`, id.String(),
+		  WHERE d.id = ?`+stateFilter, id.String(),
 	)
 	r, err := scanDispatchRow(row)
 	if err != nil {

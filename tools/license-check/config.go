@@ -38,6 +38,7 @@ type licensingConfig struct {
 	apachePrefixes []string
 	agplPrefixes   []string
 	exemptEntries  []string
+	thirdParty     thirdPartyLicenses
 }
 
 func loadLicensingYAML(root string) (*licensingConfig, error) {
@@ -46,17 +47,26 @@ func loadLicensingYAML(root string) (*licensingConfig, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var doc struct {
-		Apache []string `yaml:"apache"`
-		AGPL   []string `yaml:"agpl"`
-		Exempt []string `yaml:"exempt"`
+		Apache     []string `yaml:"apache"`
+		AGPL       []string `yaml:"agpl"`
+		Exempt     []string `yaml:"exempt"`
+		ThirdParty struct {
+			PermittedLicenses []string          `yaml:"permitted_licenses"`
+			Modules           map[string]string `yaml:"modules"`
+		} `yaml:"third_party"`
 	}
 	if err := configload.LoadFile(path, &doc); err != nil {
 		return nil, err
+	}
+	tp, err := newThirdPartyLicenses(doc.ThirdParty.PermittedLicenses, doc.ThirdParty.Modules)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return &licensingConfig{
 		apachePrefixes: normalizePrefixes(doc.Apache),
 		agplPrefixes:   normalizePrefixes(doc.AGPL),
 		exemptEntries:  normalizePrefixes(doc.Exempt),
+		thirdParty:     tp,
 	}, nil
 }
 

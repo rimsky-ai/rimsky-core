@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -72,7 +73,7 @@ func (c *CA) Leaf(dnsName string, notAfter time.Time) (certPEM, keyPEM string, e
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		DNSNames:     []string{dnsName},
+		DNSNames:     []string{dnsName, enroll.PeerServerName},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.cert, &key.PublicKey, c.key)
 	if err != nil {
@@ -87,8 +88,27 @@ func (c *CA) Leaf(dnsName string, notAfter time.Time) (certPEM, keyPEM string, e
 	return certPEM, keyPEM, nil
 }
 
+func (c *CA) EnrollServerTLS(dnsName, apiKey, serverPrincipal string) (*httptest.Server, error) {
+	certPEM, keyPEM, err := c.Leaf(serverPrincipal, time.Now().Add(time.Hour))
+	if err != nil {
+		return nil, err
+	}
+	pair, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		return nil, err
+	}
+	srv := httptest.NewUnstartedServer(c.enrollHandler(dnsName, apiKey))
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
+	srv.StartTLS()
+	return srv, nil
+}
+
 func (c *CA) EnrollServer(dnsName, apiKey string) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(c.enrollHandler(dnsName, apiKey))
+}
+
+func (c *CA) enrollHandler(dnsName, apiKey string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != enroll.Path {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -109,5 +129,5 @@ func (c *CA) EnrollServer(dnsName, apiKey string) *httptest.Server {
 			CARootPEM: c.rootPEM,
 			NotAfter:  time.Now().Add(time.Hour),
 		})
-	}))
+	}
 }

@@ -139,7 +139,7 @@ func runMigrateIfOwned(plan LaunchPlan, sigCh <-chan os.Signal) {
 	select {
 	case sig := <-sigCh:
 		slog.Info("received signal during migrate; shutting down", "signal", sig.String())
-		shutdownChild(cmd, exitCh)
+		shutdownChild(cmd, exitCh, sigCh)
 		os.Exit(0)
 	case ce := <-exitCh:
 		if ce.err != nil {
@@ -176,17 +176,22 @@ func runUnified(sigCh <-chan os.Signal) {
 		os.Exit(1)
 	}
 
+	drain := func(code int) {
+		drained := make(chan struct{})
+		defer close(drained)
+		installHardExitOnSecondSignal(sigCh, drained, nil)
+		stack.Drain(context.Background(), shutdownDeadline)
+		closeDriver()
+		os.Exit(code)
+	}
+
 	select {
 	case sig := <-sigCh:
 		slog.Info("received signal; shutting down", "signal", sig.String())
-		stack.Drain(context.Background(), shutdownDeadline)
-		closeDriver()
-		os.Exit(0)
+		drain(0)
 	case rf := <-stack.FailCh():
 		slog.Error("role failed; shutting down", "role", rf.Role, "err", rf.Err)
-		stack.Drain(context.Background(), shutdownDeadline)
-		closeDriver()
-		os.Exit(1)
+		drain(1)
 	}
 }
 
@@ -200,7 +205,7 @@ func runSingleRole(name string, sigCh <-chan os.Signal) {
 	select {
 	case sig := <-sigCh:
 		slog.Info("received signal; shutting down", "signal", sig.String())
-		shutdownChild(cmd, exitCh)
+		shutdownChild(cmd, exitCh, sigCh)
 		os.Exit(0)
 	case ce := <-exitCh:
 		if ce.err == nil {
@@ -236,16 +241,31 @@ func spawn(binary string, baseEnv []string) (*exec.Cmd, chan childExit, error) {
 	return c, exitCh, nil
 }
 
-func shutdownChild(cmd *exec.Cmd, exitCh chan childExit) {
+// @decision: graceful-shutdown
+func shutdownChild(cmd *exec.Cmd, exitCh chan childExit, sigCh <-chan os.Signal) {
 	if cmd.Process == nil {
 		return
 	}
+	drained := make(chan struct{})
+	defer close(drained)
+	installHardExitOnSecondSignal(sigCh, drained, cmd.Process)
+
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-exitCh:
 	case <-time.After(shutdownDeadline):
 		_ = cmd.Process.Kill()
 	}
+}
+
+// @decision: graceful-shutdown
+func installHardExitOnSecondSignal(sigCh <-chan os.Signal, drained <-chan struct{}, child *os.Process) {
+	shared.InstallSecondSignalHardExit(sigCh, drained, shared.NewSlogLogger(slog.Default()), func() {
+		if child != nil {
+			_ = child.Kill()
+		}
+		os.Exit(shared.HardExitCode)
+	})
 }
 
 func envWithoutProcessRole() []string {

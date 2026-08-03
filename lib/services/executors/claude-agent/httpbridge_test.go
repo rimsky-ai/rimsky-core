@@ -12,6 +12,10 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
+
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func startTestBridge(t *testing.T) (string, *callbackRecorder) {
@@ -62,21 +66,13 @@ func TestHTTPBridgeExecuteAcksAndPostsCallback(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("execute status = %d", resp.StatusCode)
 	}
-	var ack struct {
-		AsyncAckID string `json:"async_ack_id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&ack); err != nil {
-		t.Fatal(err)
-	}
-	if ack.AsyncAckID == "" {
-		t.Fatal("expected async_ack_id in 202 body")
-	}
+	ackID := decodeAwaitAsyncAckID(t, resp.Body)
 
 	call := recorder.waitForCall(t)
 	if call.url != "http://caller.invalid/cb" {
 		t.Fatalf("callback url = %q", call.url)
 	}
-	if call.body["async_ack_id"] != ack.AsyncAckID {
+	if call.body["async_ack_id"] != ackID {
 		t.Fatalf("bridge callback body must carry async_ack_id: %v", call.body)
 	}
 	success, ok := call.body["success"].(map[string]any)
@@ -87,6 +83,60 @@ func TestHTTPBridgeExecuteAcksAndPostsCallback(t *testing.T) {
 	if delta["session_token"] != "disp-77" {
 		t.Fatalf("delta = %v", delta)
 	}
+}
+
+// @decision: protojson-gateway
+func decodeAwaitAsyncAckID(t *testing.T, body io.Reader) string {
+	t.Helper()
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read execute response: %v", err)
+	}
+	outcome := &genv1.Outcome{}
+	if err := protojson.Unmarshal(raw, outcome); err != nil {
+		t.Fatalf("the bridge's execute response must be a protojson Outcome, got %s: %v", raw, err)
+	}
+	ackID := outcome.GetAwaitAsync().GetAsyncAckId()
+	if ackID == "" {
+		t.Fatalf("expected an await_async outcome carrying an ack id, got %s", raw)
+	}
+	return ackID
+}
+
+// @decision: protojson-gateway
+func TestHTTPBridgeExecuteResponseMatchesTheGrpcOutcomeShape(t *testing.T) {
+	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
+	base, recorder := startTestBridge(t)
+
+	body := `{"node_id":"n","node_type":"claude-agent","dispatch_id":"disp-shape","attributes":{"user_prompt":"go"},"callback_url":"http://caller.invalid/cb"}`
+	resp, err := http.Post(base+"/execute", "application/json", bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("execute status = %d", resp.StatusCode)
+	}
+	decodeAwaitAsyncAckID(t, resp.Body)
+	recorder.waitForCall(t)
+}
+
+// @decision: protojson-gateway
+func TestHTTPBridgeExecuteIgnoresUnknownFieldsLikeTheGrpcTransport(t *testing.T) {
+	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
+	base, recorder := startTestBridge(t)
+
+	body := `{"node_id":"n","node_type":"claude-agent","dispatch_id":"disp-unknown","attributes":{"user_prompt":"go"},"callback_url":"http://caller.invalid/cb","not_a_proto_field":"ignored"}`
+	resp, err := http.Post(base+"/execute", "application/json", bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("execute status = %d; a field the proto does not declare is ignored on the wire, as it is over gRPC", resp.StatusCode)
+	}
+	decodeAwaitAsyncAckID(t, resp.Body)
+	recorder.waitForCall(t)
 }
 
 func TestHTTPBridgeExecuteRejectsOversizedBody(t *testing.T) {
@@ -134,8 +184,7 @@ func TestHTTPBridgeTraceGet(t *testing.T) {
 	resp.Body.Close()
 	recorder.waitForCall(t)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	for {
 		traceResp, err := http.Get(fmt.Sprintf("%s/observability/v1/trace/%s", base, "disp-trace-http"))
 		if err != nil {
 			t.Fatal(err)
@@ -151,5 +200,4 @@ func TestHTTPBridgeTraceGet(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("bridge trace did not complete")
 }

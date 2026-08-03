@@ -259,9 +259,9 @@ func startHttpNodeBinary(t *testing.T, binary string, errorClassField string) st
 	addr := fmt.Sprintf("127.0.0.1:%d", grpcPort)
 	cmd := exec.Command(binary)
 	cmd.Env = append(os.Environ(),
-		"RIMSKY_EXECUTOR_HTTP_NODE_HOST=127.0.0.1",
-		fmt.Sprintf("RIMSKY_EXECUTOR_HTTP_NODE_PORT=%d", grpcPort),
-		fmt.Sprintf("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT=%d", httpPort),
+		"RIMSKY_EXECUTOR_HOST=127.0.0.1",
+		fmt.Sprintf("RIMSKY_EXECUTOR_PORT_GRPC=%d", grpcPort),
+		fmt.Sprintf("RIMSKY_EXECUTOR_PORT_HTTP=%d", httpPort),
 		"RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD="+errorClassField,
 		"RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST=127.0.0.0/8",
 	)

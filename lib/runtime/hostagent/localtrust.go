@@ -7,7 +7,6 @@ package hostagent
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"time"
 
@@ -64,34 +63,10 @@ func (lt *localTrust) callbackServerTLSConfig() *tls.Config {
 
 func (lt *localTrust) dialChildTLSConfig() *tls.Config {
 	return &tls.Config{
-		MinVersion:            tls.VersionTLS12,
-		Certificates:          []tls.Certificate{lt.agentCert},
-		NextProtos:            []string{"h2"},
-		InsecureSkipVerify:    true,
-		VerifyPeerCertificate: verifyChildAgainstPool(lt.caPool),
-	}
-}
-
-func verifyChildAgainstPool(pool *x509.CertPool) func([][]byte, [][]*x509.Certificate) error {
-	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-		if len(rawCerts) == 0 {
-			return errors.New("hostagent: child presented no certificate")
-		}
-		leaf, err := x509.ParseCertificate(rawCerts[0])
-		if err != nil {
-			return fmt.Errorf("hostagent: parse child leaf: %w", err)
-		}
-		opts := x509.VerifyOptions{Roots: pool, Intermediates: x509.NewCertPool()}
-		for _, der := range rawCerts[1:] {
-			inter, interErr := x509.ParseCertificate(der)
-			if interErr != nil {
-				return fmt.Errorf("hostagent: parse child intermediate: %w", interErr)
-			}
-			opts.Intermediates.AddCert(inter)
-		}
-		if _, err := leaf.Verify(opts); err != nil {
-			return fmt.Errorf("hostagent: child cert not issued by local CA: %w", err)
-		}
-		return nil
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{lt.agentCert},
+		NextProtos:   []string{"h2"},
+		RootCAs:      lt.caPool,
+		ServerName:   enroll.PeerServerName,
 	}
 }

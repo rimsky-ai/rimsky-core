@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
@@ -35,7 +36,8 @@ func (tlsProofProducer) Capabilities(context.Context, *genv1.CapabilitiesRequest
 	}, nil
 }
 
-func selfSignedLocalhostCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
+// @decision: peer-auth-mtls
+func selfSignedPeerCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -49,7 +51,7 @@ func selfSignedLocalhostCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
-		DNSNames:              []string{"localhost"},
+		DNSNames:              []string{"localhost", enroll.PeerServerName},
 		IsCA:                  true,
 		BasicConstraintsValid: true,
 	}
@@ -87,7 +89,7 @@ func serveStubProducer(t *testing.T, cert *tls.Certificate) string {
 }
 
 func TestPeerTLS_Required_VerifiedTLSEndToEnd(t *testing.T) {
-	cert, pool := selfSignedLocalhostCert(t)
+	cert, pool := selfSignedPeerCert(t)
 	addr := serveStubProducer(t, &cert)
 
 	peer.SetTLSRootCAsForTesting(pool)

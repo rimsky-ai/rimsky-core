@@ -34,13 +34,18 @@ func (h *RegistryHook) IncInvalidate(sourceKind string) {
 	h.reg.Invalidates.WithLabelValues(sourceKind).Inc()
 }
 
+const (
+	acquirerKindProducer  = "producer"
+	acquirerKindNamedLock = "named_lock"
+)
+
 func (h *RegistryHook) IncClaimAcquisition(producer, intent string) {
-	h.reg.ClaimAcquisitions.WithLabelValues(producer, intent).Inc()
+	h.reg.ClaimAcquisitions.WithLabelValues(acquirerKindProducer, producer, intent).Inc()
 }
 
 // @decision: named-lock-metric
 func (h *RegistryHook) IncNamedLockAcquisition(lockName, intent string) {
-	h.reg.NamedLockAcquisitions.WithLabelValues(lockName, intent).Inc()
+	h.reg.ClaimAcquisitions.WithLabelValues(acquirerKindNamedLock, lockName, intent).Inc()
 }
 
 func (h *RegistryHook) ObserveDispatchLatency(executor string, seconds float64) {

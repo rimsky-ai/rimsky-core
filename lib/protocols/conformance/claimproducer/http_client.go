@@ -6,7 +6,6 @@ package claimproducer
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,10 +36,11 @@ func NewHTTPBridgeClaimProducer(endpoint string) *HTTPBridgeClaimProducer {
 
 func (p *HTTPBridgeClaimProducer) Name() string { return "conformance-target" }
 
-func (p *HTTPBridgeClaimProducer) call(ctx context.Context, verb string, reqBody any, respMsg proto.Message) error {
+// @decision: protojson-gateway
+func (p *HTTPBridgeClaimProducer) call(ctx context.Context, verb string, reqMsg proto.Message, respMsg proto.Message) error {
 	var bodyBytes []byte
-	if reqBody != nil {
-		b, err := json.Marshal(reqBody)
+	if reqMsg != nil {
+		b, err := protojson.Marshal(reqMsg)
 		if err != nil {
 			return fmt.Errorf("http bridge %s: marshal request: %w", verb, err)
 		}
@@ -82,70 +82,47 @@ func (p *HTTPBridgeClaimProducer) Capabilities(ctx context.Context) (claimproduc
 	return serverkit.ClaimProducerCapabilitiesFromProto(&resp)
 }
 
-type httpOpenBody struct {
-	ClaimID      string `json:"claim_id"`
-	ProducerName string `json:"producer_name"`
-	Selector     string `json:"selector"`
-	Intent       string `json:"intent"`
-	Alias        string `json:"alias"`
-	TemplateID   string `json:"template_id"`
-	InstanceID   string `json:"instance_id"`
-	RunScopeID   string `json:"run_scope_id,omitempty"`
-}
-
-type httpActionBody struct {
-	ClaimID    string `json:"claim_id"`
-	Scope      []byte `json:"scope"`
-	Address    []byte `json:"address"`
-	LeaseToken string `json:"lease_token,omitempty"`
-}
-
-type httpSplitScopeBody struct {
-	ClaimHandleID    string `json:"claim_handle_id"`
-	PartitionRequest []byte `json:"partition_request"`
-}
-
 func (p *HTTPBridgeClaimProducer) Open(ctx context.Context, claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
-	body := httpOpenBody{
-		ClaimID:      string(claimID),
+	req := &genv1.OpenRequest{
+		ClaimId:      string(claimID),
 		ProducerName: spec.ProducerName,
 		Selector:     spec.Selector,
 		Intent:       string(spec.Intent),
 		Alias:        spec.Alias,
-		TemplateID:   spec.TemplateID,
-		InstanceID:   spec.InstanceID,
-		RunScopeID:   spec.RunScopeID,
+		TemplateId:   spec.TemplateID,
+		InstanceId:   spec.InstanceID,
+		RunScopeId:   spec.RunScopeID,
 	}
 	var resp genv1.OpenResponse
-	if err := p.call(ctx, "open", body, &resp); err != nil {
+	if err := p.call(ctx, "open", req, &resp); err != nil {
 		return claimproducer.OpenOutcome{}, err
 	}
 	return serverkit.OpenOutcomeFromProto(&resp)
 }
 
 func (p *HTTPBridgeClaimProducer) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) (claimproducer.CommitResult, error) {
-	body := httpActionBody{ClaimID: string(claimID), Scope: scope, Address: address, LeaseToken: leaseToken}
+	req := &genv1.CommitRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address, LeaseToken: leaseToken}
 	var resp genv1.CommitResponse
-	if err := p.call(ctx, "commit", body, &resp); err != nil {
+	if err := p.call(ctx, "commit", req, &resp); err != nil {
 		return claimproducer.CommitResult{}, err
 	}
 	return serverkit.CommitResultFromProto(&resp), nil
 }
 
 func (p *HTTPBridgeClaimProducer) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
-	body := httpActionBody{ClaimID: string(claimID), Scope: scope, Address: address, LeaseToken: leaseToken}
-	return p.call(ctx, "abandon", body, &genv1.AbandonResponse{})
+	req := &genv1.AbandonRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address, LeaseToken: leaseToken}
+	return p.call(ctx, "abandon", req, &genv1.AbandonResponse{})
 }
 
 func (p *HTTPBridgeClaimProducer) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
-	body := httpActionBody{ClaimID: string(claimID), Scope: scope, Address: address, LeaseToken: leaseToken}
-	return p.call(ctx, "release", body, &genv1.ReleaseResponse{})
+	req := &genv1.ReleaseRequest{ClaimId: string(claimID), ClaimScope: scope, Address: address, LeaseToken: leaseToken}
+	return p.call(ctx, "release", req, &genv1.ReleaseResponse{})
 }
 
 func (p *HTTPBridgeClaimProducer) SplitScope(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
-	body := httpSplitScopeBody{ClaimHandleID: req.ClaimHandleID, PartitionRequest: req.PartitionRequest}
+	wire := &genv1.SplitScopeRequest{ClaimHandleId: req.ClaimHandleID, PartitionRequest: req.PartitionRequest}
 	var resp genv1.SplitScopeResponse
-	if err := p.call(ctx, "split_scope", body, &resp); err != nil {
+	if err := p.call(ctx, "split_scope", wire, &resp); err != nil {
 		return claimproducer.SplitClaimScopeResponse{}, err
 	}
 	return serverkit.SplitScopeResponseFromProto(&resp), nil

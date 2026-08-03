@@ -115,6 +115,7 @@ func NewApp(deps AppDeps) http.Handler {
 				registerBreakpointsRoutes(rrr, deps)
 				registerDebugOverrideRoutes(rrr, deps)
 				registerNodesRoutes(rrr, deps)
+				registerRunsRoutes(rrr, deps)
 				registerEventsRoutes(rrr, deps)
 				registerAuditRoutes(rrr, deps)
 				registerClaimsRoutes(rrr, deps)

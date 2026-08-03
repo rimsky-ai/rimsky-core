@@ -188,14 +188,16 @@ func tryAcquireBatch(
 			}
 		}
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: events.KindWorkStarted(), Payload: map[string]any{
-					"supervisor_id": args.SupervisorID,
-					"dispatch_id":   acq.NodeRunID.String(),
-				},
-			}, tx); err != nil {
-				return err
+			if !resumesStaleRecoveredDispatch(acq) {
+				if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+					NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+					Kind: events.KindWorkStarted(), Payload: map[string]any{
+						"supervisor_id": args.SupervisorID,
+						"dispatch_id":   acq.NodeRunID.String(),
+					},
+				}, tx); err != nil {
+					return err
+				}
 			}
 			for _, lk := range acq.Locks {
 				if err := emitLockAcquired(ctx, args, acq, lk, tx); err != nil {
@@ -212,6 +214,13 @@ func tryAcquireBatch(
 		return acq, true, nil
 	}
 	return acquisition{}, false, nil
+}
+
+// @story: work-completed-emitted
+// @decision: prior-stale-recovery-rename
+func resumesStaleRecoveredDispatch(acq acquisition) bool {
+	return acq.PriorDispatchDisposition == "stale_recovery" &&
+		acq.PriorNodeRunID != nil && *acq.PriorNodeRunID == acq.NodeRunID
 }
 
 // @decision: in-place-retry

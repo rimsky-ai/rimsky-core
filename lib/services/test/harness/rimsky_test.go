@@ -58,3 +58,50 @@ func TestWritePeerBlocks_QuotesNamesAndTokensForYAMLSafety(t *testing.T) {
 		t.Errorf("named_locks key did not round-trip: %+v", locks)
 	}
 }
+
+// @decision: peer-auth-mtls
+// @story: peer-auth-mtls-mutual
+func TestWritePeerBlocks_LeavesExecutorTLSToThePeerAuthDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		peerAuthMTLS bool
+		override     string
+		wantKeyGone  bool
+		wantValue    string
+	}{
+		{name: "mtls with no override leaves tls unset so the flip implies required", peerAuthMTLS: true, wantKeyGone: true},
+		{name: "default posture leaves tls unset so the config default off applies", wantKeyGone: true},
+		{name: "an explicit override survives the flip", peerAuthMTLS: true, override: "off", wantValue: "off"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cb := &configBuilder{
+				claimProducers: map[string]producerCfg{},
+				publishers:     map[string]publisherCfg{},
+				namedLocks:     map[string]int{},
+				peerAuthMTLS:   tc.peerAuthMTLS,
+				executors: map[string]executorCfg{
+					"exec": {endpoint: "exec:9091", transport: "grpc", tlsOverride: tc.override},
+				},
+			}
+			var b strings.Builder
+			writePeerBlocks(&b, cb)
+			var doc map[string]any
+			if err := yaml.Unmarshal([]byte(b.String()), &doc); err != nil {
+				t.Fatalf("rendered config is not valid YAML: %v\n%s", err, b.String())
+			}
+			execs, _ := doc["executors"].(map[string]any)
+			entry, _ := execs["exec"].(map[string]any)
+			got, present := entry["tls"]
+			if tc.wantKeyGone {
+				if present {
+					t.Fatalf("tls = %v, want the key absent — hardcoding it here would override the very "+
+						"peer_auth default the harness exists to exercise\n%s", got, b.String())
+				}
+				return
+			}
+			if got != tc.wantValue {
+				t.Fatalf("tls = %v, want %q", got, tc.wantValue)
+			}
+		})
+	}
+}

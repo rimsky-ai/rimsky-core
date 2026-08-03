@@ -23,8 +23,8 @@ func StartVerifierShapeChecksOnNetwork(ctx context.Context, t testing.TB, networ
 	c, err := runWithRetry(ctx, ImageRef(verifierShapeChecksImage),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),
 		testcontainers.WithEnv(map[string]string{
-			"RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_HOST": "0.0.0.0",
-			"RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT": "9095",
+			"RIMSKY_EXECUTOR_HOST":      "0.0.0.0",
+			"RIMSKY_EXECUTOR_PORT_GRPC": "9095",
 		}),
 		testcontainers.WithExposedPorts("9095/tcp"),
 		testcontainers.WithWaitStrategy(

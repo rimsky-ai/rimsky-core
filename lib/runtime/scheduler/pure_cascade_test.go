@@ -78,6 +78,10 @@ func (f *fakeQueue) CountLive(_ context.Context, _ persistence.DispatchListFilte
 func (f *fakeQueue) GetByID(_ context.Context, _ shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
+
+func (f *fakeQueue) GetAnyByID(_ context.Context, _ shared.UUID) (*persistence.DispatchRow, error) {
+	return nil, nil
+}
 func (f *fakeQueue) GetInFlightRunForNode(_ context.Context, _ shared.UUID, _ shared.UUID, _ persistence.Tx) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
 }

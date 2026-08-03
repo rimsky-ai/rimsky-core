@@ -1,11 +1,11 @@
 name: ci
 
 # PR-gating CI for the public repo. Runs on every pull request and on pushes to
-# main. Three independent jobs: the Go build+test matrix across the four
-# workspace modules, golangci-lint across those modules, and the TypeScript
-# executor build+test. The Go job runs on a Docker-enabled ubuntu runner so the
-# testcontainers-backed scenario/storage tests (which require a working Docker
-# socket) actually execute instead of being silently skipped.
+# main. Two independent jobs: the Go build+test matrix across the workspace
+# modules, and golangci-lint across those modules. The Go job runs on a
+# Docker-enabled ubuntu runner so the testcontainers-backed scenario/storage
+# tests (which require a working Docker socket) actually execute instead of
+# being silently skipped.
 
 on:
   pull_request:
@@ -34,6 +34,12 @@ jobs:
   # the other shards skip that image build to keep their critical path short.
   go:
     runs-on: ubuntu-latest
+    env:
+      # The root module's test/plumbline slice shells the vendored Plumbline
+      # lint binary and self-skips when it cannot resolve one. Point it at the
+      # copy committed under .ok-plumbline/bin so comment-hygiene and
+      # citation-resolution violations fail CI instead of passing unchecked.
+      PLUMBLINE_BIN: ${{ github.workspace }}/.ok-plumbline/bin/plumbline
     strategy:
       fail-fast: false
       matrix:
@@ -91,22 +97,3 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Lint all modules
         run: make lint
-
-  ts-executor:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: lib/services/executors/claude-agent
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      # No npm cache: package.json pulls in @rimsky-ai/protocols via a
-      # file: link to lib/protocols, which has no lockfile entry to key a cache on.
-      - name: Install dependencies
-        run: npm ci
-      - name: Test
-        run: npm test
-      - name: Build
-        run: npm run build

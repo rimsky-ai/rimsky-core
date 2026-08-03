@@ -5,6 +5,8 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -133,6 +135,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	var (
 		mtlsCA       *pki.CA
+		mtlsIdentity *peer.IdentityHolder
 		stopIdentity = func() {}
 	)
 	if cfg.PeerAuth == peer.PeerAuthMTLS {
@@ -140,11 +143,12 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		if principal == "" {
 			principal = defaultControlAPIPrincipal()
 		}
-		_, ca, cancel, err := installPeerIdentity(context.Background(), persistStore, principal, cfg.Clock, cfg.Logger)
+		holder, ca, cancel, err := installPeerIdentity(context.Background(), persistStore, principal, cfg.Clock, cfg.Logger)
 		if err != nil {
 			return nil, fmt.Errorf("StartControlAPI: %w", err)
 		}
 		mtlsCA = ca
+		mtlsIdentity = holder
 		stopIdentity = cancel
 	}
 	registry, err := dialRemoteClaimProducers(context.Background(), cfg.ClaimProducers, persistStore, cfg.LateBindServiceProxies)
@@ -303,6 +307,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		return nil, fmt.Errorf("StartControlAPI: listen: %w", err)
 	}
 	srv := &http.Server{Handler: app}
+	// @decision: peer-auth-mtls
+	if tlsCfg := peer.TLSControlAPIServerConfig(cfg.PeerAuth, mtlsIdentity, caPoolOrNil(mtlsCA)); tlsCfg != nil {
+		srv.TLSConfig = tlsCfg
+		listener = tls.NewListener(listener, tlsCfg)
+	}
 	terminator := controlapi.NewInstanceTerminator(deps, 0)
 	loopCtx, cancelLoops := context.WithCancel(context.Background())
 	closersWithIdentity := append([]func(){stopIdentity}, peerClosers...)
@@ -418,3 +427,11 @@ func (h *sharedLoggerHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (h *sharedLoggerHandler) WithGroup(_ string) slog.Handler { return h }
+
+// @decision: peer-auth-mtls
+func caPoolOrNil(ca *pki.CA) *x509.CertPool {
+	if ca == nil {
+		return nil
+	}
+	return ca.CertPool()
+}

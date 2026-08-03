@@ -16,6 +16,8 @@ import (
 	"math/big"
 	"net/url"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 )
 
 const (
@@ -150,7 +152,7 @@ func (ca *CA) IssueLeaf(principalKeyID string, now time.Time, ttl time.Duration)
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 		URIs:         []*url.URL{principalURI(principalKeyID)},
-		DNSNames:     []string{principalKeyID},
+		DNSNames:     []string{principalKeyID, enroll.PeerServerName},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &leafKey.PublicKey, ca.key)
 	if err != nil {

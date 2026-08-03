@@ -1,5 +1,4 @@
 {
-  "cmd/rimsky-entrypoint/main_test.go": 3,
   "cmd/rimsky-host-agent-proxy/agent_server_test.go": 3,
   "cmd/rimsky-host-agent-proxy/executor_handler_test.go": 1,
   "cmd/rimsky-host-agent-proxy/harness_test.go": 1,
@@ -35,8 +34,7 @@
   "lib/runtime/scheduler/scheduler_test.go": 1,
   "lib/services/executors/claude-agent/agentrun_test.go": 6,
   "lib/services/executors/claude-agent/clirunner_test.go": 2,
-  "lib/services/executors/claude-agent/httpbridge_test.go": 1,
-  "lib/services/executors/claude-agent/server_test.go": 2,
+  "lib/services/executors/claude-agent/server_test.go": 1,
   "lib/services/executors/internal/observability/store_test.go": 2,
   "lib/services/subscribers/openlineage/subscriber_test.go": 2,
   "lib/services/test/scenarios/atomic_staging/fs_held_swap_e2e_test.go": 2,

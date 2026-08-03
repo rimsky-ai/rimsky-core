@@ -335,6 +335,18 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, err
 	}
 	rawProducers := wrapper.ClaimProducers
+	peerAuth, err := ParsePeerAuth(wrapper.PeerAuth)
+	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+	if peerAuth == peer.PeerAuthMTLS {
+		if _, err := pki.ParseCAEncryptionKey(os.Getenv(pki.EnvCAEncryptionKey)); err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: peer_auth: mtls requires %w", path, err)
+		}
+	}
+	// @decision: peer-auth-mtls
+	peerTLSDefault := defaultPeerTLSMode(peerAuth)
+
 	producers := RemoteClaimProducersConfig{ClaimProducers: make(map[string]ClaimProducerEntry, len(rawProducers))}
 	for name, e := range rawProducers {
 		envelope, err := parseAllowed(name, e.WriteSemanticsAllowed)
@@ -357,7 +369,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasClaimProducer {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: protocols must include %q", path, name, ProtocolClaimProducer)
 		}
-		tlsMode, err := parseTLSMode("claim_producers", name, e.TLS)
+		tlsMode, err := parseTLSMode("claim_producers", name, e.TLS, peerTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -387,7 +399,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasExecutor {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: executors[%q]: protocols must include %q", path, name, ProtocolExecutor)
 		}
-		tlsMode, err := parseTLSMode("executors", name, e.TLS)
+		tlsMode, err := parseTLSMode("executors", name, e.TLS, peerTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -417,7 +429,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasPublisher {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: publishers[%q]: protocols must include %q", path, name, ProtocolPublisher)
 		}
-		tlsMode, err := parseTLSMode("publishers", name, e.TLS)
+		tlsMode, err := parseTLSMode("publishers", name, e.TLS, peerTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -446,7 +458,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasValidation {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: validators[%q]: protocols must include %q", path, name, claimproducer.ProtocolValidation)
 		}
-		tlsMode, err := parseTLSMode("validators", name, e.TLS)
+		tlsMode, err := parseTLSMode("validators", name, e.TLS, peerTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -475,7 +487,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasDataProcessing {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: data_processors[%q]: protocols must include %q", path, name, claimproducer.ProtocolDataProcessing)
 		}
-		tlsMode, err := parseTLSMode("data_processors", name, e.TLS)
+		tlsMode, err := parseTLSMode("data_processors", name, e.TLS, peerTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -540,16 +552,6 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	dispatchCfg, err := parseDispatchDefaults(wrapper.DispatchDefaults)
 	if err != nil {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
-	}
-
-	peerAuth, err := ParsePeerAuth(wrapper.PeerAuth)
-	if err != nil {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
-	}
-	if peerAuth == peer.PeerAuthMTLS {
-		if _, err := pki.ParseCAEncryptionKey(os.Getenv(pki.EnvCAEncryptionKey)); err != nil {
-			return RimskyConfig{}, fmt.Errorf("rimsky config %q: peer_auth: mtls requires %w", path, err)
-		}
 	}
 
 	unreachableValidatorPolicy, err := ParseUnreachableValidatorPolicy(wrapper.UnreachableValidatorPolicy)
@@ -683,15 +685,27 @@ func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics
 }
 
 // @decision: tls-mode-validation
-func parseTLSMode(block, name, raw string) (string, error) {
+// @decision: peer-auth-mtls
+func parseTLSMode(block, name, raw, defaultMode string) (string, error) {
 	switch raw {
-	case "", peer.TLSModeOff:
+	case "":
+		return defaultMode, nil
+	case peer.TLSModeOff:
 		return peer.TLSModeOff, nil
 	case peer.TLSModeRequired:
 		return peer.TLSModeRequired, nil
 	default:
 		return "", fmt.Errorf("%s[%q]: tls: unknown value %q (one of: off, required)", block, name, raw)
 	}
+}
+
+// @decision: peer-auth-mtls
+// @story: peer-auth-mtls-mutual
+func defaultPeerTLSMode(peerAuth string) string {
+	if peerAuth == peer.PeerAuthMTLS {
+		return peer.TLSModeRequired
+	}
+	return peer.TLSModeOff
 }
 
 func ValidProtocols() map[string]bool {

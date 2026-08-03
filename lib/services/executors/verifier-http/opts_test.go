@@ -6,7 +6,7 @@ package verifierhttp
 import "testing"
 
 func TestLoadOptsFromEnv_MalformedPortFailsStartup(t *testing.T) {
-	t.Setenv("RIMSKY_EXECUTOR_VERIFIER_HTTP_PORT", "not-a-port")
+	t.Setenv("RIMSKY_EXECUTOR_PORT_GRPC", "not-a-port")
 
 	if _, err := LoadOptsFromEnv(); err == nil {
 		t.Fatal("LoadOptsFromEnv: expected an error for a malformed port var, got nil " +
@@ -15,7 +15,7 @@ func TestLoadOptsFromEnv_MalformedPortFailsStartup(t *testing.T) {
 }
 
 func TestLoadOptsFromEnv_ValidPortWiredThrough(t *testing.T) {
-	t.Setenv("RIMSKY_EXECUTOR_VERIFIER_HTTP_PORT", "9999")
+	t.Setenv("RIMSKY_EXECUTOR_PORT_GRPC", "9999")
 
 	opts, err := LoadOptsFromEnv()
 	if err != nil {

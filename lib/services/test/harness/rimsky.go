@@ -5,6 +5,7 @@ package harness
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,6 +56,7 @@ type RimskyEndpoint struct {
 	HostDSN         string
 	InternalDSN     string
 	Network         string
+	Bearer          string
 }
 
 type Option func(*configBuilder)
@@ -98,6 +100,7 @@ type executorCfg struct {
 	endpoint       string
 	transport      string
 	extraProtocols []string
+	tlsOverride    string
 }
 
 type publisherCfg struct {
@@ -130,6 +133,21 @@ func WithClaimProducerProtocols(name string, extraProtocols ...string) Option {
 func WithExecutor(name, endpoint string) Option {
 	return func(cb *configBuilder) {
 		cb.executors[name] = executorCfg{endpoint: endpoint, transport: "grpc"}
+	}
+}
+
+// @decision: peer-auth-mtls
+func WithExecutorTLS(name, mode string) Option {
+	return func(cb *configBuilder) {
+		entry, ok := cb.executors[name]
+		if !ok {
+			panic(fmt.Sprintf("harness.WithExecutorTLS: no executor registered as %q — call WithExecutor first", name))
+		}
+		if mode != "off" && mode != "required" {
+			panic(fmt.Sprintf("harness.WithExecutorTLS(%q): tls mode %q is not one of off, required", name, mode))
+		}
+		entry.tlsOverride = mode
+		cb.executors[name] = entry
 	}
 }
 
@@ -352,7 +370,7 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 
 	rimsky, baseURL, callbackBaseURL := runRimskyContainer(ctx, t, cb, yamlBytes, networkName, rimskyAlias)
 
-	internalURL := fmt.Sprintf("http://%s:8080", rimskyAlias)
+	internalURL := fmt.Sprintf("%s://%s:8080", controlAPIScheme(cb), rimskyAlias)
 
 	return &RimskyHandle{
 		Endpoint: RimskyEndpoint{
@@ -471,7 +489,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 		dumpLogsForFailure(t, "rimsky/all", rimsky)
 		t.Fatalf("harness: rimsky mapped port: %v", err)
 	}
-	baseURL := fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
+	baseURL := fmt.Sprintf("%s://%s:%s", controlAPIScheme(cb), hostIP, mapped.Port())
 
 	mappedCb, err := rimsky.MappedPort(ctx, "9100")
 	if err != nil {
@@ -509,13 +527,16 @@ func (e RimskyEndpoint) PostJSONWithHeaders(t testing.TB, path string, body any,
 	if raw != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if e.Bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+e.Bearer)
+	}
 	for k, v := range headers {
 		if k == "" || v == "" {
 			t.Fatalf("harness: POST %s: header with empty key or value (key=%q, value=%q)", path, k, v)
 		}
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harnessHTTPClient(req.URL.Scheme).Do(req)
 	if err != nil {
 		t.Fatalf("harness: POST %s: %v", path, err)
 	}
@@ -600,10 +621,13 @@ func (e RimskyEndpoint) TryGetJSON(path, bearer string) (int, []byte, error) {
 	if err != nil {
 		return 0, nil, fmt.Errorf("build GET %s: %w", path, err)
 	}
+	if bearer == "" {
+		bearer = e.Bearer
+	}
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harnessHTTPClient(req.URL.Scheme).Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -670,7 +694,7 @@ func waitForHealth(ctx context.Context, baseURL string) error {
 			return fmt.Errorf("waitForHealth: %s/v1/health never returned 200 before the caller's context ended (expected: HTTP 200; last observed: %s): %w", baseURL, last, ctx.Err())
 		}
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/health", nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := harnessHTTPClient(req.URL.Scheme).Do(req)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -790,7 +814,9 @@ func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 			fmt.Fprintf(b, "  %q:\n", name)
 			fmt.Fprintf(b, "    transport: %q\n", e.transport)
 			fmt.Fprintf(b, "    endpoint: %q\n", e.endpoint)
-			b.WriteString("    tls: off\n")
+			if e.tlsOverride != "" {
+				fmt.Fprintf(b, "    tls: %s\n", e.tlsOverride)
+			}
 			b.WriteString("    protocols: ")
 			writeQuotedList(b, "executor", e.extraProtocols)
 		}
@@ -805,3 +831,30 @@ func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 		}
 	}
 }
+
+// @decision: peer-auth-mtls
+func controlAPIScheme(cb *configBuilder) string {
+	if cb != nil && cb.peerAuthMTLS {
+		return "https"
+	}
+	return "http"
+}
+
+// @decision: peer-auth-mtls
+func harnessHTTPClient(scheme string) *http.Client {
+	if scheme != "https" {
+		return http.DefaultClient
+	}
+	harnessTLSClientOnce.Do(func() {
+		harnessTLSClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: true,
+		}}}
+	})
+	return harnessTLSClient
+}
+
+var (
+	harnessTLSClientOnce sync.Once
+	harnessTLSClient     *http.Client
+)

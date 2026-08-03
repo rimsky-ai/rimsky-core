@@ -226,9 +226,11 @@ var v1Actions = []ActionEntry{
 	// @concept: cascade-graph
 	{Action: "instance:list-frames", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/instances/{id}/frames"}},
+		MCPTools:    []string{"instance_frame_list"},
 		Description: "List frames for an instance; supports filter by triggering_message_id."},
 	{Action: "instance:read-frame", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/instances/{id}/frames/{frame_id}"}},
+		MCPTools:    []string{"instance_frame_get"},
 		Description: "Fetch one frame joined with its triggering message envelope."},
 
 	// @concept: breakpoint
@@ -308,6 +310,13 @@ var v1Actions = []ActionEntry{
 		Routes:      []Route{{Method: "POST", Path: "/v1/nodes/{id}/reset"}},
 		MCPTools:    []string{"node_reset"},
 		Description: "Reset a failed node back to stale so it can be re-attempted."},
+
+	// @concept: node-run
+	// @decision: node-state-retired-from-operator-api
+	{Action: "run:read", IsWrite: false,
+		Routes:      []Route{{Method: "GET", Path: "/v1/runs/{run_id}"}},
+		MCPTools:    []string{"run_get"},
+		Description: "Read one run's current lifecycle state by run id, in flight or terminal."},
 
 	{Action: "message:send", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/instances/{id}/messages"}},
@@ -407,10 +416,11 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"auth_rotate_key"},
 		Description: "Rotate an API key (mint a new plaintext with same identity; old key revoked at grace expiry)."},
 
+	// @decision: mcp-http-parity
 	{Action: "observability:read", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/observability/*"}},
-		MCPTools:    nil,
-		Description: "Read observability data via /v1/observability/*."},
+		MCPTools:    []string{"observability_get"},
+		Description: "Read observability data via /v1/observability/*; the MCP tool takes the path below /v1/observability/ as its path_suffix argument."},
 
 	// @concept: permission
 	{Action: composeOriginAction, IsWrite: false,
@@ -423,8 +433,9 @@ var v1Actions = []ActionEntry{
 		MCPTools:    nil,
 		Description: "Invoke the MCP JSON-RPC dispatch surface (POST), open the server-to-client stream (GET), and close a session (DELETE); per-tool actions still gate tools/call."},
 
+	// @decision: mcp-http-parity
 	{Action: "service:enroll", IsWrite: false,
 		Routes:      []Route{{Method: "POST", Path: "/v1/enroll"}},
-		MCPTools:    nil,
+		MCPTools:    []string{"service_enroll"},
 		Description: "Exchange the caller's api-key for a short-lived mTLS leaf certificate (peer authentication enrollment)."},
 }

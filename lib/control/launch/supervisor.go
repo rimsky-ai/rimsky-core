@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type supervisorYAMLConfig struct {
@@ -192,10 +193,12 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	execPeers := make([]observability.PeerSpec, 0, len(rimskyCfg.Executors.Executors))
 	for name, e := range rimskyCfg.Executors.Executors {
+		// @decision: peer-auth-mtls
 		execPeers = append(execPeers, observability.PeerSpec{
 			Name:                  name,
 			Endpoint:              e.Endpoint,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
+			TLS:                   e.TLS,
 		})
 	}
 	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, logger)
@@ -258,6 +261,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		return nil, nil, err
 	}
 	log.Info("supervisor started", "id", supID, "callback_addr", h.CallbackAddr())
+	reprobePeersNowThatTheIdentityIsInstalled(ctx, disc, rimskyCfg.PeerAuth, logger)
 
 	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
 	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
@@ -321,4 +325,13 @@ func loadSupervisorYAML(path string) (supervisorYAMLConfig, error) {
 		return supervisorYAMLConfig{}, err
 	}
 	return cfg, nil
+}
+
+// @concept: peer-auth
+// @decision: peer-auth-mtls
+func reprobePeersNowThatTheIdentityIsInstalled(ctx context.Context, disc *observability.Discovery, peerAuth string, log *slog.Logger) {
+	if peerAuth != peer.PeerAuthMTLS {
+		return
+	}
+	disc.Refresh(ctx, log)
 }

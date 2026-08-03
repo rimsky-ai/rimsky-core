@@ -48,7 +48,13 @@ func verifyImports(files []fileEntry, cfg *licensingConfig) []violation {
 		}
 		for _, imp := range af.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
+			if isStdlibImport(path) {
+				continue
+			}
 			if !strings.HasPrefix(path, "github.com/rimsky-ai/rimsky-core") {
+				if v := verifyThirdPartyImport(f.relPath, path, cfg.thirdParty); v != nil {
+					out = append(out, *v)
+				}
 				continue
 			}
 			repoPath, ok := importToRepoPath(path)

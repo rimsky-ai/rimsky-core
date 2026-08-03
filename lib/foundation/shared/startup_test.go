@@ -40,6 +40,24 @@ func TestWaitForSignalOrFailureReturnsOnSignal(t *testing.T) {
 	require.Equal(t, "info", records[0].Level)
 }
 
+// @decision: graceful-shutdown
+func TestInstallSecondSignalHardExitFiresOnTheNextSignal(t *testing.T) {
+	log := NewCapturingLogger()
+	sigCh := make(chan os.Signal, 1)
+	drained := make(chan struct{})
+	defer close(drained)
+
+	fired := make(chan struct{})
+	InstallSecondSignalHardExit(sigCh, drained, log, func() { close(fired) })
+
+	sigCh <- os.Interrupt
+	<-fired
+
+	records := log.Records()
+	require.Len(t, records, 1)
+	require.Equal(t, "warn", records[0].Level)
+}
+
 func TestWaitForSignalOrFailureReturnsOnFailure(t *testing.T) {
 	log := NewCapturingLogger()
 	sigCh := make(chan os.Signal, 1)

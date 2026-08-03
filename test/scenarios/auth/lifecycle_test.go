@@ -45,15 +45,21 @@ type authFixture struct {
 
 func newAuthFixture(t *testing.T) *authFixture {
 	t.Helper()
-	return newAuthFixtureOpts(t, false)
+	return newAuthFixtureOpts(t, false, nil)
 }
 
 func newAuthFixtureWithObservability(t *testing.T) *authFixture {
 	t.Helper()
-	return newAuthFixtureOpts(t, true)
+	return newAuthFixtureOpts(t, true, nil)
 }
 
-func newAuthFixtureOpts(t *testing.T, withObservability bool) *authFixture {
+// @concept: peer-auth
+func newAuthFixtureWithEnroll(t *testing.T, enroll *controlapi.EnrollDeps) *authFixture {
+	t.Helper()
+	return newAuthFixtureOpts(t, false, enroll)
+}
+
+func newAuthFixtureOpts(t *testing.T, withObservability bool, enroll *controlapi.EnrollDeps) *authFixture {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -84,6 +90,7 @@ func newAuthFixtureOpts(t *testing.T, withObservability bool) *authFixture {
 		LifecycleSubs:  lifecycle.NewRegistry(),
 		ClaimProducers: claimProducers,
 		AuthState:      state,
+		Enroll:         enroll,
 	}
 	if withObservability {
 		deps.Observability = func(r chi.Router) {

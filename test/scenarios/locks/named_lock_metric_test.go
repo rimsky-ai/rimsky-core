@@ -47,7 +47,7 @@ func TestNamedLockAcquisitionMovesMetric(t *testing.T) {
 	t.Cleanup(func() { _ = pool.Close() })
 
 	reg := observability.NewMetricsRegistry()
-	before := testutil.ToFloat64(reg.NamedLockAcquisitions.WithLabelValues(lockName, "acquired"))
+	before := testutil.ToFloat64(reg.ClaimAcquisitions.WithLabelValues("named_lock", lockName, "acquired"))
 
 	args := runtime.RunArgs{
 		Persist:               h.Persist,
@@ -69,13 +69,13 @@ func TestNamedLockAcquisitionMovesMetric(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner must have acquired and run the named-lock node")
 
-	after := testutil.ToFloat64(reg.NamedLockAcquisitions.WithLabelValues(lockName, "acquired"))
+	after := testutil.ToFloat64(reg.ClaimAcquisitions.WithLabelValues("named_lock", lockName, "acquired"))
 	require.Equal(t, before+1, after,
 		"acquiring the named lock through the real acquire path must move the labeled counter")
 }
 
 // @story: named-lock-metric
-func TestNamedLockContentionMovesUnavailableMetricDistinctFromClaimAcquisitions(t *testing.T) {
+func TestNamedLockContentionMovesUnavailableSeriesDistinctFromProducerClaims(t *testing.T) {
 	t.Parallel()
 
 	const lockName = "deploy-mutex-contended"
@@ -108,8 +108,8 @@ func TestNamedLockContentionMovesUnavailableMetricDistinctFromClaimAcquisitions(
 	t.Cleanup(func() { _ = pool.Close() })
 
 	reg := observability.NewMetricsRegistry()
-	beforeUnavailable := testutil.ToFloat64(reg.NamedLockAcquisitions.WithLabelValues(lockName, "unavailable"))
-	beforeClaimAcquisitions := testutil.ToFloat64(reg.ClaimAcquisitions.WithLabelValues(lockName, "unavailable"))
+	beforeUnavailable := testutil.ToFloat64(reg.ClaimAcquisitions.WithLabelValues("named_lock", lockName, "unavailable"))
+	beforeClaimAcquisitions := testutil.ToFloat64(reg.ClaimAcquisitions.WithLabelValues("producer", lockName, "unavailable"))
 
 	makeArgs := func(supID string) runtime.RunArgs {
 		return runtime.RunArgs{
@@ -147,11 +147,11 @@ func TestNamedLockContentionMovesUnavailableMetricDistinctFromClaimAcquisitions(
 	close(holdCh)
 	<-holderDone
 
-	afterUnavailable := testutil.ToFloat64(reg.NamedLockAcquisitions.WithLabelValues(lockName, "unavailable"))
+	afterUnavailable := testutil.ToFloat64(reg.ClaimAcquisitions.WithLabelValues("named_lock", lockName, "unavailable"))
 	require.Equal(t, beforeUnavailable+1, afterUnavailable,
 		"a named-lock acquisition blocked by the configured limit must move the unavailable-labeled counter")
 
-	afterClaimAcquisitions := testutil.ToFloat64(reg.ClaimAcquisitions.WithLabelValues(lockName, "unavailable"))
+	afterClaimAcquisitions := testutil.ToFloat64(reg.ClaimAcquisitions.WithLabelValues("producer", lockName, "unavailable"))
 	require.Equal(t, beforeClaimAcquisitions, afterClaimAcquisitions,
-		"named-lock contention must not move the producer-claim counter — the two are distinct series")
+		"named-lock contention must not move the producer-claim series — acquirer_kind discriminates the two inside one family")
 }

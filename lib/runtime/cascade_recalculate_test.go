@@ -95,6 +95,10 @@ func (f *invTestQueue) CountLive(_ context.Context, _ persistence.DispatchListFi
 func (f *invTestQueue) GetByID(_ context.Context, _ shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
+
+func (f *invTestQueue) GetAnyByID(_ context.Context, _ shared.UUID) (*persistence.DispatchRow, error) {
+	return nil, nil
+}
 func (f *invTestQueue) GetInFlightRunForNode(ctx context.Context, nodeID, runScopeID shared.UUID, tx persistence.Tx) (shared.UUID, bool, error) {
 	if f.real != nil {
 		return f.real.GetInFlightRunForNode(ctx, nodeID, runScopeID, tx)

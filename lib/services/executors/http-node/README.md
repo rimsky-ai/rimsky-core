@@ -9,9 +9,9 @@ outbound HTTP request based on its `attributes` and returns a single
 The executor exposes two transports simultaneously, both backed by the same
 `Server.Execute` implementation:
 
-- **gRPC** on `RIMSKY_EXECUTOR_HTTP_NODE_PORT` (default `9091`) — primary
+- **gRPC** on `RIMSKY_EXECUTOR_PORT_GRPC` (default `9091`) — primary
   transport used by the rimsky supervisor.
-- **HTTP+JSON bridge** on `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT` (default
+- **HTTP+JSON bridge** on `RIMSKY_EXECUTOR_PORT_HTTP` (default
   `9092`, i.e. grpc port + 1). POST a protojson-encoded `ExecuteRequest` to
   `/v1/Execute` and receive a single protojson-encoded `Outcome` in the
   response body.
@@ -97,9 +97,9 @@ destinations are blocked by default. Opt a CIDR back in via
 
 | var | default | purpose |
 | --- | --- | --- |
-| `RIMSKY_EXECUTOR_HTTP_NODE_HOST` | `0.0.0.0` | bind host for both transports |
-| `RIMSKY_EXECUTOR_HTTP_NODE_PORT` | `9091` | gRPC port (also honors `RIMSKY_AGENT_PORT` for late-bound spawns) |
-| `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT` | `grpc+1` | HTTP+JSON bridge port |
+| `RIMSKY_EXECUTOR_HOST` | `0.0.0.0` | bind host for both transports |
+| `RIMSKY_EXECUTOR_PORT_GRPC` | `9091` | gRPC port (also honors `RIMSKY_AGENT_PORT` for late-bound spawns) |
+| `RIMSKY_EXECUTOR_PORT_HTTP` | `grpc+1` | HTTP+JSON bridge port |
 | `RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES` | `10485760` | response-body size cap |
 | `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL` | `` | advertised HTTP-bridge URL surfaced in observability capabilities |
 | `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` | `error_class` | JSON key read from 4xx error bodies to build `http/request_invalid/<class>` |

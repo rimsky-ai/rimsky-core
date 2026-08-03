@@ -10,8 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -98,6 +101,72 @@ func TestWorkCompletedSingletonAcrossRetryIterations(t *testing.T) {
 		"precondition: the run must actually iterate through %d in-place retries", maxRetries)
 
 	assertWorkPair(t, h, n.ID, "errored")
+}
+
+// @story: work-completed-emitted
+// @decision: prior-stale-recovery-rename
+func TestWorkCompletedSingletonAcrossLivenessRecovery(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true, NoScheduler: true})
+	h.Stub.WhenType("agent").
+		AwaitAsyncCallback("ack-liveness-recovery", 600000).
+		Then().Success(map[string]any{"ok": true}, true, "recovered")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "work-completed-liveness-recovery", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(node.TemplateNodeDef{Type: "agent", Executor: "stub"}),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-work-completed-liveness-recovery", map[string]any{})
+
+	n := h.FindNode(iid, "agent")
+	require.NotNil(t, n)
+
+	pool := executor.NewClientPool()
+	t.Cleanup(func() { _ = pool.Close() })
+	args := runtime.RunArgs{
+		Persist:               h.Persist,
+		Queue:                 h.Queue,
+		ClaimHandles:          h.Persist.ClaimHandles(),
+		AdvisoryLocker:        h.Driver.AdvisoryLocker(),
+		ClaimProducerRegistry: locks.NewRegistry(),
+		Clock:                 foundationshared.SystemClock{},
+		Logger:                foundationshared.SilentLogger{},
+		SupervisorID:          "scenario-runner-liveness-recovery",
+		Pool:                  pool,
+		MaxQuietPeriodDefault: time.Second,
+		CallbackURL:           "http://callback.invalid",
+		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
+			"stub": {Transport: "grpc", URL: h.StubAddr},
+		}),
+	}
+
+	handoff, err := runtime.RunNode(h.Ctx, args, nil)
+	require.NoError(t, err)
+	require.True(t, handoff.Ran, "precondition: the first acquisition must dispatch the node")
+
+	started := eventwait.Events(h.Ctx, t, h.Persist,
+		eventwait.Matcher{NodeID: &n.ID, Kind: "work_started"})
+	require.Len(t, started, 1, "precondition: the first acquisition announces the episode")
+
+	require.NoError(t, runtime.SweepExecutorDeadlines(h.Ctx, runtime.ConductorArgs{
+		Persist: h.Persist,
+		Queue:   h.Queue,
+		Clock:   foundationshared.NewControllableClock(time.Now().UTC().Add(24 * time.Hour)),
+		Logger:  foundationshared.SilentLogger{},
+	}))
+
+	reaped := eventwait.Events(h.Ctx, t, h.Persist,
+		eventwait.Matcher{NodeID: &n.ID, Kind: "orphaned_claim_released"})
+	require.Len(t, reaped, 1,
+		"precondition: the quiet dispatch must be swept back to acquisition-eligible")
+
+	recovered, err := runtime.RunNode(h.Ctx, args, nil)
+	require.NoError(t, err)
+	require.True(t, recovered.Ran, "the swept dispatch must be re-acquired and run to terminal")
+
+	assertWorkPair(t, h, n.ID, "complete")
 }
 
 func TestWorkCompletedPairsWorkStartedOnErrored(t *testing.T) {

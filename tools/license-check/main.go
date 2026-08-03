@@ -43,6 +43,7 @@ func main() {
 	violations := verifyHeaders(files)
 	violations = append(violations, verifyImports(files, cfg)...)
 	violations = append(violations, verifyEntriesExist(cfg, *root)...)
+	violations = append(violations, verifyApacheClosure(cfg, *root)...)
 
 	apacheCount, agplCount := 0, 0
 	for _, f := range files {

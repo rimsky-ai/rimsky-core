@@ -5,7 +5,6 @@ package serverkit
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -94,66 +93,44 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 	case "capabilities":
 		return srv.Capabilities(ctx, &genv1.CapabilitiesRequest{})
 	case "open":
-		var req openBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.OpenRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		if req.Intent != "r" && req.Intent != "rw" {
-			return nil, fmt.Errorf("%w: intent must be \"r\" or \"rw\", got %q", errBadRequest, req.Intent)
+		if req.GetIntent() != "r" && req.GetIntent() != "rw" {
+			return nil, fmt.Errorf("%w: intent must be \"r\" or \"rw\", got %q", errBadRequest, req.GetIntent())
 		}
-		return srv.Open(ctx, &genv1.OpenRequest{
-			ClaimId:      req.ClaimID,
-			ProducerName: req.ProducerName,
-			Selector:     req.Selector,
-			Intent:       req.Intent,
-			Alias:        req.Alias,
-			TemplateId:   req.TemplateID,
-			InstanceId:   req.InstanceID,
-			RunScopeId:   req.RunScopeID,
-			Lifetime:     req.Lifetime,
-		})
+		return srv.Open(ctx, req)
 	case "commit":
-		var req actionBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.CommitRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.Commit(ctx, &genv1.CommitRequest{
-			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address, LeaseToken: req.LeaseToken,
-		})
+		return srv.Commit(ctx, req)
 	case "abandon":
-		var req actionBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.AbandonRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.Abandon(ctx, &genv1.AbandonRequest{
-			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address, LeaseToken: req.LeaseToken,
-		})
+		return srv.Abandon(ctx, req)
 	case "release":
-		var req actionBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.ReleaseRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.Release(ctx, &genv1.ReleaseRequest{
-			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address, LeaseToken: req.LeaseToken,
-		})
+		return srv.Release(ctx, req)
 	case "split_scope":
-		var req splitScopeBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.SplitScopeRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.SplitScope(ctx, &genv1.SplitScopeRequest{
-			ClaimHandleId:    req.ClaimHandleID,
-			PartitionRequest: req.PartitionRequest,
-		})
+		return srv.SplitScope(ctx, req)
 	case "scopes_conflict":
-		var req scopesConflictBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.ClaimScopesConflictRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.ScopesConflict(ctx, &genv1.ClaimScopesConflictRequest{
-			ClaimScopeA: req.ClaimScopeA,
-			ClaimScopeB: req.ClaimScopeB,
-		})
+		return srv.ScopesConflict(ctx, req)
 	}
 	return nil, errUnknownVerb
 }
@@ -161,131 +138,61 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer, verb string, body []byte) (proto.Message, error) {
 	switch verb {
 	case "on_template_registered":
-		var req templateScopeBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.OnTemplateRegisteredRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{
-			TemplateHash: req.TemplateHash,
-			Spec:         req.Spec,
-		})
+		return srv.OnTemplateRegistered(ctx, req)
 	case "on_template_deployed":
-		var req templateScopeBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.OnTemplateDeployedRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{
-			TemplateHash: req.TemplateHash,
-			Tags:         req.Tags,
-		})
+		return srv.OnTemplateDeployed(ctx, req)
 	case "on_template_undeployed":
-		var req templateScopeBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.OnTemplateUndeployedRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.OnTemplateUndeployed(ctx, &genv1.OnTemplateUndeployedRequest{TemplateHash: req.TemplateHash})
+		return srv.OnTemplateUndeployed(ctx, req)
 	case "on_template_deregistered":
-		var req templateScopeBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.OnTemplateDeregisteredRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.OnTemplateDeregistered(ctx, &genv1.OnTemplateDeregisteredRequest{TemplateHash: req.TemplateHash})
+		return srv.OnTemplateDeregistered(ctx, req)
 	case "on_instance_created":
-		var req instanceScopeBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.OnInstanceCreatedRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
-			InstanceId:            req.InstanceID,
-			TemplateHash:          req.TemplateHash,
-			InstanceKey:           req.InstanceKey,
-			Params:                req.Params,
-			ServiceBindings:       req.ServiceBindings,
-			OwnerApiKeyId:         req.OwnerAPIKeyID,
-			TargetRoutingIdentity: req.TargetRoutingIdentity,
-		})
+		return srv.OnInstanceCreated(ctx, req)
 	case "on_instance_terminated":
-		var req instanceScopeBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.OnInstanceTerminatedRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.OnInstanceTerminated(ctx, &genv1.OnInstanceTerminatedRequest{
-			InstanceId:         req.InstanceID,
-			TemplateHash:       req.TemplateHash,
-			TerminatedAtUnixMs: req.TerminatedAtUnixMs,
-		})
+		return srv.OnInstanceTerminated(ctx, req)
 	case "on_run_scope_terminal":
-		var req runScopeTerminalBody
-		if err := decodeOptional(body, &req); err != nil {
-			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		req := &genv1.OnRunScopeTerminalRequest{}
+		if err := decodeRequest(body, req); err != nil {
+			return nil, err
 		}
-		return srv.OnRunScopeTerminal(ctx, &genv1.OnRunScopeTerminalRequest{
-			RunScopeId:     req.RunScopeID,
-			TerminalReason: req.TerminalReason,
-			InstanceId:     req.InstanceID,
-		})
+		return srv.OnRunScopeTerminal(ctx, req)
 	}
 	return nil, errUnknownVerb
 }
 
-type openBody struct {
-	ClaimID      string `json:"claim_id"`
-	ProducerName string `json:"producer_name"`
-	Selector     string `json:"selector"`
-	Intent       string `json:"intent"`
-	Alias        string `json:"alias"`
-	TemplateID   string `json:"template_id"`
-	InstanceID   string `json:"instance_id"`
-	RunScopeID   string `json:"run_scope_id,omitempty"`
-	Lifetime     string `json:"lifetime,omitempty"`
-}
+// @decision: protojson-gateway
+var requestUnmarshal = protojson.UnmarshalOptions{DiscardUnknown: true}
 
-type actionBody struct {
-	ClaimID    string `json:"claim_id"`
-	Scope      []byte `json:"scope"`
-	Address    []byte `json:"address"`
-	LeaseToken string `json:"lease_token,omitempty"`
-}
-
-type splitScopeBody struct {
-	ClaimHandleID    string `json:"claim_handle_id"`
-	PartitionRequest []byte `json:"partition_request"`
-}
-
-type scopesConflictBody struct {
-	ClaimScopeA []byte `json:"claim_scope_a"`
-	ClaimScopeB []byte `json:"claim_scope_b"`
-}
-
-type templateScopeBody struct {
-	TemplateHash string   `json:"template_hash"`
-	Spec         []byte   `json:"spec,omitempty"`
-	Tags         []string `json:"tags,omitempty"`
-}
-
-type instanceScopeBody struct {
-	TemplateHash          string `json:"template_hash"`
-	InstanceID            string `json:"instance_id"`
-	InstanceKey           string `json:"instance_key,omitempty"`
-	Params                []byte `json:"params,omitempty"`
-	TerminatedAtUnixMs    int64  `json:"terminated_at_unix_ms,omitempty"`
-	ServiceBindings       []byte `json:"service_bindings,omitempty"`
-	OwnerAPIKeyID         string `json:"owner_api_key_id,omitempty"`
-	TargetRoutingIdentity string `json:"target_routing_identity,omitempty"`
-}
-
-type runScopeTerminalBody struct {
-	RunScopeID     string `json:"run_scope_id"`
-	TerminalReason string `json:"terminal_reason,omitempty"`
-	InstanceID     string `json:"instance_id,omitempty"`
-}
-
-func decodeOptional(body []byte, v any) error {
+// @decision: protojson-gateway
+func decodeRequest(body []byte, msg proto.Message) error {
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return nil
 	}
-	if err := json.Unmarshal(body, v); err != nil {
-		return fmt.Errorf("decode JSON body: %w", err)
+	if err := requestUnmarshal.Unmarshal(body, msg); err != nil {
+		return fmt.Errorf("%w: decode JSON body: %s", errBadRequest, err.Error())
 	}
 	return nil
 }

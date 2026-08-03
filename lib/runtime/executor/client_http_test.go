@@ -5,13 +5,16 @@ package executor
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
@@ -30,13 +33,32 @@ func stubBridgeHandler() http.Handler {
 	})
 }
 
-func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
-	srv := httptest.NewTLSServer(stubBridgeHandler())
-	defer srv.Close()
+// @concept: peer-auth
+func startDeploymentCABridge(t *testing.T) (*httptest.Server, *pki.CA) {
+	t.Helper()
+	ca, err := pki.GenerateCA(time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	issued, err := ca.IssueLeaf("key-01JBRIDGEPEER", time.Now().Add(-time.Hour), pki.LeafTTL)
+	if err != nil {
+		t.Fatalf("IssueLeaf: %v", err)
+	}
+	pair, err := tls.X509KeyPair(issued.CertPEM, issued.KeyPEM)
+	if err != nil {
+		t.Fatalf("X509KeyPair: %v", err)
+	}
+	srv := httptest.NewUnstartedServer(stubBridgeHandler())
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv, ca
+}
 
-	pool := x509.NewCertPool()
-	pool.AddCert(srv.Certificate())
-	peer.SetTLSRootCAsForTesting(pool)
+func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
+	srv, ca := startDeploymentCABridge(t)
+
+	peer.SetTLSRootCAsForTesting(ca.CertPool())
 	defer peer.SetTLSRootCAsForTesting(nil)
 
 	c, err := NewHTTPClient(Endpoint{Transport: "http", URL: srv.URL, TLS: peer.TLSModeRequired})
@@ -44,12 +66,16 @@ func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
 		t.Fatalf("NewHTTPClient: %v", err)
 	}
 	defer c.Close()
-	outcome, _, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
+	outcome, principal, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
 	if err != nil {
-		t.Fatalf("Execute over tls: required: %v", err)
+		t.Fatalf("Execute over tls: required against a leaf naming its api-key principal (not the dialed host): %v", err)
 	}
 	if outcome.GetSuccess() == nil {
 		t.Fatalf("expected Success outcome, got %+v", outcome)
+	}
+	if principal != "key-01JBRIDGEPEER" {
+		t.Fatalf("verified peer principal = %q, want key-01JBRIDGEPEER — the chain must stay verified so the "+
+			"principal is readable off it", principal)
 	}
 }
 

@@ -299,6 +299,9 @@ func (f *fakeDiagnosticQueue) CountParked(context.Context) (int, error) {
 func (f *fakeDiagnosticQueue) GetByID(context.Context, shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
+func (f *fakeDiagnosticQueue) GetAnyByID(context.Context, shared.UUID) (*persistence.DispatchRow, error) {
+	return nil, nil
+}
 func (f *fakeDiagnosticQueue) GetInFlightRunForNode(context.Context, shared.UUID, shared.UUID, persistence.Tx) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
 }

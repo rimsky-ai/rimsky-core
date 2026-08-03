@@ -37,6 +37,28 @@ agpl:
   - test/
   - tools/
 
+# Third-party licenses for the Apache surface's dependency closure. The lint
+# resolves every non-stdlib import of an Apache file to its longest-matching
+# module entry below, and separately walks the full build closure of each
+# Apache module. An unlisted module is a violation, not a pass: classify it
+# here (reading the dependency's own LICENSE file) before it can ship.
+third_party:
+  permitted_licenses:
+    - Apache-2.0
+    - BSD-2-Clause
+    - BSD-3-Clause
+    - ISC
+    - MIT
+  modules:
+    github.com/google/uuid: BSD-3-Clause
+    golang.org/x/net: BSD-3-Clause
+    golang.org/x/sys: BSD-3-Clause
+    golang.org/x/text: BSD-3-Clause
+    google.golang.org/genproto/googleapis/rpc: Apache-2.0
+    google.golang.org/grpc: Apache-2.0
+    google.golang.org/protobuf: BSD-3-Clause
+    gopkg.in/yaml.v3: MIT AND Apache-2.0
+
 exempt:
   # Non-source files at the repo root that carry no per-file header.
   - LICENSE.apache

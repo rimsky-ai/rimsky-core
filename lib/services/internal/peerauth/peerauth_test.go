@@ -9,6 +9,9 @@ import (
 	"crypto/x509"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,5 +263,82 @@ func TestLoadConfigFromEnvReadsOnlyControlAPIURL(t *testing.T) {
 	}
 	if cfg.ControlAPIURL != "http://control:8080" {
 		t.Fatalf("ControlAPIURL = %q, want the RIMSKY_CONTROL_API_URL value", cfg.ControlAPIURL)
+	}
+}
+
+// @concept: peer-auth
+func TestEnrollmentReachesAnHTTPSControlAPIThroughThePinnedCARoot(t *testing.T) {
+	ca, err := mtlstest.NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := ca.EnrollServerTLS(serverName, "svc-key", "key-01JCONTROLAPI")
+	if err != nil {
+		t.Fatalf("EnrollServerTLS: %v", err)
+	}
+	t.Cleanup(srv.Close)
+
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, []byte(ca.RootPEM()), 0o600); err != nil {
+		t.Fatalf("write pinned CA root: %v", err)
+	}
+
+	id, err := Load(context.Background(), Config{
+		Mode:             enroll.PeerAuthMTLS,
+		ControlAPIURL:    srv.URL,
+		APIKey:           "svc-key",
+		Label:            serverName,
+		ControlAPICARoot: caPath,
+	}, nil, time.Now)
+	if err != nil {
+		t.Fatalf("a service must be able to enroll against a control API serving TLS under peer_auth: mtls, "+
+			"verifying it by the pinned deployment CA root rather than by hostname: %v", err)
+	}
+	if !id.Enabled() {
+		t.Fatal("the enrolled identity must be enabled")
+	}
+}
+
+func TestEnrollmentRefusesAnHTTPSControlAPIWithNoPinnedCARoot(t *testing.T) {
+	_, err := enrollHTTPClient(Config{
+		Mode:          enroll.PeerAuthMTLS,
+		ControlAPIURL: "https://control:8080",
+		APIKey:        "svc-key",
+	})
+	if err == nil {
+		t.Fatal("enrolling over https with no pinned CA root must fail closed — the api-key crosses that hop once")
+	}
+	if !strings.Contains(err.Error(), EnvControlAPICA) {
+		t.Errorf("the refusal must name %s so the operator knows what to set, got %v", EnvControlAPICA, err)
+	}
+}
+
+func TestEnrollmentRefusesAPinnedCARootOnAPlaintextControlAPI(t *testing.T) {
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, []byte("irrelevant"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := enrollHTTPClient(Config{
+		Mode:             enroll.PeerAuthMTLS,
+		ControlAPIURL:    "http://control:8080",
+		APIKey:           "svc-key",
+		ControlAPICARoot: caPath,
+	})
+	if err == nil {
+		t.Fatal("pinning a CA root at a plaintext control API is a misconfiguration that buys nothing and must be named, not ignored")
+	}
+}
+
+func TestLoadConfigFromEnvReadsThePinnedCARoot(t *testing.T) {
+	t.Setenv(EnvPeerAuth, enroll.PeerAuthMTLS)
+	t.Setenv(EnvControlAPIURL, "https://control:8080")
+	t.Setenv(EnvAPIKey, "k")
+	t.Setenv(EnvControlAPICA, "/etc/rimsky/ca.pem")
+	cfg, err := LoadConfigFromEnv("svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ControlAPICARoot != "/etc/rimsky/ca.pem" {
+		t.Fatalf("ControlAPICARoot = %q, want /etc/rimsky/ca.pem", cfg.ControlAPICARoot)
 	}
 }

@@ -18,9 +18,9 @@ func StartHttpNodeStubOnNetwork(ctx context.Context, t testing.TB, networkName, 
 	t.Helper()
 	uniqueAlias := fmt.Sprintf("%s-%d", alias, nextAliasSuffix())
 	env := map[string]string{
-		"RIMSKY_EXECUTOR_HTTP_NODE_PORT":      "9091",
-		"RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT": "9092",
-		"RIMSKY_EXECUTOR_STUB_MODE":           "1",
+		"RIMSKY_EXECUTOR_PORT_GRPC": "9091",
+		"RIMSKY_EXECUTOR_PORT_HTTP": "9092",
+		"RIMSKY_EXECUTOR_STUB_MODE": "1",
 	}
 	c, err := runWithRetry(ctx, ImageRef("rimsky-executor-http-node"),
 		tcnet.WithNetworkName([]string{uniqueAlias}, networkName),

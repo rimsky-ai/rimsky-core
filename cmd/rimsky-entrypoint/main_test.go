@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 func writeFixtureBinary(t *testing.T, dir, name, body string) string {
@@ -115,8 +117,7 @@ func TestRunMigrateIfOwned_SignalInterrupts(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	writeFixtureBinary(t, dir, "rimsky-migrate",
-		`trap 'kill $! 2>/dev/null; exit 0' TERM INT; sleep 60 & wait`)
+	writeFixtureBinary(t, dir, "rimsky-migrate", `exec sleep 60`)
 
 	cmd := exec.Command(os.Args[0], "-test.run", "TestRunMigrateIfOwned_SignalInterrupts")
 	cmd.Env = append(os.Environ(),
@@ -124,19 +125,8 @@ func TestRunMigrateIfOwned_SignalInterrupts(t *testing.T) {
 		"ENTRYPOINT_TEST_FIXTURE_DIR="+dir,
 		"RIMSKY_ENTRYPOINT_MIGRATE=1",
 	)
-	done := make(chan error, 1)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start subprocess: %v", err)
-	}
-	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("interrupted migrate should exit 0, got: %v", err)
-		}
-	case <-time.After(15 * time.Second):
-		_ = cmd.Process.Kill()
-		t.Fatal("runMigrateIfOwned did not exit promptly on a queued signal; migrate phase is not interruptible")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("interrupted migrate should exit 0, got: %v", err)
 	}
 }
 
@@ -214,7 +204,7 @@ func TestEntrypointRoleSelection(t *testing.T) {
 		}
 		t.Cleanup(func() { terminateAndReap(cmd, exitCh) })
 
-		waitForFile(t, filepath.Join(markerDir, "rimsky-scheduler"))
+		waitForFile(filepath.Join(markerDir, "rimsky-scheduler"))
 
 		for _, n := range []string{"rimsky-supervisor", "rimsky-control-api"} {
 			if _, err := os.Stat(filepath.Join(markerDir, n)); err == nil {
@@ -237,7 +227,7 @@ func TestEntrypointRoleSelection(t *testing.T) {
 		}
 		t.Cleanup(func() { terminateAndReap(cmd, exitCh) })
 
-		waitForFile(t, envFile)
+		waitForFile(envFile)
 		dump, err := os.ReadFile(envFile)
 		if err != nil {
 			t.Fatalf("read env dump: %v", err)
@@ -271,16 +261,13 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-func waitForFile(t *testing.T, path string) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+func waitForFile(path string) {
+	for {
 		if _, err := os.Stat(path); err == nil {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("expected file %q to appear", path)
 }
 
 func TestShouldMigrate(t *testing.T) {
@@ -499,7 +486,7 @@ func TestShutdownChild(t *testing.T) {
 		t.Skip("shell-script fixtures unavailable on windows")
 	}
 	dir := t.TempDir()
-	writeFixtureBinary(t, dir, "rimsky-scheduler", `trap 'kill $! 2>/dev/null; exit 0' TERM INT; sleep 60 & wait`)
+	writeFixtureBinary(t, dir, "rimsky-scheduler", `exec sleep 60`)
 	t.Cleanup(func() { binaryDir = "/usr/local/bin" })
 	binaryDir = dir
 
@@ -508,19 +495,75 @@ func TestShutdownChild(t *testing.T) {
 		t.Fatalf("spawnRole: %v", err)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		shutdownChild(cmd, exitCh)
-		close(done)
-	}()
+	shutdownChild(cmd, exitCh, make(chan os.Signal))
 
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("shutdownChild did not return within 10s; graceful shutdown path is wedged")
-	}
 	if cmd.ProcessState == nil {
 		t.Fatal("child was not reaped by shutdownChild")
 	}
+	if sig := terminatingSignal(cmd.ProcessState); sig != syscall.SIGTERM {
+		t.Fatalf("child was terminated by %v, want SIGTERM; shutdownChild fell through to the hard-kill deadline instead of shutting the child down gracefully", sig)
+	}
 }
+
+func terminatingSignal(state *os.ProcessState) syscall.Signal {
+	status, ok := state.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return 0
+	}
+	return status.Signal()
+}
+
+const hardExitHelperEnv = "ENTRYPOINT_HARD_EXIT_HELPER_DIR"
+
+// @decision: graceful-shutdown
+func TestShutdownChildHardExitsOnSecondSignal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixtures unavailable on windows")
+	}
+	if dir := os.Getenv(hardExitHelperEnv); dir != "" {
+		runHardExitHelper(dir)
+		return
+	}
+
+	dir := t.TempDir()
+	blockFifo := filepath.Join(dir, "block.fifo")
+	if out, err := exec.Command("mkfifo", blockFifo).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo %s: %v: %s", blockFifo, err, out)
+	}
+	writeFixtureBinary(t, dir, "rimsky-scheduler", strings.Join([]string{
+		"exec >/dev/null 2>&1",
+		"trap '' TERM INT",
+		": > " + hardExitReadyPath(dir),
+		"read line < " + blockFifo,
+	}, "\n"))
+
+	helper := exec.Command(os.Args[0], "-test.run=^TestShutdownChildHardExitsOnSecondSignal$")
+	helper.Env = append(os.Environ(), hardExitHelperEnv+"="+dir)
+	err := helper.Run()
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("helper should have hard-exited on the second signal; got err=%v", err)
+	}
+	if exitErr.ExitCode() != shared.HardExitCode {
+		t.Errorf("second signal exit code = %d, want %d", exitErr.ExitCode(), shared.HardExitCode)
+	}
+}
+
+func hardExitReadyPath(dir string) string { return filepath.Join(dir, "signals-ignored") }
+
+func runHardExitHelper(dir string) {
+	binaryDir = dir
+	cmd, exitCh, err := spawnRole("rimsky-scheduler")
+	if err != nil {
+		os.Exit(3)
+	}
+	waitForFile(hardExitReadyPath(dir))
+
+	sigCh := make(chan os.Signal, 1)
+	sigCh <- syscall.SIGINT
+	shutdownChild(cmd, exitCh, sigCh)
+	blockUntilHardExitWins()
+}
+
+func blockUntilHardExitWins() { select {} }

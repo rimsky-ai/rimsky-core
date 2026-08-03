@@ -14,11 +14,10 @@ import (
 type MetricsRegistry struct {
 	reg *prometheus.Registry
 
-	Dispatches            *prometheus.CounterVec
-	TerminalVerdicts      *prometheus.CounterVec
-	Invalidates           *prometheus.CounterVec
-	ClaimAcquisitions     *prometheus.CounterVec
-	NamedLockAcquisitions *prometheus.CounterVec
+	Dispatches        *prometheus.CounterVec
+	TerminalVerdicts  *prometheus.CounterVec
+	Invalidates       *prometheus.CounterVec
+	ClaimAcquisitions *prometheus.CounterVec
 
 	NodesByState    *prometheus.GaugeVec
 	ParkedNodes     prometheus.Gauge
@@ -47,13 +46,10 @@ func NewMetricsRegistry() *MetricsRegistry {
 			prometheus.CounterOpts{Name: "rimsky_invalidates_total", Help: "Invalidates fired, by source kind."},
 			[]string{"source_kind"},
 		),
+		// @decision: named-lock-metric
 		ClaimAcquisitions: prometheus.NewCounterVec(
-			prometheus.CounterOpts{Name: "rimsky_claim_acquisitions_total", Help: "Claim acquisitions by producer and intent."},
-			[]string{"producer", "intent"},
-		),
-		NamedLockAcquisitions: prometheus.NewCounterVec(
-			prometheus.CounterOpts{Name: "rimsky_named_lock_acquisitions_total", Help: "Named-lock acquisitions by lock name and intent."},
-			[]string{"lock_name", "intent"},
+			prometheus.CounterOpts{Name: "rimsky_claim_acquisitions_total", Help: "Acquisitions by acquirer kind (producer claim or named lock), acquirer name, and intent."},
+			[]string{"acquirer_kind", "acquirer", "intent"},
 		),
 		NodesByState: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "rimsky_nodes_by_state", Help: "Count of rimsky_node_runs rows in each state (not distinct nodes)."},
@@ -104,7 +100,6 @@ func NewMetricsRegistry() *MetricsRegistry {
 		m.TerminalVerdicts,
 		m.Invalidates,
 		m.ClaimAcquisitions,
-		m.NamedLockAcquisitions,
 		m.NodesByState,
 		m.ParkedNodes,
 		m.HeldFrames,

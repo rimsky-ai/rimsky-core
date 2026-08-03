@@ -201,12 +201,31 @@ func appendQueryString(path, q string) string {
 	return path + "?" + q
 }
 
+const pathSuffixArgName = "path_suffix"
+
+// @decision: mcp-http-parity
 func substitutePathParams(pattern string, args map[string]json.RawMessage) (string, map[string]json.RawMessage, error) {
 	remaining := map[string]json.RawMessage{}
 	for k, v := range args {
 		remaining[k] = v
 	}
 	out := pattern
+	if strings.HasSuffix(out, "/*") {
+		raw, ok := args[pathSuffixArgName]
+		if !ok {
+			return "", nil, fmt.Errorf("missing path param %q", pathSuffixArgName)
+		}
+		delete(remaining, pathSuffixArgName)
+		suffix := stringFromRaw(raw)
+		var escaped []string
+		for _, seg := range strings.Split(strings.Trim(suffix, "/"), "/") {
+			if seg == "" || seg == "." || seg == ".." {
+				return "", nil, fmt.Errorf("%s must be a path below the wildcard route, got %q", pathSuffixArgName, suffix)
+			}
+			escaped = append(escaped, url.PathEscape(seg))
+		}
+		out = strings.TrimSuffix(out, "*") + strings.Join(escaped, "/")
+	}
 	for {
 		i := strings.Index(out, "{")
 		if i < 0 {
@@ -221,14 +240,18 @@ func substitutePathParams(pattern string, args map[string]json.RawMessage) (stri
 		if !ok {
 			return "", nil, fmt.Errorf("missing path param %q", paramName)
 		}
-		var str string
-		if err := json.Unmarshal(raw, &str); err != nil {
-			str = strings.Trim(string(raw), `"`)
-		}
-		out = out[:i] + url.PathEscape(str) + out[i+j+1:]
+		out = out[:i] + url.PathEscape(stringFromRaw(raw)) + out[i+j+1:]
 		delete(remaining, paramName)
 	}
 	return out, remaining, nil
+}
+
+func stringFromRaw(raw json.RawMessage) string {
+	var str string
+	if err := json.Unmarshal(raw, &str); err != nil {
+		return strings.Trim(string(raw), `"`)
+	}
+	return str
 }
 
 func urlQueryFromRemaining(m map[string]json.RawMessage) (string, []string) {

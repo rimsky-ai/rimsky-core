@@ -21,6 +21,23 @@ func ParseLogLevel(s string) slog.Level {
 	}
 }
 
+const HardExitCode = 130
+
+// @decision: graceful-shutdown
+func InstallSecondSignalHardExit(sigCh <-chan os.Signal, done <-chan struct{}, log Logger, hardExit func()) {
+	go func() {
+		select {
+		case <-done:
+			return
+		case s := <-sigCh:
+			if log != nil {
+				log.Warn("second signal received; escalating to hard exit", "signal", s.String())
+			}
+			hardExit()
+		}
+	}()
+}
+
 func WaitForSignalOrFailure(log Logger, sigCh <-chan os.Signal, failCh <-chan error) error {
 	select {
 	case s := <-sigCh:

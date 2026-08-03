@@ -247,8 +247,8 @@ func startVerifierHTTPBinary(t *testing.T, binary string) string {
 	addr := fmt.Sprintf("127.0.0.1:%d", grpcPort)
 	cmd := exec.Command(binary)
 	cmd.Env = append(os.Environ(),
-		"RIMSKY_EXECUTOR_VERIFIER_HTTP_HOST=127.0.0.1",
-		fmt.Sprintf("RIMSKY_EXECUTOR_VERIFIER_HTTP_PORT=%d", grpcPort),
+		"RIMSKY_EXECUTOR_HOST=127.0.0.1",
+		fmt.Sprintf("RIMSKY_EXECUTOR_PORT_GRPC=%d", grpcPort),
 	)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

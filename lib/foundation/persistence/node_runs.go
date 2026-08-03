@@ -131,6 +131,9 @@ type Queue interface {
 
 	GetByID(ctx context.Context, id shared.UUID) (*DispatchRow, error)
 
+	// @decision: node-state-retired-from-operator-api
+	GetAnyByID(ctx context.Context, id shared.UUID) (*DispatchRow, error)
+
 	// @concept: run-scope
 	GetInFlightRunForNode(ctx context.Context, nodeID, runScopeID shared.UUID, tx Tx) (shared.UUID, bool, error)
 

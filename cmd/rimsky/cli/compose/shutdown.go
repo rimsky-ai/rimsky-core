@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
@@ -151,27 +152,24 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 	}
 }
 
+// @decision: graceful-shutdown
 func InstallSecondSignalEscalator(sigCh <-chan os.Signal, done <-chan struct{}, services []*hostagent.SpawnedService, logger *slog.Logger) {
-	go func() {
-		select {
-		case <-done:
-			return
-		case <-sigCh:
-			if logger != nil {
-				logger.Warn("compose run: second signal received; hard-exit 130")
+	var log shared.Logger
+	if logger != nil {
+		log = shared.NewSlogLogger(logger).With("path", "compose run")
+	}
+	shared.InstallSecondSignalHardExit(sigCh, done, log, func() {
+		for _, s := range services {
+			if s == nil || s.Cmd == nil || s.Cmd.Process == nil {
+				continue
 			}
-			for _, s := range services {
-				if s == nil || s.Cmd == nil || s.Cmd.Process == nil {
-					continue
-				}
-				if err := s.Cmd.Process.Kill(); err != nil && logger != nil && !errors.Is(err, os.ErrProcessDone) {
-					logger.Warn("compose run: SIGKILL on hard-exit failed",
-						"pid", s.Cmd.Process.Pid,
-						"err", err.Error(),
-					)
-				}
+			if err := s.Cmd.Process.Kill(); err != nil && logger != nil && !errors.Is(err, os.ErrProcessDone) {
+				logger.Warn("compose run: SIGKILL on hard-exit failed",
+					"pid", s.Cmd.Process.Pid,
+					"err", err.Error(),
+				)
 			}
-			os.Exit(130)
 		}
-	}()
+		os.Exit(shared.HardExitCode)
+	})
 }

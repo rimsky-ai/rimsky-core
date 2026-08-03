@@ -29,6 +29,12 @@ func (dialTLSTestClaimProducerServer) Capabilities(context.Context, *genv1.Capab
 
 func startMTLSClaimProducerServer(t *testing.T, ca *pki.CA, keyID string) string {
 	t.Helper()
+	return startMTLSClaimProducerServerTrusting(t, ca, ca, keyID)
+}
+
+func startMTLSClaimProducerServerTrusting(t *testing.T, serverIssuer, clientIssuer *pki.CA, keyID string) string {
+	t.Helper()
+	ca := serverIssuer
 	issued, err := ca.IssueLeaf(keyID, time.Now().Add(-time.Hour), 48*time.Hour)
 	if err != nil {
 		t.Fatalf("IssueLeaf(%s): %v", keyID, err)
@@ -43,7 +49,7 @@ func startMTLSClaimProducerServer(t *testing.T, ca *pki.CA, keyID string) string
 	}
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{pair},
-		ClientCAs:    ca.CertPool(),
+		ClientCAs:    clientIssuer.CertPool(),
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		MinVersion:   tls.VersionTLS12,
 	})))
@@ -74,6 +80,51 @@ func TestDial_TLSModeRequired_UsesTransportCredentials(t *testing.T) {
 		t.Fatalf("Dial(required) against an mTLS server with a valid client identity must succeed: %v", err)
 	}
 	t.Cleanup(client.Close)
+}
+
+// @concept: peer-auth
+// @story: peer-auth-mtls-mutual
+func TestDial_TLSModeRequired_AcceptsAPeerWhoseLeafNamesItsPrincipalNotItsHost(t *testing.T) {
+	ca, err := pki.GenerateCA(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	SetTLSRootCAsForTesting(ca.CertPool())
+	t.Cleanup(func() { SetTLSRootCAsForTesting(nil) })
+	SetClientIdentity(holderFor(t, ca, clientKeyID))
+	t.Cleanup(func() { SetClientIdentity(nil) })
+
+	endpoint := startMTLSClaimProducerServer(t, ca, "key-01JENROLLEDSERVICE")
+
+	client, err := Dial(context.Background(), "producer-mtls", endpoint, TLSModeRequired)
+	if err != nil {
+		t.Fatalf("enrollment issues a leaf whose SAN is the peer's api-key principal, never the hostname "+
+			"the config points at, so binding the dial to the endpoint hostname would break every "+
+			"forward leg under peer_auth: mtls: %v", err)
+	}
+	t.Cleanup(client.Close)
+}
+
+func TestDial_TLSModeRequired_RejectsAPeerCertFromAnotherCA(t *testing.T) {
+	ca, err := pki.GenerateCA(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	impostor, err := pki.GenerateCA(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("GenerateCA impostor: %v", err)
+	}
+	SetTLSRootCAsForTesting(ca.CertPool())
+	t.Cleanup(func() { SetTLSRootCAsForTesting(nil) })
+	SetClientIdentity(holderFor(t, ca, clientKeyID))
+	t.Cleanup(func() { SetClientIdentity(nil) })
+
+	endpoint := startMTLSClaimProducerServerTrusting(t, impostor, ca, "key-01JIMPOSTOR")
+
+	if _, err := Dial(context.Background(), "producer-impostor", endpoint, TLSModeRequired); err == nil {
+		t.Fatal("dropping hostname verification must not drop issuer verification: a leaf signed by a CA " +
+			"that is not this deployment's must still be refused")
+	}
 }
 
 func TestDial_TLSModeOff_DoesNotSatisfyMTLSServer(t *testing.T) {

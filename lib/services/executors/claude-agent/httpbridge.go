@@ -5,35 +5,24 @@ package claudeagent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/encoding/protojson"
 
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 const maxExecuteBodyBytes = 10 * 1024 * 1024
 
-type httpExecuteBody struct {
-	NodeID                   string         `json:"node_id"`
-	InstanceID               string         `json:"instance_id"`
-	NodeType                 string         `json:"node_type"`
-	NodeRunID                string         `json:"dispatch_id"`
-	Attributes               map[string]any `json:"attributes"`
-	AttributesSchema         map[string]any `json:"attributes_schema"`
-	ClaimProducers           map[string]any `json:"claim_producers"`
-	CallbackURL              string         `json:"callback_url"`
-	CancelToken              string         `json:"cancel_token"`
-	PriorNodeRunID           string         `json:"prior_dispatch_id"`
-	PriorDispatchDisposition string         `json:"prior_dispatch_disposition"`
-	RunScopeID               string         `json:"run_scope_id"`
-	Scratch                  string         `json:"scratch"`
-}
+// @decision: protojson-gateway
+var executeRequestUnmarshal = protojson.UnmarshalOptions{DiscardUnknown: true}
 
 type RunningHTTPBridge struct {
 	Address string
@@ -71,40 +60,45 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxExecuteBodyBytes)
-		var body httpExecuteBody
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		req := &genv1.ExecuteRequest{}
+		if err := executeRequestUnmarshal.Unmarshal(raw, req); err != nil {
+			http.Error(w, "protojson: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		ackID := uuid.NewString()
-		runID := body.NodeRunID
+		runID := req.GetDispatchId()
 		if runID == "" {
 			runID = uuid.NewString()
 		}
-		traceID := body.NodeRunID
+		traceID := req.GetDispatchId()
 		if traceID == "" {
 			traceID = ackID
 		}
-		logger := executor.cfg.Logger.With("run_id", runID, "node_id", body.NodeID)
+		logger := executor.cfg.Logger.With("run_id", runID, "node_id", req.GetNodeId())
 
-		attributes := body.Attributes
+		attributes := req.GetAttributes().AsMap()
 		if attributes == nil {
 			attributes = map[string]any{}
 		}
 		inputs := dispatchInputs{
-			NodeID:                       nodeIDOr(body.NodeID, runID),
-			InstanceID:                   body.InstanceID,
-			NodeType:                     nodeTypeOr(body.NodeType),
-			NodeRunID:                    body.NodeRunID,
-			RunScopeID:                   body.RunScopeID,
-			PriorNodeRunID:               body.PriorNodeRunID,
-			PriorDispatchDispositionWire: body.PriorDispatchDisposition,
-			CallbackURL:                  body.CallbackURL,
-			CancelToken:                  body.CancelToken,
+			NodeID:                       nodeIDOr(req.GetNodeId(), runID),
+			InstanceID:                   req.GetInstanceId(),
+			NodeType:                     nodeTypeOr(req.GetNodeType()),
+			NodeRunID:                    req.GetDispatchId(),
+			RunScopeID:                   req.GetRunScopeId(),
+			PriorNodeRunID:               req.GetPriorDispatchId(),
+			PriorDispatchDispositionWire: priorDispositionWire(req),
+			CallbackURL:                  req.GetCallbackUrl(),
+			CancelToken:                  req.GetCancelToken(),
 			Attributes:                   attributes,
-			AttributesSchema:             body.AttributesSchema,
-			ClaimProducers:               unwrapClaimProducersJSON(body.ClaimProducers),
-			SessionToken:                 sessionTokenOr(SessionTokenFromScratchBase64(body.Scratch), attributes),
+			AttributesSchema:             req.GetAttributesSchema().AsMap(),
+			ClaimProducers:               unwrapClaimProducersProto(req.GetClaimProducers()),
+			SessionToken:                 sessionTokenOr(SessionTokenFromScratch(req.GetScratch()), attributes),
 		}
 
 		executor.recordDispatchStart(traceID, inputs)
@@ -114,9 +108,17 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *
 			func(callbackBody map[string]any) { callbackBody["async_ack_id"] = ackID },
 		)
 
+		outcome := &genv1.Outcome{Outcome: &genv1.Outcome_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
+			AsyncAckId: ackID,
+		}}}
+		encoded, mErr := protojson.Marshal(outcome)
+		if mErr != nil {
+			http.Error(w, "protojson: "+mErr.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]any{"async_ack_id": ackID})
+		_, _ = w.Write(encoded)
 	})
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))

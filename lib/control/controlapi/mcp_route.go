@@ -82,11 +82,27 @@ func builtinSchemas() map[string][]byte {
 		"node_get":   []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		"node_reset": []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 
+		// @decision: node-state-retired-from-operator-api
+		"run_get": []byte(`{"type":"object","properties":{"run_id":{"type":"string","description":"run (node-run) UUID"}},"required":["run_id"]}`),
+
+		// @concept: frame
+		"instance_frame_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"triggering_message_id":{"type":"string"}},"required":["id"]}`),
+		"instance_frame_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"frame_id":{"type":"string","description":"frame UUID"}},"required":["id","frame_id"]}`),
+
+		// @decision: mcp-http-parity
+		"observability_get": []byte(`{"type":"object","properties":{"path_suffix":{"type":"string","description":"path below /v1/observability/, e.g. \"executors\" or \"executors/claude-agent/trace/<dispatch_id>\""}},"required":["path_suffix"]}`),
+
+		// @concept: peer-auth
+		"service_enroll": []byte(`{"type":"object","properties":{"label":{"type":"string","description":"optional label recorded on the enrollment audit line"}}}`),
+
 		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string","description":"ignored; the server derives sender from the caller's identity or publisher_subscription_id"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Omit to have the server synthesize a random one"}},"required":["id","type"]}`),
 		"message_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"message_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"message id"}},"required":["id"]}`),
 
 		"event_list": obj,
+
+		// @story: audit-log-read
+		"audit_list": []byte(`{"type":"object","properties":{"kind":{"type":"string"},"key_id":{"type":"string"},"key_name":{"type":"string"},"action":{"type":"string"},"action_prefix":{"type":"string"},"target":{"type":"string"},"status":{"type":"string"},"mode":{"type":"string"},"since":{"type":"string","description":"RFC3339 timestamp"},"until":{"type":"string","description":"RFC3339 timestamp"},"limit":{"type":"integer"},"cursor":{"type":"string"}}}`),
 
 		"lineage_get":               []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"claim_handle_id":{"type":"string"},"source_type":{"type":"string"},"source_id":{"type":"string"},"executor_name":{"type":"string"}}}`),
 		"lineage_run_ancestors":     []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["run_id"]}`),

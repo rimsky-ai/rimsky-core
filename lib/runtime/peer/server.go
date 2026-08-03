@@ -19,3 +19,14 @@ func TLSServerConfig(peerAuth string, serverIdentity *IdentityHolder, clientCAs 
 		ClientAuth:     tls.RequireAndVerifyClientCert,
 	}
 }
+
+// @concept: peer-auth
+// @decision: peer-auth-mtls
+func TLSControlAPIServerConfig(peerAuth string, serverIdentity *IdentityHolder, clientCAs *x509.CertPool) *tls.Config {
+	cfg := TLSServerConfig(peerAuth, serverIdentity, clientCAs)
+	if cfg == nil {
+		return nil
+	}
+	cfg.ClientAuth = tls.VerifyClientCertIfGiven
+	return cfg
+}

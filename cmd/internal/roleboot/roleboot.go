@@ -47,6 +47,12 @@ func Main(run RoleRunner) {
 	}
 
 	roleErr := shared.WaitForSignalOrFailure(log, sigCh, failCh)
+
+	// @decision: graceful-shutdown
+	drained := make(chan struct{})
+	defer close(drained)
+	shared.InstallSecondSignalHardExit(sigCh, drained, log, func() { os.Exit(shared.HardExitCode) })
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownDeadline)
 	defer cancel()
 	_ = stop(shutdownCtx)

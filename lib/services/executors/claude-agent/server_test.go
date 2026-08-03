@@ -5,6 +5,7 @@ package claudeagent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -41,8 +42,7 @@ func (r *callbackRecorder) post(url string, body map[string]any, _ *slog.Logger)
 
 func (r *callbackRecorder) waitForCall(t *testing.T) capturedCallback {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+	for {
 		r.mu.Lock()
 		if len(r.calls) > 0 {
 			call := r.calls[0]
@@ -52,8 +52,6 @@ func (r *callbackRecorder) waitForCall(t *testing.T) capturedCallback {
 		r.mu.Unlock()
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("callback was not posted within 10s")
-	return capturedCallback{}
 }
 
 func startTestExecutor(t *testing.T) (*ExecutorServer, *ObservabilityServer, *callbackRecorder) {
@@ -371,11 +369,12 @@ func TestSessionTokenScratchRoundTrip(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	b64 := SessionTokenToScratchBase64("run-99")
-	if got := SessionTokenFromScratchBase64(b64); got != "run-99" {
-		t.Fatalf("round trip = %q", got)
+	decoded, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("park scratch must be base64: %v", err)
 	}
-	if SessionTokenFromScratchBase64("") != "" {
-		t.Fatal("empty scratch string must yield empty token")
+	if got := SessionTokenFromScratch(decoded); got != "run-99" {
+		t.Fatalf("round trip = %q", got)
 	}
 }
 

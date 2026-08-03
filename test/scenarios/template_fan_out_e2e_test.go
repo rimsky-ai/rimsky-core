@@ -39,8 +39,6 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 		},
 	})
 
-	const concurrencyBound = 500 * time.Millisecond
-
 	holds := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 	builder := h.Stub.WhenType("fan-parent").
 		Success(map[string]any{"ok": true}, true, "ok").
@@ -103,24 +101,9 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 		`, []any{parentNode.ID}, &ws)
 		return ws >= 3
 	}, 60*time.Second, 25*time.Millisecond,
-		"each of the three partition children must emit a work_started event "+
-			"(dispatch reached the runner's post-acquisition audit tx)")
-
-	var spreadMs int64
-	h.QueryRowSQL(`
-		SELECT (EXTRACT(EPOCH FROM (MAX(occurred_at) - MIN(occurred_at))) * 1000)::bigint
-		  FROM (
-		    SELECT occurred_at FROM rimsky_events
-		     WHERE node_id = $1 AND kind = 'work_started'
-		     ORDER BY occurred_at ASC
-		     LIMIT 3
-		  ) sub
-	`, []any{parentNode.ID}, &spreadMs)
-	require.Less(t, spreadMs, concurrencyBound.Milliseconds(),
-		"work_started events for the three partition runs must be concurrent — "+
-			"observed spread %dms ≥ bound %dms suggests serialized dispatch "+
-			"(fan-out children must be dispatched in parallel, not one after another)",
-		spreadMs, concurrencyBound.Milliseconds())
+		"all three partition children must be in flight at once: every dispatch is held open until this "+
+			"test releases it, so three work_started events can only coexist if the three were dispatched "+
+			"in parallel — serialized dispatch stalls on the first hold and never reaches the third")
 
 	terminalChildren := func() int {
 		var n int

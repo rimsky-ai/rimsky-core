@@ -20,8 +20,8 @@ func TestMetricsHandler_Smoke(t *testing.T) {
 	m.Dispatches.WithLabelValues("worker", "complete").Inc()
 	m.TerminalVerdicts.WithLabelValues("complete", "").Inc()
 	m.Invalidates.WithLabelValues("admin").Inc()
-	m.ClaimAcquisitions.WithLabelValues("filesystem", "rw").Inc()
-	m.NamedLockAcquisitions.WithLabelValues("deploy-mutex", "acquired").Inc()
+	m.ClaimAcquisitions.WithLabelValues("producer", "filesystem", "rw").Inc()
+	m.ClaimAcquisitions.WithLabelValues("named_lock", "deploy-mutex", "acquired").Inc()
 	m.NodesByState.WithLabelValues("fresh").Set(0)
 	m.ParkedNodes.Set(0)
 	m.HeldFrames.Set(0)
@@ -52,7 +52,6 @@ func TestMetricsHandler_Smoke(t *testing.T) {
 		"rimsky_terminal_verdicts_total",
 		"rimsky_invalidates_total",
 		"rimsky_claim_acquisitions_total",
-		"rimsky_named_lock_acquisitions_total",
 		"rimsky_nodes_by_state",
 		"rimsky_parked_nodes",
 		"rimsky_held_frames",
@@ -66,5 +65,12 @@ func TestMetricsHandler_Smoke(t *testing.T) {
 		if !strings.Contains(string(body), name) {
 			t.Errorf("metric %q not present in scrape", name)
 		}
+	}
+	// @decision: named-lock-metric
+	if strings.Contains(string(body), "rimsky_named_lock_acquisitions_total") {
+		t.Error("named-lock acquisitions are counted in the claim-acquisition family under acquirer_kind=named_lock; the separate family must not be exported")
+	}
+	if !strings.Contains(string(body), `acquirer_kind="named_lock"`) {
+		t.Error("named-lock acquisitions missing from the claim-acquisition family")
 	}
 }
