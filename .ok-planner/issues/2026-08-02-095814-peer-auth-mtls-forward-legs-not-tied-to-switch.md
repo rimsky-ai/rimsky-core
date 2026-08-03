@@ -5,8 +5,9 @@ category: decision-drift
 artifacts:
   - story:peer-auth-mtls-mutual
   - decision:peer-auth-mtls
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:14Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # Flipping `peer_auth: mtls` leaves the forward dispatch legs and the control API's own port in plaintext

@@ -4,8 +4,9 @@ kind: audit
 category: decision-drift
 artifacts:
   - decision:graceful-shutdown
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:24Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # Production shutdown runs a 30-second grace with no second-signal escape; the decision promises 5 seconds and a hard exit

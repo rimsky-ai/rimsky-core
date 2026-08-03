@@ -4,8 +4,9 @@ kind: audit
 category: decision-drift
 artifacts:
   - story:anonymous-mode-bootstrap
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:11Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # Service enrollment rejects the anonymous identity even while anonymous mode is open

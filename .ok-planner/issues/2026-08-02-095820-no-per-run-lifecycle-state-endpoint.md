@@ -4,8 +4,9 @@ kind: audit
 category: decision-drift
 artifacts:
   - decision:node-state-retired-from-operator-api
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:20Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # The per-run state endpoint the operator API promises was never built

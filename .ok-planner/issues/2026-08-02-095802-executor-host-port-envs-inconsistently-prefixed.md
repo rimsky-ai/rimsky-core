@@ -4,8 +4,9 @@ kind: audit
 category: decision-drift
 artifacts:
   - decision:operator-env-namespaced-per-service
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:02Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # Three of the four bundled executors prefix their host/port env vars; the fourth and the decision say unprefixed

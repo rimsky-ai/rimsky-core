@@ -4,8 +4,9 @@ kind: audit
 category: decision-drift
 artifacts:
   - decision:protojson-gateway
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:25Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # Two of the three HTTP bridges hand-roll their JSON instead of using protojson

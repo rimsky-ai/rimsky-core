@@ -4,8 +4,9 @@ kind: audit
 category: test-coverage
 artifacts:
   - decision:coding-style
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:12Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # CI never runs the plumbline lint; its purpose-built test silently self-skips there

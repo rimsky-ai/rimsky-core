@@ -4,8 +4,9 @@ kind: audit
 category: decision-drift
 artifacts:
   - decision:inproc-eventstream
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:03Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # The in-process executor call is bridged through a goroutine and channel the decision's prose denies

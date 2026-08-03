@@ -4,8 +4,9 @@ kind: audit
 category: decision-drift
 artifacts:
   - decision:licensing-enforced-by-license-lint
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:13Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # The license lint never looks at a third-party dependency's license

@@ -5,8 +5,9 @@ category: decision-drift
 artifacts:
   - decision:mcp-http-parity
   - story:mcp-transport
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:26Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # Four of the 45 control-API actions have no MCP counterpart, so an MCP-only client can't do everything

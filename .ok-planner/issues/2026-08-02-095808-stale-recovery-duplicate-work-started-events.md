@@ -4,8 +4,9 @@ kind: audit
 category: bug
 artifacts:
   - story:work-completed-emitted
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:08Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # A liveness-recovered dispatch emits two work-started events against one work-completed

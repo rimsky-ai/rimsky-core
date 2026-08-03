@@ -4,8 +4,9 @@ kind: audit
 category: decision-drift
 artifacts:
   - decision:named-lock-metric
-status: verified
+status: promoted
 opened: 2026-08-02T09:58:23Z
+sprint: 2026-08-03-audit-gap-drain.md
 ---
 
 # Named-lock acquisitions got their own metric family — the exact alternative the decision rejects
