@@ -9,7 +9,6 @@ package sqlite_test
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -422,20 +421,44 @@ func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *test
 	store := d.Tables()
 
 	runID, _ := seedDispatchInstance(t, ctx, d)
-	stop := make(chan struct{})
-	bumperReady := make(chan struct{})
+
+	const bumpsRequiredWhileSweeping = 100
+
+	sweeperEngaged := make(chan struct{})
+	bumperFinished := make(chan struct{})
+	var engageOnce sync.Once
+	markSweeperEngaged := func() { engageOnce.Do(func() { close(sweeperEngaged) }) }
+
 	var wg sync.WaitGroup
-	var bumpsCompleted atomic.Int64
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		first := true
+		defer markSweeperEngaged()
 		for {
+			if _, err := store.Frames().PruneTraceForRetention(ctx, 1, f.cutoff); err != nil {
+				t.Errorf("PruneTraceForRetention under contention: %v", err)
+				return
+			}
+			if _, err := store.Events().DeleteOlderThan(ctx, f.cutoff); err != nil {
+				t.Errorf("Events.DeleteOlderThan under contention: %v", err)
+				return
+			}
+			markSweeperEngaged()
 			select {
-			case <-stop:
+			case <-bumperFinished:
 				return
 			default:
 			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(bumperFinished)
+		<-sweeperEngaged
+		for i := 0; i < bumpsRequiredWhileSweeping; i++ {
 			err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				_, berr := d.Queue().BumpLastProgressAt(ctx, runID, time.Now(), tx)
 				return berr
@@ -444,42 +467,8 @@ func TestSQLite_RetentionSweepRespectsWriterSerializationUnderContention(t *test
 				t.Errorf("background bumper: %v", err)
 				return
 			}
-			bumpsCompleted.Add(1)
-			if first {
-				first = false
-				close(bumperReady)
-			}
-			time.Sleep(100 * time.Microsecond)
 		}
 	}()
-	<-bumperReady
 
-	const contentionWindow = 500 * time.Millisecond
-	sweepDeadline := time.Now().Add(30 * time.Second)
-	contentionUntil := time.Now().Add(contentionWindow)
-	iters := 0
-	for time.Now().Before(sweepDeadline) {
-		if _, err := store.Frames().PruneTraceForRetention(ctx, 1, f.cutoff); err != nil {
-			close(stop)
-			wg.Wait()
-			t.Fatalf("PruneTraceForRetention under contention: %v", err)
-		}
-		if _, err := store.Events().DeleteOlderThan(ctx, f.cutoff); err != nil {
-			close(stop)
-			wg.Wait()
-			t.Fatalf("Events.DeleteOlderThan under contention: %v", err)
-		}
-		iters++
-		if !time.Now().Before(contentionUntil) {
-			break
-		}
-	}
-	close(stop)
 	wg.Wait()
-	if iters == 0 {
-		t.Fatalf("retention sweep never completed under contention (deadlock or livelock)")
-	}
-	if got := bumpsCompleted.Load(); got < 100 {
-		t.Fatalf("background bumper completed only %d bumps under sustained contention over %v (lower bound: ≥100 at 100µs per bump) — sweep is starving the bumper, weakening the serialization invariant the test exists to verify", got, contentionWindow)
-	}
 }

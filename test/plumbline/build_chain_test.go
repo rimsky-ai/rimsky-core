@@ -47,7 +47,7 @@ func TestReleaseChainOrder(t *testing.T) {
 		t.Fatalf("Makefile has no release target")
 	}
 	deps := strings.Fields(m[1])
-	want := []string{"lint", "core-images", "service-images", "test-all", "test-race", "scan", "push-images"}
+	want := []string{"lint", "core-images", "service-images", "test-all", "scan", "push-images"}
 	if strings.Join(deps, " ") != strings.Join(want, " ") {
 		t.Errorf("release chain is %v, want the decided order %v", deps, want)
 	}
@@ -190,14 +190,12 @@ func TestGoreleaserCLIArchiveChannelMatchesDecision(t *testing.T) {
 	}
 }
 
-// @decision: race-gate-split
-func TestRaceGateSplit(t *testing.T) {
-	makefile := readBuildFile(t, "Makefile")
-	assertMakeTarget(t, makefile, "test-race")
-	if !regexp.MustCompile(`-race -count=1`).MatchString(makefile) {
-		t.Errorf("the everyday gate no longer carries a single-iteration race slice")
-	}
-	if !regexp.MustCompile(`-race -count=3`).MatchString(makefile) {
-		t.Errorf("the dedicated race gate no longer repeats under the race detector")
+func TestNoRaceDetectorInAnyBuildGate(t *testing.T) {
+	uncommentedRaceFlag := regexp.MustCompile(`(?m)^[^#\n]*\B-race\b`)
+	for _, rel := range []string{"Makefile", ".github/workflows/ci.yml"} {
+		if uncommentedRaceFlag.MatchString(readBuildFile(t, rel)) {
+			t.Errorf("%s wires the race detector into a build gate — the suite's verdict must be a function of the code alone, "+
+				"and a green race-detector run proves nothing, so gating on one makes the gate's verdict probabilistic", rel)
+		}
 	}
 }

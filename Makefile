@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-race test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -49,11 +49,6 @@ tidy:
 # over the four workspace modules (plus examples), with each job running its
 # own module's slice in parallel. `test-all` composes them for local runs.
 #
-# The thin -race -count=1 slice rides on the owning module's target:
-# root owns lib/runtime + lib/graph/scheduler; foundation owns its persistence
-# packages. The full -count=3 treatment lives in `test-race` (release-gate
-# only).
-#
 # Subscription mounting is asynchronous (instance-create returns 201 with
 # rows in `mounting`; a reconciler drives Subscribe to `active`), and the
 # docker-stack tests wait on that observable state instead of a wall-clock
@@ -69,11 +64,9 @@ GOTEST_GUARD := $(CURDIR)/tools/gotest-guard.sh
 
 test-root:
 	$(GOTEST_GUARD) -timeout 300s ./...
-	$(GOTEST_GUARD) -timeout 180s -race -count=1 ./lib/runtime/... ./lib/graph/scheduler/...
 
 test-foundation:
 	cd lib/foundation && $(GOTEST_GUARD) -timeout 120s ./...
-	cd lib/foundation && $(GOTEST_GUARD) -timeout 180s -race -count=1 ./persistence/postgres/... ./persistence/sqlite/...
 
 test-protocols:
 	cd lib/protocols && $(GOTEST_GUARD) -timeout 60s ./...
@@ -131,19 +124,6 @@ test-report:
 	@echo
 	@echo "==== Slowest tests (threshold $(SLOW_THRESHOLD), top $(SLOW_NUM)) ===="
 	@gotestsum tool slowest --jsonfile .test-report/all.json --threshold=$(SLOW_THRESHOLD) --num=$(SLOW_NUM)
-
-# Full race-detection gate over the race-sensitive packages: -count=3 to
-# shake out scheduling-order-dependent races that a single run can miss.
-# Required by the `release` chain.
-#
-# Scope is the load-bearing race surface — runtime + scheduler. The
-# persistence packages are deliberately omitted from the -count=3 slice:
-# their race surface is mostly contention against the underlying driver,
-# not Go data races, and `test-all` already covers them with
-# -race -count=1, which catches the common races on every run without
-# tripling testcontainer boot cost in the release gate.
-test-race:
-	go test -timeout 1800s -race -count=3 ./lib/runtime/... ./lib/graph/scheduler/...
 
 build-all:
 	go build ./...
@@ -411,8 +391,6 @@ push-images: check-clean buildx-builder
 #   service-images — build the 11 bundled-service images locally
 #   test-all       — full Go test suite, including testcontainer scenarios
 #                    (requires Docker daemon for the testcontainer tests)
-#   test-race      — full -race -count=3 treatment over the race-sensitive
-#                    packages (runtime, scheduler, persistence)
 #   scan           — docker scout cves against every locally-built image
 #   push-images    — buildx build + push with SBOM + provenance attestations
 #
@@ -430,7 +408,7 @@ push-images: check-clean buildx-builder
 # LATEST_TAG=dev so the floating tag pushed alongside :$(VERSION) is :dev
 # instead of :latest. If scan finds vulnerabilities, the chain stops before
 # push.
-release: lint core-images service-images test-all test-race scan push-images
+release: lint core-images service-images test-all scan push-images
 
 # Mechanical pre-release / dev channel. Derives a SemVer-2.0 pre-release
 # version (v<next-minor>.0-dev.<YYYYMMDD>.g<sha>) from the latest stable

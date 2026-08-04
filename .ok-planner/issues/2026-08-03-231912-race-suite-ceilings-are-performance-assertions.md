@@ -103,3 +103,61 @@ than 300 is a performance assertion wearing a backstop's clothes.
 The ruling decides whether the ceilings become failsafes and the setup
 cost is attacked on its own merits, or the `-race` coverage is narrowed
 instead.
+
+## Correction to the measurements above
+
+The timings recorded in this file — the SQLite package exceeding 300s,
+`lib/runtime/hostagent` at roughly 105 seconds — were taken while 189
+orphaned busy-loop processes were saturating the machine's CPUs. They
+were left behind by a load-generator script used earlier to reproduce
+an unrelated intermittent failure, and they ran for over twenty hours
+before being found and killed. Every duration above is therefore an
+upper bound taken under artificial load, not a measurement of the
+machine. The qualitative findings do not depend on them: the suite was
+observed making steady progress with no goroutine blocked on any
+synchronization primitive, which is what established that nothing was
+deadlocked.
+
+## Ruling
+
+The test suite's purpose is finding regressions in business logic
+during development, and its verdict must be a function of the code
+alone. `-race` does not meet that bar: it is a detector, not a check —
+a report is real, but a green run proves nothing, so wiring it into a
+gate makes the gate's verdict probabilistic. That is the same defect as
+a flaky assertion arriving from the other direction, and it contradicts
+this project's standing rule that tests are deterministic.
+
+So `-race` comes out of the suite entirely — not narrowed, not
+re-ceilinged. Remove it from `test-root` and `test-foundation`, delete
+the `test-race` target, drop it from the `release` chain, and correct
+the project rule that asserted the opposite. The ceiling question this
+issue was filed about dissolves along with it: with no detector in the
+gate, nothing on those targets needs a thirty-minute backstop.
+
+Race conditions remain real bugs. Finding them is a separate discipline
+with its own tooling and its own cadence, to be settled on its own
+terms later; it does not gate the build.
+
+### Corpus consequences a sprint must carry
+
+The ruling has been executed in code and in the project rules, but four
+design artifacts still describe the retired arrangement, and moving them
+is an intent-level change no working session may make ad hoc:
+
+- `decision:race-gate-split` — retire; it is the decision the ruling
+  overturns, and nothing in the build realizes it any more.
+- `decision:release-chain` — amend; its Choice still names a dedicated
+  repeated-race gate as a step in the chain.
+- The decisions table of contents — drop the `race-gate-split` row.
+- `decision:race-injection-hooks` — amend; it rejects an alternative by
+  reference to the repeated race gate, which no longer exists. Its
+  standing rationale is the closest thing the corpus already has to this
+  ruling: it rejects relying on the race detector alone precisely
+  because a scheduler-dependent interleaving can survive any finite
+  repetition budget unexercised.
+
+The test that pinned the retired decision is gone, replaced by one that
+pins the new rule mechanically — no `-race` in the Makefile or the CI
+workflow. That test carries no decision citation, because the decision
+it would cite does not exist until a sprint writes it.

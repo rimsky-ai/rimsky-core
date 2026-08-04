@@ -16,7 +16,6 @@ Run **every** check that could be affected by the change. This is mandatory, not
 - **Any Go change:** `go build ./... && go test ./... && make lint`
 - **Proto changes (`lib/protocols/proto/v1/*.proto`):** `make proto-gen` first, then the Go checks above.
 - **Scenario or storage changes:** `go test ./test/scenarios/... ./lib/foundation/persistence/... -count=1` (these spin up real Postgres via testcontainers — Docker must be running).
-- **Race-sensitive paths (queue, supervisor, scheduler):** add `-race`, e.g. `go test ./lib/foundation/persistence/postgres/... ./lib/runtime/... ./lib/runtime/scheduler/... -race -count=3`.
 - **Reference-binary or deploy changes:** rebuild the touched core images with `make core-images` (and `make service-images` for bundled-service changes), then verify the stack via the testcontainers-based services harness under `lib/services/test/` (e.g. `go test ./lib/services/test/scenarios/... -count=1`), which boots `rimsky-all-in-one:latest` and drives a node to terminal.
 - **Conformance-relevant changes (protocol, executor surface):** `go run ./cmd/rimsky conformance executor --endpoint <executor> --transport grpc` against the executors you touched.
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.
@@ -42,7 +41,8 @@ Rules:
 - **The only sanctioned hang backstop is the suite-level `go test -timeout`.** It is a harness-layer failsafe, not a verdict input: it fails loud with a stack dump naming the hung test, and it is load-independent in outcome (correct code → pass; broken code → hang → killed). Load changes how long a pass takes, never whether it passes. Never put the hang backstop inside the test's verdict logic.
 - **No `time.Sleep` to "let things settle"** in a test. Replace with an explicit synchronization point. No bare `time.Now()` in logic under test — inject the `Clock` abstraction the codebase already provides.
 - **Isolate per-test state:** unique DB schema/namespace, `t.TempDir()`, OS-assigned ephemeral ports, no package-level mutable state shared across tests.
-- **`-race` always in CI**; deterministic seeds for anything randomized (vary by index, never by wall-clock).
+- **No `-race` in the suite, ever.** The suite's job is catching regressions in business logic, and its verdict must be a function of the code alone. The race detector is a *detector*, not a check: a report is real, but a green run proves nothing, so wiring it into a gate makes the gate's verdict probabilistic — the same defect as a flaky assertion, arriving from the other direction. Finding races is a separate discipline with its own tooling and its own cadence; it does not gate the build, and no target, CI job, or release chain may add `-race` back.
+- Deterministic seeds for anything randomized (vary by index, never by wall-clock).
 - When you touch a test that has ever flaked, fix its nondeterminism at the root as part of that change ("Fix Every Bug You Find" applies to flaky tests).
 
 ## Project-agnostic

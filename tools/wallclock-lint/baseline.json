@@ -23,7 +23,6 @@
   "lib/control/observability/handshake_test.go": 2,
   "lib/foundation/persistence/sqlite/advisory_locker_test.go": 2,
   "lib/foundation/persistence/sqlite/deadlock_guard_test.go": 1,
-  "lib/foundation/persistence/sqlite/trace_retention_test.go": 1,
   "lib/foundation/shared/clock_test.go": 1,
   "lib/protocols/conformance/executor/callback_receiver_test.go": 7,
   "lib/protocols/publisherkit/publisher_test.go": 1,
