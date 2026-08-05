@@ -4,9 +4,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -213,6 +216,70 @@ func TestNoProtocolSuiteHangsOffAnotherProtocolsSubcommand(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func dispatchedConformanceSubcommands(t *testing.T) []string {
+	t.Helper()
+	src, err := os.ReadFile("conformance.go")
+	if err != nil {
+		t.Fatalf("read conformance.go: %v", err)
+	}
+	body := regexp.MustCompile(`(?s)func dispatchConformance\(.*?\n}\n`).Find(src)
+	if body == nil {
+		t.Fatalf("dispatchConformance is no longer a top-level function in conformance.go")
+	}
+	var names []string
+	for _, m := range regexp.MustCompile(`case "([a-z][a-z-]*)":`).FindAllStringSubmatch(string(body), -1) {
+		if m[1] == "help" {
+			continue
+		}
+		names = append(names, m[1])
+	}
+	if len(names) == 0 {
+		t.Fatalf("no conformance subcommands parsed out of dispatchConformance")
+	}
+	return names
+}
+
+func rootUsageConformanceSubcommands(t *testing.T) []string {
+	t.Helper()
+	var buf bytes.Buffer
+	printRootUsage(&buf)
+	var block []string
+	collecting := false
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "conformance ") {
+			collecting = true
+			line = strings.TrimSpace(line)[len("conformance "):]
+		} else if collecting && strings.TrimSpace(line) == "" {
+			break
+		}
+		if collecting {
+			block = append(block, line)
+		}
+	}
+	if len(block) == 0 {
+		t.Fatalf("root usage no longer carries a conformance line")
+	}
+	var names []string
+	for _, name := range strings.Split(strings.Join(block, " "), "|") {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// @concept: conformance
+// @decision: conformance-suite-per-protocol
+func TestRootUsageListsExactlyTheDispatchedConformanceSubcommands(t *testing.T) {
+	dispatched := dispatchedConformanceSubcommands(t)
+	listed := rootUsageConformanceSubcommands(t)
+	sort.Strings(dispatched)
+	sort.Strings(listed)
+	if strings.Join(dispatched, " ") != strings.Join(listed, " ") {
+		t.Errorf("`rimsky help` lists conformance suites %v but dispatchConformance accepts %v — an implementer reading the root usage would not find every suite that exists", listed, dispatched)
 	}
 }
 

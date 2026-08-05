@@ -5,8 +5,8 @@ Rimsky is multi-licensed:
   1. Source files in the embedder layer — the lib/protocols/ module, the wire
      contract consumers implement and link against to speak to Rimsky — are
      licensed under the Apache License, Version 2.0 (see LICENSE.apache). The
-     embedder layer is identified per-file by an "Apache License, Version
-     2.0" header.
+     embedder layer is identified per-file by an
+     "SPDX-License-Identifier: Apache-2.0" header.
 
   2. Source files in the orchestrator layer — everything else Rimsky ships,
      the orchestrator binaries and the reference services — are dual-licensed:
@@ -21,8 +21,10 @@ Rimsky is multi-licensed:
            source disclosure) obligations. Contact
            licensing@fallguyconsulting.com.
 
-     The orchestrator layer is identified per-file by a "Dual-licensed under
-     AGPL-3.0-or-later or a Fall Guy Consulting commercial license" header.
+     The orchestrator layer is identified per-file by an
+     "SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial"
+     header. `LicenseRef-FallGuy-Commercial` is a non-registry SPDX pointer to
+     the commercial alternative in (b) above, not a public license text.
 
 Contributions are accepted under the Rimsky Contributor Certificate in
 CONTRIBUTING.md — a single per-commit Rimsky-Cert sign-off that grants Fall Guy
