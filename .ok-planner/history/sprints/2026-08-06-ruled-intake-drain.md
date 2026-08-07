@@ -1,3 +1,7 @@
+---
+closed: a973a395
+---
+
 # Sprint: Ruled-intake drain — race-gate retirement and eleven verified fixes
 
 ## Intent
