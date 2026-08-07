@@ -125,13 +125,6 @@ func (DispatchFrame_DispatchFrameKind) EnumDescriptor() ([]byte, []int) {
 	return file_host_agent_proto_rawDescGZIP(), []int{11, 0}
 }
 
-// claim_producer_verb names the unary ClaimProducer RPC the agent must
-// invoke on the child. Carried on the wire because CommitRequest /
-// AbandonRequest / ReleaseRequest are byte-identical at claim_id — the
-// agent cannot infer the verb from the payload shape, and committing an
-// Abandon/Release on a side-effecting producer is a state-integrity bug.
-// Only meaningful when protocol == "claim_producer"; UNSPECIFIED on
-// executor dispatch and on Open (Open is distinguished by its payload).
 type DispatchFrame_ClaimProducerVerb int32
 
 const (
@@ -314,11 +307,11 @@ type ClientFrame_Reaped struct {
 }
 
 type ClientFrame_DispatchFrame struct {
-	DispatchFrame *DispatchFrame `protobuf:"bytes,5,opt,name=dispatch_frame,json=dispatchFrame,proto3,oneof"` // from spawned process → supervisor
+	DispatchFrame *DispatchFrame `protobuf:"bytes,5,opt,name=dispatch_frame,json=dispatchFrame,proto3,oneof"`
 }
 
 type ClientFrame_HttpForward struct {
-	HttpForward *LocalHttpForward `protobuf:"bytes,6,opt,name=http_forward,json=httpForward,proto3,oneof"` // from spawned process → rimsky-side
+	HttpForward *LocalHttpForward `protobuf:"bytes,6,opt,name=http_forward,json=httpForward,proto3,oneof"`
 }
 
 func (*ClientFrame_Register) isClientFrame_Body() {}
@@ -460,11 +453,11 @@ type ServerFrame_Reap struct {
 }
 
 type ServerFrame_DispatchFrame struct {
-	DispatchFrame *DispatchFrame `protobuf:"bytes,5,opt,name=dispatch_frame,json=dispatchFrame,proto3,oneof"` // from supervisor → spawned process
+	DispatchFrame *DispatchFrame `protobuf:"bytes,5,opt,name=dispatch_frame,json=dispatchFrame,proto3,oneof"`
 }
 
 type ServerFrame_HttpResponse struct {
-	HttpResponse *LocalHttpResponse `protobuf:"bytes,6,opt,name=http_response,json=httpResponse,proto3,oneof"` // from rimsky-side → spawned process
+	HttpResponse *LocalHttpResponse `protobuf:"bytes,6,opt,name=http_response,json=httpResponse,proto3,oneof"`
 }
 
 func (*ServerFrame_RegisterAck) isServerFrame_Body() {}
@@ -480,23 +473,14 @@ func (*ServerFrame_DispatchFrame) isServerFrame_Body() {}
 func (*ServerFrame_HttpResponse) isServerFrame_Body() {}
 
 type Register struct {
-	state        protoimpl.MessageState `protogen:"open.v1"`
-	ApiKey       string                 `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
-	AgentLabel   string                 `protobuf:"bytes,2,opt,name=agent_label,json=agentLabel,proto3" json:"agent_label,omitempty"` // e.g., "hostname-pid"; informational disambiguation
-	AgentVersion string                 `protobuf:"bytes,3,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	// Base URL the agent's local HTTP listener serves for spawned processes.
-	// The proxy uses this to rewrite callback_url and other rimsky-side URLs
-	// before tunneling them into the spawned process.
-	LocalCallbackBaseUrl string `protobuf:"bytes,4,opt,name=local_callback_base_url,json=localCallbackBaseUrl,proto3" json:"local_callback_base_url,omitempty"`
-	// routing_label is the agent's requested routing identity for anonymous
-	// registrations. Ignored when api_key names a real key (the proxy adopts
-	// the key id). For anonymous agents the proxy accepts a non-empty
-	// routing_label iff it does not collide with another currently-connected
-	// anonymous agent; an empty routing_label causes the proxy to generate a
-	// fresh silly-name. The adopted identity is returned in RegisterAck.
-	RoutingLabel  string `protobuf:"bytes,5,opt,name=routing_label,json=routingLabel,proto3" json:"routing_label,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	ApiKey               string                 `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	AgentLabel           string                 `protobuf:"bytes,2,opt,name=agent_label,json=agentLabel,proto3" json:"agent_label,omitempty"`
+	AgentVersion         string                 `protobuf:"bytes,3,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	LocalCallbackBaseUrl string                 `protobuf:"bytes,4,opt,name=local_callback_base_url,json=localCallbackBaseUrl,proto3" json:"local_callback_base_url,omitempty"`
+	RoutingLabel         string                 `protobuf:"bytes,5,opt,name=routing_label,json=routingLabel,proto3" json:"routing_label,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Register) Reset() {
@@ -565,16 +549,10 @@ func (x *Register) GetRoutingLabel() string {
 }
 
 type RegisterAck struct {
-	state        protoimpl.MessageState `protogen:"open.v1"`
-	ProxyVersion string                 `protobuf:"bytes,1,opt,name=proxy_version,json=proxyVersion,proto3" json:"proxy_version,omitempty"`
-	// If a prior agent for this routing_identity was connected, this ack carries
-	// a notice that the prior connection has been displaced.
-	DisplacedPrior bool `protobuf:"varint,2,opt,name=displaced_prior,json=displacedPrior,proto3" json:"displaced_prior,omitempty"`
-	// routing_identity is the identity the proxy adopted for this connection —
-	// the api-key id for authenticated agents, or the assigned silly-name for
-	// anonymous agents. The agent persists this so a reconnect can re-present
-	// it and preserve routing continuity for previously-created instances.
-	RoutingIdentity string `protobuf:"bytes,3,opt,name=routing_identity,json=routingIdentity,proto3" json:"routing_identity,omitempty"`
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ProxyVersion    string                 `protobuf:"bytes,1,opt,name=proxy_version,json=proxyVersion,proto3" json:"proxy_version,omitempty"`
+	DisplacedPrior  bool                   `protobuf:"varint,2,opt,name=displaced_prior,json=displacedPrior,proto3" json:"displaced_prior,omitempty"`
+	RoutingIdentity string                 `protobuf:"bytes,3,opt,name=routing_identity,json=routingIdentity,proto3" json:"routing_identity,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -630,10 +608,6 @@ func (x *RegisterAck) GetRoutingIdentity() string {
 	return ""
 }
 
-// HostAgentHeartbeat / HostAgentHeartbeatAck are the agent-liveness frames
-// on the proxy↔agent stream. Named distinctly from executor.proto's
-// Heartbeat (a different shape on a different protocol) because all v1
-// protos share the flat rimsky.v1 message namespace.
 type HostAgentHeartbeat struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SentAtUnixMs  int64                  `protobuf:"varint,1,opt,name=sent_at_unix_ms,json=sentAtUnixMs,proto3" json:"sent_at_unix_ms,omitempty"`
@@ -728,7 +702,7 @@ type Spawn struct {
 	Binding             *Binding               `protobuf:"bytes,2,opt,name=binding,proto3" json:"binding,omitempty"`
 	Cwd                 string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
 	RunScopeId          string                 `protobuf:"bytes,4,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
-	ExpectedProtocols   []string               `protobuf:"bytes,5,rep,name=expected_protocols,json=expectedProtocols,proto3" json:"expected_protocols,omitempty"` // e.g., ["executor"], ["claim_producer"], or both
+	ExpectedProtocols   []string               `protobuf:"bytes,5,rep,name=expected_protocols,json=expectedProtocols,proto3" json:"expected_protocols,omitempty"`
 	ReadyTimeoutSeconds int32                  `protobuf:"varint,6,opt,name=ready_timeout_seconds,json=readyTimeoutSeconds,proto3" json:"ready_timeout_seconds,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
@@ -807,17 +781,12 @@ func (x *Spawn) GetReadyTimeoutSeconds() int32 {
 }
 
 type Binding struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Path  string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	// Per-binding exec() overrides. All four fields are additive and
-	// backward-compatible: an absent field means today's default behavior,
-	// so a binding declared with none of them spawns exactly as before
-	// (no extra args, inherited env, the instance-level cwd, and the global
-	// Spawn ready-timeout).
-	Args                []string          `protobuf:"bytes,2,rep,name=args,proto3" json:"args,omitempty"`                                                                         // additive: extra argv passed to the child; absent → no extra args
-	Env                 map[string]string `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // additive: env vars layered onto the inherited environment; absent → inherited env only
-	Cwd                 string            `protobuf:"bytes,4,opt,name=cwd,proto3" json:"cwd,omitempty"`                                                                           // additive: per-binding working-directory override; absent → falls back to the instance-level cwd
-	ReadyTimeoutSeconds int32             `protobuf:"varint,5,opt,name=ready_timeout_seconds,json=readyTimeoutSeconds,proto3" json:"ready_timeout_seconds,omitempty"`             // additive: per-binding spawn-readiness timeout override; absent (0) → the global Spawn ready_timeout_seconds
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Path                string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Args                []string               `protobuf:"bytes,2,rep,name=args,proto3" json:"args,omitempty"`
+	Env                 map[string]string      `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Cwd                 string                 `protobuf:"bytes,4,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	ReadyTimeoutSeconds int32                  `protobuf:"varint,5,opt,name=ready_timeout_seconds,json=readyTimeoutSeconds,proto3" json:"ready_timeout_seconds,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -888,13 +857,11 @@ func (x *Binding) GetReadyTimeoutSeconds() int32 {
 }
 
 type SpawnAck struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	SpawnId string                 `protobuf:"bytes,1,opt,name=spawn_id,json=spawnId,proto3" json:"spawn_id,omitempty"`
-	Status  SpawnAck_SpawnStatus   `protobuf:"varint,2,opt,name=status,proto3,enum=rimsky.v1.SpawnAck_SpawnStatus" json:"status,omitempty"`
-	// On READY: per-protocol Capabilities responses, keyed by protocol name.
-	// Bytes are the serialized CapabilitiesResponse for each protocol.
-	Capabilities  map[string][]byte `protobuf:"bytes,3,rep,name=capabilities,proto3" json:"capabilities,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Error         *HostAgentError   `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"` // populated when status = SPAWN_STATUS_FAILED
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SpawnId       string                 `protobuf:"bytes,1,opt,name=spawn_id,json=spawnId,proto3" json:"spawn_id,omitempty"`
+	Status        SpawnAck_SpawnStatus   `protobuf:"varint,2,opt,name=status,proto3,enum=rimsky.v1.SpawnAck_SpawnStatus" json:"status,omitempty"`
+	Capabilities  map[string][]byte      `protobuf:"bytes,3,rep,name=capabilities,proto3" json:"capabilities,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Error         *HostAgentError        `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1070,32 +1037,16 @@ func (x *Reaped) GetError() *HostAgentError {
 }
 
 type DispatchFrame struct {
-	state    protoimpl.MessageState `protogen:"open.v1"`
-	SpawnId  string                 `protobuf:"bytes,1,opt,name=spawn_id,json=spawnId,proto3" json:"spawn_id,omitempty"`
-	Protocol string                 `protobuf:"bytes,2,opt,name=protocol,proto3" json:"protocol,omitempty"` // "executor", "claim_producer", etc. — used at dispatch start
-	Payload  []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`   // serialized gRPC frame for the named protocol
-	// Stream multiplexing: a single spawn_id can host concurrent dispatch
-	// streams (e.g., concurrent ClaimProducer.Open calls). Each stream
-	// carries a stream_id.
+	state             protoimpl.MessageState          `protogen:"open.v1"`
+	SpawnId           string                          `protobuf:"bytes,1,opt,name=spawn_id,json=spawnId,proto3" json:"spawn_id,omitempty"`
+	Protocol          string                          `protobuf:"bytes,2,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Payload           []byte                          `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
 	StreamId          string                          `protobuf:"bytes,4,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
 	Kind              DispatchFrame_DispatchFrameKind `protobuf:"varint,5,opt,name=kind,proto3,enum=rimsky.v1.DispatchFrame_DispatchFrameKind" json:"kind,omitempty"`
 	ClaimProducerVerb DispatchFrame_ClaimProducerVerb `protobuf:"varint,6,opt,name=claim_producer_verb,json=claimProducerVerb,proto3,enum=rimsky.v1.DispatchFrame_ClaimProducerVerb" json:"claim_producer_verb,omitempty"`
-	// rpc_method names the unary RPC the agent must invoke on the child for
-	// the non-executor, non-claim-producer fronted protocols — e.g. "Subscribe"
-	// (publisher), "Validate" (validation), "BeginCandidate" (data-processing).
-	// It is the generic analogue of claim_producer_verb: those protocols expose
-	// multiple unary RPCs whose request messages are distinct types, so — exactly
-	// as Commit/Abandon/Release are byte-identical at claim_id and force
-	// claim_producer_verb to carry the verb — the agent cannot reliably infer the
-	// target RPC from the payload shape alone. rpc_method is therefore
-	// authoritative for publisher / validation / data-processing dispatch, just as
-	// claim_producer_verb is authoritative for the claim-producer path. The value
-	// is the short or fully-qualified RPC name (the agent matches it against the
-	// child service descriptor). Empty on executor dispatch and on the
-	// claim-producer path (which uses claim_producer_verb instead).
-	RpcMethod     string `protobuf:"bytes,7,opt,name=rpc_method,json=rpcMethod,proto3" json:"rpc_method,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RpcMethod         string                          `protobuf:"bytes,7,opt,name=rpc_method,json=rpcMethod,proto3" json:"rpc_method,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DispatchFrame) Reset() {
@@ -1181,10 +1132,10 @@ type LocalHttpForward struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ForwardId     string                 `protobuf:"bytes,1,opt,name=forward_id,json=forwardId,proto3" json:"forward_id,omitempty"`
 	Method        string                 `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`
-	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"` // full URL as the spawned process saw it
+	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	Body          []byte                 `protobuf:"bytes,4,opt,name=body,proto3" json:"body,omitempty"`
 	Headers       map[string]string      `protobuf:"bytes,5,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	SpawnId       string                 `protobuf:"bytes,6,opt,name=spawn_id,json=spawnId,proto3" json:"spawn_id,omitempty"` // for routing back through the proxy if needed
+	SpawnId       string                 `protobuf:"bytes,6,opt,name=spawn_id,json=spawnId,proto3" json:"spawn_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1329,13 +1280,9 @@ func (x *LocalHttpResponse) GetHeaders() map[string]string {
 	return nil
 }
 
-// HostAgentError carries a failure on the proxy↔agent stream. Named
-// distinctly from executor.proto's Error (a different shape on a different
-// protocol) because all v1 protos share the flat rimsky.v1 message
-// namespace.
 type HostAgentError struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Class         string                 `protobuf:"bytes,1,opt,name=class,proto3" json:"class,omitempty"` // matches rimsky's error-class vocabulary
+	Class         string                 `protobuf:"bytes,1,opt,name=class,proto3" json:"class,omitempty"`
 	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

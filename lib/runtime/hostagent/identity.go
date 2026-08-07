@@ -20,6 +20,15 @@ type PersistedIdentity struct {
 	RoutingIdentity string `json:"routing_identity"`
 }
 
+const IdentityFileEnvVar = "RIMSKY_AGENT_IDENTITY_FILE"
+
+func IdentityFilePath() (string, error) {
+	if p := os.Getenv(IdentityFileEnvVar); p != "" {
+		return p, nil
+	}
+	return DefaultIdentityFile()
+}
+
 func DefaultIdentityFile() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {

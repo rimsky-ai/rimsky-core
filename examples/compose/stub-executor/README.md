@@ -35,7 +35,7 @@ reference the class without registration-time rejection.
 ## How tests invoke it
 
 Tests build the binary at runtime via `go build -o <tmpdir>/stub-executor
-./cmd/rimsky/cli/compose/testdata/stub-executor`, then pass it to
+./examples/compose/stub-executor`, then pass it to
 `rimsky compose run --service stub=<path>`. The compose-run verb spawns
 the binary, merges its endpoint into the synthetic `rimsky.yml` under
 the `stub` executor name, and drives the manifest's nodes through it.

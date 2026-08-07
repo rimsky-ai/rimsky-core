@@ -10,10 +10,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	verifierhttp "github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-http"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 func main() {

@@ -6,11 +6,11 @@ decision: release-chain
 
 ## Choice
 
-Lint → license lint → build the core images → build the bundled-service images → run the full test suite → run the dedicated repeated race-detection gate (see `decision:race-gate-split`) → scan the built images → push the images.
+Lint → license lint → build the core images → build the bundled-service images → run the full test suite → scan the built images → push the images.
 
 ## Rationale
 
-Comprehensive pre-push verification; images get built before the test suite runs so the scenario tests can drive the locally-built image set; the repeated race-detection gate's repetition budget is reserved for release time rather than every everyday run.
+Comprehensive pre-push verification; images get built before the test suite runs so the scenario tests can drive the locally-built image set.
 
 ## Alternatives
 

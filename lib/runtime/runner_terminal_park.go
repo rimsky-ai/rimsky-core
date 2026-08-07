@@ -18,12 +18,6 @@ func applyTerminalPark(
 	t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
 
-	var maxRetries *int
-	if acq.NodeDef != nil && acq.NodeDef.MaxRetries != nil {
-		v := *acq.NodeDef.MaxRetries
-		maxRetries = &v
-	}
-
 	now := args.Clock.Now()
 	in := persistence.ParkActiveInput{
 		NodeRunID:         acq.NodeRunID,
@@ -39,11 +33,6 @@ func applyTerminalPark(
 	// @decision: no-resume-context
 	if err := applyTerminalScratchInTx(ctx, args, acq, t.Scratch, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
-	}
-	if maxRetries != nil {
-		if err := args.Queue.UpdateDispatchTuning(ctx, acq.NodeRunID, maxRetries, tx); err != nil {
-			return nil, fmt.Errorf("applyTerminalPark: %w", err)
-		}
 	}
 	// @concept: signal
 	parkSigType := string(parkTerminalSignal(args, t).Type)

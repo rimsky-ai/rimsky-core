@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -104,4 +105,22 @@ func terminateBootFailure(ctx context.Context, img string, c testcontainers.Cont
 	termCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	_ = c.Terminate(termCtx)
+}
+
+func rereadableContainerFile(content, containerPath string, mode int64) testcontainers.ContainerFile {
+	f, err := os.CreateTemp("", "rimsky-harness-container-file-*")
+	if err != nil {
+		panic(fmt.Sprintf("harness: stage container file for %s: %v", containerPath, err))
+	}
+	if _, err := f.WriteString(content); err != nil {
+		panic(fmt.Sprintf("harness: stage container file for %s: %v", containerPath, err))
+	}
+	if err := f.Close(); err != nil {
+		panic(fmt.Sprintf("harness: stage container file for %s: %v", containerPath, err))
+	}
+	return testcontainers.ContainerFile{
+		HostFilePath:      f.Name(),
+		ContainerFilePath: containerPath,
+		FileMode:          mode,
+	}
 }

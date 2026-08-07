@@ -26,25 +26,13 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// PriorDispatchDisposition is the classifier accompanying
-// ExecuteRequest.prior_dispatch_id. Tells the executor *why* the
-// supervisor is asking it to take over from a predecessor dispatch.
 type PriorDispatchDisposition int32
 
 const (
-	// PRIOR_NONE is the wire default. Equivalent to the field being unset.
-	PriorDispatchDisposition_PRIOR_NONE PriorDispatchDisposition = 0
-	// PRIOR_STALE_RECOVERY: the supervisor's async deadline sweep reaped
-	// the prior run (quiet period or max runtime exceeded); this dispatch
-	// is the re-enqueue.
-	PriorDispatchDisposition_PRIOR_STALE_RECOVERY PriorDispatchDisposition = 1
-	// PRIOR_RETRY_AFTER_ERROR: the prior dispatch reported an Error
-	// terminal that the error-policy resolved to retry; this dispatch
-	// is the retry.
+	PriorDispatchDisposition_PRIOR_NONE              PriorDispatchDisposition = 0
+	PriorDispatchDisposition_PRIOR_STALE_RECOVERY    PriorDispatchDisposition = 1
 	PriorDispatchDisposition_PRIOR_RETRY_AFTER_ERROR PriorDispatchDisposition = 2
-	// PRIOR_RECALCULATE: the cascade walker invalidated the prior run
-	// (upstream input changed); this dispatch is the recalculate.
-	PriorDispatchDisposition_PRIOR_RECALCULATE PriorDispatchDisposition = 3
+	PriorDispatchDisposition_PRIOR_RECALCULATE       PriorDispatchDisposition = 3
 )
 
 // Enum value maps for PriorDispatchDisposition.
@@ -90,74 +78,22 @@ func (PriorDispatchDisposition) EnumDescriptor() ([]byte, []int) {
 	return file_executor_proto_rawDescGZIP(), []int{0}
 }
 
-// ExecuteRequest carries the full context of a node dispatch. The
-// attributes bag is the unified surface for both rimsky-populated
-// inputs and executor-written outputs.
 type ExecuteRequest struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	NodeId     string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	InstanceId string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	NodeType   string                 `protobuf:"bytes,3,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
-	// Per-run typed attributes. Source-directive fields are pre-populated by
-	// rimsky at dispatch; static-default fields carry their declared
-	// default value; sourceless/executor-written fields are populated by
-	// the executor via attributes_delta on the run-terminating verdict
-	// (Success / Error). Park is dispatch-internal and does not write
-	// attributes; executors that need state across a park-and-resume use
-	// scratch (per concept:parked-state).
-	Attributes *structpb.Struct `protobuf:"bytes,5,opt,name=attributes,proto3" json:"attributes,omitempty"`
-	// The declared JSON Schema for the node's attributes. For executor reference;
-	// rimsky validates at dispatch (substitution) and at commit (writeback)
-	// regardless.
-	AttributesSchema *structpb.Struct `protobuf:"bytes,6,opt,name=attributes_schema,json=attributesSchema,proto3" json:"attributes_schema,omitempty"`
-	// Handles for each claim_producer the node references. Keyed by claim_producer-config name.
-	ClaimProducers map[string]*ClaimProducerHandle `protobuf:"bytes,7,rep,name=claim_producers,json=claimProducers,proto3" json:"claim_producers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// HTTP+JSON callback URL the executor may POST to for async handoff,
-	// incremental attribute writes, and keepalive bumps.
-	// Populated by the supervisor; empty string if the supervisor did not
-	// configure a callback endpoint.
-	CallbackUrl string `protobuf:"bytes,8,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
-	// Token the supervisor watches for cancellation requests, also used as the
-	// bearer token on incremental attribute and keepalive callbacks.
-	CancelToken string `protobuf:"bytes,9,opt,name=cancel_token,json=cancelToken,proto3" json:"cancel_token,omitempty"`
-	// The supervisor-side rimsky_node_runs.id for this dispatch. Exposed
-	// so executors can key per-dispatch traces/state (the executor
-	// observability protocol identifies dispatches by this id). May be
-	// empty when the supervisor invokes Execute outside the node-run-row
-	// path (e.g. unit tests or stub-mode probes).
-	DispatchId string `protobuf:"bytes,12,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
-	// prior_dispatch_id is set when this dispatch supersedes a prior
-	// failed / abandoned / stale-recovered dispatch for the same
-	// (run_scope_id, node_id) pair. Used by executors that maintain
-	// per-dispatch session state to identify the predecessor and
-	// (optionally) recover or hand off work-in-progress. Unset on the
-	// initial dispatch of a node within a RunScope.
-	//
+	state            protoimpl.MessageState          `protogen:"open.v1"`
+	NodeId           string                          `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	InstanceId       string                          `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	NodeType         string                          `protobuf:"bytes,3,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
+	Attributes       *structpb.Struct                `protobuf:"bytes,5,opt,name=attributes,proto3" json:"attributes,omitempty"`
+	AttributesSchema *structpb.Struct                `protobuf:"bytes,6,opt,name=attributes_schema,json=attributesSchema,proto3" json:"attributes_schema,omitempty"`
+	ClaimProducers   map[string]*ClaimProducerHandle `protobuf:"bytes,7,rep,name=claim_producers,json=claimProducers,proto3" json:"claim_producers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CallbackUrl      string                          `protobuf:"bytes,8,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
+	CancelToken      string                          `protobuf:"bytes,9,opt,name=cancel_token,json=cancelToken,proto3" json:"cancel_token,omitempty"`
+	DispatchId       string                          `protobuf:"bytes,12,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
 	// @concept: run-scope
-	PriorDispatchId *string `protobuf:"bytes,14,opt,name=prior_dispatch_id,json=priorDispatchId,proto3,oneof" json:"prior_dispatch_id,omitempty"`
-	// prior_dispatch_disposition explains why prior_dispatch_id is set,
-	// so the executor can route its recovery / handoff logic. Unset
-	// (== PRIOR_NONE) on the initial dispatch.
+	PriorDispatchId          *string                   `protobuf:"bytes,14,opt,name=prior_dispatch_id,json=priorDispatchId,proto3,oneof" json:"prior_dispatch_id,omitempty"`
 	PriorDispatchDisposition *PriorDispatchDisposition `protobuf:"varint,15,opt,name=prior_dispatch_disposition,json=priorDispatchDisposition,proto3,enum=rimsky.v1.PriorDispatchDisposition,oneof" json:"prior_dispatch_disposition,omitempty"`
-	// run_scope_id is the RunScope this dispatch lives in; used by the
-	// host-agent-proxy to key per-run-scope spawn isolation (one spawned
-	// late-bound child per (run_scope_id, binding), reaped at run-scope
-	// termination). Opaque to in-process executors.
-	//
 	// @concept: run-scope
-	RunScopeId string `protobuf:"bytes,16,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
-	// scratch carries opaque executor-attached bytes persisted on the
-	// dispatch row (col:rimsky_node_runs.scratch_inline / scratch_handle /
-	// scratch_handle_backend). Empty on the initial dispatch. When this
-	// dispatch supersedes a prior dispatch under any prior-dispatch
-	// disposition (stale_recovery | retry_after_error | recalculate), the
-	// enqueue path copies scratch from the prior row onto the new row;
-	// the supervisor materializes spilled scratch via the configured
-	// BlobBackend before populating this field.
-	//
-	// Inert in rimsky per concept:inertness. The
-	// executor writes scratch back via the Success / Error / Park outcome
-	// variants only; there is no mid-dispatch scratch channel.
+	RunScopeId    string `protobuf:"bytes,16,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
 	Scratch       []byte `protobuf:"bytes,17,opt,name=scratch,proto3" json:"scratch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -284,27 +220,11 @@ func (x *ExecuteRequest) GetScratch() []byte {
 	return nil
 }
 
-// ClaimProducerHandle is the per-claim_producer reference handed to the executor at
-// dispatch. `handle` carries the producer-supplied Address bytes
-// returned by ClaimProducer.Open — opaque to Rimsky, decoded by
-// the executor per its producer-specific knowledge.
 type ClaimProducerHandle struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Operator-configured producer kind (e.g. "filesystem", "postgres",
-	// or a producer's own canonical kind name). Conventionally
-	// informational — the executor knows its producer's kind from the
-	// deployment's operator config.
-	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
-	// Producer-supplied Address bytes returned by ClaimProducer.Open,
-	// wrapped as a google.protobuf.Struct so JSON-shaped addresses
-	// round-trip cleanly. Inert to Rimsky.
-	Handle *structpb.Struct `protobuf:"bytes,2,opt,name=handle,proto3" json:"handle,omitempty"`
-	// candidate_handle is set by the supervisor for
-	// DataProcessing-capable claims at fan-out leaf dispatch. Opaque to
-	// rimsky; the executor passes this back to its own writes against
-	// the producer. Empty for non-DataProcessing claims and non-fan-out
-	// claims. The bytes are inert in rimsky.
-	CandidateHandle []byte `protobuf:"bytes,6,opt,name=candidate_handle,json=candidateHandle,proto3" json:"candidate_handle,omitempty"`
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Kind            string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Handle          *structpb.Struct       `protobuf:"bytes,2,opt,name=handle,proto3" json:"handle,omitempty"`
+	CandidateHandle []byte                 `protobuf:"bytes,6,opt,name=candidate_handle,json=candidateHandle,proto3" json:"candidate_handle,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -360,11 +280,6 @@ func (x *ClaimProducerHandle) GetCandidateHandle() []byte {
 	return nil
 }
 
-// Outcome is the single response of the unary Execute RPC. Exactly one
-// of the four variants is populated: Success / Error / Park settle the
-// dispatch directly with the verdict committed atomically; AwaitAsyncCallback
-// defers the verdict to a later HTTP POST against the supervisor's callback
-// URL carrying an AsyncCallbackBody.
 type Outcome struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Outcome:
@@ -479,27 +394,15 @@ func (*Outcome_Park) isOutcome_Outcome() {}
 
 func (*Outcome_AwaitAsync) isOutcome_Outcome() {}
 
-// Success reports a successful executor run with a producer-declared
-// `changed` verdict. `attributes_delta` carries terminal-final attribute
-// writeback; `tags` is a set (deduplicated at decode) of subscriber-visible
-// discriminators that downstream subscriptions match via CEL `when:`
-// filters on `payload.tags`. The supervisor validates each tag against
-// the executor's observability-declared tags at terminal time.
 type Success struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Changed         bool                   `protobuf:"varint,1,opt,name=changed,proto3" json:"changed,omitempty"`
 	ChangeSummary   string                 `protobuf:"bytes,2,opt,name=change_summary,json=changeSummary,proto3" json:"change_summary,omitempty"`
 	AttributesDelta *structpb.Struct       `protobuf:"bytes,3,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
-	// Executor-attached opaque bytes the supervisor persists onto the
-	// dispatch row at terminal time. Inert in rimsky.
-	Scratch []byte `protobuf:"bytes,4,opt,name=scratch,proto3" json:"scratch,omitempty"`
-	// Set semantics: duplicates are collapsed at decode and order is the
-	// first-appearance order from the wire. Each tag must appear in the
-	// emitting executor's observability-declared tag set; the supervisor
-	// rejects emissions of undeclared names at the terminal handler.
-	Tags          []string `protobuf:"bytes,5,rep,name=tags,proto3" json:"tags,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Scratch         []byte                 `protobuf:"bytes,4,opt,name=scratch,proto3" json:"scratch,omitempty"`
+	Tags            []string               `protobuf:"bytes,5,rep,name=tags,proto3" json:"tags,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Success) Reset() {
@@ -567,25 +470,15 @@ func (x *Success) GetTags() []string {
 	return nil
 }
 
-// Error reports an executor error. `error_class` is the discriminator
-// the operator-side `error_types:` policy routes on. Common classes
-// include "executor_blocked", "rate_limited", "transient_io", etc.
-// `attributes_delta` and `tags` carry the uniform run-terminating
-// shape — error verdicts may write attributes and emit tags exactly
-// as Success does. Park is dispatch-internal and does not carry
-// attributes_delta; Park does carry `tags`, but audit-only (see Park.tags).
 type Error struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	ErrorClass string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
-	Payload    *structpb.Struct       `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
-	// Executor-attached opaque bytes the supervisor persists onto the
-	// dispatch row at terminal time. Inert in rimsky.
-	Scratch         []byte           `protobuf:"bytes,3,opt,name=scratch,proto3" json:"scratch,omitempty"`
-	AttributesDelta *structpb.Struct `protobuf:"bytes,4,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
-	// Set semantics — same rules as Success.tags.
-	Tags          []string `protobuf:"bytes,5,rep,name=tags,proto3" json:"tags,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ErrorClass      string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
+	Payload         *structpb.Struct       `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	Scratch         []byte                 `protobuf:"bytes,3,opt,name=scratch,proto3" json:"scratch,omitempty"`
+	AttributesDelta *structpb.Struct       `protobuf:"bytes,4,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
+	Tags            []string               `protobuf:"bytes,5,rep,name=tags,proto3" json:"tags,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Error) Reset() {
@@ -653,37 +546,11 @@ func (x *Error) GetTags() []string {
 	return nil
 }
 
-// Park signals that the executor wants to snooze the node until a
-// wall-clock resume time. The held claim handle is retained across
-// the park boundary. Per concept:parked-state, executor-managed
-// state crosses the park-and-resume boundary via scratch: the
-// executor writes state to `scratch` on Park, which the supervisor
-// persists on the parked row's scratch slot. On time-wake the same
-// row re-dispatches, so the resumed executor reads its scratch from
-// ExecuteRequest.scratch on the same dispatch. Attribute writes are
-// not available on Park because Park is dispatch-internal — the run
-// does not terminate, no cascade-fire happens, and the
-// attribute-writeback channel is reserved for run-terminating
-// verdicts (Success / Error) per decision:uniform-attributes-delta.
-//
-// Park carries exactly resume_at + scratch + tags. Waiting on an
-// external callback is not a park — that is AwaitAsyncCallback,
-// which keeps the run running.
 type Park struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Required. The supervisor wakes the node at this wall-clock time.
-	// A Park without resume_at is rejected as a protocol violation.
-	ResumeAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`
-	// Executor-attached opaque bytes the supervisor persists onto the
-	// dispatch row at park-verdict time. Copied forward onto the resume
-	// dispatch's row at re-enqueue. Inert in rimsky.
-	Scratch []byte `protobuf:"bytes,7,opt,name=scratch,proto3" json:"scratch,omitempty"`
-	// Set semantics — same rules as Success.tags. On Park these are
-	// audit-only (no cascade-fire means no CEL evaluation against
-	// `payload.tags`); operators reacting to a parked node subscribe
-	// to the eventual run-terminating settlement that follows the
-	// wake.
-	Tags          []string `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ResumeAt      *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`
+	Scratch       []byte                 `protobuf:"bytes,7,opt,name=scratch,proto3" json:"scratch,omitempty"`
+	Tags          []string               `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -739,22 +606,10 @@ func (x *Park) GetTags() []string {
 	return nil
 }
 
-// AwaitAsyncCallback signals that the executor has accepted the work
-// but will report the final outcome later via HTTP+JSON POST to
-// ExecuteRequest.callback_url. The supervisor persists the
-// async_ack_id on the dispatch row (col:rimsky_node_runs.async_ack_id)
-// and keeps the node in running state until the callback arrives
-// (subject to max_quiet_period / max_runtime deadlines per
-// concept:executor). The persistence is durable across supervisor
-// restart.
 type AwaitAsyncCallback struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Echoed back by the executor on the callback so the supervisor can
-	// correlate.
-	AsyncAckId string `protobuf:"bytes,1,opt,name=async_ack_id,json=asyncAckId,proto3" json:"async_ack_id,omitempty"`
-	// Optional hint; the supervisor still uses its own quiet-period /
-	// max-runtime deadlines for timeout enforcement.
-	ExpectedCompletionMs int64 `protobuf:"varint,2,opt,name=expected_completion_ms,json=expectedCompletionMs,proto3" json:"expected_completion_ms,omitempty"`
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	AsyncAckId           string                 `protobuf:"bytes,1,opt,name=async_ack_id,json=asyncAckId,proto3" json:"async_ack_id,omitempty"`
+	ExpectedCompletionMs int64                  `protobuf:"varint,2,opt,name=expected_completion_ms,json=expectedCompletionMs,proto3" json:"expected_completion_ms,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -803,14 +658,6 @@ func (x *AwaitAsyncCallback) GetExpectedCompletionMs() int64 {
 	return 0
 }
 
-// AsyncCallbackBody is the canonical schema for the HTTP+JSON body an
-// executor POSTs to ${callback_url}/v1/callback/{async_ack_id} after
-// emitting AwaitAsyncCallback. The body carries exactly one settling-
-// terminal outcome (Success / Error / Park) — the same uniform shape
-// the unary Execute RPC returns.
-//
-// AwaitAsyncCallback is not present in this outcome oneof because the
-// webhook IS the second half of the async path; chaining is forbidden.
 type AsyncCallbackBody struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Outcome:

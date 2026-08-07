@@ -38,7 +38,7 @@ func TestIdempotentMode_SubstitutionFailureRoutesBeforeModeRule(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:        "b",
 					Executor:    "stub",
-					CascadeMode: string(cascade.CascadeModeIdempotentQueue),
+					CascadeMode: spec.CascadeModeIdempotentQueue,
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"template_resolution_failed": {Action: "give_up"},
 					},

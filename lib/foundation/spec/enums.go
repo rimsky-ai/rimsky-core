@@ -24,6 +24,17 @@ const (
 	JitterPlusMinus JitterKind = "plus_minus"
 )
 
+// @concept: cascade
+// @decision: mode-default-most-recent
+type CascadeMode string
+
+const (
+	CascadeModeMostRecent        CascadeMode = "most-recent"
+	CascadeModeSequenced         CascadeMode = "sequenced"
+	CascadeModeIdempotentQueue   CascadeMode = "idempotent-queue"
+	CascadeModeIdempotentSettled CascadeMode = "idempotent-settled"
+)
+
 const (
 	ErrorClassTemplateResolutionFailed  = "template_resolution_failed"
 	ErrorClassTemplateValidationFailed  = "template_validation_failed"

@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
@@ -58,7 +57,7 @@ func TestSequencedPreservesCascadeRounds(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:        "b",
 					Executor:    "stub",
-					CascadeMode: string(cascade.CascadeModeSequenced),
+					CascadeMode: spec.CascadeModeSequenced,
 				},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{

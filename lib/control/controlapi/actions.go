@@ -393,7 +393,7 @@ var v1Actions = []ActionEntry{
 			{Method: "GET", Path: "/v1/admin/diagnostics/producer-outbox"},
 		},
 		MCPTools:    []string{"held_frames_list"},
-		Description: "List frames held by holding-subgraph claims and undelivered producer-verb outbox entries."},
+		Description: "List frames held by a parked node-run (held-claim holds are not reported here) and undelivered producer-verb outbox entries."},
 
 	{Action: "auth:read", IsWrite: false,
 		Routes: []Route{

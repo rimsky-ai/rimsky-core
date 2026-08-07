@@ -29,21 +29,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Executor is the protocol rimsky supervisors use to dispatch work to
-// external executors. The dispatch verb is unary: the supervisor calls
-// Execute once and receives a single Outcome. The Outcome is one of four
-// variants — Success / Error / Park / AwaitAsyncCallback — three of which
-// settle the dispatch directly and the fourth of which defers the verdict
-// to a later HTTP POST callback. See concept:executor for the full
-// contract (transports, async handoff, attributes, claim_producers, deadlines,
-// auth).
 // @decision: grpc-internal-protocols
 type ExecutorClient interface {
-	// Execute is called by the rimsky supervisor when dispatching a node.
-	// The executor returns exactly one Outcome. There is no stream, no
-	// heartbeats, and no named events; per-dispatch liveness for async
-	// dispatches travels over the HTTP keepalive / attribute-writeback
-	// callbacks (see concept:executor liveness sections).
 	// @decision: executor-unary-rpc
 	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*Outcome, error)
 }
@@ -70,21 +57,8 @@ func (c *executorClient) Execute(ctx context.Context, in *ExecuteRequest, opts .
 // All implementations must embed UnimplementedExecutorServer
 // for forward compatibility.
 //
-// Executor is the protocol rimsky supervisors use to dispatch work to
-// external executors. The dispatch verb is unary: the supervisor calls
-// Execute once and receives a single Outcome. The Outcome is one of four
-// variants — Success / Error / Park / AwaitAsyncCallback — three of which
-// settle the dispatch directly and the fourth of which defers the verdict
-// to a later HTTP POST callback. See concept:executor for the full
-// contract (transports, async handoff, attributes, claim_producers, deadlines,
-// auth).
 // @decision: grpc-internal-protocols
 type ExecutorServer interface {
-	// Execute is called by the rimsky supervisor when dispatching a node.
-	// The executor returns exactly one Outcome. There is no stream, no
-	// heartbeats, and no named events; per-dispatch liveness for async
-	// dispatches travels over the HTTP keepalive / attribute-writeback
-	// callbacks (see concept:executor liveness sections).
 	// @decision: executor-unary-rpc
 	Execute(context.Context, *ExecuteRequest) (*Outcome, error)
 	mustEmbedUnimplementedExecutorServer()

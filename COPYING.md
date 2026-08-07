@@ -24,7 +24,9 @@ Rimsky ships under two licenses, divided by a single boundary:
   packages a consumer implements or links against to speak to Rimsky. It is
   deliberately permissive so that anyone can build a service that talks to
   Rimsky, or embed the protocol surface, without taking on copyleft
-  obligations.
+  obligations. `examples/` — copy-and-modify protocol examples — carries the
+  same Apache terms, as a deliberate carve-out kept permissive so consumers
+  can build on them.
 
 - **Everything else Rimsky ships is AGPL-3.0-or-later, or a Fall Guy
   Consulting commercial license.** The orchestrator binaries *and* the
@@ -34,10 +36,11 @@ Rimsky ships under two licenses, divided by a single boundary:
 The boundary is enforced mechanically, not just described here. `licensing.yml`
 is the source-of-truth path map; `tools/license-check` verifies that every
 file carries the right per-file header, that no Apache file imports an AGPL
-package, and that every path the map names still exists. Because the `lib/protocols/`
-module imports nothing internal, the Apache code forms a single closed island —
-there is no code path by which Apache-licensed source depends on AGPL-licensed
-source.
+package, that every path the map names still exists, and that every
+third-party dependency in an Apache module's build closure carries a
+permitted permissive license. Because the `lib/protocols/` module imports
+nothing internal, the Apache code forms a single closed island — there is no
+code path by which Apache-licensed source depends on AGPL-licensed source.
 
 ## Why the line is drawn here
 

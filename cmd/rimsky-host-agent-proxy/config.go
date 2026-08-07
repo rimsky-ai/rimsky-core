@@ -7,12 +7,16 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 )
 
 type Config struct {
 	GRPCPort          int
+	PeerGRPCPort      int
 	ControlAPIURL     string
 	ControlAPIToken   string
+	ControlAPICAPath  string
 	LogLevel          string
 	TLSCertPath       string
 	TLSKeyPath        string
@@ -23,8 +27,10 @@ type Config struct {
 func LoadConfig() Config {
 	return Config{
 		GRPCPort:          envInt("RIMSKY_PROXY_GRPC_PORT", 9090),
+		PeerGRPCPort:      envInt("RIMSKY_PROXY_PEER_GRPC_PORT", 9091),
 		ControlAPIURL:     trimTrailingSlash(os.Getenv("RIMSKY_CONTROL_API_URL")),
 		ControlAPIToken:   os.Getenv("RIMSKY_CONTROL_API_TOKEN"),
+		ControlAPICAPath:  os.Getenv(enroll.EnvControlAPICA),
 		LogLevel:          envOr("RIMSKY_LOG_LEVEL", "info"),
 		TLSCertPath:       os.Getenv("RIMSKY_PROXY_TLS_CERT"),
 		TLSKeyPath:        os.Getenv("RIMSKY_PROXY_TLS_KEY"),

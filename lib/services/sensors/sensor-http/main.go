@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 type slogAdapter struct{ l *slog.Logger }

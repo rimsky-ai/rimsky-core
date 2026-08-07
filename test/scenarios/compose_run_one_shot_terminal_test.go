@@ -22,9 +22,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const composeRunSampleManifestRel = "cmd/rimsky/cli/compose/testdata/sample-manifest"
+const composeRunSampleManifestRel = "examples/compose/sample-manifest"
 
-const composeRunStubExecutorPkg = "./cmd/rimsky/cli/compose/testdata/stub-executor"
+const composeRunStubExecutorPkg = "./examples/compose/stub-executor"
 
 func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	binDir := t.TempDir()

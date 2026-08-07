@@ -4,8 +4,8 @@
 
 set -u
 
-repo_root() {
-  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd
+script_dir() {
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
 }
 
 die() {
@@ -17,7 +17,7 @@ step() {
   echo "==> $*"
 }
 
-REPO="$(repo_root)"
+HERE="$(script_dir)"
 WORK="$(mktemp -d -t rimsky-one-shot-demo-XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -27,16 +27,17 @@ RIMSKY_BIN="${RIMSKY_BIN:-}"
 if [[ -z "$RIMSKY_BIN" ]]; then
   RIMSKY_BIN="$WORK/rimsky"
   step "build rimsky CLI"
-  (cd "$REPO" && go build -o "$RIMSKY_BIN" ./cmd/rimsky) || die "go build ./cmd/rimsky failed"
+  (cd "$HERE/../.." && go build -o "$RIMSKY_BIN" ./cmd/rimsky) \
+    || die "go build ./cmd/rimsky failed (vendored copy? set RIMSKY_BIN to a prebuilt rimsky binary)"
 fi
 [[ -x "$RIMSKY_BIN" ]] || die "RIMSKY_BIN ($RIMSKY_BIN) not executable"
 
 STUB_BIN="$WORK/stub-executor"
 step "build stub executor"
-(cd "$REPO" && go build -o "$STUB_BIN" ./cmd/rimsky/cli/compose/testdata/stub-executor) \
+(cd "$HERE/stub-executor" && go build -o "$STUB_BIN" .) \
   || die "go build stub-executor failed"
 
-cp -R "$REPO/cmd/rimsky/cli/compose/testdata/sample-manifest"/* "$WORK"/
+cp -R "$HERE/sample-manifest"/* "$WORK"/
 cd "$WORK" || die "cd $WORK"
 
 LOG="$WORK/run.stderr"

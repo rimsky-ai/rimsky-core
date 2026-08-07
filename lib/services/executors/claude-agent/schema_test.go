@@ -117,15 +117,3 @@ func TestDeclaredErrorClassesMatchesRetiredTypeScriptSet(t *testing.T) {
 		}
 	}
 }
-
-func TestDeclaredTagsParsesCommaSeparatedEnv(t *testing.T) {
-	t.Setenv("RIMSKY_EXECUTOR_DECLARED_TAGS", " alpha , ,beta")
-	tags := DeclaredTags()
-	if len(tags) != 2 || tags[0] != "alpha" || tags[1] != "beta" {
-		t.Fatalf("tags = %v", tags)
-	}
-	t.Setenv("RIMSKY_EXECUTOR_DECLARED_TAGS", "")
-	if DeclaredTags() != nil {
-		t.Fatal("expected nil for empty env")
-	}
-}

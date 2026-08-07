@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -213,7 +214,7 @@ func TestCommitMissingClaimRoute(t *testing.T) {
 }
 
 func TestClaimProducerCapabilitiesAllSemantics(t *testing.T) {
-	h := newClaimProducerHandler(newProxyState(), Config{})
+	h := newClaimProducerHandler(newProxyState(), Config{}, &http.Client{})
 	resp, err := h.Capabilities(context.Background(), &genv1.CapabilitiesRequest{})
 	if err != nil {
 		t.Fatalf("capabilities: %v", err)

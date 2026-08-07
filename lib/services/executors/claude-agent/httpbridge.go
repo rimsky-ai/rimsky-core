@@ -14,9 +14,9 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 const maxExecuteBodyBytes = 10 * 1024 * 1024

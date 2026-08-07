@@ -137,11 +137,7 @@ func StartEnrollingHTTPNodeExecutor(
 			"RIMSKY_API_KEY":            apiKey,
 			"RIMSKY_CONTROL_API_CA":     enrolledExecutorCARootPath,
 		}),
-		testcontainers.WithFiles(testcontainers.ContainerFile{
-			Reader:            strings.NewReader(caRootPEM),
-			ContainerFilePath: enrolledExecutorCARootPath,
-			FileMode:          0o644,
-		}),
+		testcontainers.WithFiles(rereadableContainerFile(caRootPEM, enrolledExecutorCARootPath, 0o644)),
 		testcontainers.WithExposedPorts("9091/tcp", "9092/tcp"),
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("9091/tcp").WithStartupTimeout(120*time.Second),

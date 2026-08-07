@@ -175,55 +175,13 @@ type ObservabilityCapabilities struct {
 	SupportsTraceStream           bool                   `protobuf:"varint,2,opt,name=supports_trace_stream,json=supportsTraceStream,proto3" json:"supports_trace_stream,omitempty"`
 	RetentionAfterTerminalSeconds uint64                 `protobuf:"varint,3,opt,name=retention_after_terminal_seconds,json=retentionAfterTerminalSeconds,proto3" json:"retention_after_terminal_seconds,omitempty"`
 	CustomUi                      *CustomUI              `protobuf:"bytes,4,opt,name=custom_ui,json=customUi,proto3" json:"custom_ui,omitempty"`
-	// http_bridge_url, when non-empty, is the absolute base URL the service
-	// serves the HTTP+JSON observability bridge on. Dashboard clients
-	// dial this URL directly for browser-friendly fetch/SSE access. When
-	// empty, services expose only the gRPC surface.
-	HttpBridgeUrl string `protobuf:"bytes,5,opt,name=http_bridge_url,json=httpBridgeUrl,proto3" json:"http_bridge_url,omitempty"`
-	// expected_attributes_schema is a JSON Schema (RFC 8259 + draft 2020-12)
-	// describing the executor's accepted attribute shape. Empty means "no
-	// schema; accept any attributes."
-	//
-	// Each property in the schema is one of:
-	//   - an *input* the executor consumes at dispatch (no `readOnly`); or
-	//   - an *output* the executor produces at commit write-back, marked
-	//     `readOnly: true` per the JSON Schema standard keyword.
-	//
-	// Rimsky merges this schema with template-level defaults (L1) and
-	// per-node declarations (L2) at registration to compute the effective
-	// attribute schema, then validates the post-substitution attribute bag
-	// at dispatch and the post-write-back bag at commit. Validation
-	// failures route through Error { error_class: "template_validation_failed" }.
-	ExpectedAttributesSchema []byte `protobuf:"bytes,6,opt,name=expected_attributes_schema,json=expectedAttributesSchema,proto3" json:"expected_attributes_schema,omitempty"`
-	// declared_tags is the set of tag names this executor may include on
-	// a settling outcome (Success / Error / Park). Empty means "executor
-	// does not emit tags."
-	//
-	// Rimsky validates at template registration that every subscription's
-	// CEL `when:` filter over `payload.tags` references a tag in
-	// declared_tags, and rejects emissions of undeclared names at the
-	// supervisor's terminal handler.
-	DeclaredTags []string `protobuf:"bytes,7,rep,name=declared_tags,json=declaredTags,proto3" json:"declared_tags,omitempty"`
-	// declared_error_classes is the set of error-class paths this
-	// executor may emit on Error.error_class. Patterns ending in `*`
-	// indicate prefix-pattern leaves (e.g., `http/server_error/*`);
-	// exact strings indicate fixed leaves. The validator's range-check
-	// of operator `error_types:` keys accepts a key if it exactly
-	// matches a declared plain leaf OR matches a declared `<prefix>/*`
-	// pattern by prefix. Empty/absent means "executor does not declare;
-	// skip validator range-check for this executor".
-	//
-	// Per concept:signal hierarchical error_class rule.
-	DeclaredErrorClasses []string `protobuf:"bytes,8,rep,name=declared_error_classes,json=declaredErrorClasses,proto3" json:"declared_error_classes,omitempty"`
-	// validation_supported_roles: set when "validation" is in the
-	// executor's advertised protocols (e.g. ["executor"]). Mirrors
-	// publisher.proto's PublisherCapabilities.validation_supported_roles
-	// — the Validation service has no Capabilities verb, so each peer
-	// kind advertises its supported validation roles on its own
-	// capability surface; this is the executor's.
-	ValidationSupportedRoles []string `protobuf:"bytes,9,rep,name=validation_supported_roles,json=validationSupportedRoles,proto3" json:"validation_supported_roles,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	HttpBridgeUrl                 string                 `protobuf:"bytes,5,opt,name=http_bridge_url,json=httpBridgeUrl,proto3" json:"http_bridge_url,omitempty"`
+	ExpectedAttributesSchema      []byte                 `protobuf:"bytes,6,opt,name=expected_attributes_schema,json=expectedAttributesSchema,proto3" json:"expected_attributes_schema,omitempty"`
+	DeclaredTags                  []string               `protobuf:"bytes,7,rep,name=declared_tags,json=declaredTags,proto3" json:"declared_tags,omitempty"`
+	DeclaredErrorClasses          []string               `protobuf:"bytes,8,rep,name=declared_error_classes,json=declaredErrorClasses,proto3" json:"declared_error_classes,omitempty"`
+	ValidationSupportedRoles      []string               `protobuf:"bytes,9,rep,name=validation_supported_roles,json=validationSupportedRoles,proto3" json:"validation_supported_roles,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *ObservabilityCapabilities) Reset() {

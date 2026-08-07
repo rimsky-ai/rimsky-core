@@ -20,11 +20,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/store"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/listarray"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )

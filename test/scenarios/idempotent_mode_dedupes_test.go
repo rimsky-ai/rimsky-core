@@ -60,7 +60,7 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:        "b",
 					Executor:    "stub",
-					CascadeMode: string(cascade.CascadeModeIdempotentQueue),
+					CascadeMode: spec.CascadeModeIdempotentQueue,
 				},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{
@@ -172,7 +172,7 @@ func TestIdempotentModeDedupes_SettledComparison(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:        "b",
 					Executor:    "stub",
-					CascadeMode: string(cascade.CascadeModeIdempotentSettled),
+					CascadeMode: spec.CascadeModeIdempotentSettled,
 				},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{

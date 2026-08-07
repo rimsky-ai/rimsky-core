@@ -11,11 +11,6 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
 import "executor_observability.proto";
 
-// ClaimProducerObservability is the optional read-only protocol every
-// claim-producer MAY implement to expose per-claim views (state,
-// history, producer-chosen payload/address/scope disclosure) plus
-// optional admin views to dashboards. The dispatch protocol
-// (claim_producer.proto) is unchanged.
 service ClaimProducerObservability {
   rpc Capabilities(GetClaimProducerCapabilitiesRequest) returns (ClaimProducerObservabilityCapabilities);
   rpc GetClaim(GetClaimRequest) returns (ClaimDetail);
@@ -33,10 +28,6 @@ message ClaimProducerObservabilityCapabilities {
   uint64 retention_after_terminal_seconds = 4;
   CustomUI custom_ui = 5;
   repeated AdminViewDecl admin_views = 6;
-  // http_bridge_url, when non-empty, is the absolute base URL the service
-  // serves the HTTP+JSON observability bridge on. Dashboard clients
-  // dial this URL directly for browser-friendly fetch/SSE access. When
-  // empty, services expose only the gRPC surface.
   string http_bridge_url = 7;
 }
 

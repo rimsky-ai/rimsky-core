@@ -32,12 +32,6 @@ const (
 // ClaimProducerObservabilityClient is the client API for ClaimProducerObservability service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// ClaimProducerObservability is the optional read-only protocol every
-// claim-producer MAY implement to expose per-claim views (state,
-// history, producer-chosen payload/address/scope disclosure) plus
-// optional admin views to dashboards. The dispatch protocol
-// (claim_producer.proto) is unchanged.
 type ClaimProducerObservabilityClient interface {
 	Capabilities(ctx context.Context, in *GetClaimProducerCapabilitiesRequest, opts ...grpc.CallOption) (*ClaimProducerObservabilityCapabilities, error)
 	GetClaim(ctx context.Context, in *GetClaimRequest, opts ...grpc.CallOption) (*ClaimDetail, error)
@@ -116,12 +110,6 @@ func (c *claimProducerObservabilityClient) GetAdminView(ctx context.Context, in 
 // ClaimProducerObservabilityServer is the server API for ClaimProducerObservability service.
 // All implementations must embed UnimplementedClaimProducerObservabilityServer
 // for forward compatibility.
-//
-// ClaimProducerObservability is the optional read-only protocol every
-// claim-producer MAY implement to expose per-claim views (state,
-// history, producer-chosen payload/address/scope disclosure) plus
-// optional admin views to dashboards. The dispatch protocol
-// (claim_producer.proto) is unchanged.
 type ClaimProducerObservabilityServer interface {
 	Capabilities(context.Context, *GetClaimProducerCapabilitiesRequest) (*ClaimProducerObservabilityCapabilities, error)
 	GetClaim(context.Context, *GetClaimRequest) (*ClaimDetail, error)

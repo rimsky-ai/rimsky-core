@@ -14,5 +14,5 @@ These are designed defenses against inherent multi-replica collisions; determini
 
 ## Alternatives
 
-- Relying on the repeated race-detector gate alone (see `decision:race-gate-split`) — rejected: probabilistic; a scheduler-dependent interleaving can survive any finite repetition budget unexercised.
+- Relying on the race detector alone — rejected: probabilistic; a green run proves nothing, and a scheduler-dependent interleaving can survive any finite repetition budget unexercised.
 - Sleep-based timing tests to provoke the interleavings — rejected: nondeterministic verdicts, which the project's test discipline forbids outright.

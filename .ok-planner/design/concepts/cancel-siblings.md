@@ -12,7 +12,7 @@ Snapshotted on the parent claim-handle row at acquire-time from the fan-out pare
 
 ## Boundaries
 
-Owns: the proactive cancel walker, the multi-supervisor scope filter. Does NOT own: the post-resolution aggregate verdict (see `concept:fan-out` aggregator), the `strict` policy itself (see `concept:node-run` aggregation), the held-durable promotion (see `concept:claim-lifetime`), the unconditional recursive descendant-cancel walk that fires on any Abandon regardless of aggregation policy (see `concept:claim-tree`), the run-level force-cancellation of remaining in-flight clones under `strict`/`first` — a separate mechanism, keyed off the run tree rather than the claim tree, that reaches clones with no active claim to walk (see `concept:fan-out`, `concept:node-run`). Adjacent: `concept:claim-tree`, `concept:fan-out`, `concept:claim-co-holdership`, `concept:claim-lifetime`.
+Owns: the proactive cancel walker, the multi-supervisor scope filter. Does NOT own: the post-resolution aggregate verdict (see `concept:fan-out` aggregator), the `strict` policy's semantics itself (owned by `concept:fan-out`; `concept:node-run` only snapshots the value on the parent run for run-tree aggregation), the held-durable promotion (see `concept:claim-lifetime`), the unconditional recursive descendant-cancel walk that fires on any Abandon regardless of aggregation policy (see `concept:claim-tree`), the run-level force-cancellation of remaining in-flight clones under `strict`/`first` — a separate mechanism, keyed off the run tree rather than the claim tree, that reaches clones with no active claim to walk (see `concept:fan-out`, `concept:node-run`). Adjacent: `concept:claim-tree`, `concept:fan-out`, `concept:claim-co-holdership`, `concept:claim-lifetime`.
 
 ## Invariants
 
@@ -29,7 +29,7 @@ Owns: the proactive cancel walker, the multi-supervisor scope filter. Does NOT o
 
 **Cancel-siblings is scoped to the supervisor that holds the parent.** Under multi-supervisor deployments (more than one supervisor process running concurrently), sub-claims of the same parent can be acquired by different supervisor processes. The cancel walker filters mismatched-supervisor siblings out of its walk per invariant 4: a supervisor cannot release claims held by a different supervisor.
 
-Practical consequence under a `strict` error policy with multi-supervisor fan-out:
+Practical consequence under a `strict` aggregation policy with multi-supervisor fan-out:
 
 - Supervisor A holds 5 of 12 sub-claims; supervisor B holds the other 7.
 - One of A's sub-claims resolves to Abandon.

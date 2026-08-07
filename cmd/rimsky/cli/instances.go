@@ -27,7 +27,7 @@ func ResolveTargetAgent(explicit, apiKey string) string {
 	if apiKey != "" {
 		return ""
 	}
-	path, err := hostagent.DefaultIdentityFile()
+	path, err := hostagent.IdentityFilePath()
 	if err != nil {
 		return ""
 	}

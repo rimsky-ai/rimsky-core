@@ -9,11 +9,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	foundationspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func TestValidateCascadeMode_Ok(t *testing.T) {
-	for _, mode := range []string{"", "most-recent", "sequenced", "idempotent-queue", "idempotent-settled"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []foundationspec.CascadeMode{"", "most-recent", "sequenced", "idempotent-queue", "idempotent-settled"} {
+		t.Run(string(mode), func(t *testing.T) {
 			spec := &TemplateSpec{
 				Name:    "demo",
 				Version: "1.0.0",

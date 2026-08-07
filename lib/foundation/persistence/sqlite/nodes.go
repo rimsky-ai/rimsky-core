@@ -38,7 +38,7 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 	}
 	cascadeMode := in.CascadeMode
 	if cascadeMode == "" {
-		cascadeMode = cascade.CascadeModeMostRecent
+		cascadeMode = spec.CascadeModeMostRecent
 	}
 	if _, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (
@@ -437,21 +437,21 @@ func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundati
 
 // @concept: cascade
 // @decision: mode-default-most-recent
-func (s *nodesImpl) GetCascadeMode(ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx) (cascade.CascadeMode, error) {
+func (s *nodesImpl) GetCascadeMode(ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx) (spec.CascadeMode, error) {
 	var mode string
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT cascade_mode FROM rimsky_nodes WHERE id = ?`, nodeID.String(),
 	).Scan(&mode)
 	if errors.Is(err, sql.ErrNoRows) {
-		return cascade.CascadeModeMostRecent, nil
+		return spec.CascadeModeMostRecent, nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("GetCascadeMode: %w", err)
 	}
 	if mode == "" {
-		return cascade.CascadeModeMostRecent, nil
+		return spec.CascadeModeMostRecent, nil
 	}
-	return cascade.CascadeMode(mode), nil
+	return spec.CascadeMode(mode), nil
 }
 
 // @concept: node
@@ -760,9 +760,9 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.Tags = tags
 	cm := cascadeMode.String
 	if cm == "" {
-		cm = string(cascade.CascadeModeMostRecent)
+		cm = string(spec.CascadeModeMostRecent)
 	}
-	r.CascadeMode = cascade.CascadeMode(cm)
+	r.CascadeMode = spec.CascadeMode(cm)
 	return r, nil
 }
 

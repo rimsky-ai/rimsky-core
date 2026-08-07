@@ -445,22 +445,14 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 		testcontainers.WithExposedPorts("8080/tcp", "9100/tcp"),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
-		testcontainers.WithFiles(testcontainers.ContainerFile{
-			Reader:            strings.NewReader(string(yamlBytes)),
-			ContainerFilePath: "/etc/rimsky/rimsky.yml",
-			FileMode:          0o644,
-		}),
+		testcontainers.WithFiles(rereadableContainerFile(string(yamlBytes), "/etc/rimsky/rimsky.yml", 0o644)),
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("8080/tcp").WithStartupTimeout(120 * time.Second),
 		),
 	}
 	if cb.bundledFS != nil {
 		rimskyOpts = append(rimskyOpts,
-			testcontainers.WithFiles(testcontainers.ContainerFile{
-				Reader:            strings.NewReader(cb.bundledFS.configYAML),
-				ContainerFilePath: "/etc/rimsky/claim-producer-filesystem.yml",
-				FileMode:          0o644,
-			}),
+			testcontainers.WithFiles(rereadableContainerFile(cb.bundledFS.configYAML, "/etc/rimsky/claim-producer-filesystem.yml", 0o644)),
 			testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
 				hc.Binds = append(hc.Binds, cb.bundledFS.hostDir+":/workspace:rw,delegated")
 			}),

@@ -72,11 +72,7 @@ func StartFilesystemClaimProducer(ctx context.Context, t testing.TB, networkName
 			"RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG": "/etc/store/config.yml",
 		}),
 		testcontainers.WithExposedPorts(exposedPorts...),
-		testcontainers.WithFiles(testcontainers.ContainerFile{
-			Reader:            strings.NewReader(configYAML),
-			ContainerFilePath: "/etc/store/config.yml",
-			FileMode:          0o644,
-		}),
+		testcontainers.WithFiles(rereadableContainerFile(configYAML, "/etc/store/config.yml", 0o644)),
 		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
 			hc.Binds = append(hc.Binds, hostDir+":/workspace:rw,delegated")
 		}),

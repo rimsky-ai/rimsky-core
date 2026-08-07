@@ -1016,7 +1016,7 @@ func provisionInstanceTx(
 			NodeType:    def.Type,
 			Executor:    def.Executor,
 			Tags:        resolvedTags,
-			CascadeMode: cascade.CascadeMode(def.CascadeMode),
+			CascadeMode: def.CascadeMode,
 		}, tx); err != nil {
 			return createInstanceResponse{}, fmt.Errorf("instance-factory: create node %q: %w", def.Type, err)
 		}

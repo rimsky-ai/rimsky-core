@@ -41,8 +41,8 @@ type NodeRow struct {
 	Tags []string `json:"tags"`
 	// @concept: cascade
 	// @decision: mode-default-most-recent
-	CascadeMode cascade.CascadeMode `json:"cascade_mode"`
-	CreatedAt   time.Time           `json:"created_at"`
+	CascadeMode spec.CascadeMode `json:"cascade_mode"`
+	CreatedAt   time.Time        `json:"created_at"`
 }
 
 type NodeCreateInput struct {
@@ -53,7 +53,7 @@ type NodeCreateInput struct {
 	Tags       []string
 	// @concept: cascade
 	// @decision: mode-default-most-recent
-	CascadeMode cascade.CascadeMode
+	CascadeMode spec.CascadeMode
 }
 
 type NodeListFilter struct {
@@ -107,7 +107,7 @@ type NodeTable interface {
 
 	// @concept: cascade
 	// @decision: mode-default-most-recent
-	GetCascadeMode(ctx context.Context, nodeID shared.UUID, tx Tx) (cascade.CascadeMode, error)
+	GetCascadeMode(ctx context.Context, nodeID shared.UUID, tx Tx) (spec.CascadeMode, error)
 
 	// @concept: node
 	GetRunSummary(ctx context.Context, nodeID shared.UUID, tx Tx) (NodeRunSummary, error)

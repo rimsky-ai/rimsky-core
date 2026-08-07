@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
@@ -58,7 +57,7 @@ func TestIdempotentModeQueueComparison_DifferingBagSurvives(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:        "b",
 					Executor:    "stub",
-					CascadeMode: string(cascade.CascadeModeIdempotentQueue),
+					CascadeMode: spec.CascadeModeIdempotentQueue,
 				},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{

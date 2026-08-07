@@ -1,14 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
 // Licensed under the Apache License, Version 2.0.
 
-// DataProcessing is a mix-in service-protocol for ClaimProducer
-// implementations that materialize content (Parquet files, PostGIS
-// tables, etc.) against partitioned writes. Producers advertise it
-// via CapabilitiesResponse.protocols (claim_producer.proto). The
-// supervisor calls BeginCandidate inside the rimsky-side sub-claim
-// acquisition transaction for fan-out and CommitCandidate /
-// AbandonCandidate at leaf terminal.
-
 syntax = "proto3";
 
 package rimsky.v1;
@@ -28,30 +20,13 @@ service DataProcessing {
   rpc GetVersionSchema(GetVersionSchemaRequest) returns (GetVersionSchemaResponse);
 }
 
-// DataProcessingCapabilities advertises the data shapes,
-// materializations, partition kinds, and aggregators the producer
-// supports. Rimsky cross-checks template `data:` declarations against
-// this set at canonicalization time when `validation` is also
-// advertised; producer-side Validate.Validate is the authoritative
-// gate.
 message DataProcessingCapabilities {
-  // e.g. "parquet", "geo-parquet", "postgis-table".
   repeated string data_shapes = 1;
-  // e.g. "full", "partitioned", "iceberg".
   repeated string materializations = 2;
-  // e.g. "date_range", "region_list", "hash", "bounding_box", "h3_grid",
-  // "attribute_value".
   repeated string partition_kinds = 3;
-  // e.g. "map_partitioned", "union", "merge", "reduce", "collect", "first".
   repeated string aggregators = 4;
 }
 
-// BeginCandidateRequest is called inside the rimsky-side acquisition
-// transaction for fan-out sub-claims. The producer allocates a staging
-// candidate (e.g. a unique S3 prefix) keyed by idempotency_key (a fresh
-// UUID minted per sub-claim descriptor per acquisition attempt, not
-// stable across retries) and returns an opaque candidate_handle rimsky
-// persists on col:rimsky_claim_handles.producer_candidate_handle.
 message BeginCandidateRequest {
   string claim_handle_id      = 1;
   bytes  sub_scope_descriptor = 2;
@@ -62,10 +37,6 @@ message BeginCandidateResponse {
   bytes candidate_handle = 1;
 }
 
-// CommitCandidateRequest finalizes the candidate at leaf-run success.
-// candidate_metadata is opaque-to-rimsky producer-side info about the
-// candidate (e.g. row count, byte size, partition stats); surfaces via
-// the parent's writeback if the producer threads it through Commit.
 message CommitCandidateRequest {
   bytes candidate_handle = 1;
 }
@@ -74,8 +45,6 @@ message CommitCandidateResponse {
   bytes candidate_metadata = 1;
 }
 
-// AbandonCandidateRequest is called at leaf-run failure or
-// strict-cancel-siblings cancellation. The producer GCs the candidate.
 message AbandonCandidateRequest {
   bytes candidate_handle = 1;
 }
@@ -114,6 +83,5 @@ message GetVersionSchemaRequest {
 }
 
 message GetVersionSchemaResponse {
-  // Typically a JSON Schema or Arrow schema bytes. Opaque to rimsky.
   bytes schema = 1;
 }

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 type ValidationError struct {
@@ -119,6 +119,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		base := fmt.Sprintf("nodes[%d]", i)
 		validateSubscribes(n, base, declared, declaredMessages, messageBodyFields, hooks, spec, &res)
 		validateErrorTypes(n, base, hooks, &res)
+		validateRetryBackoff(n, base, &res)
 		validateExecutorCoherence(n, base, hooks, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateKindDeclaration(n, base, hooks, &res)
@@ -919,7 +920,7 @@ func validateClaimProducers(n TemplateNodeDef, base string, spec *TemplateSpec, 
 			continue
 		}
 		switch s.Intent {
-		case "r", "rw":
+		case claimproducer.IntentRead, claimproducer.IntentReadWrite:
 		case "":
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase + ".intent",
@@ -997,15 +998,40 @@ func validateLocks(n TemplateNodeDef, base string, spec *TemplateSpec, hooks Reg
 	}
 }
 
+// @concept: error-policy
+func validateRetryBackoff(n TemplateNodeDef, base string, res *ValidationResult) {
+	if n.RetryBackoff == nil {
+		return
+	}
+	switch n.RetryBackoff.Kind {
+	case "", spec.BackoffLinear, spec.BackoffExponential:
+	default:
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".retry_backoff.kind",
+			Msg: fmt.Sprintf("unknown retry_backoff kind %q: must be one of %q, %q",
+				n.RetryBackoff.Kind, spec.BackoffLinear, spec.BackoffExponential),
+		})
+	}
+	switch n.RetryBackoff.Jitter {
+	case "", spec.JitterNone, spec.JitterPlusMinus:
+	default:
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".retry_backoff.jitter",
+			Msg: fmt.Sprintf("unknown retry_backoff jitter %q: must be one of %q, %q",
+				n.RetryBackoff.Jitter, spec.JitterNone, spec.JitterPlusMinus),
+		})
+	}
+}
+
 func validateCascadeMode(n TemplateNodeDef, base string, res *ValidationResult) {
 	if n.CascadeMode == "" {
 		return
 	}
-	switch cascade.CascadeMode(n.CascadeMode) {
-	case cascade.CascadeModeMostRecent,
-		cascade.CascadeModeSequenced,
-		cascade.CascadeModeIdempotentQueue,
-		cascade.CascadeModeIdempotentSettled:
+	switch spec.CascadeMode(n.CascadeMode) {
+	case spec.CascadeModeMostRecent,
+		spec.CascadeModeSequenced,
+		spec.CascadeModeIdempotentQueue,
+		spec.CascadeModeIdempotentSettled:
 		return
 	}
 	res.Errors = append(res.Errors, ValidationError{
@@ -1013,10 +1039,10 @@ func validateCascadeMode(n TemplateNodeDef, base string, res *ValidationResult) 
 		Msg: fmt.Sprintf(
 			"unknown cascade_mode %q: must be one of %q, %q, %q, %q",
 			n.CascadeMode,
-			cascade.CascadeModeMostRecent,
-			cascade.CascadeModeSequenced,
-			cascade.CascadeModeIdempotentQueue,
-			cascade.CascadeModeIdempotentSettled,
+			spec.CascadeModeMostRecent,
+			spec.CascadeModeSequenced,
+			spec.CascadeModeIdempotentQueue,
+			spec.CascadeModeIdempotentSettled,
 		),
 	})
 }

@@ -65,7 +65,7 @@ func TestCascadeDefersDuringFlight_WalkerQueuesNewPendingWithoutMutatingInFlight
 				node.TemplateNodeDef{
 					Type:        "b",
 					Executor:    "stub",
-					CascadeMode: string(cascade.CascadeModeSequenced),
+					CascadeMode: spec.CascadeModeSequenced,
 				},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{

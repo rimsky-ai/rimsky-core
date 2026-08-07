@@ -10,8 +10,8 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 func NewBridgeServer(addr string, handler http.Handler, id *peerauth.Identity) *http.Server {

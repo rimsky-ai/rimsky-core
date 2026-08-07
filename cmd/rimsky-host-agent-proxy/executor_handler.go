@@ -28,10 +28,10 @@ type executorHandler struct {
 	spawnTimeout time.Duration
 }
 
-func newExecutorHandler(state *proxyState, cfg Config) *executorHandler {
+func newExecutorHandler(state *proxyState, cfg Config, controlAPIClient *http.Client) *executorHandler {
 	return &executorHandler{
 		state:        state,
-		fetch:        newControlAPIFetcher(&http.Client{Timeout: 10 * time.Second}, cfg.ControlAPIURL, cfg.ControlAPIToken),
+		fetch:        newControlAPIFetcher(controlAPIClient, cfg.ControlAPIURL, cfg.ControlAPIToken),
 		spawnTimeout: cfg.SpawnReadyTimeout,
 	}
 }

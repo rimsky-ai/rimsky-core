@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/template/canonical"
@@ -338,10 +339,10 @@ func loadReceiverCarryForward(
 // @concept: cascade-mode
 // @decision: mode-default-most-recent
 func applyCascadeModeRule(
-	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, bag map[string]any, mode cascade.CascadeMode, tx persistence.Tx,
+	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, bag map[string]any, mode spec.CascadeMode, tx persistence.Tx,
 ) (drop bool, err error) {
 	switch mode {
-	case cascade.CascadeModeMostRecent, "":
+	case spec.CascadeModeMostRecent, "":
 		hasLater, herr := args.Persist.Nodes().HasLaterCascadePending(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx)
 		if herr != nil {
 			return false, fmt.Errorf("most-recent: has later: %w", herr)
@@ -353,11 +354,11 @@ func applyCascadeModeRule(
 			return false, fmt.Errorf("most-recent: delete prior: %w", derr)
 		}
 		return false, nil
-	case cascade.CascadeModeSequenced:
+	case spec.CascadeModeSequenced:
 		return false, nil
-	case cascade.CascadeModeIdempotentQueue:
+	case spec.CascadeModeIdempotentQueue:
 		return modeDropIfPriorEqual(ctx, args, row, bag, false, tx)
-	case cascade.CascadeModeIdempotentSettled:
+	case spec.CascadeModeIdempotentSettled:
 		return modeDropIfPriorEqual(ctx, args, row, bag, true, tx)
 	}
 	return false, fmt.Errorf("applyCascadeModeRule: unknown mode %q", mode)

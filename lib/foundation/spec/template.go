@@ -3,7 +3,11 @@
 
 package spec
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+)
 
 type TemplateSpec struct {
 	Name         string            `yaml:"name" json:"name"`
@@ -95,7 +99,7 @@ type TemplateNodeDef struct {
 
 	// @concept: cascade
 	// @decision: mode-default-most-recent
-	CascadeMode string `yaml:"cascade_mode,omitempty" json:"cascade_mode,omitempty"`
+	CascadeMode CascadeMode `yaml:"cascade_mode,omitempty" json:"cascade_mode,omitempty"`
 }
 
 const (
@@ -107,12 +111,12 @@ const SendMessageKindName = "send_message"
 
 // @concept: claim
 type NodeClaimProducerRef struct {
-	Name     string          `yaml:"name" json:"name"`
-	Selector string          `yaml:"selector" json:"selector"`
-	Intent   string          `yaml:"intent" json:"intent"`
-	Alias    string          `yaml:"alias,omitempty" json:"alias,omitempty"`
-	Lifetime string          `yaml:"lifetime,omitempty" json:"lifetime,omitempty"`
-	Data     json.RawMessage `yaml:"data,omitempty" json:"data,omitempty"`
+	Name     string               `yaml:"name" json:"name"`
+	Selector string               `yaml:"selector" json:"selector"`
+	Intent   claimproducer.Intent `yaml:"intent" json:"intent"`
+	Alias    string               `yaml:"alias,omitempty" json:"alias,omitempty"`
+	Lifetime string               `yaml:"lifetime,omitempty" json:"lifetime,omitempty"`
+	Data     json.RawMessage      `yaml:"data,omitempty" json:"data,omitempty"`
 }
 
 func (s NodeClaimProducerRef) AliasOf() string {

@@ -153,19 +153,6 @@ func (q *queueImpl) ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx 
 	return cmd.RowsAffected() == 1, nil
 }
 
-func (q *queueImpl) UpdateDispatchTuning(ctx context.Context, nodeRunID shared.UUID, maxRetriesWithoutProgress *int, tx persistence.Tx) error {
-	_, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_node_runs
-		    SET max_retries_without_progress = $2
-		  WHERE id = $1`,
-		nodeRunID, intPtrOrNullPark(maxRetriesWithoutProgress),
-	)
-	if err != nil {
-		return fmt.Errorf("postgres.UpdateDispatchTuning: %w", err)
-	}
-	return nil
-}
-
 func scanParkedRows(rows pgx.Rows) ([]persistence.ParkedRow, error) {
 	var out []persistence.ParkedRow
 	for rows.Next() {
@@ -288,11 +275,4 @@ func timeOrNullPark(t time.Time) any {
 		return nil
 	}
 	return t
-}
-
-func intPtrOrNullPark(p *int) any {
-	if p == nil {
-		return nil
-	}
-	return *p
 }

@@ -16,9 +16,9 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	httpnode "github.com/rimsky-ai/rimsky-core/lib/services/executors/http-node"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 const grpcShutdownGracePeriod = 10 * time.Second

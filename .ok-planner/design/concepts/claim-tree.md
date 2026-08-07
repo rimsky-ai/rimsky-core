@@ -14,7 +14,7 @@ Used by the parent-resolution walk, part of the unified terminal-resolution engi
 
 ## Boundaries
 
-Owns: the self-referential parent pointer on the claim-handle ledger, the child-listing accessor, the recursive parent-resolution walk, the recursive descendant-cancel walk (fires unconditionally whenever any claim resolves to Abandon, independent of aggregation policy). Does NOT own: claim acquisition (see `concept:claim`, `concept:claim-handle`), state aggregation policy (see `concept:fan-out`), the run-tree (see `concept:node-run`), the proactive in-flight-sibling cancel that strict aggregation layers on top of a resolving child (see `concept:cancel-siblings`). Adjacent: `concept:claim-handle`, `concept:fan-out`, `concept:cancel-siblings`, `concept:auto-terminal`, `concept:terminal-resolution`, `concept:node-run`.
+Owns: the self-referential parent pointer on the claim-handle ledger, the child-listing accessor, the recursive parent-resolution walk, the recursive descendant-cancel walk (fires unconditionally whenever any claim resolves to Abandon, independent of aggregation policy). Does NOT own: claim acquisition (see `concept:claim`, `concept:claim-handle`), state aggregation policy (see `concept:fan-out`), the run-tree's own structure (its parent-child shape lives on the run-scope ledger, see `concept:run-scope`) or its consumption for state aggregation (see `concept:node-run`), the proactive in-flight-sibling cancel that strict aggregation layers on top of a resolving child (see `concept:cancel-siblings`). Adjacent: `concept:claim-handle`, `concept:fan-out`, `concept:cancel-siblings`, `concept:auto-terminal`, `concept:terminal-resolution`, `concept:node-run`, `concept:run-scope`.
 
 ## Invariants
 

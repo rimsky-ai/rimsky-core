@@ -52,11 +52,7 @@ func StartClaudeAgentFakeOnNetwork(
 
 	files := []testcontainers.ContainerFile{}
 	if opts.SignoffPrivateKeyPEM != "" {
-		files = append(files, testcontainers.ContainerFile{
-			Reader:            strings.NewReader(opts.SignoffPrivateKeyPEM),
-			ContainerFilePath: "/etc/rimsky/fake-claude-signoff-private-key.pem",
-			FileMode:          0o644,
-		})
+		files = append(files, rereadableContainerFile(opts.SignoffPrivateKeyPEM, "/etc/rimsky/fake-claude-signoff-private-key.pem", 0o644))
 	}
 
 	c, err := runWithRetry(ctx, ImageRef(claudeAgentFakeImage),

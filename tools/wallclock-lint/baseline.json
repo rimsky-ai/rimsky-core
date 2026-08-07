@@ -4,7 +4,6 @@
   "cmd/rimsky-host-agent-proxy/harness_test.go": 1,
   "cmd/rimsky-host-agent-proxy/lifecycle_handler_test.go": 4,
   "cmd/rimsky/cli/compose/launcher_test.go": 1,
-  "cmd/rimsky/cli/compose/testdata/stub-executor/main.go": 2,
   "cmd/rimsky/cli/compose/wait_test.go": 1,
   "cmd/rimsky/cli/ctx_demo_test.go": 1,
   "cmd/rimsky/cli/instances_test.go": 2,

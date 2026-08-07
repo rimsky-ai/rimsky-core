@@ -47,6 +47,7 @@ func LoadConfigFromEnv() (Config, error) {
 		ProxyURL:           os.Getenv("RIMSKY_HOST_AGENT_PROXY_URL"),
 		APIKey:             os.Getenv("RIMSKY_API_KEY"),
 		ListenAddr:         os.Getenv("RIMSKY_AGENT_LISTEN"),
+		AllowPaths:         splitCommaNonEmpty(os.Getenv(allowPathsEnvVar)),
 		AgentLabel:         envOr("RIMSKY_AGENT_LABEL", defaultAgentLabel()),
 		LogLevel:           envOr("RIMSKY_LOG_LEVEL", "info"),
 		HeartbeatInterval:  heartbeat,
@@ -56,7 +57,7 @@ func LoadConfigFromEnv() (Config, error) {
 		TLSCAPath:          os.Getenv("RIMSKY_AGENT_TLS_CA"),
 		StatusFile:         os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
 		RoutingLabel:       os.Getenv(agentRoutingLabelEnvVar),
-		IdentityFile:       os.Getenv("RIMSKY_AGENT_IDENTITY_FILE"),
+		IdentityFile:       os.Getenv(IdentityFileEnvVar),
 	}, nil
 }
 
@@ -85,6 +86,18 @@ func defaultAgentLabel() string {
 		host = "unknown"
 	}
 	return fmt.Sprintf("%s-%d", host, os.Getpid())
+}
+
+const allowPathsEnvVar = "RIMSKY_AGENT_ALLOW_PATHS"
+
+func splitCommaNonEmpty(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envOr(key, def string) string {

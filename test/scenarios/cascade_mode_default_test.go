@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -78,13 +77,13 @@ func TestCascadeModeDefaultsToMostRecentAndCoalesces(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	var resolved cascade.CascadeMode
+	var resolved spec.CascadeMode
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		m, err := h.Persist.Nodes().GetCascadeMode(h.Ctx, b.ID, tx)
 		resolved = m
 		return err
 	}))
-	require.Equal(t, cascade.CascadeModeMostRecent, resolved,
+	require.Equal(t, spec.CascadeModeMostRecent, resolved,
 		"a template omitting cascade_mode must resolve to most-recent")
 
 	bObs := func() []stub.ObservedRequest {

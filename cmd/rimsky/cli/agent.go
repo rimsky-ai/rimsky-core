@@ -54,6 +54,45 @@ func RunAgent(args []string) int {
 	}
 }
 
+type agentStartFlags struct {
+	allowPaths   string
+	listen       string
+	proxy        string
+	apiKey       string
+	tls          bool
+	tlsCA        string
+	label        string
+	identityFile string
+}
+
+func applyAgentStartFlags(cfg hostagent.Config, f agentStartFlags) hostagent.Config {
+	if f.allowPaths != "" {
+		cfg.AllowPaths = splitNonEmpty(f.allowPaths, ",")
+	}
+	if f.listen != "" {
+		cfg.ListenAddr = f.listen
+	}
+	if f.proxy != "" {
+		cfg.ProxyURL = f.proxy
+	}
+	if f.apiKey != "" {
+		cfg.APIKey = f.apiKey
+	}
+	if f.tls {
+		cfg.TLSEnabled = true
+	}
+	if f.tlsCA != "" {
+		cfg.TLSCAPath = f.tlsCA
+	}
+	if f.label != "" {
+		cfg.RoutingLabel = f.label
+	}
+	if f.identityFile != "" {
+		cfg.IdentityFile = f.identityFile
+	}
+	return cfg
+}
+
 func runAgentStart(args []string) int {
 	fs := flag.NewFlagSet("agent start", flag.ContinueOnError)
 	allowPaths := fs.String("allow-paths", "", "comma-separated glob patterns for binary path validation")
@@ -76,30 +115,16 @@ func runAgentStart(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if *allowPaths != "" {
-		cfg.AllowPaths = splitNonEmpty(*allowPaths, ",")
-	}
-	if *listen != "" {
-		cfg.ListenAddr = *listen
-	}
-	if *proxy != "" {
-		cfg.ProxyURL = *proxy
-	}
-	if *apiKey != "" {
-		cfg.APIKey = *apiKey
-	}
-	if *tls {
-		cfg.TLSEnabled = true
-	}
-	if *tlsCA != "" {
-		cfg.TLSCAPath = *tlsCA
-	}
-	if *label != "" {
-		cfg.RoutingLabel = *label
-	}
-	if *identityFile != "" {
-		cfg.IdentityFile = *identityFile
-	}
+	cfg = applyAgentStartFlags(cfg, agentStartFlags{
+		allowPaths:   *allowPaths,
+		listen:       *listen,
+		proxy:        *proxy,
+		apiKey:       *apiKey,
+		tls:          *tls,
+		tlsCA:        *tlsCA,
+		label:        *label,
+		identityFile: *identityFile,
+	})
 
 	dir, err := resolveStateDir(*stateDir)
 	if err != nil {

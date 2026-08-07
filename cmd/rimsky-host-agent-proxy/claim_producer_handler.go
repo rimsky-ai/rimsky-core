@@ -29,10 +29,10 @@ type claimProducerHandler struct {
 	callTimeout  time.Duration
 }
 
-func newClaimProducerHandler(state *proxyState, cfg Config) *claimProducerHandler {
+func newClaimProducerHandler(state *proxyState, cfg Config, controlAPIClient *http.Client) *claimProducerHandler {
 	return &claimProducerHandler{
 		state:        state,
-		fetch:        newControlAPIFetcher(&http.Client{Timeout: 10 * time.Second}, cfg.ControlAPIURL, cfg.ControlAPIToken),
+		fetch:        newControlAPIFetcher(controlAPIClient, cfg.ControlAPIURL, cfg.ControlAPIToken),
 		spawnTimeout: cfg.SpawnReadyTimeout,
 		callTimeout:  60 * time.Second,
 	}

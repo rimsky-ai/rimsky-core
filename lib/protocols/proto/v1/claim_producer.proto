@@ -1,84 +1,28 @@
 // Copyright © 2026 Fall Guy Consulting.
 // Licensed under the Apache License, Version 2.0.
 
-// ClaimProducer wire protocol (renamed from "store-service" under the
-// layer-crystallization plan, Phase 4). Four runtime verbs (Open / Commit /
-// Abandon / Release) plus one startup-handshake verb (Capabilities).
-// HTTP+JSON bridge handlers decode JSON to these messages and call the
-// same internal handler the gRPC server uses.
-//
-// Field shapes:
-//   - claim_id is a UUID textual form (string), generated client-side
-//     before Open is called and threaded through every subsequent verb
-//     for that claim's lifecycle.
-//   - claim_scope, address, payload are opaque bytes (json.RawMessage on the
-//     rimsky side; producers choose their own canonical encoding).
-//   - selector, intent, alias, producer_name are strings.
-//
-// Errors flow as gRPC status codes.
-
 syntax = "proto3";
 
 package rimsky.v1;
 
 option go_package = "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1";
 
-// ClaimProducer is the wire-form rimsky↔producer contract. Every
-// standard claim-producer binary implements this interface; rimsky's
-// runtime/peer/ package implements the gRPC client.
-//
-// Lifecycle events live in the separate LifecycleSubscriber service
-// (lifecycle.proto). A binary that wishes to react to control-plane
-// events implements both services.
 service ClaimProducer {
-  // Capabilities is the startup-handshake verb. Called once per
-  // producer per rimsky process at startup; the result is cached
-  // and validated against the operator's declared requirements. Not
-  // called on the runtime path.
   rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
 
-  // Open creates whatever producer-internal state the (intent,
-  // realized write_semantics) combination requires and returns the
-  // producer-supplied address the executor will use on the data path.
-  // Called inside the rimsky-side acquisition transaction; the producer
-  // runs its own state mutation in its own transaction.
   rpc Open(OpenRequest) returns (OpenResponse);
 
-  // Commit signals that the consumer of the claim succeeded. The
-  // producer decides what to do with its own state per its own
-  // configuration.
   rpc Commit(CommitRequest) returns (CommitResponse);
 
-  // Abandon signals that the consumer of the claim failed. The
-  // producer decides what to do with its own state per its own
-  // configuration.
   rpc Abandon(AbandonRequest) returns (AbandonResponse);
 
-  // Release tears down producer-internal read state created at Open.
-  // For producers that registered no per-claim state, typically a no-op.
   rpc Release(ReleaseRequest) returns (ReleaseResponse);
 
-  // SplitScope is optional. Producers that advertise
-  // CapabilitiesResponse.supports_split_scope = true MUST implement
-  // this RPC. The supervisor calls it inside the rimsky-side
-  // acquisition transaction for fan-out nodes: the parent claim is
-  // already Open'd, then SplitScope partitions the parent scope into
-  // sub-scope descriptors used to seed sub-claim rows. The shape of
-  // partition_request bytes is producer-defined.
   rpc SplitScope(SplitScopeRequest) returns (SplitScopeResponse);
 
-  // ScopesConflict is optional. Producers that advertise
-  // CapabilitiesResponse.supports_scopes_conflict = true MUST
-  // implement this RPC. When unsupported, rimsky falls back to the
-  // byte-equal default.
   rpc ScopesConflict(ClaimScopesConflictRequest) returns (ScopesConflictResponse);
 }
 
-// WriteSemantics declares how a claim handle's writes coexist with
-// concurrent claims on byte-equal scopes. UNKNOWN is the proto-default
-// zero value; producers MUST NOT return it. The
-// set returned by Capabilities is the allowed values per producer;
-// each Open returns the realized value for that specific claim.
 enum WriteSemantics {
   WRITE_SEMANTICS_UNKNOWN = 0;
   WRITE_SEMANTICS_SYNC = 1;
@@ -89,82 +33,28 @@ enum WriteSemantics {
 
 message CapabilitiesRequest {}
 
-// CapabilitiesResponse advertises the set of WriteSemantics values the
-// producer may realize on Open. Operator config (rimsky.yml's
-// write_semantics_allowed: per claim_producers entry) declares a
-// permitted subset that MUST be a subset of this set; rimsky validates
-// strict subset at startup.
-//
-// protocols advertises the mix-in service protocols this binary
-// implements alongside ClaimProducer (e.g. "data_processing",
-// "validation", "lifecycle_subscriber"). validation_supported_roles
-// lists the role discriminators this service is willing to validate
-// when it advertises the "validation" protocol.
 message CapabilitiesResponse {
   repeated WriteSemantics write_semantics_allowed = 1;
-  // supports_split_scope: producer implements SplitScope. Required for
-  // templates that fan out against this producer; rimsky rejects such
-  // templates at registration when the producer advertises false.
   bool supports_split_scope = 2;
-  // supports_scopes_conflict: producer implements ScopesConflict.
-  // When false, rimsky uses byte-equal default.
   bool supports_scopes_conflict = 3;
-  // protocols advertises the mix-in service protocols this binary
-  // implements alongside ClaimProducer (e.g. "data_processing",
-  // "validation", "lifecycle_subscriber").
   repeated string protocols = 4;
-  // validation_supported_roles: when "validation" is in protocols,
-  // the set of role discriminators this service is willing to validate
-  // ("executor" | "claim_producer" | "lifecycle_subscriber" | "publisher").
   repeated string validation_supported_roles = 5;
 
-  // declared_error_classes is the set of error-class paths this
-  // producer may name on acquisition-failure responses (the
-  // Unavailable.error_class arm and gRPC ErrorInfo.Reason on faulted
-  // verbs). Patterns ending in `*` indicate prefix-pattern leaves
-  // (e.g., `pg/claim_unavailable/*`); exact strings indicate fixed
-  // leaves. The validator's range-check of operator `error_types:`
-  // keys accepts a key if it exactly matches a declared plain leaf OR
-  // matches a declared `<prefix>/*` pattern by prefix. Empty/absent
-  // means "producer does not declare" — legal; keys attributable to
-  // no declared vocabulary surface as advisory warnings, never hard
-  // rejections. Mirrors
-  // executor_observability.proto::ObservabilityCapabilities.declared_error_classes.
-  //
-  // Per concept:signal hierarchical error_class rule.
   repeated string declared_error_classes = 6;
 }
 
-// OpenRequest carries the rimsky-generated claim_id plus the resolved
-// claim spec. selector is post-substitution; the producer parses it.
-// template_id and instance_id form the per-spec scope envelope:
-// opaque to rimsky, populated from the dispatch row's instance →
-// template lookup, available to the producer for namespace routing or
-// trace correlation.
 message OpenRequest {
   string claim_id = 1;
   string producer_name = 2;
   string selector = 3;
-  string intent = 4;  // "r" | "rw"
-  string alias = 5;   // template-side identifier; producer ignores
-  string template_id = 6;  // content hash; opaque to rimsky.
-  string instance_id = 7;  // instance UUID; opaque to rimsky.
-  // run_scope_id is the RunScope this claim lives in; used by the
-  // host-agent-proxy to key per-run-scope spawn isolation on the
-  // claim-producer path. Opaque to rimsky.
+  string intent = 4;
+  string alias = 5;
+  string template_id = 6;
+  string instance_id = 7;
   string run_scope_id = 8;
-  // lifetime: "subgraph" | "durable". Mirrors ClaimBinding.lifetime in
-  // validation.proto so a producer sees the same value at Open that it
-  // was validated against.
   string lifetime = 9;
 }
 
-// OpenResponse signals acquisition outcome. Producers that always
-// have a claim to give return Acquired. Producers that may have
-// nothing right now (e.g. an empty items-table queue) return
-// Unavailable; rimsky retries on the next scheduler tick. Producer-
-// side faults flow as gRPC error status codes, not as an Unavailable
-// response.
 message OpenResponse {
   oneof result {
     Acquired    acquired    = 1;
@@ -172,13 +62,6 @@ message OpenResponse {
   }
 }
 
-// Acquired carries the producer's acquisition outputs. Address,
-// payload, and scope are opaque bytes (inert in rimsky; not
-// introspected); any or all may be empty depending on the
-// (write_semantics, intent) combination. realized_write_semantics
-// declares the per-claim semantics; MUST be a member of the producer's
-// CapabilitiesResponse.write_semantics_allowed; MUST be uniform
-// across byte-equal-scope claims.
 message Acquired {
   bytes address = 1;
   bytes payload = 2;
@@ -186,16 +69,6 @@ message Acquired {
   WriteSemantics realized_write_semantics = 4;
 }
 
-// Unavailable signals "no claim available right now." The optional
-// error_class names the producer-declared acquisition-failure class
-// (a member of the producer's declared error vocabulary, e.g.
-// "pg/claim_unavailable") rimsky's acquisition-failure routing keys the
-// operator's `error_types:` chain on. Leaving it empty preserves the
-// historical behavior: rimsky routes the unavailability under the
-// synthetic class "acquire/unavailable". The Available=false wire shape
-// (this Unavailable arm of the oneof) is unchanged; the class is an
-// out-of-band hint consumed on the rimsky routing side, not a new
-// acquisition outcome.
 message Unavailable {
   string error_class = 1;
 }
@@ -204,36 +77,18 @@ message CommitRequest {
   string claim_id = 1;
   bytes  claim_scope = 2;
   bytes  address  = 3;
-  // lease_token echoes SubScopeDescriptor.lease_token for sub-claims minted
-  // by SplitScope. Optional-but-verified-when-present: producers that mint
-  // lease tokens MUST match a non-empty token against the live lease and
-  // treat a mismatch as "no lease held" (stale holder), never as the
-  // current lease. Empty means the caller carries no lease identity
-  // (non-batch claims; producers that do not mint tokens ignore it).
   string lease_token = 4;
 }
 
 message CommitResponse {
-  // Optional canonical version identifier any producer may stamp on
-  // the base-protocol Commit response; opaque to rimsky; persisted in
-  // col:rimsky_claim_handles.version_id and table:rimsky_lineage for
-  // record_kind: claim_terminal. A non-empty base-Commit version_id
-  // wins over the staged DataProcessing CommitCandidate one (the base
-  // verb is the finalizing call).
   string version_id = 1;
-  // Optional producer-supplied metadata bytes. Inert in rimsky;
-  // surfaced (base64-encoded — the writeback
-  // row is JSON) in the parent run's writeback row at fan-out parent
-  // terminal under the `producer_metadata` key, keyed by the child's
-  // partition key (spec §Output aggregation).
   bytes producer_metadata = 2;
 }
 
 message AbandonRequest {
   string claim_id = 1;
   bytes  claim_scope = 2;
-  bytes  address  = 3;  // may be empty; producer identifies state by claim_id
-  // Same contract as CommitRequest.lease_token.
+  bytes  address  = 3;
   string lease_token = 4;
 }
 
@@ -243,53 +98,22 @@ message ReleaseRequest {
   string claim_id = 1;
   bytes  claim_scope = 2;
   bytes  address  = 3;
-  // Same contract as CommitRequest.lease_token.
   string lease_token = 4;
 }
 
 message ReleaseResponse {}
 
-// SplitScopeRequest asks the producer to partition a parent scope.
-// claim_handle_id is the rimsky-side parent claim_handle id;
-// partition_request is producer-interpreted bytes (e.g., a date range,
-// a list of regions, a hash bucket count). Called inside the
-// rimsky-side acquisition tx for fan-out nodes.
 message SplitScopeRequest {
   string claim_handle_id  = 1;
   bytes  partition_request = 2;
 }
 
-// SubScopeDescriptor identifies one of the sub-claim-scopes the producer
-// partitioned the parent into. claim_scope_data is producer-canonicalized
-// bytes (same shape rimsky stores on rimsky_claim_handles.claim_scope_data);
-// partition_key is the human-readable key rimsky persists in
-// col:rimsky_node_runs.child_key for run-tree bookkeeping;
-// producer_metadata is opaque per-sub-claim-scope info the producer wants
-// persisted on the row.
 message SubScopeDescriptor {
   bytes  claim_scope_data  = 1;
   string partition_key    = 2;
   bytes  producer_metadata = 3;
-  // Producer-supplied per-sub-claim address — what an executor uses to access
-  // the underlying data. Empty allowed (e.g., for pass-through list-array
-  // shapes where data lives in payload). The bytes wire type carries opaque
-  // content, but rimsky's runtime requires JSON-valid bytes when non-empty:
-  // producers emitting non-JSON address bytes must wrap them in a JSON
-  // envelope (e.g. a base64-tagged object). Non-JSON address bytes are
-  // rejected with a clear error.
   bytes  address           = 4;
-  // Producer-supplied per-sub-claim payload bytes, surfaced to the child's
-  // substitution via {{claim.<alias>.payload[.<field>]}}. Inert in rimsky's
-  // runtime. Same JSON-validity contract as address — when non-empty, bytes
-  // must be JSON-valid.
   bytes  payload           = 5;
-  // Producer-minted identity of the lease backing this sub-claim-scope
-  // (e.g. a batch-pop lease). Opaque to rimsky; persisted on the sub-claim
-  // handle and echoed back verbatim on Commit / Abandon / Release so the
-  // producer can match terminal verbs by lease identity rather than scope
-  // equality — a stale holder's terminal verb must not resolve a
-  // successor's lease on a byte-equal scope. Empty when the producer keeps
-  // no per-lease state.
   string lease_token       = 6;
 }
 
@@ -297,10 +121,6 @@ message SplitScopeResponse {
   repeated SubScopeDescriptor sub_scopes = 1;
 }
 
-// ClaimScopesConflictRequest asks the producer whether two claim_scope_data byte
-// strings should conflict (single-writer-per-claim-scope serialization).
-// When unsupported (CapabilitiesResponse.supports_scopes_conflict =
-// false), rimsky uses byte-equal as the trivial default.
 message ClaimScopesConflictRequest {
   bytes claim_scope_a = 1;
   bytes claim_scope_b = 2;

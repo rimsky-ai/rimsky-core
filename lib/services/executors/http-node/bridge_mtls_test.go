@@ -16,8 +16,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/mtlstest"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/mtlstest"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 )
 
 const bridgeServerName = "http-node"

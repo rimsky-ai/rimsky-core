@@ -5,10 +5,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 )
 
 func main() {
@@ -35,38 +35,60 @@ func main() {
 		slog.Error("proxy TLS config invalid", "error", err)
 		os.Exit(1)
 	}
-	var serverOpts []grpc.ServerOption
+	var agentCreds []grpc.ServerOption
 	if creds != nil {
-		serverOpts = append(serverOpts, grpc.Creds(creds))
+		agentCreds = append(agentCreds, grpc.Creds(creds))
 		slog.Info("agent-facing TLS enabled", "cert", cfg.TLSCertPath)
 	}
-	grpcSrv := grpc.NewServer(serverOpts...)
 
-	verifyIdentity := newControlAPIRegisterIdentityVerifier(&http.Client{Timeout: 10 * time.Second}, cfg.ControlAPIURL)
-	genv1.RegisterHostAgentServer(grpcSrv, newAgentServer(state, verifyIdentity))
+	controlAPIClient, err := controlAPIHTTPClient(cfg, 10*time.Second)
+	if err != nil {
+		slog.Error("control-API client config invalid", "error", err)
+		os.Exit(1)
+	}
 
-	genv1.RegisterExecutorServer(grpcSrv, newExecutorHandler(state, cfg))
-	genv1.RegisterExecutorObservabilityServer(grpcSrv, newExecutorObsHandler())
-	genv1.RegisterClaimProducerServer(grpcSrv, newClaimProducerHandler(state, cfg))
-	genv1.RegisterClaimProducerObservabilityServer(grpcSrv, newClaimProducerObsHandler())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	identity, err := peerauth.LoadFromEnv(ctx, "host-agent-proxy")
+	if err != nil {
+		slog.Error("peer-auth enrollment failed", "error", err)
+		os.Exit(1)
+	}
+	identity.StartMaintain(ctx, "host-agent-proxy")
 
-	genv1.RegisterLifecycleSubscriberServer(grpcSrv, newLifecycleHandler(state, cfg))
+	servers := buildProxyServers(cfg, state, identity, controlAPIClient, agentCreds)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
 	if err != nil {
 		slog.Error("listen failed", "error", err, "grpc_port", cfg.GRPCPort)
 		os.Exit(1)
 	}
-
 	go func() {
-		if serveErr := grpcSrv.Serve(lis); serveErr != nil {
-			slog.Error("grpc serve stopped", "error", serveErr)
+		if serveErr := servers.agent.Serve(lis); serveErr != nil {
+			slog.Error("agent-facing grpc serve stopped", "error", serveErr)
 		}
 	}()
+
+	if servers.peer != nil {
+		supLis, lerr := net.Listen("tcp", fmt.Sprintf(":%d", cfg.PeerGRPCPort))
+		if lerr != nil {
+			slog.Error("listen failed", "error", lerr, "peer_grpc_port", cfg.PeerGRPCPort)
+			os.Exit(1)
+		}
+		slog.Info("peer-facing mTLS listener enabled", "peer_grpc_port", cfg.PeerGRPCPort)
+		go func() {
+			if serveErr := servers.peer.Serve(supLis); serveErr != nil {
+				slog.Error("peer-facing grpc serve stopped", "error", serveErr)
+			}
+		}()
+	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
 	slog.Info("rimsky-host-agent-proxy shutting down")
-	grpcSrv.GracefulStop()
+	servers.agent.GracefulStop()
+	if servers.peer != nil {
+		servers.peer.GracefulStop()
+	}
 }

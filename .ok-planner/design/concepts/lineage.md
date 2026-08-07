@@ -17,7 +17,7 @@ Owns: the lineage projection storage, the two record kinds, the operator-facing 
 ## Invariants
 
 - Records are append-only; no UPDATEs.
-- Source of truth: the lineage projection is written forward from the audit log and the claim-handle lifecycle; it is not reconstructable from them. The projection writer runs at leaf-run terminal and at claim-handle terminal (commit, natural abandon, or force-cancelled abandon).
+- Source of truth: the lineage projection is written forward from the audit log and the claim-handle lifecycle at terminal time; it is not reconstructed from them (there is no replay/rebuild path — the projection writer runs at leaf-run terminal and at claim-handle terminal (commit, natural abandon, or force-cancelled abandon), and that is the only way records are populated).
 - Pass-through nodes — runs whose runtime path never invokes an executor (fan-out parents, which skip executor at the acquire-phase split to dispatch children directly; pure-cascade nodes, which carry no executor declaration and settle on cascade alone) — emit no `leaf_run` record. The projection covers computational units; a pass-through has no computation to cite and no substitution-derived data dependency to capture, so it is structurally absent from the leaf-run surface by design. Causality for these runs lives in the audit log's signal-emission and cascade-firing rows, not in lineage.
 - Walks are bounded by a configurable depth.
 

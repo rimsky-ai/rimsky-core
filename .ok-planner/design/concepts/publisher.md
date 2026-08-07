@@ -31,4 +31,4 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 - Send-time messages identify the sender as a publisher and present the per-subscription capability token. Rimsky derives the sender name from the publisher-subscription row; the request's declared sender is ignored for trust.
 - Mounting-to-active reconciliation, its retry cadence, and the failed-state contract are owned by `concept:publisher-subscription`.
 - Replicas are not coordinated by rimsky. Single-replica is the durable posture per `concept:replica`.
-- invariant: message-inertness — payload bytes flow from publisher → message envelope → consumer's substitution leaf without inspection.
+- invariant: message-inertness — payload bytes flow from publisher → message envelope → consumer's substitution leaf uninspected outside the sanctioned read sites (the receipt-time body-schema validation among them; see `concept:inertness`).

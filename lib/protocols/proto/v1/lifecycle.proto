@@ -1,17 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
 // Licensed under the Apache License, Version 2.0.
 
-// LifecycleSubscriber wire protocol (extracted from claim_producer.proto
-// under the layer-crystallization plan, Phase 4). Implementer pattern:
-// return success from any method the binary doesn't react to. Binaries
-// that don't react to any event simply don't implement the service.
-//
-// Idempotency: rimsky tracks per-peer idempotency in the
-// rimsky_lifecycle_idempotencies table; subscribers can assume each
-// (peer, event) pair fires exactly once on the rimsky side. Subscribers
-// SHOULD also be idempotent against duplicate calls in case of network
-// retries.
-
 syntax = "proto3";
 
 package rimsky.v1;
@@ -25,19 +14,12 @@ service LifecycleSubscriber {
   rpc OnTemplateDeregistered(OnTemplateDeregisteredRequest) returns (LifecycleAck);
   rpc OnInstanceCreated(OnInstanceCreatedRequest) returns (LifecycleAck);
   rpc OnInstanceTerminated(OnInstanceTerminatedRequest) returns (LifecycleAck);
-  // OnRunScopeTerminal fires when a run-scope reaches terminal state.
-  // Fired from the rimsky-side process that owns the state transition:
-  // control-api for main scopes (polling-driven via instance_terminator.tick);
-  // the supervisor for sub-graph and fanout-partition scopes (synchronous,
-  // in-tx). DB-tracked idempotency via rimsky_lifecycle_idempotencies
-  // (scope_kind="run_scope", state="run_scope_terminal") is preserved across
-  // both firing sites.
   rpc OnRunScopeTerminal(OnRunScopeTerminalRequest) returns (LifecycleAck);
 }
 
 message OnTemplateRegisteredRequest {
   string template_hash = 1;
-  bytes spec = 2;  // canonical JCS-canonicalized template spec (may be empty)
+  bytes spec = 2;
 }
 
 message OnTemplateDeployedRequest {
@@ -56,24 +38,12 @@ message OnTemplateDeregisteredRequest {
 message OnInstanceCreatedRequest {
   string instance_id = 1;
   string template_hash = 2;
-  string instance_key = 3;  // may be empty
+  string instance_key = 3;
   bytes params = 4;
 
-  // service_bindings carries the per-instance late-bound service catalog
-  // (opaque JSONB bytes). Empty when the instance has no late-bound services.
-  // Consumed by the host-agent-proxy to populate its binding cache.
   bytes service_bindings = 5;
 
-  // owner_api_key_id is the api-key whose authenticated request created the
-  // instance (empty string for anonymous-mode-created instances). Retained
-  // as an audit signal on the fan-out payload; routing consumes
-  // target_routing_identity instead.
   string owner_api_key_id = 6;
-  // target_routing_identity is the routing identity a host-agent-proxy must
-  // resolve to dispatch this instance's late-bound work: an api-key id for
-  // ordinary owner-created instances, or an anonymous agent's silly-name
-  // for anonymous-mode instances. Populated at instance-creation time on
-  // every instance; never empty.
   string target_routing_identity = 7;
 }
 
@@ -86,15 +56,8 @@ message OnInstanceTerminatedRequest {
 message OnRunScopeTerminalRequest {
   string run_scope_id    = 1;
   string terminal_reason = 2;
-  // instance_id is the owning instance of the terminating run-scope.
-  // Populated at every firing site (control-api for main scopes; the
-  // supervisor for sub-graph and fanout-partition scopes). The
-  // host-agent-proxy keys lazily-spawned children by run_scope_id, falling
-  // back to instance_id only when run_scope_id is empty (legacy callers
-  // that predate this field, or scopes with no narrower identity).
   string instance_id    = 3;
 }
 
 message LifecycleAck {
-  // empty; reserved for future use
 }

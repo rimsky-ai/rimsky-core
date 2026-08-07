@@ -16,14 +16,12 @@ type ObservabilityServer struct {
 
 	store         *observability.Store
 	httpBridgeURL string
-	declaredTags  []string
 }
 
-func NewObservabilityServer(httpBridgeURL string, declaredTags []string) *ObservabilityServer {
+func NewObservabilityServer(httpBridgeURL string) *ObservabilityServer {
 	return &ObservabilityServer{
 		store:         observability.NewStore(),
 		httpBridgeURL: httpBridgeURL,
-		declaredTags:  declaredTags,
 	}
 }
 
@@ -48,7 +46,6 @@ func (s *ObservabilityServer) CapabilitiesPayload() *genv1.ObservabilityCapabili
 		RetentionAfterTerminalSeconds: observability.RetentionSeconds,
 		HttpBridgeUrl:                 s.httpBridgeURL,
 		ExpectedAttributesSchema:      SchemaBytes(),
-		DeclaredTags:                  s.declaredTags,
 		DeclaredErrorClasses:          DeclaredErrorClasses(),
 	}
 }

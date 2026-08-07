@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	stubexec "github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	stubtest "github.com/rimsky-ai/rimsky-core/test/support/executors/stub/stubtest"
@@ -28,7 +29,7 @@ func WriteClaimRef(producerName, selector string) node.NodeClaimProducerRef {
 	return node.NodeClaimProducerRef{Name: producerName, Selector: selector, Intent: "rw"}
 }
 
-func AliasedClaimRef(producerName, selector, intent, alias string) node.NodeClaimProducerRef {
+func AliasedClaimRef(producerName, selector string, intent claimproducer.Intent, alias string) node.NodeClaimProducerRef {
 	return node.NodeClaimProducerRef{Name: producerName, Selector: selector, Intent: intent, Alias: alias}
 }
 

@@ -1,5 +1,5 @@
 // Copyright © 2026 Fall Guy Consulting.
-// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
+// SPDX-License-Identifier: Apache-2.0
 
 package peerauth
 
@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/mtlstest"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/mtlstest"
 )
 
 const serverName = "rimsky-peer"

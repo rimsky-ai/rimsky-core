@@ -1203,7 +1203,7 @@ func claimProducerRefToJSON(s node.NodeClaimProducerRef) map[string]any {
 	item := map[string]any{
 		"name":     s.Name,
 		"selector": s.Selector,
-		"intent":   s.Intent,
+		"intent":   string(s.Intent),
 	}
 	if s.Alias != "" {
 		item["alias"] = s.Alias

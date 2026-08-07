@@ -131,9 +131,6 @@ func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ share
 func (f *invTestQueue) ResumeParked(_ context.Context, _ shared.UUID, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *invTestQueue) UpdateDispatchTuning(_ context.Context, _ shared.UUID, _ *int, _ persistence.Tx) error {
-	return nil
-}
 func (f *invTestQueue) CountParked(_ context.Context) (int, error) {
 	return 0, nil
 }

@@ -761,8 +761,8 @@ func (f *fakeNodesDeps) ListPendingSiblingRunsInScope(_ context.Context, _ share
 func (f *fakeNodesDeps) GetRunByDispatchIDForUpdate(_ context.Context, _ shared.UUID, _ persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	return nil, nil
 }
-func (f *fakeNodesDeps) GetCascadeMode(_ context.Context, _ shared.UUID, _ persistence.Tx) (cascade.CascadeMode, error) {
-	return cascade.CascadeModeMostRecent, nil
+func (f *fakeNodesDeps) GetCascadeMode(_ context.Context, _ shared.UUID, _ persistence.Tx) (spec.CascadeMode, error) {
+	return spec.CascadeModeMostRecent, nil
 }
 func (f *fakeNodesDeps) GetRunSummary(_ context.Context, _ shared.UUID, _ persistence.Tx) (persistence.NodeRunSummary, error) {
 	return persistence.NodeRunSummary{}, nil

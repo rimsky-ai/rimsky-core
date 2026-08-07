@@ -5,7 +5,6 @@ package claudeagent
 
 import (
 	_ "embed"
-	"os"
 	"strings"
 )
 
@@ -37,22 +36,6 @@ func SchemaBytes() []byte {
 	out := make([]byte, len(expectedAttributesSchema))
 	copy(out, expectedAttributesSchema)
 	return out
-}
-
-// @concept: terminal-tag
-func DeclaredTags() []string {
-	raw := os.Getenv("RIMSKY_EXECUTOR_DECLARED_TAGS")
-	if raw == "" {
-		return nil
-	}
-	var tags []string
-	for _, s := range strings.Split(raw, ",") {
-		s = strings.TrimSpace(s)
-		if s != "" {
-			tags = append(tags, s)
-		}
-	}
-	return tags
 }
 
 func DeclaredErrorClasses() []string {

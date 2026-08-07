@@ -68,7 +68,6 @@ type Opts struct {
 	ExposeEnvAllowlist         Allowlist
 	ObservabilityHTTPBridgeURL string
 	StubMode                   bool
-	DeclaredTags               []string
 }
 
 func StubModeEnabled() bool {
@@ -111,7 +110,6 @@ func LoadOptsFromEnv() (Opts, error) {
 		ExposeEnvAllowlist:         allowlistFromEnv("RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST"),
 		ObservabilityHTTPBridgeURL: os.Getenv("RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL"),
 		StubMode:                   StubModeEnabled(),
-		DeclaredTags:               DeclaredTags(),
 	}
 	return opts, nil
 }

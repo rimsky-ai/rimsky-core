@@ -2,11 +2,12 @@ Rimsky is Copyright © 2026 Fall Guy Consulting.
 
 Rimsky is multi-licensed:
 
-  1. Source files in the embedder layer — the lib/protocols/ module, the wire
-     contract consumers implement and link against to speak to Rimsky — are
-     licensed under the Apache License, Version 2.0 (see LICENSE.apache). The
-     embedder layer is identified per-file by an
-     "SPDX-License-Identifier: Apache-2.0" header.
+  1. Source files in the embedder layer — the lib/protocols/ module (the wire
+     contract consumers implement and link against to speak to Rimsky) plus
+     the examples/ carve-out (copy-and-modify protocol examples, kept
+     permissive so consumers can build on them) — are licensed under the
+     Apache License, Version 2.0 (see LICENSE.apache). The embedder layer is
+     identified per-file by an "SPDX-License-Identifier: Apache-2.0" header.
 
   2. Source files in the orchestrator layer — everything else Rimsky ships,
      the orchestrator binaries and the reference services — are dual-licensed:

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 )
 
 const grpcShutdownGracePeriod = 10 * time.Second
@@ -46,7 +46,7 @@ func Serve(opts Opts) error {
 		callbackClient.Transport = &http.Transport{TLSClientConfig: identity.ClientTLSConfig()}
 	}
 
-	obs := NewObservabilityServer(opts.ObservabilityHTTPBridgeURL, opts.DeclaredTags)
+	obs := NewObservabilityServer(opts.ObservabilityHTTPBridgeURL)
 	executor := NewExecutorServer(ServerConfig{
 		Opts:          opts,
 		Observability: obs,

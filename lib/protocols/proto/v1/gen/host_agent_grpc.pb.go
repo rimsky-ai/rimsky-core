@@ -28,14 +28,6 @@ const (
 // HostAgentClient is the client API for HostAgent service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// HostAgent is the protocol that rimsky-host-agent-proxy uses to communicate
-// with connected rimsky-host-agent daemons running on user dev machines.
-// Single bidi long-lived stream per connected agent. Frame oneof shapes
-// enumerated below.
-//
-// This protocol is INTERNAL to the proxy binary; it is not part of the
-// public service-protocol surface. Operators do not implement against it.
 type HostAgentClient interface {
 	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ClientFrame, ServerFrame], error)
 }
@@ -64,14 +56,6 @@ type HostAgent_ConnectClient = grpc.BidiStreamingClient[ClientFrame, ServerFrame
 // HostAgentServer is the server API for HostAgent service.
 // All implementations must embed UnimplementedHostAgentServer
 // for forward compatibility.
-//
-// HostAgent is the protocol that rimsky-host-agent-proxy uses to communicate
-// with connected rimsky-host-agent daemons running on user dev machines.
-// Single bidi long-lived stream per connected agent. Frame oneof shapes
-// enumerated below.
-//
-// This protocol is INTERNAL to the proxy binary; it is not part of the
-// public service-protocol surface. Operators do not implement against it.
 type HostAgentServer interface {
 	Connect(grpc.BidiStreamingServer[ClientFrame, ServerFrame]) error
 	mustEmbedUnimplementedHostAgentServer()

@@ -17,9 +17,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 type slogAdapter struct{ l *slog.Logger }

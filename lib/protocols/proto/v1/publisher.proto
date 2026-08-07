@@ -1,21 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
 // Licensed under the Apache License, Version 2.0.
 
-// Publisher is the service-protocol that publisher peer services
-// implement. Sensors are one kind of publisher; the four bundled
-// sensors (sensors/sensor-cron, sensors/sensor-http,
-// sensors/sensor-object-store, sensors/sensor-webhook) all implement
-// this protocol.
-//
-// Rimsky's control-api drives publisher lifecycle at instance create /
-// terminate via Subscribe / Unsubscribe, and reconciles publisher state
-// after a rimsky restart via ListSubscriptions.
-//
-// Publishers POST message envelopes to the generic
-// POST /instances/{instance_id}/messages endpoint with
-// sender_kind="publisher" + publisher_subscription_id capability token.
-// There is no special observation deposit endpoint.
-
 syntax = "proto3";
 
 package rimsky.v1;
@@ -32,49 +17,24 @@ service Publisher {
   rpc ListSubscriptions (google.protobuf.Empty)     returns (ListSubscriptionsResponse);
 }
 
-// PublisherCapabilities advertises the kinds this binary supports and
-// any mix-in protocols (e.g. "validation"). Rimsky reads it at
-// startup and caches in the discovery cache.
 message PublisherCapabilities {
   repeated PublisherKindCapability supported_kinds = 1;
-  // protocols advertises mix-in service protocols (e.g. "publisher",
-  // "validation").
   repeated string protocols = 2;
-  // validation_supported_roles: set when "validation" is in protocols
-  // (e.g. ["publisher"]).
   repeated string validation_supported_roles = 3;
 }
 
 message PublisherKindCapability {
   string kind          = 1;
-  // config_schema is the JSON Schema for the resolved_config the
-  // publisher accepts at Subscribe for this kind. Opaque to rimsky;
-  // surfaces to operator tooling.
   bytes  config_schema = 2;
 }
 
-// SubscribeRequest carries the publisher-subscription identity and
-// routing fields. The publisher copies `message_type` onto each emitted
-// envelope; rimsky's runtime routes delivery purely by message type
-// against node-subscription edges.
 message SubscribeRequest {
   string publisher_subscription_id = 1;
   string instance_id               = 2;
   string kind                      = 3;
-  // resolved_config is the per-instance config the publisher watches
-  // against (e.g. cron expression, HTTP URL, S3 bucket+prefix).
-  // Substituted by rimsky from the template `publishers:` block before
-  // dispatch.
   bytes  resolved_config           = 4;
-  // Reserved (was: string target_node = 5). Receiver-node-alias routing
-  // retired; delivery routes purely by message_type against
-  // node-subscription edges (2026-06-19).
   reserved 5;
   reserved "target_node";
-  // message_type is the wire-level message type-path declared in the
-  // target instance's template `messages:` registry. The publisher
-  // copies this onto each message envelope as `type`. No default —
-  // an empty value is rejected at the receipt-time registry gate.
   string message_type              = 6;
 }
 

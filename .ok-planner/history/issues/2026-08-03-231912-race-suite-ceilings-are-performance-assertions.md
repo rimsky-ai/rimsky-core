@@ -6,8 +6,9 @@ artifacts:
   - decision:test-wallclock-lint-ratchet
   - decision:sqlite-modernc-pure-go
   - decision:sqlite-multiproc-safety
-status: open
+status: promoted
 opened: 2026-08-03T23:19:12Z
+sprint: 2026-08-06-ruled-intake-drain.md
 ---
 
 # The `-race` test targets fail on a slow machine, because their timeouts are sized as performance assertions rather than hang backstops

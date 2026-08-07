@@ -130,8 +130,10 @@ share the same emission and the same CEL environment, so a subscriber's
 `when:` filter may reference either or both freely. Transient park payloads
 carry tags and the park's reason fields for audit forensics; they carry no
 `attributes_delta` slot because park is dispatch-internal and does not write
-attributes — attribute mutation is a feature of the run-terminating verdicts
-only (see `decision:uniform-attributes-delta`).
+attributes — on the signal channel, attribute mutation is a feature of the
+run-terminating verdicts only; the coexisting mid-dispatch attribute-writeback
+callback (see `concept:supervisor`) also writes attributes but emits no
+signal at all (see `decision:uniform-attributes-delta`).
 
 The signal envelope's outer field is `payload`. Where a signal's payload wraps
 an opaque sub-object whose wire carrier also names its own opaque field
@@ -228,10 +230,12 @@ Adjacent: `concept:node-subscription`, `concept:error-policy`,
   targets a transient leaf, exact or wildcarded. Operators reacting to an
   in-flight event subscribe instead to the eventual `terminal/*` settlement.
   Transient payloads do not carry `attributes_delta` on the wire and do not
-  mutate the per-run attribute row — attribute writeback is a feature of
-  run-terminating verdicts only (see `decision:uniform-attributes-delta`).
-  Executors that need to thread state across a park-and-resume boundary use
-  scratch (see `concept:parked-state`).
+  mutate the per-run attribute row — on the signal channel, attribute
+  writeback is a feature of run-terminating verdicts only; the coexisting
+  mid-dispatch attribute-writeback callback (see `concept:supervisor`) also
+  writes attributes but emits no signal at all (see
+  `decision:uniform-attributes-delta`). Executors that need to thread state
+  across a park-and-resume boundary use scratch (see `concept:parked-state`).
 - **CEL is the filter language; exact-type subscriptions parse-check field
   references against the resolved payload schema; prefix-type subscriptions
   bind `payload` as `dyn`.** This keeps tight checking for the common

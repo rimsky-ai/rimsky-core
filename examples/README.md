@@ -35,28 +35,55 @@ To run a copied example against the real conformance harness once you've filled
 in your logic, see `rimsky conformance executor` (and the Go libraries under
 `lib/protocols/conformance/`).
 
+The directory also carries worked-example graphs and demo scripts — not
+protocol-server skeletons, but runnable templates plus a `demo.sh` (or
+`main_e2e_test.go`) driving a real stack, each demonstrating one story from
+`.ok-planner/design/stories.md` (see the `@story:` annotation in each
+script/test):
+
+| Directory / script | Story |
+|---|---|
+| `fanout-any-source/` | `fanout-any-substitution-source` |
+| `fanout-fs-expand-folder/` | `fs-fanout-expand-folder` |
+| `fanout-fs-list-array/` | `fanout-list-array` |
+| `fanout-pg-list-array/` | `fanout-list-array` |
+| `fanout-intent-inheritance/` | `fanout-intent-inheritance` |
+| `inproc-loop-counter/` | `inproc-utility-executor` |
+| `messages-as-nodes/` | `messages-as-nodes-substitution` |
+| `park-resume/` (+ `park-resume-demo.sh`) | `bundled-park-resume-recipe` |
+| `sub-claim-payload/` | `sub-claim-payload-substitution` |
+| `cascade-send-demo.sh` + `cascade-send-demo-template.yaml` | `cascade-send` |
+| `client-context-demo.sh` | `client-context` |
+| `frame-origin-audit-demo.sh` + `frame-origin-audit-demo-template.yaml` | `frame-origin-audit` |
+| `host-agent-control-plane-demo.sh` | `host-agent-control-plane` |
+| `producer-error-demo.sh` | `producer-error-passthrough` |
+| `subscription-mounting-demo.sh` | `subscription-mounting` |
+| `onboarding-demo.sh` + `onboarding-template.yaml` | `operator-onboarding` (see below) |
+
 ## Sign-off validator (claude-agent gate)
 
 A **sign-off validator** is not one of the core gRPC protocols above — it is a
 validator-MCP server (or any out-of-band signer) that an agent consults to
-cryptographically attest the claude-agent sign-off gate's bound output. Because
-the gate's byte-contract is defined in TypeScript (the claude-agent executor),
-the copyable reference validator lives in that package's non-dist source tree:
+cryptographically attest the claude-agent sign-off gate's bound output. The
+claude-agent executor is flat Go (`lib/services/executors/claude-agent/`, no
+`src/`, no TypeScript); there is no separate copyable validator package in
+this tree. Build your validator against the wire contract itself:
 
-- `lib/services/executors/claude-agent/src/examples/signoff-validator/reference-validator.ts`
-  — Apache-2.0, **copy-and-modify**. It shows the exact bytes a validator signs
-  (`SIGNOFF_DOMAIN ‖ "\n" ‖ dispatch_id ‖ "\n" ‖ canonical_json(value)`), how to
-  produce an Ed25519 signature the executor's real `verifyRequiredSignoffs`
-  accepts, and how to emit the PEM SPKI public key that
-  `cli.required_signoffs[].public_key` carries. Its correctness is proven in the
-  repo gate by `reference-validator.test.ts` against the executor's **real**
-  verifier — not by a fixture.
+- `lib/services/executors/claude-agent/signoff.go` — `BuildSignoffMessage`
+  shows the exact bytes a validator signs
+  (`SIGNOFF_DOMAIN ‖ "\n" ‖ dispatch_id ‖ "\n" ‖ canonical_json(value)`), and
+  `VerifyRequiredSignoffs` is the executor's real verifier your signature must
+  satisfy. It shows how to produce an Ed25519 signature and how to emit the
+  PEM SPKI public key that `cli.required_signoffs[].public_key` carries.
+- `lib/services/executors/claude-agent/testdata/signoff-wire-compat.json` —
+  fixed cross-implementation test vectors (public key, canonicalized value,
+  signature) that any conforming validator implementation, in any language,
+  must reproduce; held in place by `signoff_test.go` against the executor's
+  real verifier, not a fixture.
 
-Contrast this with `lib/services/executors/claude-agent/src/signoff-test-signer.ts`,
-which is the executor's own **test-only** signer: it is excluded from `dist/` via
-`tsconfig.json`, exists solely to drive the executor's internal tests, and is
-**not** a copyable reference. Build your validator from the Apache reference
-above, not from the dist-excluded test signer.
+The executor's own test-only signer is an unexported helper inside
+`signoff_test.go` (`testSigner`) — it exists solely to drive the executor's
+internal tests and is not a copyable reference.
 
 ## Onboarding walkthrough (the first-steps demo)
 

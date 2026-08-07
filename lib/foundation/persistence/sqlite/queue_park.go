@@ -181,23 +181,6 @@ func (q *queueImpl) ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx 
 	return rowsAffected == 1, nil
 }
 
-func (q *queueImpl) UpdateDispatchTuning(ctx context.Context, nodeRunID shared.UUID, maxRetriesWithoutProgress *int, tx persistence.Tx) error {
-	var retries any
-	if maxRetriesWithoutProgress != nil {
-		retries = *maxRetriesWithoutProgress
-	}
-	_, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		    SET max_retries_without_progress = ?
-		  WHERE id = ?`,
-		retries, nodeRunID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("sqlite.UpdateDispatchTuning: %w", err)
-	}
-	return nil
-}
-
 // @concept: executor
 func (q *queueImpl) LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) ([]byte, string, string, error) {
 	if tx == nil {

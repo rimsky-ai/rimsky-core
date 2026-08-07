@@ -128,13 +128,9 @@ type ClaimProducerObservabilityCapabilities struct {
 	RetentionAfterTerminalSeconds uint64                 `protobuf:"varint,4,opt,name=retention_after_terminal_seconds,json=retentionAfterTerminalSeconds,proto3" json:"retention_after_terminal_seconds,omitempty"`
 	CustomUi                      *CustomUI              `protobuf:"bytes,5,opt,name=custom_ui,json=customUi,proto3" json:"custom_ui,omitempty"`
 	AdminViews                    []*AdminViewDecl       `protobuf:"bytes,6,rep,name=admin_views,json=adminViews,proto3" json:"admin_views,omitempty"`
-	// http_bridge_url, when non-empty, is the absolute base URL the service
-	// serves the HTTP+JSON observability bridge on. Dashboard clients
-	// dial this URL directly for browser-friendly fetch/SSE access. When
-	// empty, services expose only the gRPC surface.
-	HttpBridgeUrl string `protobuf:"bytes,7,opt,name=http_bridge_url,json=httpBridgeUrl,proto3" json:"http_bridge_url,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	HttpBridgeUrl                 string                 `protobuf:"bytes,7,opt,name=http_bridge_url,json=httpBridgeUrl,proto3" json:"http_bridge_url,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *ClaimProducerObservabilityCapabilities) Reset() {

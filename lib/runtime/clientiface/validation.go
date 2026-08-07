@@ -3,7 +3,11 @@
 
 package clientiface
 
-import "context"
+import (
+	"context"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+)
 
 type ValidationFinding struct {
 	ServiceName string `json:"service_name"`
@@ -48,7 +52,7 @@ type ValidateClaimBinding struct {
 	NodeAlias        string
 	ClaimAlias       string
 	Selector         string
-	Intent           string
+	Intent           claimproducer.Intent
 	Lifetime         string
 	Data             []byte
 	PartitionRequest []byte

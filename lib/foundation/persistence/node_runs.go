@@ -151,8 +151,6 @@ type Queue interface {
 
 	ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx Tx) (resumed bool, err error)
 
-	UpdateDispatchTuning(ctx context.Context, nodeRunID shared.UUID, maxRetriesWithoutProgress *int, tx Tx) error
-
 	// @concept: executor
 	LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx Tx) (inline []byte, handle, handleBackend string, err error)
 

@@ -104,9 +104,6 @@ func (f *fakeQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.U
 func (f *fakeQueue) ResumeParked(_ context.Context, _ shared.UUID, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
-func (f *fakeQueue) UpdateDispatchTuning(_ context.Context, _ shared.UUID, _ *int, _ persistence.Tx) error {
-	return nil
-}
 func (f *fakeQueue) BumpLastProgressAt(_ context.Context, _ shared.UUID, _ time.Time, _ persistence.Tx) (bool, error) {
 	return true, nil
 }

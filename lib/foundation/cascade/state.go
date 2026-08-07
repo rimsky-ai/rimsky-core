@@ -206,14 +206,3 @@ const (
 	CreationReasonRecalculate        CreationReason = "recalculate"
 	CreationReasonMessageDelivery    CreationReason = "message_delivery"
 )
-
-// @concept: cascade
-// @decision: mode-default-most-recent
-type CascadeMode string
-
-const (
-	CascadeModeMostRecent        CascadeMode = "most-recent"
-	CascadeModeSequenced         CascadeMode = "sequenced"
-	CascadeModeIdempotentQueue   CascadeMode = "idempotent-queue"
-	CascadeModeIdempotentSettled CascadeMode = "idempotent-settled"
-)

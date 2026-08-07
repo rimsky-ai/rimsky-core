@@ -99,7 +99,6 @@ func executorEntries() []executorEntry {
 				return claudeagent.NewExecutorServer(claudeagent.ServerConfig{Opts: o, Logger: logger}), nil
 			},
 			schema:       claudeagent.SchemaBytes(),
-			tags:         claudeagent.DeclaredTags(),
 			errorClasses: claudeagent.DeclaredErrorClasses(),
 		},
 		{

@@ -21,9 +21,9 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
 )
 
 type PostCallbackFn func(url string, body map[string]any, logger *slog.Logger)

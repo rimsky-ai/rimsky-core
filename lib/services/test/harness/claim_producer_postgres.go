@@ -88,11 +88,7 @@ func StartPostgresClaimProducer(ctx context.Context, t testing.TB, networkName, 
 			"RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG": "/etc/store/config.yml",
 		}),
 		testcontainers.WithExposedPorts("9101/tcp"),
-		testcontainers.WithFiles(testcontainers.ContainerFile{
-			Reader:            strings.NewReader(configYAML),
-			ContainerFilePath: "/etc/store/config.yml",
-			FileMode:          0o644,
-		}),
+		testcontainers.WithFiles(rereadableContainerFile(configYAML, "/etc/store/config.yml", 0o644)),
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("9101/tcp").WithStartupTimeout(120*time.Second),
 		),

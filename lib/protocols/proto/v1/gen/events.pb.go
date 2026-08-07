@@ -26,71 +26,46 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// OperationalKind enumerates the canonical set of operational event-log
-// kind discriminators rimsky emits today. Signal-class kinds (the
-// `terminal/...`, `transient/...`, `attribute/...`, `event/...`,
-// `message/...` taxonomy validated at template registration) are NOT
-// listed here — those carry the parsed signal type-path as the kind
-// value and live in the signal taxonomy.
-//
-// See decision:event-log-kind-enum: rimsky's app logic consumes typed
-// values exclusively (this enum for operational kinds; the parsed
-// signal type-path for signal-class kinds), never raw strings. The
-// persistence layer marshals typed → string at write and string →
-// typed at read; an unknown string at the unmarshal boundary is a
-// defensive error.
-//
-// Adding a new operational kind = adding a value here and regenerating
-// Go bindings (no schema migration; the storage column stays TEXT).
 type OperationalKind int32
 
 const (
-	OperationalKind_OPERATIONAL_KIND_UNSPECIFIED OperationalKind = 0
-	// auth.* — auth-audit slice surfaced by GET /audit.
-	OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED OperationalKind = 1
-	OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_DENIED    OperationalKind = 2
-	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_CREATED      OperationalKind = 3
-	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_REVOKED      OperationalKind = 4
-	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_ROTATED      OperationalKind = 5
-	// Node-run lifecycle and supervisor decisions.
-	OperationalKind_OPERATIONAL_KIND_STATE_TRANSITION    OperationalKind = 10
-	OperationalKind_OPERATIONAL_KIND_WORK_STARTED        OperationalKind = 11
-	OperationalKind_OPERATIONAL_KIND_WORK_COMPLETED      OperationalKind = 12
-	OperationalKind_OPERATIONAL_KIND_WORK_REJECTED       OperationalKind = 13
-	OperationalKind_OPERATIONAL_KIND_NO_OP_COMMIT        OperationalKind = 15
-	OperationalKind_OPERATIONAL_KIND_OPERATOR_OVERRIDE   OperationalKind = 16
-	OperationalKind_OPERATIONAL_KIND_UNRESOLVED_EXECUTOR OperationalKind = 17
-	OperationalKind_OPERATIONAL_KIND_INSTANCE_TERMINATED OperationalKind = 18
-	OperationalKind_OPERATIONAL_KIND_ERROR               OperationalKind = 19
-	// Lock-holder lifecycle.
-	OperationalKind_OPERATIONAL_KIND_LOCK_ACQUIRED      OperationalKind = 20
-	OperationalKind_OPERATIONAL_KIND_LOCK_RELEASED      OperationalKind = 21
-	OperationalKind_OPERATIONAL_KIND_LOCK_ORPHAN_REAPED OperationalKind = 22
-	// Claim lifecycle.
-	OperationalKind_OPERATIONAL_KIND_CLAIM_ACQUIRED           OperationalKind = 30
-	OperationalKind_OPERATIONAL_KIND_CLAIM_HELD               OperationalKind = 31
-	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLVED           OperationalKind = 32
-	OperationalKind_OPERATIONAL_KIND_ORPHANED_CLAIM_RELEASED  OperationalKind = 33
-	OperationalKind_OPERATIONAL_KIND_ORPHANED_CLAIM_LOST_RACE OperationalKind = 34
-	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_COMMIT  OperationalKind = 35
-	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON OperationalKind = 36
-	// Attribute-substitution + validation.
-	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED       OperationalKind = 40
-	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_COMMITTED         OperationalKind = 41
-	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED OperationalKind = 42
-	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED     OperationalKind = 43
-	OperationalKind_OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED   OperationalKind = 47
-	OperationalKind_OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED   OperationalKind = 44
-	OperationalKind_OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED   OperationalKind = 45
-	OperationalKind_OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE  OperationalKind = 46
-	// Breakpoint debugger.
-	OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT OperationalKind = 50
-	// Message bus (operational-side audit of message activity, distinct
-	// from the signal-class `message/...` topology).
-	OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT          OperationalKind = 60
-	OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED      OperationalKind = 61
-	OperationalKind_OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED OperationalKind = 62
-	// Fan-out + sub-claim + sub-graph dispatch.
+	OperationalKind_OPERATIONAL_KIND_UNSPECIFIED                     OperationalKind = 0
+	OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED           OperationalKind = 1
+	OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_DENIED              OperationalKind = 2
+	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_CREATED                OperationalKind = 3
+	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_REVOKED                OperationalKind = 4
+	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_ROTATED                OperationalKind = 5
+	OperationalKind_OPERATIONAL_KIND_STATE_TRANSITION                OperationalKind = 10
+	OperationalKind_OPERATIONAL_KIND_WORK_STARTED                    OperationalKind = 11
+	OperationalKind_OPERATIONAL_KIND_WORK_COMPLETED                  OperationalKind = 12
+	OperationalKind_OPERATIONAL_KIND_WORK_REJECTED                   OperationalKind = 13
+	OperationalKind_OPERATIONAL_KIND_NO_OP_COMMIT                    OperationalKind = 15
+	OperationalKind_OPERATIONAL_KIND_OPERATOR_OVERRIDE               OperationalKind = 16
+	OperationalKind_OPERATIONAL_KIND_UNRESOLVED_EXECUTOR             OperationalKind = 17
+	OperationalKind_OPERATIONAL_KIND_INSTANCE_TERMINATED             OperationalKind = 18
+	OperationalKind_OPERATIONAL_KIND_ERROR                           OperationalKind = 19
+	OperationalKind_OPERATIONAL_KIND_LOCK_ACQUIRED                   OperationalKind = 20
+	OperationalKind_OPERATIONAL_KIND_LOCK_RELEASED                   OperationalKind = 21
+	OperationalKind_OPERATIONAL_KIND_LOCK_ORPHAN_REAPED              OperationalKind = 22
+	OperationalKind_OPERATIONAL_KIND_CLAIM_ACQUIRED                  OperationalKind = 30
+	OperationalKind_OPERATIONAL_KIND_CLAIM_HELD                      OperationalKind = 31
+	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLVED                  OperationalKind = 32
+	OperationalKind_OPERATIONAL_KIND_ORPHANED_CLAIM_RELEASED         OperationalKind = 33
+	OperationalKind_OPERATIONAL_KIND_ORPHANED_CLAIM_LOST_RACE        OperationalKind = 34
+	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_COMMIT         OperationalKind = 35
+	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON        OperationalKind = 36
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED          OperationalKind = 40
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_COMMITTED            OperationalKind = 41
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED    OperationalKind = 42
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED        OperationalKind = 43
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED      OperationalKind = 47
+	OperationalKind_OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED      OperationalKind = 44
+	OperationalKind_OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED      OperationalKind = 45
+	OperationalKind_OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE     OperationalKind = 46
+	OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT                  OperationalKind = 50
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_SENT                    OperationalKind = 60
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED                OperationalKind = 61
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_DEAD_LETTERED           OperationalKind = 62
 	OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED              OperationalKind = 70
 	OperationalKind_OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED         OperationalKind = 71
 	OperationalKind_OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE        OperationalKind = 72
@@ -99,12 +74,7 @@ const (
 	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_DISPATCHED             OperationalKind = 75
 	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY             OperationalKind = 76
 	OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED           OperationalKind = 81
-	// Debug channel (POST /instances/{id}/debug/override). The audit
-	// event for a successful operator override applied through the
-	// gated debug channel, distinct from the legacy
-	// OPERATIONAL_KIND_OPERATOR_OVERRIDE which records the surviving
-	// node:reset operator action.
-	OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED OperationalKind = 82
+	OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED          OperationalKind = 82
 )
 
 // Enum value maps for OperationalKind.
@@ -234,19 +204,6 @@ func (OperationalKind) EnumDescriptor() ([]byte, []int) {
 	return file_events_proto_rawDescGZIP(), []int{0}
 }
 
-// Event is one row of the rimsky_events log with a typed payload. Consumers
-// who want type-checked event streams may use this shape; rimsky's own
-// internals use map[string]any + JSONB and do not marshal through this proto.
-//
-// See spec §9.8 of docs/history/2026-04-25-stores-redesign-design.md for the
-// full event-kind catalogue. When new kinds are added to the log, they should
-// be declared here.
-//
-// The wire `kind` field is `string` for backward compatibility on the wire
-// (rimsky's typed-payload oneof is unchanged); the typed `OperationalKind`
-// enum is what app logic consumes internally, with marshaling to/from the
-// wire string happening at the persistence boundary. See
-// decision:event-log-kind-enum.
 type Event struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	Id         int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -278,10 +235,7 @@ type Event struct {
 	//	*Event_ClaimHeld
 	//	*Event_ClaimResolved
 	//	*Event_TemplateResolutionFailed
-	Payload isEvent_Payload `protobuf_oneof:"payload"`
-	// For event kinds not in the oneof above, the raw JSON payload is surfaced
-	// here. Kept populated for all events as a convenience so consumers can
-	// fall back to untyped reading.
+	Payload       isEvent_Payload  `protobuf_oneof:"payload"`
 	PayloadRaw    *structpb.Struct `protobuf:"bytes,30,opt,name=payload_raw,json=payloadRaw,proto3" json:"payload_raw,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -617,10 +571,6 @@ type Event_UnresolvedExecutor struct {
 }
 
 type Event_LockAcquired struct {
-	// New event kinds added by the stores-redesign (spec §9.8). Numbers
-	// start at 40 to skip past the existing top-level `payload_raw = 30`.
-	// Field numbers 28 and 29 are held via the `reserved 28, 29;` line
-	// above for future event-kind slots.
 	LockAcquired *LockAcquiredPayload `protobuf:"bytes,40,opt,name=lock_acquired,json=lockAcquired,proto3,oneof"`
 }
 
@@ -706,7 +656,7 @@ func (*Event_TemplateResolutionFailed) isEvent_Payload() {}
 
 type MessageSentPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // "invalidate" | "recalculate"
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	SourceNodeId  string                 `protobuf:"bytes,2,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
 	TargetNodeId  string                 `protobuf:"bytes,3,opt,name=target_node_id,json=targetNodeId,proto3" json:"target_node_id,omitempty"`
 	Params        *structpb.Struct       `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"`
@@ -1014,7 +964,7 @@ func (x *WorkStartedPayload) GetSupervisorId() string {
 
 type WorkCompletedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Outcome       string                 `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"` // "committed" | "no_op" | "rejected" | "errored" | "infra_errored"
+	Outcome       string                 `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1408,19 +1358,16 @@ func (x *UnresolvedExecutorPayload) GetSupervisorId() string {
 	return ""
 }
 
-// LockAcquiredPayload is emitted when a supervisor successfully acquires a
-// lock-holder row (§13.3). `lock_kind` is one of "named" | "scope" | "claim"
-// and selects which of the kind-specific fields are populated.
 type LockAcquiredPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`             // "named" | "scope" | "claim"
-	LockName      string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`             // populated for kind="named"
-	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"` // populated for kind in ("scope","claim")
-	ScopeData     *structpb.Struct       `protobuf:"bytes,4,opt,name=scope_data,json=scopeData,proto3" json:"scope_data,omitempty"`          // populated for kind="scope"
-	ClaimId       string                 `protobuf:"bytes,5,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`                // populated for kind="claim"
-	SupervisorId  string                 `protobuf:"bytes,6,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"` // holder_supervisor_id
-	HolderId      string                 `protobuf:"bytes,7,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`             // rimsky_claim_handles.id (UUID as text)
-	Resumed       bool                   `protobuf:"varint,8,opt,name=resumed,proto3" json:"resumed,omitempty"`                              // true when this acquisition rebound a preserve-for-resume row
+	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`
+	LockName      string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
+	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
+	ScopeData     *structpb.Struct       `protobuf:"bytes,4,opt,name=scope_data,json=scopeData,proto3" json:"scope_data,omitempty"`
+	ClaimId       string                 `protobuf:"bytes,5,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
+	SupervisorId  string                 `protobuf:"bytes,6,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
+	HolderId      string                 `protobuf:"bytes,7,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`
+	Resumed       bool                   `protobuf:"varint,8,opt,name=resumed,proto3" json:"resumed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1511,17 +1458,15 @@ func (x *LockAcquiredPayload) GetResumed() bool {
 	return false
 }
 
-// LockReleasedPayload is emitted when a supervisor releases a lock-holder
-// row at terminal (§13.6). `action` records the release intent.
 type LockReleasedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"` // "named" | "scope" | "claim"
+	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`
 	LockName      string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
 	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	ClaimId       string                 `protobuf:"bytes,4,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	HolderId      string                 `protobuf:"bytes,5,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`
 	SupervisorId  string                 `protobuf:"bytes,6,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
-	Action        string                 `protobuf:"bytes,7,opt,name=action,proto3" json:"action,omitempty"` // "commit" | "give_up" | "discard" | "preserve_for_resume"
+	Action        string                 `protobuf:"bytes,7,opt,name=action,proto3" json:"action,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1605,16 +1550,14 @@ func (x *LockReleasedPayload) GetAction() string {
 	return ""
 }
 
-// LockOrphanReapedPayload is emitted by the scheduler's lock-holder sweep
-// (§13.5 step 2) when a lock-holder row's `expires_at` has passed.
 type LockOrphanReapedPayload struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	LockKind          string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"` // "named" | "scope" | "claim"
+	LockKind          string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`
 	LockName          string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
 	ProducerName      string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	ClaimId           string                 `protobuf:"bytes,4,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	HolderId          string                 `protobuf:"bytes,5,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`
-	PriorSupervisorId string                 `protobuf:"bytes,6,opt,name=prior_supervisor_id,json=priorSupervisorId,proto3" json:"prior_supervisor_id,omitempty"` // supervisor whose row was reaped
+	PriorSupervisorId string                 `protobuf:"bytes,6,opt,name=prior_supervisor_id,json=priorSupervisorId,proto3" json:"prior_supervisor_id,omitempty"`
 	ExpiredAt         *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=expired_at,json=expiredAt,proto3" json:"expired_at,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
@@ -1699,19 +1642,12 @@ func (x *LockOrphanReapedPayload) GetExpiredAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// AttributesSubstitutedPayload is emitted at dispatch when rimsky completes
-// the source-directive substitution pass that populates
-// `rimsky_node_attributes.data` (§5.7 / §10.2).
 type AttributesSubstitutedPayload struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Names of attribute schema properties that were populated by source
-	// directives during this dispatch substitution pass.
-	SubstitutedFields []string `protobuf:"bytes,1,rep,name=substituted_fields,json=substitutedFields,proto3" json:"substituted_fields,omitempty"`
-	// Names of optional attribute schema properties whose source directives
-	// failed to resolve and were therefore omitted from `data` (per §10.3).
-	OmittedFields []string `protobuf:"bytes,2,rep,name=omitted_fields,json=omittedFields,proto3" json:"omitted_fields,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SubstitutedFields []string               `protobuf:"bytes,1,rep,name=substituted_fields,json=substitutedFields,proto3" json:"substituted_fields,omitempty"`
+	OmittedFields     []string               `protobuf:"bytes,2,rep,name=omitted_fields,json=omittedFields,proto3" json:"omitted_fields,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *AttributesSubstitutedPayload) Reset() {
@@ -1758,18 +1694,11 @@ func (x *AttributesSubstitutedPayload) GetOmittedFields() []string {
 	return nil
 }
 
-// AttributesCommittedPayload is emitted when an executor's terminal
-// `attributes_delta` is merged into `rimsky_node_attributes.data` and
-// validated successfully (§5.7).
 type AttributesCommittedPayload struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Producer-declared change flag — drives cascade propagation (§4.3 of the
-	// node-graph design doc). Trust + audit log; rimsky does not hash-and-check.
-	Changed bool `protobuf:"varint,1,opt,name=changed,proto3" json:"changed,omitempty"`
-	// Names of attribute schema properties touched by this commit (executor
-	// writeback merged into `data`).
-	UpdatedFields []string `protobuf:"bytes,2,rep,name=updated_fields,json=updatedFields,proto3" json:"updated_fields,omitempty"`
-	ChangeSummary string   `protobuf:"bytes,3,opt,name=change_summary,json=changeSummary,proto3" json:"change_summary,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Changed       bool                   `protobuf:"varint,1,opt,name=changed,proto3" json:"changed,omitempty"`
+	UpdatedFields []string               `protobuf:"bytes,2,rep,name=updated_fields,json=updatedFields,proto3" json:"updated_fields,omitempty"`
+	ChangeSummary string                 `protobuf:"bytes,3,opt,name=change_summary,json=changeSummary,proto3" json:"change_summary,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1825,16 +1754,9 @@ func (x *AttributesCommittedPayload) GetChangeSummary() string {
 	return ""
 }
 
-// AttributesValidationFailedPayload is emitted when JSON-schema validation
-// of `rimsky_node_attributes.data` fails at commit (§5.7.1: commit-time
-// `attributes_schema_failed`). Dispatch-time required-source resolution
-// failures are emitted as `template_resolution_failed` with their own
-// payload — they do not surface here.
 type AttributesValidationFailedPayload struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Structured per-error details (path, keyword, message). One Struct per
-	// schema violation.
-	Errors        []*structpb.Struct `protobuf:"bytes,2,rep,name=errors,proto3" json:"errors,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Errors        []*structpb.Struct     `protobuf:"bytes,2,rep,name=errors,proto3" json:"errors,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1876,16 +1798,13 @@ func (x *AttributesValidationFailedPayload) GetErrors() []*structpb.Struct {
 	return nil
 }
 
-// ClaimAcquiredPayload is emitted at the same moment as `lock_acquired` for
-// a claim-kind lock — it carries the claim-specific bookkeeping the lock
-// event doesn't (`hold`, on-commit/on-give-up declarations).
 type ClaimAcquiredPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	ProducerName  string                 `protobuf:"bytes,2,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
-	Hold          bool                   `protobuf:"varint,3,opt,name=hold,proto3" json:"hold,omitempty"`                          // §5.6.3
-	OnCommit      string                 `protobuf:"bytes,4,opt,name=on_commit,json=onCommit,proto3" json:"on_commit,omitempty"`   // "pop" | "pop_and_move" | "pop_and_delete" | "recycle"
-	OnGiveUp      string                 `protobuf:"bytes,5,opt,name=on_give_up,json=onGiveUp,proto3" json:"on_give_up,omitempty"` // same vocabulary as on_commit
+	Hold          bool                   `protobuf:"varint,3,opt,name=hold,proto3" json:"hold,omitempty"`
+	OnCommit      string                 `protobuf:"bytes,4,opt,name=on_commit,json=onCommit,proto3" json:"on_commit,omitempty"`
+	OnGiveUp      string                 `protobuf:"bytes,5,opt,name=on_give_up,json=onGiveUp,proto3" json:"on_give_up,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1955,16 +1874,11 @@ func (x *ClaimAcquiredPayload) GetOnGiveUp() string {
 	return ""
 }
 
-// ClaimHeldPayload is emitted at commit of a claiming-source node when
-// `hold: true` and `rimsky_claim_holders` rows are inserted, one per
-// terminal-leaf identified by the §11.4 DAG walk.
 type ClaimHeldPayload struct {
-	state        protoimpl.MessageState `protogen:"open.v1"`
-	ClaimId      string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	ProducerName string                 `protobuf:"bytes,2,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
-	// Terminal-leaf node ids that participate in the held claim (one row per
-	// id was inserted into rimsky_claim_holders).
-	TerminalNodeIds []string `protobuf:"bytes,3,rep,name=terminal_node_ids,json=terminalNodeIds,proto3" json:"terminal_node_ids,omitempty"`
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ClaimId         string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
+	ProducerName    string                 `protobuf:"bytes,2,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
+	TerminalNodeIds []string               `protobuf:"bytes,3,rep,name=terminal_node_ids,json=terminalNodeIds,proto3" json:"terminal_node_ids,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2020,13 +1934,9 @@ func (x *ClaimHeldPayload) GetTerminalNodeIds() []string {
 	return nil
 }
 
-// ClaimResolvedPayload is emitted when the §5.6.4 resolution algorithm
-// runs for a held claim — either at terminal-node release or via the
-// scheduler's claim-holder GC sweep (§13.5 step 3). Carries `action`,
-// `claim_id`, `producer_name` per spec §9.8.
 type ClaimResolvedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "commit" | "abandon" — the rimsky-side verb fired at held-claim resolution
+	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
 	ClaimId       string                 `protobuf:"bytes,2,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2084,19 +1994,12 @@ func (x *ClaimResolvedPayload) GetProducerName() string {
 	return ""
 }
 
-// TemplateResolutionFailedPayload is emitted when a required source directive
-// fails to resolve at dispatch (§5.7.1, §10.3, §10.4). The error class is
-// `template_resolution_failed`; this payload carries the directive text and
-// failure reason for debugging.
 type TemplateResolutionFailedPayload struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// The unresolved directive (e.g. `{{deps.upstream.field}}`).
-	Directive string `protobuf:"bytes,1,opt,name=directive,proto3" json:"directive,omitempty"`
-	// Where the directive appeared: "attribute" | "lock_name" | "scope".
-	Site string `protobuf:"bytes,2,opt,name=site,proto3" json:"site,omitempty"`
-	// For site="attribute": the attribute schema property name.
-	Field         string `protobuf:"bytes,3,opt,name=field,proto3" json:"field,omitempty"`
-	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Directive     string                 `protobuf:"bytes,1,opt,name=directive,proto3" json:"directive,omitempty"`
+	Site          string                 `protobuf:"bytes,2,opt,name=site,proto3" json:"site,omitempty"`
+	Field         string                 `protobuf:"bytes,3,opt,name=field,proto3" json:"field,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

@@ -57,7 +57,7 @@ func (r *callbackRecorder) waitForCall(t *testing.T) capturedCallback {
 func startTestExecutor(t *testing.T) (*ExecutorServer, *ObservabilityServer, *callbackRecorder) {
 	t.Helper()
 	recorder := &callbackRecorder{}
-	obs := NewObservabilityServer("http://bridge.invalid", DeclaredTags())
+	obs := NewObservabilityServer("http://bridge.invalid")
 	executor := NewExecutorServer(ServerConfig{
 		Opts:          Opts{StubMode: true},
 		CliRunner:     &fakeRunner{},
@@ -192,7 +192,7 @@ func (panicRunner) Resume(req CliResumeRequest) (CliHandle, error) {
 
 func TestGrpcExecuteRecoversDispatchGoroutinePanicAndReportsInternalError(t *testing.T) {
 	recorder := &callbackRecorder{}
-	obs := NewObservabilityServer("http://bridge.invalid", nil)
+	obs := NewObservabilityServer("http://bridge.invalid")
 	executor := NewExecutorServer(ServerConfig{
 		Opts:          Opts{StubMode: false, Auth: CliAuthConfig{AnthropicAPIKey: "test-key"}},
 		CliRunner:     panicRunner{},
@@ -229,7 +229,6 @@ func TestGrpcExecuteRecoversDispatchGoroutinePanicAndReportsInternalError(t *tes
 
 func TestGrpcObservabilityCapabilitiesAndTrace(t *testing.T) {
 	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
-	t.Setenv("RIMSKY_EXECUTOR_DECLARED_TAGS", "alpha,beta")
 	executor, obs, recorder := startTestExecutor(t)
 	client, obsClient := dialTestGrpc(t, executor, obs)
 
@@ -245,9 +244,6 @@ func TestGrpcObservabilityCapabilitiesAndTrace(t *testing.T) {
 	}
 	if len(caps.GetDeclaredErrorClasses()) != 13 {
 		t.Fatalf("declared error classes = %d, want 13", len(caps.GetDeclaredErrorClasses()))
-	}
-	if len(caps.GetDeclaredTags()) != 2 {
-		t.Fatalf("declared tags = %v", caps.GetDeclaredTags())
 	}
 	if caps.GetHttpBridgeUrl() != "http://bridge.invalid" {
 		t.Fatalf("bridge url = %q", caps.GetHttpBridgeUrl())

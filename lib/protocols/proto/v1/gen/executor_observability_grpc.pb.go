@@ -31,9 +31,6 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// ExecutorObservability is the optional read-only protocol every
-// executor MAY implement to expose per-dispatch traces to dashboards.
-// The dispatch protocol (executor.proto) is unchanged.
 // @concept: observability
 type ExecutorObservabilityClient interface {
 	Capabilities(ctx context.Context, in *ExecutorCapabilitiesRequest, opts ...grpc.CallOption) (*ObservabilityCapabilities, error)
@@ -92,9 +89,6 @@ type ExecutorObservability_StreamTraceClient = grpc.ServerStreamingClient[TraceE
 // All implementations must embed UnimplementedExecutorObservabilityServer
 // for forward compatibility.
 //
-// ExecutorObservability is the optional read-only protocol every
-// executor MAY implement to expose per-dispatch traces to dashboards.
-// The dispatch protocol (executor.proto) is unchanged.
 // @concept: observability
 type ExecutorObservabilityServer interface {
 	Capabilities(context.Context, *ExecutorCapabilitiesRequest) (*ObservabilityCapabilities, error)

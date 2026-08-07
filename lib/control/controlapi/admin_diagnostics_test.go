@@ -166,8 +166,8 @@ func (noopNodes) ListPendingSiblingRunsInScope(context.Context, shared.UUID, per
 func (noopNodes) GetRunByDispatchIDForUpdate(context.Context, shared.UUID, persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	return nil, nil
 }
-func (noopNodes) GetCascadeMode(context.Context, shared.UUID, persistence.Tx) (cascade.CascadeMode, error) {
-	return cascade.CascadeModeMostRecent, nil
+func (noopNodes) GetCascadeMode(context.Context, shared.UUID, persistence.Tx) (spec.CascadeMode, error) {
+	return spec.CascadeModeMostRecent, nil
 }
 func (noopNodes) GetRunSummary(context.Context, shared.UUID, persistence.Tx) (persistence.NodeRunSummary, error) {
 	return persistence.NodeRunSummary{}, nil
@@ -322,9 +322,6 @@ func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID, shar
 }
 func (f *fakeDiagnosticQueue) ResumeParked(context.Context, shared.UUID, persistence.Tx) (bool, error) {
 	return false, nil
-}
-func (f *fakeDiagnosticQueue) UpdateDispatchTuning(context.Context, shared.UUID, *int, persistence.Tx) error {
-	return nil
 }
 func (f *fakeDiagnosticQueue) BumpLastProgressAt(context.Context, shared.UUID, time.Time, persistence.Tx) (bool, error) {
 	return true, nil

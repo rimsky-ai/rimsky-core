@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/peerauth"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 )
 
 func TestMountBridge_RejectsOversizedBody(t *testing.T) {

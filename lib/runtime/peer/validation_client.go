@@ -54,7 +54,7 @@ func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in clienti
 			NodeAlias:        b.NodeAlias,
 			ClaimAlias:       b.ClaimAlias,
 			Selector:         b.Selector,
-			Intent:           b.Intent,
+			Intent:           string(b.Intent),
 			Lifetime:         b.Lifetime,
 			Data:             b.Data,
 			PartitionRequest: b.PartitionRequest,

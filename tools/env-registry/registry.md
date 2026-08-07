@@ -5,11 +5,12 @@
 
 | Variable | Read site |
 | --- | --- |
+| `RIMSKY_AGENT_ALLOW_PATHS` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_HEARTBEAT_SEC` | `lib/runtime/hostagent/config.go` |
-| `RIMSKY_AGENT_IDENTITY_FILE` | `lib/runtime/hostagent/config.go` |
+| `RIMSKY_AGENT_IDENTITY_FILE` | `lib/runtime/hostagent/identity.go` |
 | `RIMSKY_AGENT_LABEL` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_LISTEN` | `lib/runtime/hostagent/config.go` |
-| `RIMSKY_AGENT_PORT` | `lib/runtime/hostagent/spawn.go` |
+| `RIMSKY_AGENT_PORT` | `examples/compose/stub-executor/main.go` |
 | `RIMSKY_AGENT_REAP_GRACE_SEC` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_REGISTER_ACK_TIMEOUT_SEC` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_ROUTING_LABEL` | `lib/runtime/hostagent/spawn.go` |
@@ -35,7 +36,6 @@
 | `RIMSKY_DISPATCH_MAX_USD` | `lib/services/executors/claude-agent/clirunner.go` |
 | `RIMSKY_ENTRYPOINT_MIGRATE` | `cmd/rimsky-entrypoint/main.go` |
 | `RIMSKY_EXECUTOR_CLAUDE_BINARY` | `lib/services/executors/claude-agent/opts.go` |
-| `RIMSKY_EXECUTOR_DECLARED_TAGS` | `lib/services/executors/claude-agent/schema.go` |
 | `RIMSKY_EXECUTOR_HOST` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST` | `lib/services/executors/http-node/config.go` |
 | `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` | `lib/services/executors/http-node/config.go` |
@@ -68,6 +68,7 @@
 | `RIMSKY_PEER_AUTH` | `lib/protocols/enroll/mode.go` |
 | `RIMSKY_PROCESS_ROLE` | `cmd/rimsky/cli/compose/run.go` |
 | `RIMSKY_PROXY_GRPC_PORT` | `cmd/rimsky-host-agent-proxy/config.go` |
+| `RIMSKY_PROXY_PEER_GRPC_PORT` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_PROXY_TLS_CERT` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_PROXY_TLS_KEY` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_SCHEDULER_ID` | `lib/control/launch/scheduler.go` |

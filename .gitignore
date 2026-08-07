@@ -70,15 +70,21 @@ lib/services/stubexecutor
 /validation
 /lifecyclesubscriber
 /data-processing
+/stub-executor
+
+# Same stray-binary hazard one level down, at the `examples/` MODULE root:
+# building a nested example package by path from there (e.g. `cd examples &&
+# go build ./compose/stub-executor`) leaves the binary at examples/<name>.
+/examples/stub-executor
 
 # Stray test/example binaries left by ad-hoc `go build` inside the
 # package directory: the example executor binary lands inside
-# examples/executor/; the compose stub-executor testdata binary lands
-# next to its source under cmd/rimsky/cli/compose/testdata/; the
-# root-level stubchild is a stray from an out-of-tree build of the
-# hostagent test fixture (whose in-tree path is already covered above).
+# examples/executor/; the compose stub-executor binary lands next to
+# its source under examples/compose/; the root-level stubchild is a
+# stray from an out-of-tree build of the hostagent test fixture (whose
+# in-tree path is already covered above).
 /examples/executor/executor
-/cmd/rimsky/cli/compose/testdata/stub-executor/stub-executor
+/examples/compose/stub-executor/stub-executor
 /stubchild
 
 # Same stray-binary hazard when running `go build ./...` (or `go vet ./...`

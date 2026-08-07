@@ -67,3 +67,26 @@ func TestLoadConfigFromEnv_RejectsMalformedReapGrace(t *testing.T) {
 		t.Fatal("expected LoadConfigFromEnv to reject a zero RIMSKY_AGENT_REAP_GRACE_SEC, got nil error")
 	}
 }
+
+// @concept: host-agent
+func TestLoadConfigFromEnv_AllowPathsParsing(t *testing.T) {
+	t.Setenv("RIMSKY_AGENT_ALLOW_PATHS", " /usr/local/bin/* , ,/opt/tools/** ")
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv: %v", err)
+	}
+	if len(cfg.AllowPaths) != 2 || cfg.AllowPaths[0] != "/usr/local/bin/*" || cfg.AllowPaths[1] != "/opt/tools/**" {
+		t.Fatalf("AllowPaths = %v, want trimmed non-empty globs [/usr/local/bin/* /opt/tools/**]", cfg.AllowPaths)
+	}
+}
+
+func TestLoadConfigFromEnv_AllowPathsUnsetStaysOpen(t *testing.T) {
+	t.Setenv("RIMSKY_AGENT_ALLOW_PATHS", "")
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv: %v", err)
+	}
+	if len(cfg.AllowPaths) != 0 {
+		t.Fatalf("AllowPaths = %v, want empty (unset stays open)", cfg.AllowPaths)
+	}
+}

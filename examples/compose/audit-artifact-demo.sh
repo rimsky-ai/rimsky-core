@@ -4,8 +4,8 @@
 
 set -u
 
-repo_root() {
-  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd
+script_dir() {
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
 }
 
 die() {
@@ -20,7 +20,7 @@ step() {
 command -v sqlite3 >/dev/null 2>&1 \
   || die "sqlite3 binary not found on PATH; install sqlite3 or set PATH to include it"
 
-REPO="$(repo_root)"
+HERE="$(script_dir)"
 WORK="$(mktemp -d -t rimsky-audit-demo-XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -30,16 +30,17 @@ RIMSKY_BIN="${RIMSKY_BIN:-}"
 if [[ -z "$RIMSKY_BIN" ]]; then
   RIMSKY_BIN="$WORK/rimsky"
   step "build rimsky CLI"
-  (cd "$REPO" && go build -o "$RIMSKY_BIN" ./cmd/rimsky) || die "go build ./cmd/rimsky failed"
+  (cd "$HERE/../.." && go build -o "$RIMSKY_BIN" ./cmd/rimsky) \
+    || die "go build ./cmd/rimsky failed (vendored copy? set RIMSKY_BIN to a prebuilt rimsky binary)"
 fi
 [[ -x "$RIMSKY_BIN" ]] || die "RIMSKY_BIN ($RIMSKY_BIN) not executable"
 
 STUB_BIN="$WORK/stub-executor"
 step "build stub executor"
-(cd "$REPO" && go build -o "$STUB_BIN" ./cmd/rimsky/cli/compose/testdata/stub-executor) \
+(cd "$HERE/stub-executor" && go build -o "$STUB_BIN" .) \
   || die "go build stub-executor failed"
 
-cp -R "$REPO/cmd/rimsky/cli/compose/testdata/sample-manifest"/* "$WORK"/
+cp -R "$HERE/sample-manifest"/* "$WORK"/
 cd "$WORK" || die "cd $WORK"
 
 LOG="$WORK/run.stderr"
@@ -76,9 +77,9 @@ INSTANCE_COUNT=$(sqlite3 "$RUN_DIR/state.db" \
 [[ "$INSTANCE_COUNT" == "2" ]] \
   || die "FAIL: expected 2 instance rows; got $INSTANCE_COUNT"
 
-echo "  -- rimsky_node_runs (count by phase) --"
+echo "  -- rimsky_node_runs (count by state) --"
 sqlite3 "$RUN_DIR/state.db" \
-  "SELECT phase, COUNT(*) FROM rimsky_node_runs GROUP BY phase;"
+  "SELECT state, COUNT(*) FROM rimsky_node_runs GROUP BY state;"
 
 NODE_RUN_COUNT=$(sqlite3 "$RUN_DIR/state.db" \
   "SELECT COUNT(*) FROM rimsky_node_runs;")
@@ -96,17 +97,17 @@ WORKER_COUNT=$(sqlite3 "$RUN_DIR/state.db" \
 
 echo "  -- the failing node-run, pulled out by hand --"
 sqlite3 "$RUN_DIR/state.db" \
-  "SELECT id, node_id, phase, executor_name, claimed_by FROM rimsky_node_runs WHERE phase = 'failed';"
+  "SELECT id, node_id, state, executor_name, claimed_by FROM rimsky_node_runs WHERE state = 'failed';"
 
 FAILED_COUNT=$(sqlite3 "$RUN_DIR/state.db" \
-  "SELECT COUNT(*) FROM rimsky_node_runs WHERE phase = 'failed';")
+  "SELECT COUNT(*) FROM rimsky_node_runs WHERE state = 'failed';")
 (( FAILED_COUNT >= 1 )) \
-  || die "FAIL: expected at least 1 rimsky_node_runs row in phase 'failed' (the audit-trail terminal column for the failing dispatch); got $FAILED_COUNT"
+  || die "FAIL: expected at least 1 rimsky_node_runs row in state 'failed' (the audit-trail terminal column for the failing dispatch); got $FAILED_COUNT"
 
 COMPLETED_COUNT=$(sqlite3 "$RUN_DIR/state.db" \
-  "SELECT COUNT(*) FROM rimsky_node_runs WHERE phase = 'completed';")
+  "SELECT COUNT(*) FROM rimsky_node_runs WHERE state = 'fresh';")
 (( COMPLETED_COUNT >= 1 )) \
-  || die "FAIL: expected at least 1 rimsky_node_runs row in phase 'completed' (the audit-trail terminal column for the succeeding dispatch); got $COMPLETED_COUNT"
+  || die "FAIL: expected at least 1 rimsky_node_runs row in state 'fresh' (the audit-trail terminal column for the succeeding dispatch); got $COMPLETED_COUNT"
 
 step "PASS"
 echo "STORY-audit-artifact proven:"
@@ -114,7 +115,7 @@ echo "  - .rimsky/latest resolves to a per-run directory the operator can cd int
 echo "  - state.db loads in stock sqlite3 (not a rimsky-specific tool)"
 echo "  - rimsky_instances carries the run's terminated instance rows"
 echo "  - rimsky_node_runs carries per-node-run history with"
-echo "    distinct terminal phases for the success ('completed') and"
+echo "    distinct terminal states for the success ('fresh') and"
 echo "    failure ('failed') legs — pulled out by hand"
 echo "  - rimsky_nodes records node names that join the audit trail"
 echo "  - blobs/ subdir is present (filesystem blob backend's root)"

@@ -307,3 +307,25 @@ func TestSplitNonEmpty(t *testing.T) {
 		t.Fatal("splitNonEmpty(\"\") should be empty")
 	}
 }
+
+// @concept: host-agent
+func TestAgentStartAllowPaths_FlagOverridesEnv(t *testing.T) {
+	t.Setenv("RIMSKY_AGENT_ALLOW_PATHS", "/from/env/*")
+	cfg, err := hostagent.LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv: %v", err)
+	}
+	if len(cfg.AllowPaths) != 1 || cfg.AllowPaths[0] != "/from/env/*" {
+		t.Fatalf("env parsing: AllowPaths = %v, want [/from/env/*]", cfg.AllowPaths)
+	}
+
+	got := applyAgentStartFlags(cfg, agentStartFlags{allowPaths: "/from/flag/*"})
+	if len(got.AllowPaths) != 1 || got.AllowPaths[0] != "/from/flag/*" {
+		t.Fatalf("--allow-paths must override the env value; got %v", got.AllowPaths)
+	}
+
+	kept := applyAgentStartFlags(cfg, agentStartFlags{})
+	if len(kept.AllowPaths) != 1 || kept.AllowPaths[0] != "/from/env/*" {
+		t.Fatalf("empty flag must keep the env value; got %v", kept.AllowPaths)
+	}
+}

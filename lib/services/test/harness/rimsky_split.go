@@ -112,11 +112,7 @@ func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, 
 		testcontainers.WithExposedPorts("8080/tcp"),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
-		testcontainers.WithFiles(testcontainers.ContainerFile{
-			Reader:            strings.NewReader(string(yamlBytes)),
-			ContainerFilePath: "/etc/rimsky/rimsky.yml",
-			FileMode:          0o644,
-		}),
+		testcontainers.WithFiles(rereadableContainerFile(string(yamlBytes), "/etc/rimsky/rimsky.yml", 0o644)),
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("8080/tcp").WithStartupTimeout(120*time.Second),
 		),
@@ -153,19 +149,13 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 	env := map[string]string{
 		"RIMSKY_CONFIG": "/etc/rimsky/rimsky.yml",
 	}
-	files := []testcontainers.ContainerFile{{
-		Reader:            strings.NewReader(string(spec.yaml)),
-		ContainerFilePath: "/etc/rimsky/rimsky.yml",
-		FileMode:          0o644,
-	}}
+	files := []testcontainers.ContainerFile{
+		rereadableContainerFile(string(spec.yaml), "/etc/rimsky/rimsky.yml", 0o644),
+	}
 	if spec.supervisorYAML != nil {
 		env["RIMSKY_SUPERVISOR_CONFIG"] = "/etc/rimsky/supervisor-config.yml"
 		env["RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST"] = spec.advertiseHost
-		files = append(files, testcontainers.ContainerFile{
-			Reader:            strings.NewReader(string(spec.supervisorYAML)),
-			ContainerFilePath: "/etc/rimsky/supervisor-config.yml",
-			FileMode:          0o644,
-		})
+		files = append(files, rereadableContainerFile(string(spec.supervisorYAML), "/etc/rimsky/supervisor-config.yml", 0o644))
 	}
 	for k, v := range cb.extraEnv {
 		env[k] = v

@@ -15,7 +15,7 @@ import (
 )
 
 func TestRunningGrpcServerShutdownForceStopsPastDeadline(t *testing.T) {
-	obs := NewObservabilityServer("http://bridge.invalid", nil)
+	obs := NewObservabilityServer("http://bridge.invalid")
 	obs.RegisterDispatch("held-open")
 	obs.AppendEvent("held-open", makeTraceEvent("log", genv1.Severity_INFO, "started", nil))
 
