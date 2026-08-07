@@ -84,26 +84,3 @@ func TestResolveClaimHandleTerminal_RejectsUnknownOutcomeBeforeAnyProducerVerb(t
 		t.Errorf("unknown-outcome decision must not reach the producer at all; got verb %q", c.Verb)
 	}
 }
-
-func TestPreferVersionID_VerbWinsOverHint(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		verb string
-		hint string
-		want string
-	}{
-		{"verb_wins", "v-new", "v-old", "v-new"},
-		{"hint_fallback", "", "v-old", "v-old"},
-		{"both_empty", "", "", ""},
-	}
-	for _, c := range cases {
-		c := c
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			if got := preferVersionID(c.verb, c.hint); got != c.want {
-				t.Errorf("preferVersionID(%q, %q) = %q (want %q)", c.verb, c.hint, got, c.want)
-			}
-		})
-	}
-}

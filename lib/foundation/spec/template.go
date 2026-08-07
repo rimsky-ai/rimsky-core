@@ -102,10 +102,6 @@ type TemplateNodeDef struct {
 	CascadeMode CascadeMode `yaml:"cascade_mode,omitempty" json:"cascade_mode,omitempty"`
 }
 
-const (
-	SelfTarget = "self"
-)
-
 // @concept: message-sender-node
 const SendMessageKindName = "send_message"
 

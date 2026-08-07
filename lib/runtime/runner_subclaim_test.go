@@ -129,9 +129,8 @@ type fakeDataProcessingClient struct {
 	begins          []runtime.BeginCandidateInput
 	beginHandleFunc func(callIdx int, in runtime.BeginCandidateInput) []byte
 
-	commits   []runtime.CommitCandidateInput
-	abandons  []runtime.AbandonCandidateInput
-	versionFn func(in runtime.CommitCandidateInput) string
+	commits  []runtime.CommitCandidateInput
+	abandons []runtime.AbandonCandidateInput
 }
 
 func newFakeDataProcessingClient(name string) *fakeDataProcessingClient {
@@ -155,13 +154,8 @@ func (f *fakeDataProcessingClient) BeginCandidate(_ context.Context, in runtime.
 func (f *fakeDataProcessingClient) CommitCandidate(_ context.Context, in runtime.CommitCandidateInput) (runtime.CommitCandidateOutput, error) {
 	f.mu.Lock()
 	f.commits = append(f.commits, in)
-	fn := f.versionFn
 	f.mu.Unlock()
-	vid := "version-" + in.ClaimHandleID
-	if fn != nil {
-		vid = fn(in)
-	}
-	return runtime.CommitCandidateOutput{VersionID: vid}, nil
+	return runtime.CommitCandidateOutput{}, nil
 }
 
 func (f *fakeDataProcessingClient) AbandonCandidate(_ context.Context, in runtime.AbandonCandidateInput) error {

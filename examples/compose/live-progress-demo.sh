@@ -23,14 +23,9 @@ trap 'rm -rf "$WORK"' EXIT
 
 step "stage: $WORK"
 
-RIMSKY_BIN="${RIMSKY_BIN:-}"
-if [[ -z "$RIMSKY_BIN" ]]; then
-  RIMSKY_BIN="$WORK/rimsky"
-  step "build rimsky CLI"
-  (cd "$HERE/../.." && go build -o "$RIMSKY_BIN" ./cmd/rimsky) \
-    || die "go build ./cmd/rimsky failed (vendored copy? set RIMSKY_BIN to a prebuilt rimsky binary)"
-fi
-[[ -x "$RIMSKY_BIN" ]] || die "RIMSKY_BIN ($RIMSKY_BIN) not executable"
+RIMSKY_BIN="${RIMSKY_BIN:-rimsky}"
+command -v "$RIMSKY_BIN" >/dev/null 2>&1 \
+  || die "RIMSKY_BIN ($RIMSKY_BIN) not found on PATH; set RIMSKY_BIN to a rimsky binary (e.g. \`go build -o /path/to/rimsky ./cmd/rimsky\` from a rimsky-core checkout)"
 
 STUB_BIN="$WORK/stub-executor"
 step "build stub executor"

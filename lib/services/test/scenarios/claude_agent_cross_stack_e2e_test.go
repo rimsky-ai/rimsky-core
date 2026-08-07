@@ -497,9 +497,6 @@ func latestTerminalErrorEventClaudeAgent(
 		}
 		class, _ := e.Payload["error_class"].(string)
 		payload, _ := e.Payload["error_payload"].(map[string]any)
-		if inner, ok := payload["payload"].(map[string]any); ok {
-			payload = inner
-		}
 		return class, payload, true
 	}
 	return "", nil, false

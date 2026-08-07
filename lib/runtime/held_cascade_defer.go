@@ -302,7 +302,7 @@ func transitionHolderIfFullyResolved(
 		newState = cascade.NodeStateFailed
 		reason = cascade.ReasonAutoTerminalAbandon
 		sigType = "terminal/error/abandoned"
-		sig = signalpkg.BuildTerminalErrorSignal("abandoned", nil, 0, 0, nil, nil)
+		sig = signalpkg.BuildTerminalErrorSignal(spec.ErrorClassAbandoned, nil, 0, 0, nil, nil)
 	} else {
 		newState = cascade.NodeStateFresh
 		reason = cascade.ReasonAutoTerminalCommit

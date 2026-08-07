@@ -127,6 +127,32 @@ func TestValidateErrorTypes_AcceptsRuntimeSynthesizedExecutorSyncTimeout(t *test
 	}
 }
 
+func TestValidateErrorTypes_AcceptsRuntimeMintedExecutorProtocolViolationAndAbandoned(t *testing.T) {
+	for _, class := range []string{"executor_protocol_violation", "abandoned"} {
+		t.Run(class, func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name: "demo", Version: "1",
+				Nodes: []TemplateNodeDef{
+					{Type: "a", Executor: "http"},
+					{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
+						class: {Action: "give_up"},
+					}},
+				},
+			}
+			hooks := RegistryHooks{
+				ExecutorDeclared:             func(string) bool { return true },
+				ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
+			}
+			res := ValidateTemplate(spec, hooks)
+			for _, w := range res.Warnings {
+				if strings.HasPrefix(w.Path, "nodes[1].error_types") {
+					t.Fatalf("%q is runtime-minted (lib/runtime) and must not warn as undeclared: %+v", class, w)
+				}
+			}
+		})
+	}
+}
+
 func TestIsRuntimeSynthesizedErrorClass_MatchesSharedList(t *testing.T) {
 	for _, c := range foundationspec.RuntimeSynthesizedErrorClasses {
 		if !isRuntimeSynthesizedErrorClass(c) {

@@ -173,14 +173,19 @@ func runClaimProducerRoleChecks(
 		}
 		bindings := make([]ValidateClaimBinding, 0, len(refs))
 		for _, s := range refs {
-			bindings = append(bindings, ValidateClaimBinding{
+			binding := ValidateClaimBinding{
 				NodeAlias:  n.Type,
 				ClaimAlias: s.AliasOf(),
 				Selector:   s.Selector,
 				Intent:     s.Intent,
 				Lifetime:   s.Lifetime,
 				Data:       s.Data,
-			})
+			}
+			// @concept: fan-out
+			if n.FanOut != nil && n.FanOut.Claim == s.AliasOf() {
+				binding.PartitionRequest = []byte(n.FanOut.PartitionRequest)
+			}
+			bindings = append(bindings, binding)
 		}
 		res, err := client.ValidateClaimProducer(ctx, ValidateClaimProducerInput{
 			ProducerName: producer,

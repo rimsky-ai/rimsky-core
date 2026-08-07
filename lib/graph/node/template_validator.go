@@ -83,7 +83,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	validateMessageQueueMode(spec, &res)
 
 	rejectAuthorSetInternalFlags(spec, &res)
-	canonicalizeGraphs(spec, &res)
+	canonicalizeGraphs(spec, hooks.KindAliases, &res)
 	validateDelegateTargets(spec, &res)
 	validateParamsSchema(spec, &res)
 

@@ -81,11 +81,11 @@ func applyTerminalPark(
 func parkTerminalSignal(args RunArgs, t terminalEvent) signalpkg.Signal {
 	scratchSize := len(t.Scratch)
 	payload := signalpkg.PayloadMap(signalpkg.TransientParkPayload{
-		ResumeAt: t.ParkResumeAt,
-		Tags:     t.Tags,
+		ResumeAt:       t.ParkResumeAt,
+		Tags:           t.Tags,
+		ScratchSize:    scratchSize,
+		ScratchSpilled: shouldSpillBlob(args, scratchSize),
 	})
-	payload["scratch_size"] = scratchSize
-	payload["scratch_spilled"] = shouldSpillBlob(args, scratchSize)
 	return signalpkg.Signal{
 		Type:    "transient/park",
 		Payload: payload,

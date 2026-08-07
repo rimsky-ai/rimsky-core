@@ -4,10 +4,10 @@
 A minimal, copy-and-modify Go Executor that boots as a gRPC server and serves
 the rimsky executor protocol end-to-end.
 
-This module is **Apache 2.0** (the protocols / examples / claude-agent
-permissive surface) so you can fork it, rename the module in `go.mod`,
-and ship a custom executor without inheriting any AGPL obligations from
-the rimsky orchestrator itself.
+This directory is **Apache 2.0** (the protocols / examples / claude-agent
+permissive surface) so you can fork it into your own Go module (see
+"Migrating from this example" below) and ship a custom executor without
+inheriting any AGPL obligations from the rimsky orchestrator itself.
 
 ## What this example exhibits
 
@@ -46,7 +46,13 @@ event log. This example covers each protocol surface:
 | `main.go`             | The binary entry point — `Listen` + `RunGRPC` lifecycle.                                    |
 | `executor_test.go`    | Fast in-process tests pinning the dispatch happy path + declared-class + tagged-Success modes. |
 | `main_e2e_test.go`    | Cross-stack proof — boots a real rimsky-all-in-one stack and exhibits every surface above.  |
-| `go.mod` / `go.sum`   | Stand-alone Go module; the build-time dep is `lib/protocols` (the wire contract); the test-only deps add `lib/services/test/harness` for the cross-stack proof and never reach a consumer's `go build`. |
+
+This directory carries no `go.mod` of its own: it is part of the shared
+`examples/go.mod` workspace module (see "Migrating from this example"
+below for what a copier needs to add). The build-time dep is
+`lib/protocols` (the wire contract); the test-only deps add
+`lib/services/test/harness` for the cross-stack proof and never reach a
+consumer's `go build`.
 
 ## Running the executor
 
@@ -140,8 +146,8 @@ end-to-end against the assembled product:
    "work_started" in payload.tags}]` dispatches in the same frame —
    proving end-to-end tag-keyed cascade.
 3. **Declared error class routes through `error_types:`.** A template
-   whose worker declares `error_types: { example/forbidden: { policy:
-   [give_up] } }` and carries `mode: raise_error` causes the executor
+   whose worker declares `error_types: { example/forbidden: { action:
+   give_up } }` and carries `mode: raise_error` causes the executor
    to emit `Error{error_class: example/forbidden}`; rimsky routes the
    give_up action through the declared chain and emits the canonical
    signal `terminal/error/example/forbidden` on the event log.
@@ -227,15 +233,23 @@ exercising the real value path through the assembled rimsky stack.
 
 ## Migrating from this example
 
-1. Copy `examples/executor/` into your own repo.
-2. Rename the module in `go.mod`.
+This directory has no `go.mod` of its own — in this repo it lives inside
+the shared `examples/go.mod` workspace module, whose `lib/protocols`
+requirement is a local pseudo-version resolved only through this repo's
+`go.work`. A copy needs its own module boundary:
+
+1. Copy `executor.go` and `main.go` (drop `executor_test.go` and
+   `main_e2e_test.go`, or adapt them as a starting point for your own
+   tests) into your own repo.
+2. Run `go mod init <your-module-path>`, then
+   `go get github.com/rimsky-ai/rimsky-core/lib/protocols@vX.Y.Z`
+   (a real published version — `lib/protocols` is an independent Go
+   module with no workspace-only `replace` directives, so this
+   resolves outside a rimsky-core checkout).
 3. Replace the body of `Execute` with your work.
 4. Adjust `Capabilities` to advertise your real schema, tags,
    and error classes — the three handshake fields are the contract
    rimsky reads at startup.
-5. Drop `executor_test.go` and `main_e2e_test.go` if they no longer
-   match your shape, or adapt them as a starting point for your own
-   tests.
 
 The Apache license file (`../../LICENSE.apache`) covers the example
 itself; your fork inherits Apache 2.0 unless you explicitly relicense

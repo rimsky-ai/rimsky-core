@@ -22,7 +22,7 @@ Owns: the template surface that targets a sub-graph for delegation, entry absorp
 ## Invariants
 
 - A node declares either an inline executor or a delegate target, not both; declaring both is rejected at template validation.
-- A delegate target names a sub-graph (with both entry and exit declared) in the template. Canonicalization does not validate the reference: a delegate target that names no declared sub-graph is left unabsorbed with no template-validation error. The dangling reference surfaces only at runtime, as a dispatch failure when the caller's own terminal-apply attempts the carry settle and finds no sub-graph to carry from.
+- A delegate target names a sub-graph (with both entry and exit declared) in the template. Template validation rejects a delegate target that names no declared sub-graph, at registration, with a `subgraph_unknown_delegate_target` error. A runtime backstop still refuses the dispatch if a dangling reference somehow reaches execution, but registration catches it first.
 - Entry absorption is computed at canonicalization deterministically; the calling node's executor is taken from the entry (and the conflict above is enforced).
 - Delegation dispatches the sub-graph's internal nodes as one shared child execution context — one partition, N children; the carry settle primitive fires exactly once, on the designated exit's terminal, atomic with child-context closure — invariants of `concept:child-execution` (invariant: exit-node-writeback).
 - Subscription edges from internal nodes referencing the entry alias resolve to the calling node per-invocation at the cascade walker level; this is what makes the absorption work across invocations.

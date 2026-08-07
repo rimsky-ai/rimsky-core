@@ -91,16 +91,18 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 	var execReadOnlyProps map[string]bool
 	execSchemaVisible := false
 	if executorForSchema != "" && hooks.ExecutorExpectedAttributesSchema != nil {
-		if execBytes, ok := hooks.ExecutorExpectedAttributesSchema(executorForSchema); ok && len(execBytes) > 0 {
-			if err := json.Unmarshal(execBytes, &execSchema); err != nil {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: base + ".attributes",
-					Msg:  fmt.Sprintf("executor %q expected_attributes_schema is not valid JSON: %v", executorForSchema, err),
-				})
-				return
-			}
-			execReadOnlyProps = extractReadOnlyProps(execSchema)
+		if execBytes, ok := hooks.ExecutorExpectedAttributesSchema(executorForSchema); ok {
 			execSchemaVisible = true
+			if len(execBytes) > 0 {
+				if err := json.Unmarshal(execBytes, &execSchema); err != nil {
+					res.Errors = append(res.Errors, ValidationError{
+						Path: base + ".attributes",
+						Msg:  fmt.Sprintf("executor %q expected_attributes_schema is not valid JSON: %v", executorForSchema, err),
+					})
+					return
+				}
+				execReadOnlyProps = extractReadOnlyProps(execSchema)
+			}
 		}
 	}
 	if execReadOnlyProps == nil {

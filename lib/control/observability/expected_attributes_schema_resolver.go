@@ -5,6 +5,7 @@ package observability
 
 import "log/slog"
 
+// @concept: attribute
 func NewExpectedAttributesSchemaResolver(disc *Discovery) func(executorName string) (schema []byte, ok bool) {
 	if disc == nil {
 		return nil
@@ -25,10 +26,8 @@ func NewExpectedAttributesSchemaResolver(disc *Discovery) func(executorName stri
 		}
 		schema := entry.Capabilities.ExpectedAttributesSchema
 		if len(schema) == 0 {
-			slog.Debug("expected_attributes_schema_resolver: skip",
-				"executor", executorName,
-				"reason", "executor_advertised_no_schema")
-			return nil, false
+			slog.Debug("expected_attributes_schema_resolver: executor advertised no schema",
+				"executor", executorName)
 		}
 		return schema, true
 	}

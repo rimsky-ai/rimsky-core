@@ -593,10 +593,11 @@ func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 			Scratch:       body.Success.Scratch,
 		}, nil
 	case body.Error != nil:
+		errPayload, _ := body.Error.Payload.(map[string]any)
 		return terminalEvent{
 			Kind:          terminalKindErrored,
 			ErrorClass:    body.Error.ErrorClass,
-			Payload:       map[string]any{"payload": body.Error.Payload},
+			Payload:       errPayload,
 			AttributesDel: body.Error.AttributesDelta,
 			Tags:          shared.DedupStrings(body.Error.Tags),
 			Scratch:       body.Error.Scratch,

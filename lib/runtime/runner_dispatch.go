@@ -281,14 +281,14 @@ func readExecutorOutcome(
 		}
 		return validateTags(ctx, dctx, t), ""
 	case *genv1.Outcome_Error:
-		var payloadGo any
+		var payloadGo map[string]any
 		if oc.Error.Payload != nil {
 			payloadGo = oc.Error.Payload.AsMap()
 		}
 		t := terminalEvent{
 			Kind:       terminalKindErrored,
 			ErrorClass: oc.Error.ErrorClass,
-			Payload:    map[string]any{"payload": payloadGo},
+			Payload:    payloadGo,
 			Scratch:    oc.Error.Scratch,
 			Tags:       shared.DedupStrings(oc.Error.Tags),
 		}
@@ -300,7 +300,7 @@ func readExecutorOutcome(
 		if oc.Park.ResumeAt == nil {
 			return terminalEvent{
 				Kind:       terminalKindErrored,
-				ErrorClass: "executor_protocol_violation",
+				ErrorClass: spec.ErrorClassExecutorProtocolViolation,
 				Payload: map[string]any{
 					"reason": "park_missing_resume_at",
 				},
@@ -314,6 +314,16 @@ func readExecutorOutcome(
 		}
 		return validateTags(ctx, dctx, t), ""
 	case *genv1.Outcome_AwaitAsync:
+		// @concept: terminal-resolution
+		if oc.AwaitAsync.AsyncAckId == "" {
+			return terminalEvent{
+				Kind:       terminalKindErrored,
+				ErrorClass: spec.ErrorClassExecutorProtocolViolation,
+				Payload: map[string]any{
+					"reason": "await_async_missing_ack_id",
+				},
+			}, ""
+		}
 		return terminalEvent{Kind: terminalKindAsyncAccepted}, oc.AwaitAsync.AsyncAckId
 	default:
 		return terminalEvent{
@@ -347,7 +357,7 @@ func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) term
 		if _, ok := declaredSet[tag]; !ok {
 			return terminalEvent{
 				Kind:       terminalKindErrored,
-				ErrorClass: "executor_protocol_violation",
+				ErrorClass: spec.ErrorClassExecutorProtocolViolation,
 				Payload: map[string]any{
 					"reason":        "undeclared_tag",
 					"tag":           tag,
@@ -522,15 +532,16 @@ func computeEffectiveAttributeSchema(args RunArgs, acq *acquisition) (map[string
 	var execSchema map[string]any
 	execSchemaVisible := false
 	if args.ExpectedAttributesSchemaFor != nil && acq.Executor != "" {
-		if bytesIn, ok := args.ExpectedAttributesSchemaFor(acq.Executor); ok && len(bytesIn) > 0 {
-			if err := json.Unmarshal(bytesIn, &execSchema); err != nil {
-				if args.Logger != nil {
-					args.Logger.Warn("computeEffectiveAttributeSchema: executor schema unmarshal failed",
-						"executor", acq.Executor, "error", err.Error())
+		if bytesIn, ok := args.ExpectedAttributesSchemaFor(acq.Executor); ok {
+			execSchemaVisible = true
+			if len(bytesIn) > 0 {
+				if err := json.Unmarshal(bytesIn, &execSchema); err != nil {
+					if args.Logger != nil {
+						args.Logger.Warn("computeEffectiveAttributeSchema: executor schema unmarshal failed",
+							"executor", acq.Executor, "error", err.Error())
+					}
+					execSchema = nil
 				}
-				execSchema = nil
-			} else {
-				execSchemaVisible = true
 			}
 		}
 	}

@@ -42,9 +42,13 @@ const (
 	ErrorClassAttributesSchemaFailed    = "attributes_schema_failed"
 	ErrorClassUnresolvedExecutor        = "unresolved_executor"
 	ErrorClassExecutorSyncTimeout       = "executor_sync_timeout"
-	ErrorClassAcquirePrefix             = "acquire/"
+	ErrorClassExecutorProtocolViolation = "executor_protocol_violation"
+	// @decision: terminal-error-abandoned-as-error-class
+	ErrorClassAbandoned     = "abandoned"
+	ErrorClassAcquirePrefix = "acquire/"
 )
 
+// @concept: error-policy
 var RuntimeSynthesizedErrorClasses = []string{
 	ErrorClassTemplateResolutionFailed,
 	ErrorClassTemplateValidationFailed,
@@ -52,4 +56,6 @@ var RuntimeSynthesizedErrorClasses = []string{
 	ErrorClassAttributesSchemaFailed,
 	ErrorClassUnresolvedExecutor,
 	ErrorClassExecutorSyncTimeout,
+	ErrorClassExecutorProtocolViolation,
+	ErrorClassAbandoned,
 }

@@ -670,10 +670,62 @@ func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t
 func TestAbsorbEntryIntoCaller_ExecutorInheritedFromEntry(t *testing.T) {
 	caller := TemplateNodeDef{Type: "caller", Delegate: "sub"}
 	entry := TemplateNodeDef{Type: "entry_node", Executor: "handler.entry"}
-	out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
+	out, errs := absorbEntryIntoCaller(caller, entry, nil, "graphs[0].nodes[0]")
 	require.Empty(t, errs, "unexpected errors: %+v", errs)
 	require.Equal(t, "handler.entry", out.Executor,
 		"expected caller to inherit entry's executor when caller declares none")
+}
+
+func TestAbsorbEntryIntoCaller_ExecutorResolvedFromEntryKind(t *testing.T) {
+	aliases := NewKindAliasMap()
+	require.NoError(t, aliases.Register("loop_counter", "handler.loop_counter"))
+	caller := TemplateNodeDef{Type: "caller", Delegate: "sub"}
+	entry := TemplateNodeDef{Type: "entry_node", Kind: "loop_counter"}
+	out, errs := absorbEntryIntoCaller(caller, entry, aliases, "graphs[0].nodes[0]")
+	require.Empty(t, errs, "unexpected errors: %+v", errs)
+	require.Equal(t, "handler.loop_counter", out.Executor,
+		"expected caller to inherit the entry's kind-alias-resolved executor")
+}
+
+func TestCanonicalizeGraphs_KindAliasEntryResolvesCallerExecutor(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{
+				Name: MainGraphName,
+				Nodes: []TemplateNodeDef{
+					{Type: "caller", Delegate: "sub"},
+				},
+			},
+			{
+				Name:  "sub",
+				Entry: "count",
+				Exit:  "done",
+				Nodes: []TemplateNodeDef{
+					{Type: "count", Kind: "loop_counter"},
+					{Type: "done", Executor: "handler.done", Subscribes: []SubscriptionEntry{
+						{Node: "count", Type: "terminal/*", ForceUpstreamRefresh: BoolPtr(false)},
+					}},
+				},
+			},
+		},
+	}
+	aliases := NewKindAliasMap()
+	require.NoError(t, aliases.Register("loop_counter", "handler.loop_counter"))
+	res := ValidateTemplate(spec, RegistryHooks{KindAliases: aliases})
+	require.Empty(t, res.Errors, "unexpected validation errors: %+v", res.Errors)
+	var callerExecutor string
+	found := false
+	for _, n := range spec.Nodes {
+		if n.Type == "caller" {
+			callerExecutor = n.Executor
+			found = true
+		}
+	}
+	require.True(t, found, "expected caller node to survive flattening")
+	require.Equal(t, "handler.loop_counter", callerExecutor,
+		"delegating caller must dispatch with the kind-sugar-resolved executor of the absorbed entry")
 }
 
 func TestAbsorbEntryIntoCaller_CallerOwnExecutorAlwaysRejected(t *testing.T) {
@@ -689,7 +741,7 @@ func TestAbsorbEntryIntoCaller_CallerOwnExecutorAlwaysRejected(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			caller := TemplateNodeDef{Type: "caller", Executor: tc.callerExecutor, Delegate: "sub"}
 			entry := TemplateNodeDef{Type: "entry_node", Executor: tc.entryExecutor}
-			out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
+			out, errs := absorbEntryIntoCaller(caller, entry, nil, "graphs[0].nodes[0]")
 			require.NotEmpty(t, errs,
 				"expected rejection: a delegating caller must never declare its own executor (delegation.md: 'declaring both is rejected'); out=%+v", out)
 			require.Contains(t, errs[0].Msg, "delegate and executor are mutually exclusive")
@@ -759,7 +811,7 @@ func TestAbsorbEntryIntoCaller_AttributeSchemaDeepMerges(t *testing.T) {
 			},
 		}},
 	}
-	out, errs := absorbEntryIntoCaller(caller, entry, "graphs[0].nodes[0]")
+	out, errs := absorbEntryIntoCaller(caller, entry, nil, "graphs[0].nodes[0]")
 	require.Empty(t, errs, "unexpected errors: %+v", errs)
 	require.NotNil(t, out.Attributes, "expected merged attributes schema, got nil")
 	props, _ := out.Attributes.Schema["properties"].(map[string]any)

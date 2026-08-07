@@ -30,8 +30,8 @@ walks:
    `go` / `revise <what>` / `abort`.
 7. On `go`: stages the release commit (`package.json` +
    `releases/vX.Y.Z.md`), creates both git tags, invokes `make
-   release` (which runs the extended `lint → license-lint →
-   test-all → core-images → service-images → scan → push-images`
+   release` (which runs the extended `lint (incl. license-lint) →
+   core-images → service-images → test-all → scan → push-images`
    chain), pushes the release branch and git tags, runs `make
    publish-protocols`, creates the GitHub Release via `gh release
    create`, then fast-forwards `main` to the release commit and pushes
@@ -84,13 +84,15 @@ anywhere a clean tree is available.
 Both paths invoke `make release`, which runs:
 
 ```
-lint → license-lint → test-all → core-images → service-images → scan → push-images
+lint → core-images → service-images → test-all → scan → push-images
 ```
 
-- `lint` and `license-lint` are cheap host-side gates.
+- `lint` is a cheap host-side gate that includes `license-lint`.
+- `core-images` and `service-images` build the 4 + 11 images locally —
+  before the test suite, because the scenario tests consume the
+  locally-built image set.
 - `test-all` runs the full Go test suite across all four modules,
   including testcontainer-using tests (requires Docker daemon).
-- `core-images` and `service-images` build the 4 + 11 images locally.
 - `scan` runs `docker scout cves --only-severity critical,high
   --exit-code` against every locally-built image. Blocks on
   unaddressed critical or high CVEs.

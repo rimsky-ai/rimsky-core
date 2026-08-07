@@ -77,9 +77,9 @@ Apache terms on `lib/protocols/`. Contact **licensing@fallguyconsulting.com**.
 
 ## How to tell which license a file is under
 
-1. **The per-file header.** Apache files carry an "Apache License, Version 2.0"
-   header; AGPL files carry a "Dual-licensed under AGPL-3.0-or-later or a Fall
-   Guy Consulting commercial license" header.
+1. **The per-file header.** Apache files carry a `SPDX-License-Identifier:
+   Apache-2.0` header; AGPL files carry a `SPDX-License-Identifier:
+   AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial` header.
 2. **`licensing.yml`.** The authoritative path map. Classification is
    longest-prefix-match, so a specific subdirectory can override its parent.
 

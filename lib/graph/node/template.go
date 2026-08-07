@@ -33,10 +33,6 @@ const (
 )
 
 const (
-	SelfTarget = spec.SelfTarget
-)
-
-const (
 	MessageQueueModeBacklog  = spec.MessageQueueModeBacklog
 	MessageQueueModeCoalesce = spec.MessageQueueModeCoalesce
 )

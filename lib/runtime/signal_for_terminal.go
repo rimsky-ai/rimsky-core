@@ -18,13 +18,7 @@ func signalForTerminal(args RunArgs, acq *acquisition, t terminalEvent) signalpk
 		if acq != nil && acq.RetryDecision != nil {
 			return acq.RetryDecision.Signal
 		}
-		var errorPayload map[string]any
-		if t.Payload != nil {
-			if raw, ok := t.Payload["payload"].(map[string]any); ok {
-				errorPayload = raw
-			}
-		}
-		return signalpkg.BuildTerminalErrorSignal(t.ErrorClass, errorPayload, 0, 0, t.AttributesDel, t.Tags)
+		return signalpkg.BuildTerminalErrorSignal(t.ErrorClass, t.Payload, 0, 0, t.AttributesDel, t.Tags)
 	case terminalKindPark:
 		return parkTerminalSignal(args, t)
 	}

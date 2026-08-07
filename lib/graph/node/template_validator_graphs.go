@@ -10,7 +10,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-func canonicalizeGraphs(spec *TemplateSpec, res *ValidationResult) {
+func canonicalizeGraphs(spec *TemplateSpec, aliases *KindAliasMap, res *ValidationResult) {
 	if spec == nil {
 		return
 	}
@@ -60,7 +60,7 @@ func canonicalizeGraphs(spec *TemplateSpec, res *ValidationResult) {
 		})
 	}
 
-	flatten(spec, res)
+	flatten(spec, aliases, res)
 
 	detectDelegateCycles(spec, graphByName, res)
 
@@ -136,7 +136,7 @@ func validateGraphShape(g GraphSpec, base string, res *ValidationResult) {
 	}
 }
 
-func flatten(spec *TemplateSpec, res *ValidationResult) {
+func flatten(spec *TemplateSpec, aliases *KindAliasMap, res *ValidationResult) {
 	entryByGraph := buildEntryIndex(spec)
 
 	seen := make(map[string]string, 16)
@@ -164,7 +164,7 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 			if strings.TrimSpace(emitted.Delegate) != "" {
 				if entry, ok := entryByGraph[emitted.Delegate]; ok {
 					emitted.IsSubgraphEntryAbsorbed = true
-					absorbed, errs := absorbEntryIntoCaller(emitted, entry,
+					absorbed, errs := absorbEntryIntoCaller(emitted, entry, aliases,
 						fmt.Sprintf("graphs[%d].nodes[%d]", gi, ni))
 					emitted = absorbed
 					res.Errors = append(res.Errors, errs...)
@@ -202,7 +202,7 @@ func buildEntryIndex(spec *TemplateSpec) map[string]TemplateNodeDef {
 	return out
 }
 
-func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (TemplateNodeDef, []ValidationError) {
+func absorbEntryIntoCaller(caller, entry TemplateNodeDef, aliases *KindAliasMap, basePath string) (TemplateNodeDef, []ValidationError) {
 	out := caller
 	var errs []ValidationError
 
@@ -216,7 +216,7 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 		})
 	}
 	if out.Executor == "" {
-		out.Executor = entry.Executor
+		out.Executor = resolvedEntryExecutor(entry, aliases)
 	}
 
 	if len(entry.ClaimProducers) > 0 {
@@ -244,6 +244,18 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 	}
 
 	return out, errs
+}
+
+// @concept: node
+// @decision: kind-sugar-resolver
+func resolvedEntryExecutor(entry TemplateNodeDef, aliases *KindAliasMap) string {
+	if entry.Executor != "" || entry.Kind == "" || aliases == nil {
+		return entry.Executor
+	}
+	if alias, ok := aliases.Resolve(entry.Kind); ok {
+		return alias
+	}
+	return entry.Executor
 }
 
 func mergeClaimProducersOnAbsorb(callerClaimProducers, entryClaimProducers []NodeClaimProducerRef, basePath string) ([]NodeClaimProducerRef, []ValidationError) {

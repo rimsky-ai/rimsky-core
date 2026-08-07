@@ -38,7 +38,7 @@ const agplHeaderTS = `// Copyright © 2026 Fall Guy Consulting.
 `
 
 const apacheHeaderProto = `// Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0.
+// SPDX-License-Identifier: Apache-2.0
 `
 
 const agplHeaderProto = `// Copyright © 2026 Fall Guy Consulting.

@@ -43,7 +43,6 @@ type CommitCandidateInput struct {
 }
 
 type CommitCandidateOutput struct {
-	VersionID         string
 	CandidateMetadata []byte
 }
 

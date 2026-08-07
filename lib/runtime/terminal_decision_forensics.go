@@ -22,7 +22,7 @@ func outcomeVerbName(o TerminalOutcome) string {
 }
 
 func emitTerminalForensics(
-	ctx context.Context, args RunArgs, td TerminalDecision, versionID string, tx persistence.Tx,
+	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
 ) {
 	if args.Persist == nil || args.Clock == nil {
 		return
@@ -63,7 +63,7 @@ func emitTerminalForensics(
 		CommittedAt:             now.UTC().Format(time.RFC3339Nano),
 		ProducerName:            td.LineageHint.ProducerName,
 		ClaimScopeDataHash:      HashBytes(td.Scope),
-		VersionID:               preferVersionID(versionID, td.LineageHint.VersionID),
+		VersionID:               td.LineageHint.VersionID,
 		Outcome:                 outcome,
 		TerminatingSupervisorID: td.SupervisorID,
 	}
@@ -121,11 +121,4 @@ func terminalOutcomeKey(td TerminalDecision) string {
 		return persistence.LineageOutcomeForceCancelled
 	}
 	return persistence.LineageOutcomeAbandoned
-}
-
-func preferVersionID(fromVerb, fromHint string) string {
-	if fromVerb != "" {
-		return fromVerb
-	}
-	return fromHint
 }

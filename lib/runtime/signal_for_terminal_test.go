@@ -52,7 +52,7 @@ func TestSignalForTerminal_ErroredFallsBackWithoutRetryDecision(t *testing.T) {
 	t1 := terminalEvent{
 		Kind:       terminalKindErrored,
 		ErrorClass: "some_class",
-		Payload:    map[string]any{"payload": map[string]any{"k": "v"}},
+		Payload:    map[string]any{"k": "v"},
 	}
 
 	got := signalForTerminal(RunArgs{}, nil, t1)

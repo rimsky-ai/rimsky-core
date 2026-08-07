@@ -28,8 +28,10 @@ type TerminalErrorPayload struct {
 }
 
 type TransientParkPayload struct {
-	ResumeAt time.Time `json:"resume_at"`
-	Tags     []string  `json:"tags,omitempty"`
+	ResumeAt       time.Time `json:"resume_at"`
+	Tags           []string  `json:"tags,omitempty"`
+	ScratchSize    int       `json:"scratch_size"`
+	ScratchSpilled bool      `json:"scratch_spilled"`
 }
 
 type TransientRetryPayload struct {

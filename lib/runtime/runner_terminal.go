@@ -362,7 +362,7 @@ func applyTerminalCompletePoisoned(
 	nonMemberFilter := subgraphNonMemberFilter(tmplSpec, acq.NodeType)
 	visited := map[foundationshared.UUID]struct{}{}
 	abandonedSig := signalpkg.BuildTerminalErrorSignal(
-		"abandoned",
+		spec.ErrorClassAbandoned,
 		nil,
 		0, 0,
 		t.AttributesDel,
@@ -389,7 +389,7 @@ func applyTerminalCompletePoisoned(
 			SettlingSignalType: *settlingSignalType,
 			Changed:            t.Changed,
 			TerminalKind:       "errored",
-			ErrorClass:         "abandoned",
+			ErrorClass:         spec.ErrorClassAbandoned,
 			NodeAlias:          acq.NodeType,
 			ExecutorName:       acq.Executor,
 			TemplateHash:       acq.TemplateHash,

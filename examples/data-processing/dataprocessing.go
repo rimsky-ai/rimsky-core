@@ -21,9 +21,10 @@ import (
 type DataProcessing struct {
 	genv1.UnimplementedDataProcessingServer
 
-	mu         sync.Mutex
-	candidates map[string]*candidate
-	versions   map[string][]*versionRecord
+	mu            sync.Mutex
+	candidates    map[string]*candidate
+	issuedHandles map[string]struct{}
+	versions      map[string][]*versionRecord
 
 	versionSeq atomic.Uint64
 
@@ -47,8 +48,9 @@ type versionRecord struct {
 
 func newDataProcessing() *DataProcessing {
 	return &DataProcessing{
-		candidates: map[string]*candidate{},
-		versions:   map[string][]*versionRecord{},
+		candidates:    map[string]*candidate{},
+		issuedHandles: map[string]struct{}{},
+		versions:      map[string][]*versionRecord{},
 	}
 }
 
@@ -80,6 +82,7 @@ func (d *DataProcessing) BeginCandidate(_ context.Context, req *genv1.BeginCandi
 		claimHandleID: req.GetClaimHandleId(),
 		subScope:      append([]byte(nil), req.GetSubScopeDescriptor()...),
 	}
+	d.issuedHandles[string(handle)] = struct{}{}
 	return &genv1.BeginCandidateResponse{CandidateHandle: handle}, nil
 }
 
@@ -116,14 +119,20 @@ func (d *DataProcessing) CommitCandidate(_ context.Context, req *genv1.CommitCan
 	}, nil
 }
 
+// @concept: data-processing
 func (d *DataProcessing) AbandonCandidate(_ context.Context, req *genv1.AbandonCandidateRequest) (*emptypb.Empty, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if key, ok := d.findKeyByHandle(req.GetCandidateHandle()); ok {
-		delete(d.candidates, key)
-		d.abandonCount.Add(1)
+	key, ok := d.findKeyByHandle(req.GetCandidateHandle())
+	if !ok {
+		if _, everIssued := d.issuedHandles[string(req.GetCandidateHandle())]; everIssued {
+			return &emptypb.Empty{}, nil
+		}
+		return nil, status.Errorf(codes.FailedPrecondition, "abandon: unknown candidate handle")
 	}
+	delete(d.candidates, key)
+	d.abandonCount.Add(1)
 	return &emptypb.Empty{}, nil
 }
 
@@ -147,12 +156,14 @@ func (d *DataProcessing) ListPartitions(_ context.Context, req *genv1.ListPartit
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	rec, ok := d.findVersion(req.GetClaimHandleId(), req.GetVersionId())
-	if !ok {
-		return nil, status.Errorf(codes.FailedPrecondition, "list_partitions: unknown (claim_handle_id=%q, version_id=%q)",
-			req.GetClaimHandleId(), req.GetVersionId())
+	var partitions []*genv1.PartitionDescriptor
+	for _, r := range d.versions[req.GetClaimHandleId()] {
+		if req.GetVersionId() != "" && r.versionID != req.GetVersionId() {
+			continue
+		}
+		partitions = append(partitions, r.partitions...)
 	}
-	return &genv1.ListPartitionsResponse{Partitions: rec.partitions}, nil
+	return &genv1.ListPartitionsResponse{Partitions: partitions}, nil
 }
 
 func (d *DataProcessing) GetVersionSchema(_ context.Context, req *genv1.GetVersionSchemaRequest) (*genv1.GetVersionSchemaResponse, error) {
@@ -177,7 +188,14 @@ func (d *DataProcessing) findKeyByHandle(handle []byte) (string, bool) {
 }
 
 func (d *DataProcessing) findVersion(claimHandleID, versionID string) (*versionRecord, bool) {
-	for _, r := range d.versions[claimHandleID] {
+	recs := d.versions[claimHandleID]
+	if versionID == "" {
+		if len(recs) == 0 {
+			return nil, false
+		}
+		return recs[len(recs)-1], true
+	}
+	for _, r := range recs {
 		if r.versionID == versionID {
 			return r, true
 		}
