@@ -332,10 +332,13 @@ cleanup. No Hub push.
    (lands on `@latest`).
 7. GitHub Release (goreleaser owns creation; it uploads the CLI
    binaries + checksums and uses the curated notes as the release body).
-   Run from the `vX.Y.Z` tagged commit created in sub-step 5, with `gh`
-   authenticated (goreleaser reads its token):
+   Run from the `vX.Y.Z` tagged commit created in sub-step 5. goreleaser
+   does NOT read `gh`'s keyring token on its own — it requires
+   `GITHUB_TOKEN` in the environment and fails immediately with
+   "missing GITHUB_TOKEN, GITLAB_TOKEN and GITEA_TOKEN" otherwise —
+   so pass it explicitly from the authenticated `gh`:
    ```
-   goreleaser release --clean --release-notes=releases/vX.Y.Z.md
+   GITHUB_TOKEN=$(gh auth token) goreleaser release --clean --release-notes=releases/vX.Y.Z.md
    ```
    The archives are `rimsky_X.Y.Z_{linux,darwin}_{amd64,arm64}.tar.gz`
    (no Windows — the CLI embeds Unix-only process control). Config lives
