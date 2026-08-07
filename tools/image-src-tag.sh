@@ -1,5 +1,5 @@
 #!/bin/sh
-# ok-workspaces canonical src-tag script v14.1.0.
+# ok-workspaces canonical src-tag script v14.4.0.
 # Suite-owned: refreshed on converge by the front door's administration (/ok); do not hand-edit.
 # Prints a content-addressed tag for the current working tree
 # (including uncommitted changes): src-<first 12 hex of a git

@@ -28,4 +28,4 @@ Each row below is single-sourced from that skill's own frontmatter description �
 - `.ok-workspaces/worktrees/` — where job worktrees live by default, inside the project root so nothing escapes it. Checkouts, not repo content: `.ok-workspaces/.gitignore` (suite-owned, written on converge) keeps them untracked. A project may point `worktrees.dirPrefix` elsewhere; the committed profile decides.
 - `.claude/rules/ok-workspaces-cheatsheet.md` — the always-in-context rules, rendered from the profile, wholly plugin-owned.
 
-<!-- Materialized by ok-workspaces v14.1.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-workspaces v14.4.0 — suite-owned; overwritten on converge; do not hand-edit. -->

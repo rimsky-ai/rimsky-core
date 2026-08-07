@@ -48,4 +48,4 @@ Classify every finding; when the class is genuinely unclear, call it
 judgment. Read-only: report and stop. Do not edit files, do not re-run
 after fixes unless asked — the caller drives the loop.
 
-<!-- Materialized by ok-workspaces v14.1.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-workspaces v14.4.0 — suite-owned; overwritten on converge; do not hand-edit. -->
