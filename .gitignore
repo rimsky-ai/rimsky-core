@@ -107,6 +107,16 @@ lib/services/test/scenarios/claude_agent_fake_cli/fakeclaude/fakeclaude
 lib/services/test/scenarios/claude_agent_fake_cli/fakeclaudeserver/fakeclaudeserver
 lib/services/test/stubexecutor/stubexecutor
 
+# Same stray-binary hazard for the dev tooling under tools/: each of these is
+# a main package, so `cd tools/<name> && go build` (or `go build ./...` from
+# the root module) writes the binary into its own source directory, named for
+# that directory. license-check was committed this way and shipped inside the
+# module zip until v0.15.0.
+/tools/env-registry/env-registry
+/tools/gotestguard/gotestguard
+/tools/license-check/license-check
+/tools/wallclock-lint/wallclock-lint
+
 # Local env / coverage
 .env
 *.env.local
