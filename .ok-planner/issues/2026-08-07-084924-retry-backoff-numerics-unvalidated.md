@@ -5,7 +5,8 @@ category: enforcement-gap
 artifacts:
   - concept:error-policy
   - decision:in-place-retry
-status: verified
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T08:49:24Z
 github: https://github.com/rimsky-ai/rimsky-core/issues/77
 ---

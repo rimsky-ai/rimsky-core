@@ -7,7 +7,8 @@ artifacts:
   - concept:asset
   - concept:fan-out
   - story:data-processing-author
-status: verified
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T09:45:26Z
 github: https://github.com/rimsky-ai/rimsky-core/issues/86
 ---

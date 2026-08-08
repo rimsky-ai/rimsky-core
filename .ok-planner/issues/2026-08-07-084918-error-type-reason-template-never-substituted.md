@@ -4,7 +4,8 @@ kind: human
 category: bug
 artifacts:
   - concept:error-policy
-status: verified
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T08:49:18Z
 github: https://github.com/rimsky-ai/rimsky-core/issues/70
 ---

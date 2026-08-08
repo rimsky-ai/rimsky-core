@@ -7,7 +7,8 @@ artifacts:
   - concept:control-api
   - decision:host-agent-proxy-enrollment
   - decision:enroll-token-is-api-key
-status: verified
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T08:36:14Z
 ---
 

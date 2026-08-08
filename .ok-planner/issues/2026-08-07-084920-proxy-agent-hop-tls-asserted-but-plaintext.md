@@ -7,7 +7,8 @@ artifacts:
   - concept:peer-auth
   - decision:host-agent-proxy-tls
   - decision:host-agent-proxy-enrollment
-status: verified
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T08:49:20Z
 github: https://github.com/rimsky-ai/rimsky-core/issues/72
 ---

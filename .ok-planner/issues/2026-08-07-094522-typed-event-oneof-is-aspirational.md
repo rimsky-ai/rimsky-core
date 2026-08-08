@@ -6,7 +6,8 @@ artifacts:
   - concept:event-log
   - decision:event-log-kind-enum
   - decision:event-log-payload-shapes
-status: verified
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T09:45:22Z
 github: https://github.com/rimsky-ai/rimsky-core/issues/82
 ---
@@ -71,31 +72,25 @@ to, or a document it retires.
 
 ## Ruling
 
-> Recommended ruling (/verify-issues): stop maintaining a typed event schema
-> that no code builds. Retire it, and let the published description of an event
-> payload be generated from the structures the emitters actually construct —
-> the same arrangement the signal half of the event vocabulary already uses,
-> where the emitting code and the published shape are the same definition and
-> cannot disagree. Where a kind's payload is worth typing, type it at the emit
-> site; where it is audit data, let it stay free-form JSON and say so.
+> Generate the Go types from the events proto and construct event payloads with
+> them. Stop hand-rolling payloads as loose maps — the declaration goes into the
+> path that produces the data, rather than sitting beside it describing what the
+> data is supposed to look like.
 >
-> Rationale: a schema with no constructor is a written constraint with no check
-> behind it, which is exactly the shape this project's own conventions forbid,
-> and it is why this drifted to five phantom messages and seven missing ones
-> without anyone noticing. Reconciling it instead — the second option — buys
-> accuracy for one afternoon and then re-opens, because it leaves the same
-> unenforced arrangement in place; labelling it aspirational, the third, tells
-> external consumers the thing they read is not a contract, which is worse than
-> not publishing it. What would change this call: evidence that a consumer is
-> genuinely decoding typed events off a wire somewhere — that would make this a
-> live contract to reconcile rather than dead weight to remove. Nothing in this
-> repo does, and there is no service definition through which anything could.
+> Rationale: the nine other protos in the published package declare a service,
+> so their generated types sit on both sides of every call and a drifted field
+> stops compiling — on top of which the conformance suites drive real peers
+> against them. Those contracts stay honest because the declaration is
+> unavoidable, not because anyone watches them. The events proto is the one file
+> with no service, so nothing is generated that anyone calls, and its payload
+> half drifted to five phantom messages and seven missing ones. The fix is to
+> give it the same property the other nine have rather than to remove it:
+> emitting an event should be impossible without going through the declared
+> type. Retiring it would delete a wrong document; wiring it deletes the reason
+> documents go wrong.
 >
-> Rule this together with the field-level mismatches filed as
-> `issue:events-proto-payloads-disagree-with-emitters` — that issue is this same
-> question one level down, and retiring the schema dissolves it.
-
-<!-- Owner: this is a recommendation, not your decision. Leave it as-is to
-accept — the next /plan-sprint carries it, naming the generated/recommended
-batches at sign-off. Edit the text to redirect, empty the section to discuss
-live, or delete this note to adopt the ruling as your own. -->
+> The field-level mismatches filed as
+> `issue:events-proto-payloads-disagree-with-emitters` are this same question one
+> level down and are resolved by the same work — once the payload is built from
+> the generated type, a declared field with no writer and a written key with no
+> declaration both become impossible.

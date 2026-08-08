@@ -5,7 +5,8 @@ category: inconsistent
 artifacts:
   - concept:event-log
   - decision:event-log-payload-shapes
-status: verified
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T09:45:23Z
 github: https://github.com/rimsky-ai/rimsky-core/issues/83
 ---

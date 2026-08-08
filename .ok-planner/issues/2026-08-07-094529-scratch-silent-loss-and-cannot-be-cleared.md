@@ -6,7 +6,8 @@ artifacts:
   - decision:scratch-protocol
   - decision:scratch-recovery
   - story:opaque-executor-scratch
-status: verified
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T09:45:29Z
 github: https://github.com/rimsky-ai/rimsky-core/issues/89
 ---

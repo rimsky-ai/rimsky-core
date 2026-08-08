@@ -2,100 +2,139 @@
 issue: suite-verdict-is-load-dependent
 kind: human
 category: determinism
-artifacts: []
-status: open
+artifacts:
+  - decision:testing-scenario-based-e2e
+  - decision:test-wallclock-lint-ratchet
+status: promoted
+sprint: 2026-08-08-ruled-intake-drain.md
 opened: 2026-08-07T22:47:41Z
 ---
 
 # The test suite's verdict depends on how busy the machine is
 
-`rules.md` commits the suite to a verdict that is a function of the code alone.
-It is not. On a machine running other projects' containers, the scenario suite
-fails; on a quiet machine the same tree passes. Five runs across two trees
-produced five different failure sets, and the tree with no changes at all failed
-too.
+The project commits, in writing, to a test suite whose pass/fail is a function of
+the code alone. It is not. Running other projects' containers on the same machine
+makes the suite fail; a quiet machine passes the identical tree. Five runs across
+two trees produced five different failure sets, and the tree with no changes at
+all failed too — which is how this was found, while checking whether a batch of
+repairs had caused regressions. They had not.
 
-Two independent mechanisms produce this, and they need different fixes.
+Two independent mechanisms produce it. One is a straightforward defect with a
+known fix. The other rests on a claim the project has written into a live design
+decision, and that claim is false.
 
 ## Tests that read state written asynchronously
 
-Some tests perform an action and then assert on its result on the next line,
+Several tests perform an action and assert on its result on the very next line,
 with no wait. The result is written asynchronously, so the assertion races the
 write. `TestUnresolvedClaimProducerFailsDispatchLoudly` calls `runtime.RunNode`
-and immediately reads the node's latest run, expecting `failed`; under load it
-observes `stale` and reports a mismatch. rimsky was correct — the test looked
-too early.
+and immediately reads the node's latest run expecting `failed`; under load it
+observes `stale` and reports a mismatch. rimsky was correct — the test looked too
+early.
 
-This is the pattern `rules.md` already forbids ("Synchronize on the event, not
-on wall-clock time"), and the harness already ships the primitive these
-assertions should use: `test/support/scenario/harness.go::Harness.WaitForNodeState`
-blocks until the state appears. The remedy is mechanical — move every
-read-after-action assertion onto a blocking wait. No judgment needed; noted here
-because it shares a root with the second mechanism and should be fixed in the
-same pass.
+This is not one test. Of the seven scenario files that drive `runtime.RunNode`
+directly, six read run state immediately afterward with no blocking wait; only
+one uses the harness's own `WaitForNodeState`, which blocks until the state
+appears (`test/support/scenario/harness.go`). The remedy is mechanical, and the
+project's testing rules already forbid the pattern — synchronize on the event,
+not on wall-clock time. No judgment is needed here; it is named because it shares
+a root with the second mechanism and belongs in the same pass.
 
 ## The hang backstop is an aggregate wall-clock budget
 
-`rules.md` bans wall-clock constants from the pass/fail path — "any finite value
-is an unprovable guess about the load ceiling" — then exempts one, asserting the
-suite-level `go test -timeout` is "load-independent in outcome" and that "load
-changes how long a pass takes, never whether it passes."
+The project bans wall-clock constants from the pass/fail path — "any finite value
+is an unprovable guess about the load ceiling" — then exempts exactly one: Go's
+suite-level `-timeout`, asserted to be load-independent in outcome, on the
+grounds that load changes how long a pass takes but never whether it passes.
 
-That assertion is false, and the reason is structural rather than a matter of
-picking a better number. Go's `-timeout` is a **per-binary aggregate** budget:
-one ceiling covers every test in the package, so it must be sized to total
-runtime, which scales with both test count and machine load. A single test
-blocking longer under load consumes the budget belonging to every other test in
-the package — which is why each run killed a different, arbitrary set.
+That assertion is false, and structurally so rather than for want of a better
+number. Go's `-timeout` is a **per-package aggregate** budget: one ceiling covers
+every test in the package, so it must be sized to total runtime, which scales
+with both test count and machine load. One test blocking longer under load
+consumes budget belonging to every other test in the package — which is why each
+run killed a different, arbitrary set.
 
 The headroom is thinner than the observed variance. The scenarios package runs
-154–197s on a quiet machine; `make test-root` allows 300s; under contention it
+154–197s on a quiet machine and `make test-root` allows 300s; under contention it
 exceeded 600s and was killed twice, with `panic: test timed out after 10m0s`.
 
-`tools/gotest-guard.sh` closes half of this. It detects the kill and states
-loudly that the results are incomplete — but it exits 1 with the same message
-whether the cause was a saturated daemon or a genuine hang, and advises the
-reader to "raise the -timeout for this target or fix the slow/hanging tests."
-So the constraint is detected and then reported as a verdict anyway.
+The falsified claim is load-bearing in two places. The project's own testing
+rules state it, and so does the design decision governing scenario testing
+(`decision:testing-scenario-based-e2e`), whose rationale for unbounded wait
+helpers is precisely that the suite-level timeout keeps the verdict
+load-independent. Whichever way this is ruled, that decision changes with it.
+
+## What already exists
+
+The wall-clock lint (`tools/wallclock-lint/`) scans Go sources for four in-test
+polling idioms — `Eventually`, `select` on a timer, and two deadline loops. It
+has no detector for `-timeout` anywhere, in the Makefile or otherwise, so the
+aggregate backstop is outside its reach by construction.
+
+The test guard (`tools/gotest-guard.sh`) closes half the reporting gap. It
+detects the kill and states loudly that the results are incomplete — but exits
+with the same message whether the cause was a saturated daemon or a genuine hang,
+and advises the reader to raise the timeout or fix the slow tests. The constraint
+is detected and then reported as a verdict anyway.
+
+Machinery for the strongest option is already in the tree: `make test-report`
+runs `gotestsum --jsonfile` across all four modules and post-processes the
+combined JSON. A progress-based watchdog would extend that plumbing rather than
+introduce a dependency; it is simply not wired as a gate today.
 
 ## Options
 
 - **Make the backstop measure progress rather than elapsed time.** Run with
-  `-timeout 0` and move hang detection into the guard: consume `go test -json`
-  and kill only when no test event has arrived for some interval. A hung test
-  emits nothing and completes nothing; a slow test keeps completing tests, just
-  later. Load stops being a verdict input entirely, and a genuine hang still
-  dies loudly. Costs a real guard implementation, and the no-progress interval
-  is itself a constant — but one that a correct suite never approaches at any
+  `-timeout 0` and move hang detection into the guard: consume the test runner's
+  JSON event stream and kill only when no test event has arrived for some
+  interval. A hung test emits nothing and completes nothing; a slow test keeps
+  completing tests, just later. Load stops being a verdict input, and a genuine
+  hang still dies loudly. Costs a real guard implementation, and the no-progress
+  interval is itself a constant — but one a correct suite never approaches at any
   load, rather than one sized to total runtime.
-- **Throttle concurrency** to fit the machine, as `test-services` and
-  `test-examples` already do with `-p 2 -parallel 4`. Makes runs more
-  predictable and is worth doing on its own merits; narrows the window rather
-  than closing it, since the aggregate ceiling remains.
-- **Classify saturation separately from failure.** Have the guard distinguish
-  "the environment was saturated" from "a test hung" and report the former as an
-  inconclusive run rather than naming arbitrary tests. Honest, and it does not
-  make the suite runnable under load — it only stops the run from lying about
-  why it stopped.
-- **Halt and wait for resources** before starting, refusing to run when the
-  daemon is already loaded. Avoids producing a misleading verdict at all; turns
-  a busy machine into a blocked developer.
+- **Throttle concurrency** to fit the machine, as two of the module targets
+  already do. Makes runs more predictable and is worth doing on its own merits;
+  narrows the window rather than closing it, since the aggregate ceiling remains.
+- **Classify saturation separately from failure.** Have the guard distinguish a
+  saturated environment from a hung test and report the former as an inconclusive
+  run rather than naming arbitrary tests. Honest, and it does not make the suite
+  runnable under load — it only stops the run from lying about why it stopped.
+- **Halt and wait for resources**, refusing to start when the machine is already
+  loaded. Avoids producing a misleading verdict at all; turns a busy machine into
+  a blocked developer.
 - **Raise the ceilings.** Costs nothing to try and settles nothing: it lengthens
-  the fuse, which is the move `rules.md` already names as the tell that a
+  the fuse, which is the move the project's own rules name as the tell that a
   wall-clock constant is doing verdict work.
 
-Whichever way it goes, `rules.md`'s claim that the suite-level timeout is
-load-independent needs to change, since it is the sentence that licensed the
-current arrangement.
+The ruling decides what the hang backstop measures, and what the scenario-testing
+decision says about it.
 
-## Provenance
+## Ruling
 
-Found while re-running the suite to check whether a batch of repairs had caused
-regressions (they had not). Evidence: five runs of
-`go test ./test/scenarios/... ./lib/foundation/persistence/...` — three on a tree
-with uncommitted repairs, one on a pristine `HEAD` worktree, one instrumented
-with per-second Docker sampling. Docker container count rose 36 → 67 during a
-run and memory peaked at 82% of the daemon's 7.75 GiB, so memory was not
-exhausted; two of the five runs were killed by the package timeout, and the
-others failed fast assertions with no timeout at all. All four suspect tests
-pass three consecutive times when run in isolation on the same tree.
+> Move the hang backstop from elapsed time
+> to progress. Run the suites with no time ceiling at all and let the test guard
+> watch the runner's event stream, killing the run only when nothing has
+> completed for a good while. Fix the six racing reads in the same pass by
+> routing them through the harness's blocking wait — that part is already forced
+> by the testing rules and needs no decision. Then correct the scenario-testing
+> decision and the project rules: the suite-level timeout is not load-independent,
+> and that sentence is what licensed the current arrangement. Throttling
+> concurrency on the remaining targets is worth doing alongside, on its own
+> merits, not as the fix.
+>
+> Rationale: the project has already committed to verdicts that are a function of
+> the code alone, and spent real effort enforcing it inside tests — a lint that
+> bans exactly this idiom per-assertion while the aggregate ceiling does the same
+> work per-package is an enforcement gap, not a considered exemption. Of the
+> options, only the first actually removes load from the verdict; the middle two
+> improve honesty or odds without closing the mechanism, and the last is the move
+> the rules themselves name as the tell. The remaining objection — that a
+> no-progress interval is still a constant — is answered by what it measures: a
+> correct suite emits completions continuously at any load, so the interval never
+> binds, whereas an aggregate budget binds precisely when the machine is busy.
+>
+> One thing to establish while building it: whether the event stream emits
+> reliably enough during a single long-running test to separate "slow" from
+> "hung". If it does not, the watchdog loses its discriminating power, and the
+> honest fallback is to have the guard report saturation as an inconclusive run
+> rather than naming arbitrary tests.
