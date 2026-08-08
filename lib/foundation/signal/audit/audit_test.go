@@ -14,6 +14,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	shared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 )
 
 type fakeEvents struct {
@@ -49,11 +51,11 @@ func TestEmitSignal_WritesCanonicalRow(t *testing.T) {
 
 	sig := signal.Signal{
 		Type: "terminal/success",
-		Payload: map[string]any{
+		Payload: eventpayload.Decoded(map[string]any{
 			"changed":          true,
 			"attributes_delta": map[string]any{"foo": "bar"},
 			"change_summary":   "ok",
-		},
+		}),
 	}
 	if err := EmitSignal(context.Background(), events, instanceID, nodeID, sig, now, nil); err != nil {
 		t.Fatalf("EmitSignal: %v", err)
@@ -85,8 +87,8 @@ func TestEmitSignal_NilPayloadBecomesEmptyMap(t *testing.T) {
 		signal.Signal{Type: "terminal/success"}, time.Time{}, nil); err != nil {
 		t.Fatalf("EmitSignal: %v", err)
 	}
-	if events.rows[0].Payload == nil {
-		t.Fatalf("EmitSignal: payload should be empty map, got nil")
+	if m := events.rows[0].Payload.Map(); m == nil || len(m) != 0 {
+		t.Fatalf("EmitSignal: a signal with no payload must persist an empty object, got %v", m)
 	}
 	if events.rows[0].OccurredAt != nil {
 		t.Fatalf("EmitSignal: zero occurredAt should leave OccurredAt nil for server NOW()")

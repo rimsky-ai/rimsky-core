@@ -30,6 +30,10 @@ type reconcilerFakePublisherClient struct {
 
 func (c *reconcilerFakePublisherClient) Name() string { return c.name }
 
+func (*reconcilerFakePublisherClient) SupportedKinds(context.Context) ([]string, error) {
+	return nil, nil
+}
+
 func (c *reconcilerFakePublisherClient) Subscribe(_ context.Context, req clientiface.SubscribeRequest) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

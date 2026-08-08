@@ -14,6 +14,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 const breakpointQueueCap = 100
@@ -190,14 +193,14 @@ func createHitWithinCap(ctx context.Context, args RunArgs, cc CheckpointContext,
 				InstanceID: &cc.InstanceID,
 				NodeID:     nodeIDPt,
 				Kind:       events.KindBreakpointHit(),
-				Payload: map[string]any{
-					"instance_id":   cc.InstanceID.String(),
-					"node_id":       cc.NodeID.String(),
-					"breakpoint_id": bp.ID.String(),
-					"hit_id":        hitID.String(),
-					"checkpoint":    string(cc.Checkpoint),
-					"mode":          string(bp.Mode),
-				},
+				Payload: eventpayload.New(&genv1.BreakpointHitPayload{
+					InstanceId:   cc.InstanceID.String(),
+					NodeId:       cc.NodeID.String(),
+					BreakpointId: bp.ID.String(),
+					HitId:        hitID.String(),
+					Checkpoint:   string(cc.Checkpoint),
+					Mode:         string(bp.Mode),
+				}),
 			}, tx); err != nil {
 				return &BreakpointInfraError{Phase: "create_hit", Cause: err}
 			}

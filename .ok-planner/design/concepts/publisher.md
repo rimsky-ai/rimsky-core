@@ -26,7 +26,7 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 
 ## Invariants
 
-- Publishers are advertised in the publisher service registry of `concept:rimsky-yml`. Their declared protocol membership must include the publisher protocol.
+- Publishers are advertised in the publisher service registry of `concept:rimsky-yml`. Their declared protocol membership must include the publisher protocol. A template declaring a publisher of a kind the peer does not advertise in its capabilities handshake is refused at registration, the same way a template naming an undeclared executor or an unknown claim-producer error class is refused.
 - The subscribe verb carries the message type the publisher will stamp on every sent envelope; the subscribe surface carries no receiver-routing field — delivery routes by message type against node-subscription edges. The publisher persists the type and copies it onto each sent message envelope.
 - Send-time messages identify the sender as a publisher and present the per-subscription capability token. Rimsky derives the sender name from the publisher-subscription row; the request's declared sender is ignored for trust.
 - Mounting-to-active reconciliation, its retry cadence, and the failed-state contract are owned by `concept:publisher-subscription`.

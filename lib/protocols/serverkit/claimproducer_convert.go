@@ -49,6 +49,7 @@ func OpenRequestFromSpec(claimID claimproducer.ClaimID, spec claimproducer.Claim
 		InstanceId:   spec.InstanceID,
 		RunScopeId:   spec.RunScopeID,
 		Lifetime:     spec.Lifetime,
+		Data:         spec.Data,
 	}
 }
 

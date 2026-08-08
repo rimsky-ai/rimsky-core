@@ -15,6 +15,9 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type postCommitFn func(ctx context.Context)
@@ -43,9 +46,9 @@ func validateCommitWriteback(
 		if appendErr := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: events.KindAttributesSchemaFailed(),
-			Payload: map[string]any{
-				"errors": []map[string]any{{"message": err.Error()}},
-			},
+			Payload: eventpayload.New(&genv1.AttributesSchemaFailedPayload{
+				Message: err.Error(),
+			}),
 		}, tx); appendErr != nil && args.Logger != nil {
 			args.Logger.Warn("runner_terminal: append attributes_schema_failed event failed",
 				"node_id", acq.NodeID.String(),
@@ -98,11 +101,11 @@ func emitWorkCompleted(ctx context.Context, args RunArgs, acq *acquisition, kind
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: events.KindWorkCompleted(), Payload: map[string]any{
-				"supervisor_id": args.SupervisorID,
-				"dispatch_id":   acq.NodeRunID.String(),
-				"terminal_kind": string(terminalClassFor(kind)),
-			},
+			Kind: events.KindWorkCompleted(), Payload: eventpayload.New(&genv1.WorkCompletedPayload{
+				SupervisorId: args.SupervisorID,
+				DispatchId:   acq.NodeRunID.String(),
+				TerminalKind: string(terminalClassFor(kind)),
+			}),
 		}, tx)
 	}); err != nil && args.Logger != nil {
 		args.Logger.Warn("emitWorkCompleted: work_completed event append failed; pairing event lost",

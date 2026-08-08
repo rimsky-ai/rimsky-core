@@ -97,11 +97,11 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 			return err
 		}
 		for _, e := range rl.Events {
-			action, _ := e.Payload["action"].(string)
+			action, _ := e.Payload.Map()["action"].(string)
 			if action != "template:register" {
 				continue
 			}
-			if reason, _ := e.Payload["denial_reason"].(string); reason == string(auth.DenialPermissionDenied) {
+			if reason, _ := e.Payload.Map()["denial_reason"].(string); reason == string(auth.DenialPermissionDenied) {
 				sawScopeDenial = true
 			}
 		}

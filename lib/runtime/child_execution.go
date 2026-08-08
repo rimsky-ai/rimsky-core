@@ -22,6 +22,9 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type PartitionDescriptor struct {
@@ -291,12 +294,12 @@ func SettleFromDelegate(
 		NodeID:     &nodeID,
 		InstanceID: &instanceID,
 		Kind:       events.KindSubgraphExitCarry(),
-		Payload: map[string]any{
-			"parent_run_id":   parentNodeRunID.String(),
-			"exit_run_id":     in.ExitNodeRunID.String(),
-			"exit_node_alias": in.ExitNodeAlias,
-			"outcome":         "fresh",
-		},
+		Payload: eventpayload.New(&genv1.SubgraphExitCarryPayload{
+			ParentRunId:   parentNodeRunID.String(),
+			ExitRunId:     in.ExitNodeRunID.String(),
+			ExitNodeAlias: in.ExitNodeAlias,
+			Outcome:       "fresh",
+		}),
 	}, tx); err != nil {
 		return nil, err
 	}

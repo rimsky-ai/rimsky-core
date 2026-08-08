@@ -45,6 +45,7 @@ type FakeCall struct {
 	Intent                claimproducer.Intent
 	Alias                 string
 	Lifetime              string
+	Data                  []byte
 	Scope                 []byte
 	Address               []byte
 	TemplateID            string
@@ -89,6 +90,7 @@ func (f *Fake) Open(_ context.Context, claimID claimproducer.ClaimID, spec claim
 		Intent:     spec.Intent,
 		Alias:      spec.Alias,
 		Lifetime:   spec.Lifetime,
+		Data:       spec.Data,
 		TemplateID: spec.TemplateID,
 		InstanceID: spec.InstanceID,
 		RunScopeID: spec.RunScopeID,

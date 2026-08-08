@@ -107,7 +107,6 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON:        "claim_resolution.abandon",
 	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED:          "attributes_substituted",
 	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_COMMITTED:            "attributes_committed",
-	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED:    "attributes_validation_failed",
 	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED:        "attributes_schema_failed",
 	genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED:      "attribute_override_matched",
 	genv1.OperationalKind_OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED:      "template_resolution_failed",
@@ -238,9 +237,6 @@ func KindAttributesSubstituted() Kind {
 }
 func KindAttributesCommitted() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_COMMITTED)
-}
-func KindAttributesValidationFailed() Kind {
-	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED)
 }
 func KindAttributesSchemaFailed() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED)

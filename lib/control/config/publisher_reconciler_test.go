@@ -77,6 +77,8 @@ type flakyPublisherClient struct {
 	attempts   int
 }
 
+func (*flakyPublisherClient) SupportedKinds(context.Context) ([]string, error) { return nil, nil }
+
 func (c *flakyPublisherClient) Subscribe(ctx context.Context, req runtime.SubscribeRequest) error {
 	c.mu2.Lock()
 	c.attempts++

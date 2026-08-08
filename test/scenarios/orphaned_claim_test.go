@@ -56,7 +56,7 @@ func TestOrphanedClaim(t *testing.T) {
 	}))
 	require.NotEmpty(t, evs.Events, "expected lock_orphan_reaped event")
 
-	payload := evs.Events[0].Payload
+	payload := evs.Events[0].Payload.Map()
 	require.Equal(t, "named", payload["lock_kind"])
 	require.Equal(t, "dead-supervisor", payload["supervisor_id"])
 }

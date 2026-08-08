@@ -4,8 +4,8 @@
 package spec
 
 type ErrorTypePolicy struct {
-	Action         string `yaml:"action" json:"action"`
-	ReasonTemplate string `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
+	Action string `yaml:"action" json:"action"`
+	Reason string `yaml:"reason,omitempty" json:"reason,omitempty"`
 }
 
 type RetryBackoffConfig struct {

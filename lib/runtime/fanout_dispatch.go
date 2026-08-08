@@ -18,6 +18,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func FanOutPartitions(subClaims []SubClaim) []PartitionDescriptor {
@@ -175,26 +178,26 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: events.KindFanOutDispatched(),
-			Payload: map[string]any{
-				"parent_run_id":  acq.NodeRunID.String(),
-				"child_run_ids":  childIDs,
-				"child_keys":     childKeys,
-				"parallelism":    acq.NodeDef.FanOut.Parallelism,
-				"policy_kind":    policy.Kind,
-				"num_sub_claims": len(acq.SubClaims),
-			},
+			Payload: eventpayload.New(&genv1.FanOutDispatchedPayload{
+				ParentRunId:  acq.NodeRunID.String(),
+				ChildRunIds:  childIDs,
+				ChildKeys:    childKeys,
+				Parallelism:  int32(acq.NodeDef.FanOut.Parallelism),
+				PolicyKind:   string(policy.Kind),
+				NumSubClaims: int32(len(acq.SubClaims)),
+			}),
 		}, tx); err != nil {
 			return err
 		}
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: events.KindFanoutChildrenCreated(),
-			Payload: map[string]any{
-				"parent_run_id":        acq.NodeRunID.String(),
-				"parent_node_id":       acq.NodeID.String(),
-				"child_count":          len(children),
-				"partition_keys_count": len(childKeys),
-			},
+			Payload: eventpayload.New(&genv1.FanOutChildrenCreatedPayload{
+				ParentRunId:        acq.NodeRunID.String(),
+				ParentNodeId:       acq.NodeID.String(),
+				ChildCount:         int32(len(children)),
+				PartitionKeysCount: int32(len(childKeys)),
+			}),
 		}, tx)
 	})
 }

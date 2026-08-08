@@ -35,16 +35,16 @@ func assertWorkPair(t *testing.T, h *scenario.Harness, nodeID foundationshared.U
 	require.Equal(t, nodeID, *s.NodeID, "work_started node id")
 	require.Equal(t, nodeID, *c.NodeID, "work_completed node id")
 
-	sDispatch, ok := s.Payload["dispatch_id"].(string)
+	sDispatch, ok := s.Payload.Map()["dispatch_id"].(string)
 	require.True(t, ok, "work_started payload must carry dispatch_id, got %v", s.Payload)
 	require.NotEmpty(t, sDispatch)
-	cDispatch, ok := c.Payload["dispatch_id"].(string)
+	cDispatch, ok := c.Payload.Map()["dispatch_id"].(string)
 	require.True(t, ok, "work_completed payload must carry dispatch_id, got %v", c.Payload)
 	require.Equal(t, sDispatch, cDispatch, "work_started / work_completed must pair on dispatch_id")
 
-	require.Equal(t, s.Payload["supervisor_id"], c.Payload["supervisor_id"],
+	require.Equal(t, s.Payload.Map()["supervisor_id"], c.Payload.Map()["supervisor_id"],
 		"work_started / work_completed must carry the same supervisor_id")
-	require.Equal(t, wantTerminalKind, c.Payload["terminal_kind"],
+	require.Equal(t, wantTerminalKind, c.Payload.Map()["terminal_kind"],
 		"work_completed must carry the terminal kind")
 	require.False(t, c.OccurredAt.Before(s.OccurredAt),
 		"work_completed must not precede its work_started twin")

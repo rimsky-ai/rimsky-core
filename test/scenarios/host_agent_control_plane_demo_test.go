@@ -20,7 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 )
 
-const demoScriptRelPath = "examples/host-agent-control-plane-demo.sh"
+const demoScriptRelPath = "test/fixtures/demos/host-agent-control-plane-demo.sh"
 
 var connectedLineRE = regexp.MustCompile(`rimsky agent started \(pid (\d+), connected to [^)]+\)`)
 

@@ -169,8 +169,8 @@ func (h *mcpParityHarness) attemptedRowForAction(t *testing.T, action string) ma
 	})
 	require.NoError(t, err)
 	for _, ev := range res.Events {
-		if ev.Payload["action"] == action {
-			return ev.Payload
+		if ev.Payload.Map()["action"] == action {
+			return ev.Payload.Map()
 		}
 	}
 	t.Fatalf("no auth.access_attempted row found for action %q among %d recent rows", action, len(res.Events))

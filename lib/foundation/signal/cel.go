@@ -6,12 +6,12 @@ package signal
 import (
 	"fmt"
 	"log/slog"
-	"reflect"
 	"strings"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/ast"
 	"github.com/google/cel-go/common/types"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 type CompiledPredicate struct {
@@ -116,10 +116,7 @@ func (p *CompiledPredicate) Eval(s Signal) (bool, error) {
 	}
 	in := map[string]any{
 		"type":    string(s.Type),
-		"payload": s.Payload,
-	}
-	if in["payload"] == nil {
-		in["payload"] = map[string]any{}
+		"payload": s.Payload.Map(),
 	}
 	out, _, err := p.program.Eval(in)
 	if err != nil {
@@ -144,7 +141,7 @@ func buildEnv() (*cel.Env, error) {
 	)
 }
 
-func checkPayloadFields(checked *cel.Ast, schemaType reflect.Type) error {
+func checkPayloadFields(checked *cel.Ast, schemaType protoreflect.MessageDescriptor) error {
 	if schemaType == nil {
 		return nil
 	}
@@ -182,17 +179,14 @@ func checkPayloadFields(checked *cel.Ast, schemaType reflect.Type) error {
 		schemaType.Name(), strings.Join(missing, ", "))
 }
 
-func schemaFieldSet(t reflect.Type) map[string]struct{} {
+func schemaFieldSet(d protoreflect.MessageDescriptor) map[string]struct{} {
 	out := make(map[string]struct{})
-	if t.Kind() != reflect.Struct {
+	if d == nil {
 		return out
 	}
-	for i := 0; i < t.NumField(); i++ {
-		name, ok := jsonFieldName(t.Field(i))
-		if !ok {
-			continue
-		}
-		out[name] = struct{}{}
+	fields := d.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		out[string(fields.Get(i).Name())] = struct{}{}
 	}
 	return out
 }

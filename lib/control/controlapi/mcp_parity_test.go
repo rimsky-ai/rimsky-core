@@ -9,7 +9,10 @@ import (
 )
 
 var routedActionsDeliberatelyWithoutAnMCPTool = map[string]string{
-	"mcp:read": "the MCP transport cannot be a tool on itself; an MCP caller is already speaking it",
+	"mcp:read":          "the MCP transport cannot be a tool on itself; an MCP caller is already speaking it",
+	"health:probe":      "an unauthenticated infrastructure probe; the MCP surface is reached only with a token, so a tool for it would answer a question the caller has already answered",
+	"auth:whoami":       "the identity-echo route carries no permission, and the MCP surface projects the permissioned surface",
+	"peer-auth:ca-root": "an unauthenticated bootstrap fetch a service makes before it has a token at all",
 }
 
 // @decision: mcp-http-parity

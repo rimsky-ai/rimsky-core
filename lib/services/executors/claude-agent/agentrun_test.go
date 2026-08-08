@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 )
 
 type fakeHandle struct {
@@ -260,7 +262,7 @@ func TestRunAgentStubProbeAsyncRoutesToStubNotRealCLI(t *testing.T) {
 
 func TestRunAgentMalformedAttributes(t *testing.T) {
 	opts := baseRunOpts(&fakeRunner{})
-	opts.Attributes = map[string]any{"_invalid": "yes"}
+	opts.Attributes = map[string]any{stubmode.MalformedShapeAttribute: "yes"}
 	outcome := RunAgent(opts)
 	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/attribute_invalid" {
 		t.Fatalf("outcome = %+v", outcome)

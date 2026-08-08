@@ -248,6 +248,11 @@ func TestV1Registry(t *testing.T) {
 		"service:enroll":          true,
 		// @decision: node-state-retired-from-operator-api
 		"run:read": true,
+		// @concept: control-api
+		"health:probe": true,
+		"auth:whoami":  true,
+		// @concept: peer-auth
+		"peer-auth:ca-root": true,
 	}
 	for _, a := range surplus {
 		if !allowed[a] {
@@ -259,6 +264,9 @@ func TestV1Registry(t *testing.T) {
 func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
 	r := BuildV1Registry()
 	wantRouteCount := map[string]int{
+		"health:probe":            1,
+		"auth:whoami":             1,
+		"peer-auth:ca-root":       1,
 		"instance:read":           2,
 		"instance:create":         1,
 		"instance:terminate":      1,
@@ -500,15 +508,19 @@ func TestV1Registry_ExposesDebuggerTools(t *testing.T) {
 	}
 }
 
+// @concept: control-api
 func gateExemptRoute(method, pattern string) bool {
-	if method == http.MethodGet && pattern == "/v1/health" {
+	if strings.HasPrefix(pattern, "/v1/observability") {
 		return true
 	}
-	return strings.HasPrefix(pattern, "/v1/observability")
+	p, ok := BuildV1Registry().PostureForRoute(method, pattern)
+	return ok && p == PostureUnauthenticated
 }
 
+// @concept: control-api
 func identityEchoRoute(method, pattern string) bool {
-	return method == http.MethodGet && pattern == "/v1/auth/whoami"
+	p, ok := BuildV1Registry().PostureForRoute(method, pattern)
+	return ok && p == PostureIdentityOnly
 }
 
 func substituteChiParams(route string) string {
@@ -541,4 +553,41 @@ func substituteChiParams(route string) string {
 func sha256OfString(s string) []byte {
 	h := auth.Hash(s)
 	return h[:]
+}
+
+// @concept: control-api
+func TestValidateGrantScope_RefusesUngatedAction(t *testing.T) {
+	r := BuildV1Registry()
+	for _, action := range []string{"auth:whoami", "health:probe"} {
+		err := r.ValidateGrantScope(auth.Grant{{Action: action}})
+		if err == nil {
+			t.Fatalf("a grant naming the ungated action %q must be refused: no permission is ever consulted for it, "+
+				"so the grant could never take effect", action)
+		}
+	}
+}
+
+// @concept: control-api
+func TestValidateGrantScope_AdmitsGatedActions(t *testing.T) {
+	r := BuildV1Registry()
+	for _, action := range []string{"instance:read", "auth:create", "observability:read"} {
+		if err := r.ValidateGrantScope(auth.Grant{{Action: action}}); err != nil {
+			t.Fatalf("a grant naming the gated action %q must be admitted; got %v", action, err)
+		}
+	}
+}
+
+// @concept: control-api
+func TestRegistryRecordsAPostureForEveryMountedRoute(t *testing.T) {
+	r := BuildV1Registry()
+	for _, action := range r.AllActions() {
+		entry, _ := r.Entry(action)
+		if entry.ResolvedPosture() == "" {
+			t.Fatalf("action %q resolves to an empty auth posture", action)
+		}
+		if entry.ResolvedPosture() != PosturePermissioned &&
+			r.ValidateGrantScope(auth.Grant{{Action: action}}) == nil {
+			t.Fatalf("action %q is ungated yet a grant naming it is admitted", action)
+		}
+	}
 }

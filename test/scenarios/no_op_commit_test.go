@@ -89,8 +89,8 @@ func TestNoOpCommit(t *testing.T) {
 	require.Greater(t, len(allCommitted.Events), priorCount,
 		"expected a new terminal/success after changed=false run")
 	latest := allCommitted.Events[0]
-	changedVal, ok := latest.Payload["changed"].(bool)
-	require.True(t, ok, "second run's terminal/success payload must carry a boolean changed field, got %#v", latest.Payload["changed"])
+	changedVal, ok := latest.Payload.Map()["changed"].(bool)
+	require.True(t, ok, "second run's terminal/success payload must carry a boolean changed field, got %#v", latest.Payload.Map()["changed"])
 	require.False(t, changedVal,
 		"second run's terminal/success must carry payload.changed=false")
 

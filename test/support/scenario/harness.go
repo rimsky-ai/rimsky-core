@@ -642,7 +642,7 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 		}
 		if poll%100 == 0 {
 			h.T.Logf("waitForRootDispatch: still polling instance %s for a root dispatch row (want >0, last count=%d, last err=%v) — "+
-				"blocks until the state appears; the suite-level timeout is the only backstop", instanceID, count, err)
+				"blocks until the state appears; the test guard's no-progress watchdog is the only backstop", instanceID, count, err)
 		}
 		if h.Scheduler == nil {
 			h.driveFrameAndEnqueue(instanceID)
@@ -783,7 +783,7 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState) 
 		}
 		if poll%40 == 0 {
 			h.T.Logf("WaitForNodeState: still polling node %s for state=%s (observed: %s) — "+
-				"blocks until the state appears; the suite-level timeout is the only backstop",
+				"blocks until the state appears; the test guard's no-progress watchdog is the only backstop",
 				nodeID.String(), state, observed)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -810,7 +810,7 @@ func (h *Harness) WaitForEventCount(nodeID shared.UUID, kind string, want int) {
 		}
 		if poll%40 == 0 {
 			h.T.Logf("WaitForEventCount: still polling node %s for %d events of kind %q (observed: %d) — "+
-				"blocks until the count appears; the suite-level timeout is the only backstop",
+				"blocks until the count appears; the test guard's no-progress watchdog is the only backstop",
 				nodeID.String(), want, kind, got)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -841,7 +841,7 @@ func (h *Harness) WaitForDispatchCount(nodeID shared.UUID, want int) {
 		}
 		if poll%40 == 0 {
 			h.T.Logf("WaitForDispatchCount: still polling node %s for %d dispatches (observed: %d) — "+
-				"blocks until the count appears; the suite-level timeout is the only backstop",
+				"blocks until the count appears; the test guard's no-progress watchdog is the only backstop",
 				nodeID.String(), want, got)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -862,7 +862,7 @@ func (h *Harness) WaitForLeafRunLineageCount(nodeID shared.UUID, want int) {
 		}
 		if poll%40 == 0 {
 			h.T.Logf("WaitForLeafRunLineageCount: still polling node %s for %d leaf_run lineage records (observed: %d) — "+
-				"blocks until the count appears; the suite-level timeout is the only backstop",
+				"blocks until the count appears; the test guard's no-progress watchdog is the only backstop",
 				nodeID.String(), want, count)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -891,7 +891,7 @@ func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID) {
 		}
 		if poll%40 == 0 {
 			h.T.Logf("WaitForAllRunsTerminal: still polling node %s for all runs terminal (total=%d, in_flight=%d, last err=%v) — "+
-				"blocks until the state appears; the suite-level timeout is the only backstop",
+				"blocks until the state appears; the test guard's no-progress watchdog is the only backstop",
 				nodeID.String(), total, inFlight, err)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -1128,8 +1128,8 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		ets := map[string]any{}
 		for cls, etp := range n.ErrorTypes {
 			entry := map[string]any{"action": etp.Action}
-			if etp.ReasonTemplate != "" {
-				entry["reason_template"] = etp.ReasonTemplate
+			if etp.Reason != "" {
+				entry["reason"] = etp.Reason
 			}
 			ets[cls] = entry
 		}
@@ -1210,6 +1210,13 @@ func claimProducerRefToJSON(s node.NodeClaimProducerRef) map[string]any {
 	}
 	if s.Lifetime != "" {
 		item["lifetime"] = s.Lifetime
+	}
+	// @concept: inertness
+	if len(s.Data) > 0 {
+		var decoded any
+		if err := json.Unmarshal(s.Data, &decoded); err == nil {
+			item["data"] = decoded
+		}
 	}
 	return item
 }

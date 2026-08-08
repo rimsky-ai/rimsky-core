@@ -11,6 +11,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
@@ -45,10 +48,10 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: events.KindOrphanedClaimLostRace(),
-			Payload: map[string]any{
-				"dispatch_id":   acq.NodeRunID.String(),
-				"supervisor_id": args.SupervisorID,
-			},
+			Payload: eventpayload.New(&genv1.OrphanedClaimLostRacePayload{
+				DispatchId:   acq.NodeRunID.String(),
+				SupervisorId: args.SupervisorID,
+			}),
 		}, tx)
 	}); err != nil && args.Logger != nil {
 		args.Logger.Warn("handleOrphanedClaim: append orphaned_claim_lost_race event failed",
@@ -92,23 +95,23 @@ func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error 
 func emitLockAcquired(
 	ctx context.Context, args RunArgs, acq acquisition, lk AcquiredLock, tx persistence.Tx,
 ) error {
-	payload := map[string]any{
-		"holder_id":     lk.ClaimHandleID.String(),
-		"supervisor_id": args.SupervisorID,
+	payload := &genv1.LockAcquiredPayload{
+		HolderId:     lk.ClaimHandleID.String(),
+		SupervisorId: args.SupervisorID,
 	}
 	switch sp := lk.Spec.(type) {
 	case locks.NamedLockSpec:
-		payload["lock_kind"] = string(persistence.LockKindNamed)
-		payload["lock_name"] = sp.Name
+		payload.LockKind = string(persistence.LockKindNamed)
+		payload.LockName = sp.Name
 	case claimproducer.ClaimSpec:
-		payload["lock_kind"] = string(persistence.LockKindScope)
-		payload["producer_name"] = sp.ProducerName
-		payload["alias"] = sp.Alias
-		payload["intent"] = string(sp.Intent)
+		payload.LockKind = string(persistence.LockKindScope)
+		payload.ProducerName = sp.ProducerName
+		payload.Alias = sp.Alias
+		payload.Intent = string(sp.Intent)
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: events.KindLockAcquired(), Payload: payload,
+		Kind: events.KindLockAcquired(), Payload: eventpayload.New(payload),
 	}, tx); err != nil {
 		return fmt.Errorf("emitLockAcquired: %w", err)
 	}

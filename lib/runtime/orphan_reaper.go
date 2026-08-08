@@ -10,6 +10,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type OrphanReaperArgs struct {
@@ -85,27 +89,27 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 	})
 }
 
-func lockReapPayload(lh persistence.ClaimHandleRow) map[string]any {
+func lockReapPayload(lh persistence.ClaimHandleRow) eventpayload.Payload {
 	supervisorID := ""
 	if lh.HolderSupervisorID != nil {
 		supervisorID = *lh.HolderSupervisorID
 	}
-	payload := map[string]any{
-		"claim_handle_id": lh.ID.String(),
-		"lock_kind":       string(lh.LockKind),
-		"supervisor_id":   supervisorID,
-		"holder_node_id":  lh.HolderNodeID.String(),
-		"expires_at":      lh.ExpiresAt,
-		"claimed_at":      lh.ClaimedAt,
+	p := &genv1.LockOrphanReapedPayload{
+		ClaimHandleId: lh.ID.String(),
+		LockKind:      string(lh.LockKind),
+		SupervisorId:  supervisorID,
+		HolderNodeId:  lh.HolderNodeID.String(),
+		ExpiresAt:     timestamppb.New(lh.ExpiresAt),
+		ClaimedAt:     timestamppb.New(lh.ClaimedAt),
 	}
 	if lh.LockName != nil {
-		payload["lock_name"] = *lh.LockName
+		p.LockName = *lh.LockName
 	}
 	if lh.ProducerName != nil {
-		payload["producer_name"] = *lh.ProducerName
+		p.ProducerName = *lh.ProducerName
 	}
 	if lh.Intent != nil {
-		payload["intent"] = *lh.Intent
+		p.Intent = string(*lh.Intent)
 	}
-	return payload
+	return eventpayload.New(p)
 }

@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-var workspaceModuleDirs = []string{".", "lib/foundation", "lib/protocols", "lib/services", "examples"}
+var workspaceModuleDirs = []string{".", "lib/foundation", "lib/protocols", "lib/services"}
 
 func readManifest(t *testing.T, rel string) string {
 	t.Helper()

@@ -60,7 +60,7 @@ func Evaluate(
 			NewState: state,
 		}
 	case spec.ActionGiveUp:
-		reason := policy.ReasonTemplate
+		reason := policy.Reason
 		if reason == "" {
 			reason = spec.ActionGiveUp
 		}

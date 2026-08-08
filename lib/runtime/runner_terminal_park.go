@@ -11,6 +11,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func applyTerminalPark(
@@ -80,14 +84,13 @@ func applyTerminalPark(
 // @concept: executor
 func parkTerminalSignal(args RunArgs, t terminalEvent) signalpkg.Signal {
 	scratchSize := len(t.Scratch)
-	payload := signalpkg.PayloadMap(signalpkg.TransientParkPayload{
-		ResumeAt:       t.ParkResumeAt,
-		Tags:           t.Tags,
-		ScratchSize:    scratchSize,
-		ScratchSpilled: shouldSpillBlob(args, scratchSize),
-	})
 	return signalpkg.Signal{
-		Type:    "transient/park",
-		Payload: payload,
+		Type: "transient/park",
+		Payload: eventpayload.New(&genv1.TransientParkSignalPayload{
+			ResumeAt:       timestamppb.New(t.ParkResumeAt),
+			Tags:           t.Tags,
+			ScratchSize:    int32(scratchSize),
+			ScratchSpilled: shouldSpillBlob(args, scratchSize),
+		}),
 	}
 }

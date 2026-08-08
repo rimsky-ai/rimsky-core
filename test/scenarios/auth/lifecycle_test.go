@@ -636,7 +636,7 @@ func TestAuditContent_AccessDeniedRevoked(t *testing.T) {
 			return err
 		}
 		for _, e := range rl.Events {
-			if reason, _ := e.Payload["denial_reason"].(string); reason == string(auth.DenialRevokedToken) {
+			if reason, _ := e.Payload.Map()["denial_reason"].(string); reason == string(auth.DenialRevokedToken) {
 				foundRevoked = true
 			}
 		}
@@ -687,7 +687,7 @@ func TestAuditContent_AccessDeniedNonBearer(t *testing.T) {
 			return err
 		}
 		for _, e := range rl.Events {
-			if reason, _ := e.Payload["denial_reason"].(string); reason == string(auth.DenialInvalidToken) {
+			if reason, _ := e.Payload.Map()["denial_reason"].(string); reason == string(auth.DenialInvalidToken) {
 				foundInvalid = true
 			}
 		}
@@ -927,10 +927,10 @@ func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
 			return err
 		}
 		for _, e := range rl.Events {
-			skin, _ := e.Payload["protocol_skin"].(string)
-			action, _ := e.Payload["action"].(string)
-			path, _ := e.Payload["request_path"].(string)
-			method, _ := e.Payload["request_method"].(string)
+			skin, _ := e.Payload.Map()["protocol_skin"].(string)
+			action, _ := e.Payload.Map()["action"].(string)
+			path, _ := e.Payload.Map()["request_path"].(string)
+			method, _ := e.Payload.Map()["request_method"].(string)
 			if skin == "mcp" && action == "instance:create" && path == "/v1/instances" && method == "POST" {
 				foundMCPCreate = true
 			}

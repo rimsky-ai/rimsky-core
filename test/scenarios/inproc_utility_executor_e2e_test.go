@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,24 +17,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
+const inprocLoopCounterTemplateRel = "test/fixtures/inproc-loop-counter/template.yml"
+
 func resolveInprocExampleTemplate(t *testing.T) string {
 	t.Helper()
-	cwd, err := os.Getwd()
-	require.NoError(t, err)
-	rel := filepath.Join(cwd, "..", "..", "examples", "inproc-loop-counter", "template.yml")
-	if _, err := os.Stat(rel); err == nil {
-		abs, err := filepath.Abs(rel)
-		require.NoError(t, err)
-		return abs
-	}
-	rel = filepath.Join(cwd, "..", "examples", "inproc-loop-counter", "template.yml")
-	if _, err := os.Stat(rel); err == nil {
-		abs, err := filepath.Abs(rel)
-		require.NoError(t, err)
-		return abs
-	}
-	t.Fatalf("inproc loop_counter example YAML not found at expected paths (cwd=%s)", cwd)
-	return ""
+	return repoFilePath(t, inprocLoopCounterTemplateRel)
 }
 
 func TestInprocUtilityExecutorE2E(t *testing.T) {

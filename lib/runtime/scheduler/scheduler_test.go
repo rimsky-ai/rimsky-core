@@ -359,7 +359,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		return err
 	})
 	require.NotEmpty(t, events.Events, "expected an orphaned_claim_released event")
-	require.Equal(t, "http://unreachable-advertise-host:9099", events.Events[0].Payload["callback_url"],
+	require.Equal(t, "http://unreachable-advertise-host:9099", events.Events[0].Payload.Map()["callback_url"],
 		"the reap diagnostics must name the callback URL nobody called, so a misconfigured advertise host names its own cause")
 }
 

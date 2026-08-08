@@ -7,25 +7,26 @@ import (
 	"context"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 type EventRow struct {
-	ID         int64          `json:"id"`
-	InstanceID *shared.UUID   `json:"instance_id,omitempty"`
-	NodeID     *shared.UUID   `json:"node_id,omitempty"`
-	Kind       events.Kind    `json:"-"`
-	KindRaw    string         `json:"kind"`
-	Payload    map[string]any `json:"payload"`
-	OccurredAt time.Time      `json:"occurred_at"`
+	ID         int64                `json:"id"`
+	InstanceID *shared.UUID         `json:"instance_id,omitempty"`
+	NodeID     *shared.UUID         `json:"node_id,omitempty"`
+	Kind       events.Kind          `json:"-"`
+	KindRaw    string               `json:"kind"`
+	Payload    eventpayload.Payload `json:"payload"`
+	OccurredAt time.Time            `json:"occurred_at"`
 }
 
 type EventAppendInput struct {
 	InstanceID *shared.UUID
 	NodeID     *shared.UUID
 	Kind       events.Kind
-	Payload    map[string]any
+	Payload    eventpayload.Payload
 	OccurredAt *time.Time
 }
 

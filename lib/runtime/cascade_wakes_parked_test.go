@@ -114,7 +114,7 @@ func TestCascadeWalk_WakesParkedReceiverInTx(t *testing.T) {
 	for _, e := range events.Events {
 		if e.Kind.String() == "parked_resume_started" {
 			foundWake = true
-			require.Equal(t, string(runtime.WakeUpstreamCascade), e.Payload["resume_reason"],
+			require.Equal(t, string(runtime.WakeUpstreamCascade), e.Payload.Map()["resume_reason"],
 				"the wake event must carry the upstream_cascade resume reason")
 		}
 	}

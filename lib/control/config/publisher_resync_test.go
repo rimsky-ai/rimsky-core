@@ -28,6 +28,8 @@ type fakePublisherClient struct {
 	listedCount int
 }
 
+func (*fakePublisherClient) SupportedKinds(context.Context) ([]string, error) { return nil, nil }
+
 func (c *fakePublisherClient) Name() string { return c.name }
 
 func (c *fakePublisherClient) Subscribe(_ context.Context, req runtime.SubscribeRequest) error {

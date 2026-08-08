@@ -22,6 +22,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 )
 
 type capturedCallback struct {
@@ -135,9 +137,9 @@ func TestGrpcExecuteProbeCancelSignalsObservedThenAcknowledgedAndSurfacesCancele
 	acknowledged := make(chan struct{})
 	callbackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch strings.TrimPrefix(r.URL.Path, "/v1/callback/") {
-		case "cancel-observed":
+		case stubmode.CancelObservedAck:
 			close(observed)
-		case "cancel-acknowledged":
+		case stubmode.CancelAcknowledgedAck:
 			close(acknowledged)
 		}
 		w.WriteHeader(http.StatusNoContent)

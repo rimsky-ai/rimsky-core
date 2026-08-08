@@ -25,6 +25,9 @@ import (
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // @concept: host-agent-proxy
@@ -860,7 +863,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &inst.ID,
 				Kind:       events.KindInstanceTerminated(),
-				Payload:    map[string]any{"reason": reason},
+				Payload:    eventpayload.New(&genv1.InstanceTerminatedPayload{Reason: reason}),
 			}, tx)
 		}); err != nil {
 			writeError(w, err)

@@ -21,6 +21,9 @@ const (
 	EnvControlAPICA  = enroll.EnvControlAPICA
 )
 
+// @concept: peer-auth
+const EnvAllowPlaintextEnrollment = "RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT"
+
 const DefaultRenewCheckInterval = time.Minute
 
 type Config struct {
@@ -29,6 +32,9 @@ type Config struct {
 	APIKey           string
 	Label            string
 	ControlAPICARoot string
+
+	// @concept: peer-auth
+	AllowPlaintextEnrollment bool
 }
 
 func LoadConfigFromEnv(label string) (Config, error) {
@@ -46,7 +52,19 @@ func LoadConfigFromEnv(label string) (Config, error) {
 		APIKey:           strings.TrimSpace(os.Getenv(EnvAPIKey)),
 		Label:            label,
 		ControlAPICARoot: strings.TrimSpace(os.Getenv(EnvControlAPICA)),
+		// @concept: peer-auth
+		AllowPlaintextEnrollment: plaintextEnrollmentAllowed(),
 	}, nil
+}
+
+// @concept: peer-auth
+func plaintextEnrollmentAllowed() bool {
+	switch strings.TrimSpace(os.Getenv(EnvAllowPlaintextEnrollment)) {
+	case "", "0", "false", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 func Load(ctx context.Context, cfg Config, httpClient *http.Client, now func() time.Time) (*Identity, error) {
@@ -88,7 +106,11 @@ func enrollHTTPClient(cfg Config) (*http.Client, error) {
 			return nil, fmt.Errorf("peerauth: %s is set but %s=%q is not https — a pinned CA root cannot secure a plaintext enrollment hop",
 				EnvControlAPICA, EnvControlAPIURL, cfg.ControlAPIURL)
 		}
-		return &http.Client{Timeout: enrollHTTPTimeout}, nil
+		if cfg.AllowPlaintextEnrollment {
+			return &http.Client{Timeout: enrollHTTPTimeout}, nil
+		}
+		return nil, fmt.Errorf("peerauth: %s=%q is not https under %s=%s — the api-key travels this hop in the clear and the server is unverified, so enrollment is refused; use an https control-API URL with %s naming the deployment CA root, or set %s=1 to accept the exposure on a trusted local network",
+			EnvControlAPIURL, cfg.ControlAPIURL, EnvPeerAuth, enroll.PeerAuthMTLS, EnvControlAPICA, EnvAllowPlaintextEnrollment)
 	}
 	if cfg.ControlAPICARoot == "" {
 		return nil, fmt.Errorf("peerauth: %s=%q is https under %s=%s, so %s must name the deployment CA root PEM the control API's certificate is verified against — the api-key crosses this hop and an unverified server would receive it",

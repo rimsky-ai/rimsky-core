@@ -311,9 +311,9 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 	if stubMode {
 		attrs := req.GetAttributes().AsMap()
 		if stubmode.IsCancelProbe(attrs) && !ignoreCancelProbe {
-			postCancelProbeSignal(req.GetCallbackUrl(), "cancel-observed")
+			postCancelProbeSignal(req.GetCallbackUrl(), stubmode.CancelObservedAck)
 			<-ctx.Done()
-			postCancelProbeSignal(req.GetCallbackUrl(), "cancel-acknowledged")
+			postCancelProbeSignal(req.GetCallbackUrl(), stubmode.CancelAcknowledgedAck)
 			return nil, ctx.Err()
 		}
 		if stubmode.IsParkProbe(attrs) {
@@ -335,10 +335,12 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 			if err != nil {
 				return nil, err
 			}
+			// @concept: terminal-tag
 			return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
 				AttributesDelta: delta,
 				Changed:         true,
 				ChangeSummary:   "stub",
+				Tags:            requestedStubTags(attrs),
 			}}}, nil
 		}
 		delta, err := structpb.NewStruct(StubAttributesFor(req.GetNodeType()))
@@ -349,6 +351,7 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 			AttributesDelta: delta,
 			Changed:         true,
 			ChangeSummary:   "stub",
+			Tags:            requestedStubTags(attrs),
 		}}}, nil
 	}
 
@@ -458,4 +461,22 @@ func toStruct(v any) (*structpb.Struct, error) {
 		return structpb.NewStruct(map[string]any{"value": fmt.Sprintf("%v", v)})
 	}
 	return structpb.NewStruct(m)
+}
+
+// @concept: terminal-tag
+func requestedStubTags(attrs map[string]any) []string {
+	raw, ok := attrs[stubmode.TagsAttribute].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

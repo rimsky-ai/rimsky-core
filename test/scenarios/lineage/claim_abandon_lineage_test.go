@@ -104,7 +104,7 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 	}))
 	require.GreaterOrEqual(t, len(page.Events), 1,
 		"claim_resolution.abandon event must be emitted")
-	require.Equal(t, "natural", page.Events[0].Payload["cause"],
+	require.Equal(t, "natural", page.Events[0].Payload.Map()["cause"],
 		"natural Abandon event must carry cause=natural")
 }
 

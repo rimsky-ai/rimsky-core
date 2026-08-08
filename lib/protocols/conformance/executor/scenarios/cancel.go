@@ -34,8 +34,8 @@ func init() {
 				Attributes:  attrs,
 				CallbackUrl: env.Callbacks.URL(),
 			}
-			observed := env.Callbacks.Register("cancel-observed")
-			acknowledged := env.Callbacks.Register("cancel-acknowledged")
+			observed := env.Callbacks.Register(stubmode.CancelObservedAck)
+			acknowledged := env.Callbacks.Register(stubmode.CancelAcknowledgedAck)
 
 			execCtx, cancelExec := context.WithCancel(ctx)
 			defer cancelExec()

@@ -87,6 +87,7 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `operator-onboarding` — New operator runs first dev-loop end-to-end.
 - `peer-auth-mtls-mutual` — Operator enables mutual TLS on internal service traffic.
 - `peer-tls-enforced` — Operator enforces TLS on peer connections.
+- `permissive-peer-build` — Service author builds a peer without copyleft obligations.
 - `portable-template-across-modes` — The same template file runs in both modes without edits.
 - `producer-class-routing` — Template author routes producer-declared error classes.
 - `producer-error-passthrough` — Operator reads producer errors in API responses.

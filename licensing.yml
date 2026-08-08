@@ -24,8 +24,6 @@
 
 apache:
   - lib/protocols/   # wire IDL + generated bindings + protocol kit/helper packages + conformance libraries — the implement/link surface
-  # Edge carve-out — not the wire contract, but deliberately permissive:
-  - examples/   # copy-and-modify protocol examples; permissive so consumers can build on them
 
 agpl:
   - lib/foundation/

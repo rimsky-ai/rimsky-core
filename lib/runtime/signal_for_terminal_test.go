@@ -25,9 +25,9 @@ func TestSignalForTerminal_ErroredReusesThePolicyEmittedSignal(t *testing.T) {
 	if got.Type != policySig.Type {
 		t.Fatalf("Type = %q, want the policy-emitted %q", got.Type, policySig.Type)
 	}
-	if got.Payload["attempt"] != policySig.Payload["attempt"] {
+	if got.Payload.Map()["attempt"] != policySig.Payload.Map()["attempt"] {
 		t.Fatalf("Payload[attempt] = %v, want %v (the real retry count, not hardcoded 0)",
-			got.Payload["attempt"], policySig.Payload["attempt"])
+			got.Payload.Map()["attempt"], policySig.Payload.Map()["attempt"])
 	}
 }
 
@@ -56,7 +56,7 @@ func TestSignalForTerminal_ErroredFallsBackWithoutRetryDecision(t *testing.T) {
 	}
 
 	got := signalForTerminal(RunArgs{}, nil, t1)
-	if got.Payload["error_payload"] == nil {
+	if got.Payload.Map()["error_payload"] == nil {
 		t.Fatalf("expected the fallback reconstruction to still extract error_payload, got %+v", got.Payload)
 	}
 }

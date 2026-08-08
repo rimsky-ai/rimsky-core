@@ -9,6 +9,9 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func outcomeVerbName(o TerminalOutcome) string {
@@ -80,23 +83,21 @@ func emitTerminalForensics(
 		}
 	}
 	kind := events.KindClaimResolutionCommit()
-	payload := map[string]any{
-		"claim_handle_id":       td.ClaimHandleID.String(),
-		"run_id":                td.LineageHint.NodeRunID.String(),
-		"frame_id":              td.LineageHint.FrameID.String(),
-		"producer_name":         td.LineageHint.ProducerName,
-		"claim_scope_data_hash": rec.ClaimScopeDataHash,
-		"version_id":            rec.VersionID,
+	payload := &genv1.ClaimResolutionSettledPayload{
+		ClaimHandleId:      td.ClaimHandleID.String(),
+		RunId:              td.LineageHint.NodeRunID.String(),
+		FrameId:            td.LineageHint.FrameID.String(),
+		ProducerName:       td.LineageHint.ProducerName,
+		ClaimScopeDataHash: rec.ClaimScopeDataHash,
+		VersionId:          rec.VersionID,
 	}
 	if lineageParentClaimHandleID != nil {
-		payload["parent_claim_handle_id"] = lineageParentClaimHandleID.String()
+		s := lineageParentClaimHandleID.String()
+		payload.ParentClaimHandleId = &s
 	}
 	if td.Outcome.IsAbandon() {
 		kind = events.KindClaimResolutionAbandon()
-		payload["cause"] = td.Outcome.CauseString()
-	}
-	if rec.VersionID == "" {
-		delete(payload, "version_id")
+		payload.Cause = td.Outcome.CauseString()
 	}
 	nodeID := td.LineageHint.NodeID
 	instanceID := td.LineageHint.InstanceID
@@ -104,7 +105,7 @@ func emitTerminalForensics(
 		NodeID:     &nodeID,
 		InstanceID: &instanceID,
 		Kind:       kind,
-		Payload:    payload,
+		Payload:    eventpayload.New(payload),
 	}, tx); err != nil && args.Logger != nil {
 		args.Logger.Warn("ResolveClaimHandleTerminal: event append failed",
 			"claim_handle_id", td.ClaimHandleID.String(),

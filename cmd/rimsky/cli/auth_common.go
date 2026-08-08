@@ -25,6 +25,9 @@ func resolveAuthEndpointAndKey(flagEndpoint, flagKey string) (string, string, er
 	if key == "" {
 		key = os.Getenv("RIMSKY_API_KEY")
 	}
+	if key == "" {
+		key = ResolveAPIKeyFromContext(cfgPath)
+	}
 	return endpoint, key, nil
 }
 

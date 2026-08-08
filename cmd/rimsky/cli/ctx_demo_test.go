@@ -61,7 +61,7 @@ func TestCtxDemo(t *testing.T) {
 	binPath := filepath.Join(binDir, "rimsky")
 	buildRimskyCLI(t, binPath)
 
-	scriptPath := repoFile(t, "examples", "client-context-demo.sh")
+	scriptPath := repoFile(t, "test", "fixtures", "demos", "client-context-demo.sh")
 
 	homeDir := t.TempDir()
 

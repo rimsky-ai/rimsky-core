@@ -22,15 +22,11 @@ func EmitSignal(
 	occurredAt time.Time,
 	tx persistence.Tx,
 ) error {
-	payload := sig.Payload
-	if payload == nil {
-		payload = map[string]any{}
-	}
 	// @decision: event-log-kind-enum
 	in := persistence.EventAppendInput{
 		InstanceID: &instanceID,
 		Kind:       eventskinds.SignalKind(string(sig.Type)),
-		Payload:    payload,
+		Payload:    sig.Payload,
 	}
 	if nodeID != (shared.UUID{}) {
 		in.NodeID = &nodeID

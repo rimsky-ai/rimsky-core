@@ -32,8 +32,8 @@ func TestCascadeSendDemo_RunExitsZero(t *testing.T) {
 		harness.WithExecutor("verifier-shape-checks", verifierEP),
 	)
 
-	demoScript := repoExampleSpecPath(t, "examples/cascade-send-demo.sh")
-	repoExampleSpecPath(t, "examples/cascade-send-demo-template.yaml")
+	demoScript := repoExampleSpecPath(t, "test/fixtures/demos/cascade-send-demo.sh")
+	repoExampleSpecPath(t, "test/fixtures/demos/cascade-send-demo-template.yaml")
 
 	stdout, exitCode := runCascadeSendDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {

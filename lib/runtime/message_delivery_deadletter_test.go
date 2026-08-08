@@ -90,10 +90,10 @@ func TestDeliverNamedMessageInTx_NoReceiverRecordsDeadLetterAuditEvent(t *testin
 		t.Fatalf("expected a %s event to be persisted for the no-receiver message; events = %+v",
 			events.KindMessageDeadLettered().String(), evs.Events)
 	}
-	if found.Payload["message_id"] != msg.ID.String() {
-		t.Fatalf("dead-letter event payload message_id = %v, want %s", found.Payload["message_id"], msg.ID.String())
+	if found.Payload.Map()["message_id"] != msg.ID.String() {
+		t.Fatalf("dead-letter event payload message_id = %v, want %s", found.Payload.Map()["message_id"], msg.ID.String())
 	}
-	if found.Payload["message_type"] != msg.Type {
-		t.Fatalf("dead-letter event payload message_type = %v, want %s", found.Payload["message_type"], msg.Type)
+	if found.Payload.Map()["message_type"] != msg.Type {
+		t.Fatalf("dead-letter event payload message_type = %v, want %s", found.Payload.Map()["message_type"], msg.Type)
 	}
 }

@@ -284,3 +284,42 @@ func TestEnrollWithNilClockDefaultsToSystemClock(t *testing.T) {
 		t.Fatalf("issued cert SAN URIs %v do not include %q", cert.URIs, wantURI)
 	}
 }
+
+// @concept: peer-auth
+func TestCARootServedUnauthenticated(t *testing.T) {
+	h := newEnrollHarness(t, true, false)
+
+	resp, err := http.Get(h.srv.URL + "/v1/ca-root")
+	if err != nil {
+		t.Fatalf("GET /v1/ca-root: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — a service must be able to fetch the root before it has any token", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	block, _ := pem.Decode(body)
+	if block == nil || block.Type != "CERTIFICATE" {
+		t.Fatalf("body is not a PEM certificate: %q", string(body))
+	}
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		t.Fatalf("body does not parse as a certificate: %v", err)
+	}
+}
+
+// @concept: peer-auth
+func TestCARootAbsentWhenPeerAuthNotConfigured(t *testing.T) {
+	h := newEnrollHarness(t, false, false)
+
+	resp, err := http.Get(h.srv.URL + "/v1/ca-root")
+	if err != nil {
+		t.Fatalf("GET /v1/ca-root: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 when no deployment CA is configured", resp.StatusCode)
+	}
+}

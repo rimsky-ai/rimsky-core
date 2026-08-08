@@ -124,16 +124,16 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 			return err
 		}
 		for _, e := range rl.Events {
-			action, _ := e.Payload["action"].(string)
+			action, _ := e.Payload.Map()["action"].(string)
 			if action != "instance:create" {
 				continue
 			}
-			mode, _ := e.Payload["mode"].(string)
+			mode, _ := e.Payload.Map()["mode"].(string)
 			if mode != string(auth.ModeDryRun) {
 				continue
 			}
 			sawFlooredAttempt = true
-			if exec, _ := e.Payload["executed"].(bool); exec {
+			if exec, _ := e.Payload.Map()["executed"].(bool); exec {
 				t.Errorf("floored instance:create audit row has executed=true: %+v", e.Payload)
 			}
 		}

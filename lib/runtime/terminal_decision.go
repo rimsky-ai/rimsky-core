@@ -120,7 +120,8 @@ func ResolveClaimHandleTerminal(
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: unknown terminal outcome %q for claim_handle %s",
 			td.Outcome, td.ClaimHandleID)
 	}
-	if err := dispatchDataProcessingTerminal(ctx, args, td, tx); err != nil {
+	candidateMetadata, err := dispatchDataProcessingTerminal(ctx, args, td, tx)
+	if err != nil {
 		return nil, err
 	}
 	// @concept: terminal-resolution
@@ -160,6 +161,8 @@ func ResolveClaimHandleTerminal(
 		ParentClaimHandleID: *td.ParentClaimHandleID,
 		ChildClaimHandleID:  td.ClaimHandleID,
 		ChildOutcome:        td.Outcome,
+		// @concept: data-processing
+		ChildProducerMetadata: candidateMetadata,
 	}, tx)
 	if err != nil {
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: settle children: %w", err)
@@ -171,24 +174,25 @@ func ResolveClaimHandleTerminal(
 // @concept: data-processing
 func dispatchDataProcessingTerminal(
 	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
-) error {
+) ([]byte, error) {
 	if len(td.CandidateHandle) == 0 || td.ProducerName == "" || args.DataProcessors == nil {
-		return nil
+		return nil, nil
 	}
 	dp, ok := args.DataProcessors.Get(td.ProducerName)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if td.Outcome == OutcomeCommit {
-		if _, cErr := dp.CommitCandidate(ctx, CommitCandidateInput{
+		out, cErr := dp.CommitCandidate(ctx, CommitCandidateInput{
 			ProducerName:    td.ProducerName,
 			ClaimHandleID:   td.ClaimHandleID.String(),
 			CandidateHandle: td.CandidateHandle,
-		}); cErr != nil {
-			return fmt.Errorf("ResolveClaimHandleTerminal: CommitCandidate(%s): %w",
+		})
+		if cErr != nil {
+			return nil, fmt.Errorf("ResolveClaimHandleTerminal: CommitCandidate(%s): %w",
 				td.ProducerName, cErr)
 		}
-		return nil
+		return out.CandidateMetadata, nil
 	}
 	if td.Outcome.IsAbandon() {
 		if err := dp.AbandonCandidate(ctx, AbandonCandidateInput{
@@ -196,11 +200,11 @@ func dispatchDataProcessingTerminal(
 			ClaimHandleID:   td.ClaimHandleID.String(),
 			CandidateHandle: td.CandidateHandle,
 		}); err != nil {
-			return fmt.Errorf("ResolveClaimHandleTerminal: AbandonCandidate(%s): %w",
+			return nil, fmt.Errorf("ResolveClaimHandleTerminal: AbandonCandidate(%s): %w",
 				td.ProducerName, err)
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func promoteHandleState(

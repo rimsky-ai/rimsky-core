@@ -47,7 +47,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `message` — A typed envelope whose arrival at an instance opens a frame.
 - `message-sender-node` — A message-sender-node is a node-type whose dispatch mode is "build a message envelope from the node's attributes and insert it into the message ledger."
 - `message-schema` — A message-schema is the template-level registry of accepted message types for instances of that template.
-- `module-layout` (aliases: workspace-layout) — The Go workspace ties five modules into one build.
+- `module-layout` (aliases: workspace-layout) — The Go workspace ties four modules into one build.
 - `named-lock` — A named lock is a producer-independent capacity-counter primitive.
 - `node` (aliases: graph-node) — A node is one declarative unit of work in a template's graph.
 - `node-run` — The node-run row is the parent row for one execution of one node within a frame.

@@ -25,6 +25,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 )
 
 // @concept: attribute
@@ -120,10 +122,10 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 				Kind: events.KindUnresolvedExecutor(),
-				Payload: map[string]any{
-					"executor_name": acq.Executor,
-					"supervisor_id": args.SupervisorID,
-				},
+				Payload: eventpayload.New(&genv1.UnresolvedExecutorPayload{
+					ExecutorName: acq.Executor,
+					SupervisorId: args.SupervisorID,
+				}),
 			}, tx)
 		}); err != nil && args.Logger != nil {
 			args.Logger.Warn("runner_dispatch: append unresolved_executor event failed",
@@ -204,10 +206,10 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		maxQuietSec, maxRuntimeSec := computeEffectiveDeadlineSecs(acq.NodeDef, dctx.Args.MaxQuietPeriodDefault, dctx.Args.MaxRuntimeDefault)
 		awaitSig := signalpkg.Signal{
 			Type: "transient/await_async",
-			Payload: map[string]any{
-				"async_ack_id": asyncAck,
-				"callback_url": dctx.Args.CallbackURL,
-			},
+			Payload: eventpayload.New(&genv1.TransientAwaitAsyncSignalPayload{
+				AsyncAckId:  asyncAck,
+				CallbackUrl: dctx.Args.CallbackURL,
+			}),
 		}
 		if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			if err := dctx.Args.Queue.RegisterAsyncAck(ctx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal, dctx.Args.CallbackURL, tx); err != nil {
@@ -374,7 +376,7 @@ func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) term
 
 // @decision: walker-rule-per-sender-node
 // @story: resume-preserves-snapshot
-func resolveAttributesCore(ctx context.Context, args RunArgs, acq *acquisition) (filled, schema map[string]any, matched []int, partitionKey string, err error) {
+func resolveAttributesCore(ctx context.Context, args RunArgs, acq *acquisition) (filled, schema map[string]any, matched []attributeOverrideMatch, partitionKey string, err error) {
 	snapshot, schema, err := loadDispatchBag(ctx, args, acq)
 	if err != nil {
 		return nil, schema, nil, "", err
@@ -430,7 +432,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 		return nil, schema, err
 	}
 	acq.MergedAttributes = filled
-	if err := emitOverrideMatchEventsAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched); err != nil {
+	if err := emitOverrideMatchEventsAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, acq.NodeType, matched); err != nil {
 		return nil, schema, err
 	}
 	bpFilled, bpErr := evaluateBeforeDispatchBreakpoints(ctx, args, acq, partitionKey, filled, schema)
@@ -452,9 +454,9 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 				Kind: events.KindAttributesSubstituted(),
-				Payload: map[string]any{
-					"substituted_fields": fieldNames(filled),
-				},
+				Payload: eventpayload.New(&genv1.AttributesSubstitutedPayload{
+					SubstitutedFields: fieldNames(filled),
+				}),
 			}, tx)
 		}); err != nil && args.Logger != nil {
 			args.Logger.Warn("runner_dispatch: append attributes_substituted event failed",
@@ -616,7 +618,7 @@ func substituteAttributesSchemaWith(
 				if deferClaimRefs && attributes.IsMissingSource(err) && sourceReferencesLateBound(source) {
 					continue
 				}
-				return nil, err
+				return nil, attributes.WithField(err, name)
 			}
 			if val == nil {
 				out[name] = emptyValueForSchemaProperty(prop)
@@ -670,7 +672,7 @@ func fillClaimRefs(
 		}
 		val, err := attributes.SubstituteValue(source, rctx)
 		if err != nil {
-			return nil, err
+			return nil, attributes.WithField(err, name)
 		}
 		if val == nil {
 			out[name] = emptyValueForSchemaProperty(prop)

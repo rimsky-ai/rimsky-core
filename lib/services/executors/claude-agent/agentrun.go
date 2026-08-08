@@ -125,7 +125,7 @@ func RunAgent(opts AgentRunOptions) AgentOutcome {
 }
 
 func malformedAttributesReason(attrs map[string]any) string {
-	if _, ok := attrs["_invalid"]; ok {
+	if _, ok := attrs[stubmode.MalformedShapeAttribute]; ok {
 		return "attributes._invalid present (reserved)"
 	}
 	return ""

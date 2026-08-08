@@ -315,9 +315,9 @@ func postCancelProbeSignal(callbackURL, ackID string) {
 }
 
 func executeCancelProbe(ctx context.Context, callbackURL string) error {
-	postCancelProbeSignal(callbackURL, "cancel-observed")
+	postCancelProbeSignal(callbackURL, stubmode.CancelObservedAck)
 	<-ctx.Done()
-	postCancelProbeSignal(callbackURL, "cancel-acknowledged")
+	postCancelProbeSignal(callbackURL, stubmode.CancelAcknowledgedAck)
 	return ctx.Err()
 }
 

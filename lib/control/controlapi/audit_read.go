@@ -115,7 +115,7 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 			item := eventResponseItem{
 				ID:         e.ID,
 				Kind:       e.KindRaw,
-				Payload:    e.Payload,
+				Payload:    e.Payload.Map(),
 				OccurredAt: e.OccurredAt,
 			}
 			if e.InstanceID != nil {

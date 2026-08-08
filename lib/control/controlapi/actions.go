@@ -13,6 +13,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
+type AuthPosture string
+
+const (
+	PostureUnauthenticated AuthPosture = "unauthenticated"
+
+	PostureIdentityOnly AuthPosture = "identity-only"
+
+	PosturePermissioned AuthPosture = "permissioned"
+)
+
 type ActionEntry struct {
 	Action   string
 	IsWrite  bool
@@ -21,7 +31,18 @@ type ActionEntry struct {
 
 	ScopeDimensions []string
 
+	Posture AuthPosture
+
+	MountedWhen string
+
 	Description string
+}
+
+func (e ActionEntry) ResolvedPosture() AuthPosture {
+	if e.Posture == "" {
+		return PosturePermissioned
+	}
+	return e.Posture
 }
 
 type Route struct {
@@ -100,6 +121,20 @@ func (r *ActionRegistry) IsKnownAction(action string) bool {
 	return ok
 }
 
+func (r *ActionRegistry) PostureForRoute(method, pattern string) (AuthPosture, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	action, ok := r.byRoute[method+" "+pattern]
+	if !ok {
+		return "", false
+	}
+	e, ok := r.entries[action]
+	if !ok {
+		return "", false
+	}
+	return e.ResolvedPosture(), true
+}
+
 func (r *ActionRegistry) ScopeDimensionsFor(action string) ([]string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -120,6 +155,12 @@ func (r *ActionRegistry) ValidateGrantScope(grant auth.Grant) error {
 		entry, ok := r.entries[e.Action]
 		if !ok {
 			continue
+		}
+		if p := entry.ResolvedPosture(); p != PosturePermissioned {
+			return fmt.Errorf(
+				"grant entry %d: action %q carries the %s posture, so no permission is ever consulted for it; "+
+					"an accepted grant naming it could never take effect",
+				i, e.Action, p)
 		}
 		if len(e.Scope) == 0 {
 			continue
@@ -193,6 +234,24 @@ func BuildV1Registry() *ActionRegistry {
 }
 
 var v1Actions = []ActionEntry{
+	{Action: "health:probe", IsWrite: false,
+		Routes:      []Route{{Method: "GET", Path: "/v1/health"}},
+		Posture:     PostureUnauthenticated,
+		Description: "Liveness probe for infrastructure. Requires no token: it answers success while persistence is reachable and non-success when it is not, and persistence availability is the one dependency it checks."},
+
+	// @concept: peer-auth
+	{Action: "peer-auth:ca-root", IsWrite: false,
+		Routes:      []Route{{Method: "GET", Path: "/v1/ca-root"}},
+		Posture:     PostureUnauthenticated,
+		MountedWhen: "peer authentication is configured with a deployment CA",
+		Description: "Serve the deployment CA root certificate as PEM. Unauthenticated by necessity: a service needs this root to verify the control API's certificate before it can present a token to enroll, so requiring a token would be a chicken-and-egg. The root is a public certificate; nothing secret is disclosed."},
+
+	// @concept: api-key
+	{Action: "auth:whoami", IsWrite: false,
+		Routes:      []Route{{Method: "GET", Path: "/v1/auth/whoami"}},
+		Posture:     PostureIdentityOnly,
+		Description: "Echo the caller's own identity. Requires a valid token but no permission: a permission on this route could only ask whether a key may learn its own name, and a denial would be unlearnable — the caller cannot discover which key it is holding in order to ask for the grant. Not grantable; naming it in a permission is refused."},
+
 	{Action: "instance:read", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/instances"}, {Method: "GET", Path: "/v1/instances/{idOrKey}"}},
 		MCPTools:    []string{"instance_list", "instance_get"},
@@ -205,7 +264,7 @@ var v1Actions = []ActionEntry{
 	{Action: "instance:terminate", IsWrite: true,
 		Routes:      []Route{{Method: "DELETE", Path: "/v1/instances/{idOrKey}"}},
 		MCPTools:    []string{"instance_terminate"},
-		Description: "Terminate an instance."},
+		Description: "Delete an already-terminal instance and its rows; refused with 409 while the instance is still running. Use instance:kill to force a running instance terminal."},
 	{Action: "instance:pause", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/instances/{idOrKey}/pause"}},
 		MCPTools:    []string{"instance_pause"},
@@ -217,7 +276,7 @@ var v1Actions = []ActionEntry{
 	{Action: "instance:kill", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/instances/{idOrKey}/terminate"}},
 		MCPTools:    []string{"instance_kill"},
-		Description: "Force-terminate an instance: mark it terminal and abandon in-flight node-runs."},
+		Description: "Force a running instance terminal: mark it terminated, fail every in-flight node-run, cancel pending messages, and end open frames. Already-terminal instances return unchanged."},
 	{Action: "instance:debug-override", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/instances/{id}/debug/override"}},
 		MCPTools:    []string{"instance_debug_override"},
@@ -240,7 +299,7 @@ var v1Actions = []ActionEntry{
 			{Method: "GET", Path: "/v1/instances/{idOrKey}/breakpoint-hits"},
 		},
 		MCPTools:    []string{"breakpoint_list"},
-		Description: "List active breakpoints installed on an instance, or read its pending breakpoint hits."},
+		Description: "List active breakpoints installed on an instance, or read its breakpoint hits. The hits route returns every hit after the caller's ?since= cursor — not only unresumed ones — and answers with the next cursor and whether the page was truncated."},
 	{Action: "breakpoint:create", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/instances/{idOrKey}/breakpoints"}},
 		MCPTools:    []string{"breakpoint_create"},
@@ -276,7 +335,7 @@ var v1Actions = []ActionEntry{
 		Routes:          []Route{{Method: "POST", Path: "/v1/templates/{id}/undeploy"}},
 		MCPTools:        []string{"template_undeploy"},
 		ScopeDimensions: []string{"template_tag"},
-		Description:     "Mark a template undeployed; new instances rejected."},
+		Description:     "Mark a template undeployed so new instances are rejected. Refused while any instance of the template is still active; already-undeployed templates are a no-op."},
 	{Action: "template:deregister", IsWrite: true,
 		Routes:          []Route{{Method: "DELETE", Path: "/v1/templates/{id}"}},
 		MCPTools:        []string{"template_deregister"},
@@ -309,7 +368,7 @@ var v1Actions = []ActionEntry{
 	{Action: "node:reset", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/nodes/{id}/reset"}},
 		MCPTools:    []string{"node_reset"},
-		Description: "Reset a failed node back to stale so it can be re-attempted."},
+		Description: "Clear the failed-terminal settling-signal marker on a node so it becomes eligible again. Performs no state transition and does not re-dispatch. Refused with 409 unless the node has a failed terminal run in some scope."},
 
 	// @concept: node-run
 	// @decision: node-state-retired-from-operator-api
@@ -321,7 +380,7 @@ var v1Actions = []ActionEntry{
 	{Action: "message:send", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/instances/{id}/messages"}},
 		MCPTools:    []string{"message_send"},
-		Description: "Send a message into an instance's message bus."},
+		Description: "Send a message into an instance's message bus. Requires an Idempotency-Key request header; a retry with the same key replays instead of double-sending."},
 	{Action: "message:read", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/instances/{id}/messages"}, {Method: "GET", Path: "/v1/messages/{id}"}},
 		MCPTools:    []string{"message_list", "message_get"},
@@ -352,7 +411,7 @@ var v1Actions = []ActionEntry{
 			"lineage_get", "lineage_run_ancestors", "lineage_run_descendants",
 			"lineage_claim_ancestors", "lineage_claim_descendants",
 		},
-		Description: "Read lineage graphs."},
+		Description: "Read lineage: one run or claim-handle record by id, its ancestors or descendants to a bounded walk depth, or the records produced by a given source or executor."},
 	{Action: "lineage:prune", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/admin/lineage/prune"}},
 		MCPTools:    []string{"lineage_prune"},
@@ -361,12 +420,12 @@ var v1Actions = []ActionEntry{
 	{Action: "parked-node:read", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/admin/diagnostics/parked-nodes"}},
 		MCPTools:    []string{"parked_node_list"},
-		Description: "List nodes parked in the wait-set."},
+		Description: "List node-runs currently parked, with when each parked and when it is due to resume. This is the park roster, not the wait-set — waitset:read reads the sender/receiver edges."},
 
 	{Action: "waitset:read", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/admin/diagnostics/wait-sets"}},
 		MCPTools:    []string{"waitset_list"},
-		Description: "List wait-set entries (sender/receiver edges)."},
+		Description: "List wait-set entries (sender/receiver edges) for one frame. Requires a ?frame= query parameter; optionally narrowed to one receiver run."},
 
 	{Action: "claim-holders:read", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/claim-handles/{claim_handle_id}/holders"}},
@@ -385,7 +444,7 @@ var v1Actions = []ActionEntry{
 	{Action: "asset:delete", IsWrite: true,
 		Routes:      []Route{{Method: "DELETE", Path: "/v1/instances/{id}/assets/{alias}"}},
 		MCPTools:    []string{"asset_delete"},
-		Description: "Delete an asset on an instance."},
+		Description: "Delete an asset on an instance: releases the claim through its producer, then removes the claim-handle row. Refused while any holder of the claim is still active, and refused when the producer cannot be resolved."},
 
 	{Action: "diagnostics:read", IsWrite: false,
 		Routes: []Route{
@@ -414,12 +473,13 @@ var v1Actions = []ActionEntry{
 	{Action: "auth:rotate", IsWrite: true,
 		Routes:      []Route{{Method: "POST", Path: "/v1/auth/keys/{nameOrID}/rotate"}},
 		MCPTools:    []string{"auth_rotate_key"},
-		Description: "Rotate an API key (mint a new plaintext with same identity; old key revoked at grace expiry)."},
+		Description: "Rotate an API key: mint a new key id and plaintext under the same key name and permissions; the old key id keeps working until the grace window expires, then is revoked."},
 
 	// @decision: mcp-http-parity
 	{Action: "observability:read", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/observability/*"}},
 		MCPTools:    []string{"observability_get"},
+		MountedWhen: "an observability handler is configured",
 		Description: "Read observability data via /v1/observability/*; the MCP tool takes the path below /v1/observability/ as its path_suffix argument."},
 
 	// @concept: permission
@@ -437,5 +497,6 @@ var v1Actions = []ActionEntry{
 	{Action: "service:enroll", IsWrite: false,
 		Routes:      []Route{{Method: "POST", Path: "/v1/enroll"}},
 		MCPTools:    []string{"service_enroll"},
+		MountedWhen: "peer authentication is configured with a deployment CA",
 		Description: "Exchange the caller's api-key for a short-lived mTLS leaf certificate (peer authentication enrollment)."},
 }

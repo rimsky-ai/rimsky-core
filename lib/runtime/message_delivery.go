@@ -18,6 +18,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type EnqueueMessageDeps interface {
@@ -176,11 +179,11 @@ func deliverNamedMessageInTx(
 		if err := persist.Events().Append(ctx, persistence.EventAppendInput{
 			InstanceID: &instID,
 			Kind:       events.KindMessageDeadLettered(),
-			Payload: map[string]any{
-				"message_id":   msg.ID.String(),
-				"message_type": msg.Type,
-				"reason":       "no_message_receiver_node",
-			},
+			Payload: eventpayload.New(&genv1.MessageDeadLetteredPayload{
+				MessageId:   msg.ID.String(),
+				MessageType: msg.Type,
+				Reason:      "no_message_receiver_node",
+			}),
 		}, tx); err != nil {
 			return fmt.Errorf("deliverNamedMessageInTx: append dead-letter audit event for %q: %w", msg.Type, err)
 		}

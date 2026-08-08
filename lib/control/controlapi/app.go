@@ -84,6 +84,7 @@ func NewApp(deps AppDeps) http.Handler {
 	// @decision: protocol-version-v1-namespaced
 	r.Route("/v1", func(v1 chi.Router) {
 		registerHealthRoutes(v1, deps)
+		registerCARootRoute(v1, deps)
 
 		v1.Group(func(rr chi.Router) {
 			rr.Use(deps.AuthState.IdentityResolver())

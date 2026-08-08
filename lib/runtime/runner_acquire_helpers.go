@@ -217,37 +217,33 @@ func instanceParamsRaw(out *acquisition) (json.RawMessage, error) {
 }
 
 // @concept: executor
+// @concept: inertness
 func loadScratchIntoAcquisition(
 	ctx context.Context, args RunArgs, out *acquisition, cand persistence.Candidate, tx persistence.Tx,
-) {
+) error {
 	inline, handle, handleBackend, err := args.Queue.LoadScratch(ctx, cand.NodeRunID, tx)
 	if err != nil {
-		args.Logger.Warn("tryAcquire: LoadScratch failed; passing empty scratch to executor",
-			"dispatch_id", cand.NodeRunID.String(), "error", err.Error())
-		return
+		return fmt.Errorf("loadScratch: reading persisted scratch for dispatch %s: %w", cand.NodeRunID, err)
 	}
 	if handle == "" {
 		out.Scratch = inline
-		return
+		return nil
 	}
 	if args.Blob == nil {
-		args.Logger.Warn("tryAcquire: spilled scratch but no BlobBackend configured; passing empty scratch to executor",
-			"node_id", cand.NodeID.String(),
-			"handle_backend", handleBackend)
-		return
+		return fmt.Errorf(
+			"loadScratch: dispatch %s carries scratch spilled to blob backend %q but no blob backend is configured",
+			cand.NodeRunID, handleBackend)
 	}
 	if args.Blob.Name() != handleBackend {
-		args.Logger.Warn("tryAcquire: blob backend mismatch on scratch; passing empty scratch to executor",
-			"node_id", cand.NodeID.String(),
-			"current_backend", args.Blob.Name(),
-			"handle_backend", handleBackend)
-		return
+		return fmt.Errorf(
+			"loadScratch: dispatch %s carries scratch spilled to blob backend %q but the configured backend is %q",
+			cand.NodeRunID, handleBackend, args.Blob.Name())
 	}
 	b, berr := args.Blob.Read(ctx, persistence.Handle(handle))
 	if berr != nil {
-		args.Logger.Warn("tryAcquire: blob fetch for scratch failed; passing empty scratch to executor",
-			"node_id", cand.NodeID.String(), "error", berr.Error())
-		return
+		return fmt.Errorf("loadScratch: reading spilled scratch for dispatch %s from backend %q: %w",
+			cand.NodeRunID, handleBackend, berr)
 	}
 	out.Scratch = b
+	return nil
 }

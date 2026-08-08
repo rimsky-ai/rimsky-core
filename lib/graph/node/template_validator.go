@@ -64,6 +64,9 @@ type RegistryHooks struct {
 
 	ClaimProducerAdvertisesSplitScope func(name string) bool
 
+	// @concept: publisher
+	PublisherDeclaredKinds func(name string) ([]string, bool)
+
 	// @concept: node
 	KindAliases *KindAliasMap
 }
@@ -136,7 +139,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	}
 
 	validateHoldsAcyclic(spec, &res)
-	validatePublishers(spec, declaredMessages, &res)
+	validatePublishers(spec, declaredMessages, hooks, &res)
 
 	// @concept: message-schema
 	messageRefs := ExtractMessageRefsFromTemplate(*spec)
@@ -1021,6 +1024,36 @@ func validateRetryBackoff(n TemplateNodeDef, base string, res *ValidationResult)
 				n.RetryBackoff.Jitter, spec.JitterNone, spec.JitterPlusMinus),
 		})
 	}
+	if n.RetryBackoff.BaseDelayMs < 0 {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".retry_backoff.base_delay_ms",
+			Msg:  fmt.Sprintf("base_delay_ms must not be negative, got %d", n.RetryBackoff.BaseDelayMs),
+		})
+	}
+	if n.RetryBackoff.BaseDelayMs == 0 && backoffIsConfigured(n.RetryBackoff) {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".retry_backoff.base_delay_ms",
+			Msg:  "base_delay_ms must be greater than zero when retry_backoff is configured: a zero base makes every computed delay zero",
+		})
+	}
+	if n.RetryBackoff.MaxDelayMs < 0 {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".retry_backoff.max_delay_ms",
+			Msg:  fmt.Sprintf("max_delay_ms must not be negative, got %d", n.RetryBackoff.MaxDelayMs),
+		})
+	}
+	if n.RetryBackoff.MaxDelayMs > 0 && n.RetryBackoff.BaseDelayMs > 0 && n.RetryBackoff.MaxDelayMs < n.RetryBackoff.BaseDelayMs {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".retry_backoff.max_delay_ms",
+			Msg: fmt.Sprintf("max_delay_ms %d is below base_delay_ms %d: the ceiling would clamp every delay to the ceiling",
+				n.RetryBackoff.MaxDelayMs, n.RetryBackoff.BaseDelayMs),
+		})
+	}
+}
+
+// @concept: error-policy
+func backoffIsConfigured(b *spec.RetryBackoffConfig) bool {
+	return b.Kind != "" || b.Jitter != "" || b.MaxDelayMs != 0
 }
 
 func validateCascadeMode(n TemplateNodeDef, base string, res *ValidationResult) {

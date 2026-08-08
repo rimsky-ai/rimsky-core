@@ -28,6 +28,26 @@ func registerEnrollRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/enroll", deps.AuthState.gateByAction("service:enroll", handleEnroll(deps)))
 }
 
+// @concept: peer-auth
+func registerCARootRoute(r chi.Router, deps AppDeps) {
+	if deps.Enroll == nil || deps.Enroll.CA == nil {
+		return
+	}
+	r.Get("/ca-root", handleCARoot(deps))
+}
+
+// @concept: peer-auth
+// @decision: enroll-token-is-api-key
+func handleCARoot(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		pem := deps.Enroll.CA.CertPEM()
+		w.Header().Set("Content-Type", "application/x-pem-file")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pem)
+	}
+}
+
 // @decision: enroll-token-is-api-key
 func handleEnroll(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

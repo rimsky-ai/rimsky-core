@@ -671,7 +671,7 @@ func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID stri
 		}
 		if poll%50 == 0 {
 			t.Logf("harness: still waiting for all subscriptions on instance %s to reach state=active "+
-				"(last observed: %s) — the helper blocks until they do; the suite-level timeout is the only backstop",
+				"(last observed: %s) — the helper blocks until they do; the test guard's no-progress watchdog is the only backstop",
 				instanceID, last)
 		}
 		time.Sleep(200 * time.Millisecond)

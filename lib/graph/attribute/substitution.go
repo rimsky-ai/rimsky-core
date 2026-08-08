@@ -59,6 +59,7 @@ type ResolveContext struct {
 type ErrMissingSource struct {
 	Directive string
 	Reason    string
+	Field     string
 }
 
 func (e *ErrMissingSource) Error() string {
@@ -68,6 +69,23 @@ func (e *ErrMissingSource) Error() string {
 func IsMissingSource(err error) bool {
 	var m *ErrMissingSource
 	return errors.As(err, &m)
+}
+
+func WithField(err error, field string) error {
+	var m *ErrMissingSource
+	if !errors.As(err, &m) || m.Field != "" {
+		return err
+	}
+	m.Field = field
+	return err
+}
+
+func FieldOf(err error) string {
+	var m *ErrMissingSource
+	if errors.As(err, &m) {
+		return m.Field
+	}
+	return ""
 }
 
 type ErrFallbackChain struct {

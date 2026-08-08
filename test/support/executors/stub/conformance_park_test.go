@@ -28,3 +28,22 @@ func TestConformanceParkEmission_HonestStubPasses(t *testing.T) {
 	require.False(t, r.Skipped, "park_emission scenario unexpectedly skipped: %s", r.Error)
 	require.True(t, r.Passed, "park_emission scenario expected to PASS against the honest stub, got Error: %s", r.Error)
 }
+
+// @concept: terminal-tag
+// @concept: conformance
+func TestConformanceTagsRoundTrip_InTreeStubPasses(t *testing.T) {
+	s := New().EnableStubMode()
+	addr := listenForTest(t, s)
+
+	results, err := executorconf.Run(context.Background(), executorconf.RunnerOpts{
+		Endpoint: executorconf.Endpoint{Transport: "grpc", URL: addr},
+		Only:     []string{"tags_round_trip"},
+		Timeout:  30 * time.Second,
+	})
+	require.NoError(t, err)
+	r := findScenarioResult(t, results, "tags_round_trip")
+	require.False(t, r.Skipped,
+		"the in-tree stub declares five tags, so the tag round-trip must not self-skip: %s", r.Error)
+	require.True(t, r.Passed,
+		"the in-tree stub declares five tags, so it must echo the requested one back: %s", r.Error)
+}

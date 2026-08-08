@@ -53,6 +53,7 @@ message OpenRequest {
   string instance_id = 7;
   string run_scope_id = 8;
   string lifetime = 9;
+  bytes data = 10;
 }
 
 message OpenResponse {

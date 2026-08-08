@@ -5,6 +5,7 @@ package scenario
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"testing"
 
@@ -31,6 +32,11 @@ func WriteClaimRef(producerName, selector string) node.NodeClaimProducerRef {
 
 func AliasedClaimRef(producerName, selector string, intent claimproducer.Intent, alias string) node.NodeClaimProducerRef {
 	return node.NodeClaimProducerRef{Name: producerName, Selector: selector, Intent: intent, Alias: alias}
+}
+
+// @concept: inertness
+func ClaimRefWithData(producerName, selector string, data json.RawMessage) node.NodeClaimProducerRef {
+	return node.NodeClaimProducerRef{Name: producerName, Selector: selector, Intent: "rw", Data: data}
 }
 
 func MutexLock(name string) node.NodeLockRef {

@@ -11,6 +11,8 @@ import (
 
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 )
 
 // @concept: executor
@@ -19,7 +21,7 @@ func init() {
 		Name:         "malformed_attributes",
 		RequiresStub: true,
 		Run: func(ctx context.Context, env conformance.Env) error {
-			attrs, err := structpb.NewStruct(map[string]any{"_invalid": true})
+			attrs, err := structpb.NewStruct(map[string]any{stubmode.MalformedShapeAttribute: true})
 			if err != nil {
 				return fmt.Errorf("build attributes: %w", err)
 			}

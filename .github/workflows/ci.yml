@@ -21,10 +21,10 @@ permissions:
   contents: read
 
 jobs:
-  # Build + test the four Go modules (plus examples) tied together by go.work.
+  # Build + test the four Go modules tied together by go.work.
   # Sharded as a matrix over the per-module Makefile targets so each module's
   # test slice runs in parallel on its own runner — wall-clock is bounded by
-  # the slowest single module rather than the sum across all five.
+  # the slowest single module rather than the sum across all four.
   #
   # ubuntu-latest ships a running Docker daemon, so the testcontainers-backed
   # scenario/storage tests can spin up Postgres etc. The `services` shard is
@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [root, foundation, protocols, services, examples]
+        module: [root, foundation, protocols, services]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

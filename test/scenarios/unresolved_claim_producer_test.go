@@ -83,6 +83,8 @@ func TestUnresolvedClaimProducerFailsDispatchLoudly(t *testing.T) {
 	require.NoError(t, err,
 		"a store name that resolves nowhere must fail the claimed dispatch through the error path, not error the runner loop")
 
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
+
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, n.ID, tx)
@@ -106,7 +108,7 @@ func TestUnresolvedClaimProducerFailsDispatchLoudly(t *testing.T) {
 		if strings.Contains(e.KindRaw, "unresolved_claim_producer") {
 			sawUnresolvedClass = true
 		}
-		for _, v := range e.Payload {
+		for _, v := range e.Payload.Map() {
 			if s, ok := v.(string); ok && strings.Contains(s, "unresolved_claim_producer") {
 				sawUnresolvedClass = true
 			}

@@ -2753,8 +2753,8 @@ func TestCheckAndFireResolution_HeldCoHolderSettlement_EmitsEmptyAttributesDelta
 			continue
 		}
 		sawSuccess = true
-		delta, ok := ev.Payload["attributes_delta"].(map[string]any)
-		require.True(t, ok, "terminal/success payload must carry an attributes_delta map, got %#v", ev.Payload["attributes_delta"])
+		delta, ok := ev.Payload.Map()["attributes_delta"].(map[string]any)
+		require.True(t, ok, "terminal/success payload must carry an attributes_delta map, got %#v", ev.Payload.Map()["attributes_delta"])
 		require.Empty(t, delta,
 			"a passive held co-holder's own auto-terminal settlement must carry an empty attributes_delta "+
 				"(it did not itself produce new attributes at this settlement moment); got %#v", delta)

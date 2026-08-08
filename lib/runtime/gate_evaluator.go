@@ -17,6 +17,9 @@ import (
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/template/canonical"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // @concept: cascade
@@ -138,12 +141,12 @@ func routeSubstitutionFailureAtGate(
 		NodeID:     &row.NodeID,
 		InstanceID: &receiverNode.InstanceID,
 		Kind:       eventKind,
-		Payload: map[string]any{
-			"directive": directive,
-			"site":      substitutionSiteAttribute,
-			"field":     "",
-			"reason":    subErr.Error(),
-		},
+		Payload: eventpayload.New(&genv1.TemplateResolutionFailedPayload{
+			Directive: directive,
+			Site:      substitutionSiteAttribute,
+			Field:     attributes.FieldOf(subErr),
+			Reason:    subErr.Error(),
+		}),
 	}, tx); err != nil {
 		return fmt.Errorf("route substitution failure: append event: %w", err)
 	}

@@ -57,6 +57,8 @@ type ClaimSpec struct {
 	RunScopeID string
 	// @concept: claim-lifetime
 	Lifetime string
+	// @concept: inertness
+	Data []byte
 }
 
 type ClaimResult struct {

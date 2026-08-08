@@ -82,6 +82,8 @@ func TestUnresolvedExecutor(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should commit acquisition for the candidate")
 
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
+
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, n.ID, tx)
@@ -204,6 +206,8 @@ func TestUnresolvedExecutor_LateBindResolverMiss(t *testing.T) {
 	out, err := runtime.RunNode(h.Ctx, args, nil)
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should commit acquisition for the candidate")
+
+	h.WaitForNodeState(n.ID, cascade.NodeStateFailed)
 
 	var latest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

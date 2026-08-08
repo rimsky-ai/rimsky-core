@@ -70,7 +70,7 @@ func (e RimskyEndpoint) PollNodeObservability(
 		}
 		if poll%40 == 0 {
 			t.Logf("harness: still polling node %s/%s for the awaited state (last status=%d, err=%v, run_summary=%+v) — "+
-				"the helper blocks until the state appears; the suite-level timeout is the only backstop",
+				"the helper blocks until the state appears; the test guard's no-progress watchdog is the only backstop",
 				instanceID, nodeType, status, err, obs.RunSummary)
 		}
 		time.Sleep(250 * time.Millisecond)

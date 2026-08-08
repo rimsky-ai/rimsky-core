@@ -105,7 +105,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	cancelCount := 0
 	naturalCount := 0
 	for _, ev := range page.Events {
-		switch ev.Payload["cause"] {
+		switch ev.Payload.Map()["cause"] {
 		case "sibling_failed":
 			cancelCount++
 		case "natural":

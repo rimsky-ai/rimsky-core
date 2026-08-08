@@ -33,7 +33,7 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	specPath := repoExampleSpecPath(t, "examples/compose/template-a.yml")
+	specPath := repoExampleSpecPath(t, "test/fixtures/compose/template-a.yml")
 
 	// @story: operator-onboarding
 	stdout, code := captureRunRun(t, ctx, []string{"--endpoint", ep.BaseURL, specPath})
@@ -55,35 +55,10 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 
 	waitForDispatchToFresh(t, ep, instanceID, "worker")
 
-	readmeArgs := documentedRunInvocation(t, ep.BaseURL, "examples/compose/template-a.yml")
-	_, readmeCode := captureRunRun(t, ctx, readmeArgs)
-	if readmeCode != 0 {
-		t.Fatalf("README-documented `rimsky run` invocation %v exited %d (want 0)", readmeArgs, readmeCode)
+	_, rerunCode := captureRunRun(t, ctx, []string{"--endpoint", ep.BaseURL, specPath})
+	if rerunCode != 0 {
+		t.Fatalf("second `rimsky run %s` exited %d (want 0)", specPath, rerunCode)
 	}
-}
-
-var readmeRunInvocationRe = regexp.MustCompile(`(?m)^rimsky run (\S+)\s*$`)
-
-func documentedRunInvocation(t *testing.T, baseURL, specRelPath string) []string {
-	t.Helper()
-	raw, err := os.ReadFile(repoExampleSpecPath(t, "examples/README.md"))
-	if err != nil {
-		t.Fatalf("read examples/README.md: %v", err)
-	}
-	ms := readmeRunInvocationRe.FindAllStringSubmatch(string(raw), -1)
-	if len(ms) == 0 {
-		t.Fatalf("examples/README.md has no `rimsky run <file>` invocation line to prove")
-	}
-	documented := make([]string, 0, len(ms))
-	for _, m := range ms {
-		if filepath.FromSlash(m[1]) == filepath.FromSlash(specRelPath) {
-			return []string{"--endpoint", baseURL, repoExampleSpecPath(t, specRelPath)}
-		}
-		documented = append(documented, m[1])
-	}
-	t.Fatalf("examples/README.md documents `rimsky run` for %v, but not for %s — keep the README and the proof in sync",
-		documented, specRelPath)
-	return nil
 }
 
 func captureRunRun(t *testing.T, ctx context.Context, args []string) (string, int) {
@@ -134,7 +109,7 @@ func repoExampleSpecPath(t *testing.T, rel string) string {
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", ".."))
 	path := filepath.Join(repoRoot, filepath.FromSlash(rel))
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("shipped example spec %s not found at %s: %v — the example must ship as a real on-disk file", rel, path, err)
+		t.Fatalf("test fixture %s not found at %s: %v", rel, path, err)
 	}
 	return path
 }

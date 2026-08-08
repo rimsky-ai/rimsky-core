@@ -30,8 +30,8 @@ func TestFrameOriginAuditDemo_RunExitsZero(t *testing.T) {
 		harness.WithExecutor("verifier-shape-checks", verifierEP),
 	)
 
-	demoScript := repoExampleSpecPath(t, "examples/frame-origin-audit-demo.sh")
-	repoExampleSpecPath(t, "examples/frame-origin-audit-demo-template.yaml")
+	demoScript := repoExampleSpecPath(t, "test/fixtures/demos/frame-origin-audit-demo.sh")
+	repoExampleSpecPath(t, "test/fixtures/demos/frame-origin-audit-demo-template.yaml")
 
 	stdout, exitCode := runFrameOriginAuditDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {

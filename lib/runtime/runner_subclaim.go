@@ -19,6 +19,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type AcquireSubClaimsInput struct {
@@ -273,12 +276,12 @@ func emitSubclaimBeginCandidate(
 		InstanceID: &instanceID,
 		NodeID:     &nodeID,
 		Kind:       events.KindSubclaimBeginCandidate(),
-		Payload: map[string]any{
-			"parent_claim_handle_id":      parentID.String(),
-			"sub_claim_handle_id":         subID.String(),
-			"producer_name":               producerName,
-			"candidate_handle_size_bytes": candidateHandleSize,
-		},
+		Payload: eventpayload.New(&genv1.SubClaimBeginCandidatePayload{
+			ParentClaimHandleId:      parentID.String(),
+			SubClaimHandleId:         subID.String(),
+			ProducerName:             producerName,
+			CandidateHandleSizeBytes: int64(candidateHandleSize),
+		}),
 	}, tx); err != nil && args.Logger != nil {
 		args.Logger.Warn("AcquireSubClaims: event append failed",
 			"kind", "subclaim.begin_candidate",
@@ -298,11 +301,11 @@ func emitSubclaimAcquired(
 		InstanceID: &instanceID,
 		NodeID:     &nodeID,
 		Kind:       events.KindSubclaimAcquired(),
-		Payload: map[string]any{
-			"parent_claim_handle_id":     parentID.String(),
-			"sub_scope_descriptor_count": subScopeCount,
-			"producer_name":              producerName,
-		},
+		Payload: eventpayload.New(&genv1.SubClaimAcquiredPayload{
+			ParentClaimHandleId:     parentID.String(),
+			SubScopeDescriptorCount: int32(subScopeCount),
+			ProducerName:            producerName,
+		}),
 	}, tx); err != nil && args.Logger != nil {
 		args.Logger.Warn("AcquireSubClaims: event append failed",
 			"kind", "subclaim.acquired",

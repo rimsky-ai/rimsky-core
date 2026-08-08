@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
@@ -241,12 +244,12 @@ func TestEventsRoute_CursorPaginationWalksAllPages(t *testing.T) {
 		occurredAt := base.Add(time.Duration(i) * time.Second)
 		seedEvent(t, h, persistence.EventAppendInput{
 			Kind:       events.SignalKind("terminal/success"),
-			Payload:    map[string]any{"seq": i},
+			Payload:    eventpayload.New(&genv1.TerminalSuccessSignalPayload{ChangeSummary: fmt.Sprintf("seq-%d", i)}),
 			OccurredAt: &occurredAt,
 		})
 	}
 
-	seen := map[float64]bool{}
+	seen := map[string]bool{}
 	cursor := ""
 	for page := 0; page < total+2; page++ {
 		path := "/v1/events?kind=terminal/success&limit=1"
@@ -267,7 +270,7 @@ func TestEventsRoute_CursorPaginationWalksAllPages(t *testing.T) {
 		require.Len(t, evs, 1, "page %d must return exactly one event with limit=1", page)
 		row := evs[0].(map[string]any)
 		payload := row["payload"].(map[string]any)
-		seq := payload["seq"].(float64)
+		seq := payload["change_summary"].(string)
 		require.False(t, seen[seq], "seq %v returned twice across pages", seq)
 		seen[seq] = true
 

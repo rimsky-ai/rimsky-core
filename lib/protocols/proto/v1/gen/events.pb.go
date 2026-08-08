@@ -56,7 +56,6 @@ const (
 	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON        OperationalKind = 36
 	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED          OperationalKind = 40
 	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_COMMITTED            OperationalKind = 41
-	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED    OperationalKind = 42
 	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED        OperationalKind = 43
 	OperationalKind_OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED      OperationalKind = 47
 	OperationalKind_OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED      OperationalKind = 44
@@ -107,7 +106,6 @@ var (
 		36: "OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON",
 		40: "OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED",
 		41: "OPERATIONAL_KIND_ATTRIBUTES_COMMITTED",
-		42: "OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED",
 		43: "OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED",
 		47: "OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED",
 		44: "OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED",
@@ -155,7 +153,6 @@ var (
 		"OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON":        36,
 		"OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED":          40,
 		"OPERATIONAL_KIND_ATTRIBUTES_COMMITTED":            41,
-		"OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED":    42,
 		"OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED":        43,
 		"OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED":      47,
 		"OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED":      44,
@@ -230,11 +227,16 @@ type Event struct {
 	//	*Event_LockOrphanReaped
 	//	*Event_AttributesSubstituted
 	//	*Event_AttributesCommitted
-	//	*Event_AttributesValidationFailed
 	//	*Event_ClaimAcquired
 	//	*Event_ClaimHeld
 	//	*Event_ClaimResolved
 	//	*Event_TemplateResolutionFailed
+	//	*Event_AttributesSchemaFailed
+	//	*Event_AttributeOverrideMatched
+	//	*Event_FanOutDispatched
+	//	*Event_SubgraphInternalCascadeFired
+	//	*Event_ParkedResumeStarted
+	//	*Event_InstanceTerminated
 	Payload       isEvent_Payload  `protobuf_oneof:"payload"`
 	PayloadRaw    *structpb.Struct `protobuf:"bytes,30,opt,name=payload_raw,json=payloadRaw,proto3" json:"payload_raw,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -466,15 +468,6 @@ func (x *Event) GetAttributesCommitted() *AttributesCommittedPayload {
 	return nil
 }
 
-func (x *Event) GetAttributesValidationFailed() *AttributesValidationFailedPayload {
-	if x != nil {
-		if x, ok := x.Payload.(*Event_AttributesValidationFailed); ok {
-			return x.AttributesValidationFailed
-		}
-	}
-	return nil
-}
-
 func (x *Event) GetClaimAcquired() *ClaimAcquiredPayload {
 	if x != nil {
 		if x, ok := x.Payload.(*Event_ClaimAcquired); ok {
@@ -506,6 +499,60 @@ func (x *Event) GetTemplateResolutionFailed() *TemplateResolutionFailedPayload {
 	if x != nil {
 		if x, ok := x.Payload.(*Event_TemplateResolutionFailed); ok {
 			return x.TemplateResolutionFailed
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetAttributesSchemaFailed() *AttributesSchemaFailedPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_AttributesSchemaFailed); ok {
+			return x.AttributesSchemaFailed
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetAttributeOverrideMatched() *AttributeOverrideMatchedPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_AttributeOverrideMatched); ok {
+			return x.AttributeOverrideMatched
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetFanOutDispatched() *FanOutDispatchedPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_FanOutDispatched); ok {
+			return x.FanOutDispatched
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetSubgraphInternalCascadeFired() *SubgraphInternalCascadeFiredPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_SubgraphInternalCascadeFired); ok {
+			return x.SubgraphInternalCascadeFired
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetParkedResumeStarted() *ParkedResumeStartedPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_ParkedResumeStarted); ok {
+			return x.ParkedResumeStarted
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetInstanceTerminated() *InstanceTerminatedPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*Event_InstanceTerminated); ok {
+			return x.InstanceTerminated
 		}
 	}
 	return nil
@@ -590,10 +637,6 @@ type Event_AttributesCommitted struct {
 	AttributesCommitted *AttributesCommittedPayload `protobuf:"bytes,44,opt,name=attributes_committed,json=attributesCommitted,proto3,oneof"`
 }
 
-type Event_AttributesValidationFailed struct {
-	AttributesValidationFailed *AttributesValidationFailedPayload `protobuf:"bytes,45,opt,name=attributes_validation_failed,json=attributesValidationFailed,proto3,oneof"`
-}
-
 type Event_ClaimAcquired struct {
 	ClaimAcquired *ClaimAcquiredPayload `protobuf:"bytes,46,opt,name=claim_acquired,json=claimAcquired,proto3,oneof"`
 }
@@ -608,6 +651,30 @@ type Event_ClaimResolved struct {
 
 type Event_TemplateResolutionFailed struct {
 	TemplateResolutionFailed *TemplateResolutionFailedPayload `protobuf:"bytes,49,opt,name=template_resolution_failed,json=templateResolutionFailed,proto3,oneof"`
+}
+
+type Event_AttributesSchemaFailed struct {
+	AttributesSchemaFailed *AttributesSchemaFailedPayload `protobuf:"bytes,55,opt,name=attributes_schema_failed,json=attributesSchemaFailed,proto3,oneof"`
+}
+
+type Event_AttributeOverrideMatched struct {
+	AttributeOverrideMatched *AttributeOverrideMatchedPayload `protobuf:"bytes,56,opt,name=attribute_override_matched,json=attributeOverrideMatched,proto3,oneof"`
+}
+
+type Event_FanOutDispatched struct {
+	FanOutDispatched *FanOutDispatchedPayload `protobuf:"bytes,59,opt,name=fan_out_dispatched,json=fanOutDispatched,proto3,oneof"`
+}
+
+type Event_SubgraphInternalCascadeFired struct {
+	SubgraphInternalCascadeFired *SubgraphInternalCascadeFiredPayload `protobuf:"bytes,63,opt,name=subgraph_internal_cascade_fired,json=subgraphInternalCascadeFired,proto3,oneof"`
+}
+
+type Event_ParkedResumeStarted struct {
+	ParkedResumeStarted *ParkedResumeStartedPayload `protobuf:"bytes,67,opt,name=parked_resume_started,json=parkedResumeStarted,proto3,oneof"`
+}
+
+type Event_InstanceTerminated struct {
+	InstanceTerminated *InstanceTerminatedPayload `protobuf:"bytes,69,opt,name=instance_terminated,json=instanceTerminated,proto3,oneof"`
 }
 
 func (*Event_MessageSent) isEvent_Payload() {}
@@ -644,8 +711,6 @@ func (*Event_AttributesSubstituted) isEvent_Payload() {}
 
 func (*Event_AttributesCommitted) isEvent_Payload() {}
 
-func (*Event_AttributesValidationFailed) isEvent_Payload() {}
-
 func (*Event_ClaimAcquired) isEvent_Payload() {}
 
 func (*Event_ClaimHeld) isEvent_Payload() {}
@@ -653,6 +718,18 @@ func (*Event_ClaimHeld) isEvent_Payload() {}
 func (*Event_ClaimResolved) isEvent_Payload() {}
 
 func (*Event_TemplateResolutionFailed) isEvent_Payload() {}
+
+func (*Event_AttributesSchemaFailed) isEvent_Payload() {}
+
+func (*Event_AttributeOverrideMatched) isEvent_Payload() {}
+
+func (*Event_FanOutDispatched) isEvent_Payload() {}
+
+func (*Event_SubgraphInternalCascadeFired) isEvent_Payload() {}
+
+func (*Event_ParkedResumeStarted) isEvent_Payload() {}
+
+func (*Event_InstanceTerminated) isEvent_Payload() {}
 
 type MessageSentPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -921,6 +998,7 @@ func (x *ErrorPayload) GetDelayMs() int64 {
 type WorkStartedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SupervisorId  string                 `protobuf:"bytes,1,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
+	DispatchId    string                 `protobuf:"bytes,2,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -962,9 +1040,18 @@ func (x *WorkStartedPayload) GetSupervisorId() string {
 	return ""
 }
 
+func (x *WorkStartedPayload) GetDispatchId() string {
+	if x != nil {
+		return x.DispatchId
+	}
+	return ""
+}
+
 type WorkCompletedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Outcome       string                 `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	SupervisorId  string                 `protobuf:"bytes,2,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
+	DispatchId    string                 `protobuf:"bytes,3,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
+	TerminalKind  string                 `protobuf:"bytes,4,opt,name=terminal_kind,json=terminalKind,proto3" json:"terminal_kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -999,9 +1086,23 @@ func (*WorkCompletedPayload) Descriptor() ([]byte, []int) {
 	return file_events_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *WorkCompletedPayload) GetOutcome() string {
+func (x *WorkCompletedPayload) GetSupervisorId() string {
 	if x != nil {
-		return x.Outcome
+		return x.SupervisorId
+	}
+	return ""
+}
+
+func (x *WorkCompletedPayload) GetDispatchId() string {
+	if x != nil {
+		return x.DispatchId
+	}
+	return ""
+}
+
+func (x *WorkCompletedPayload) GetTerminalKind() string {
+	if x != nil {
+		return x.TerminalKind
 	}
 	return ""
 }
@@ -1114,7 +1215,10 @@ type OrphanedClaimReleasedPayload struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	DispatchId     string                 `protobuf:"bytes,1,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
 	PriorClaimedBy string                 `protobuf:"bytes,2,opt,name=prior_claimed_by,json=priorClaimedBy,proto3" json:"prior_claimed_by,omitempty"`
-	ClaimedAt      *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
+	LastProgressAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=last_progress_at,json=lastProgressAt,proto3" json:"last_progress_at,omitempty"`
+	ErrorClass     string                 `protobuf:"bytes,5,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
+	Reason         string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
+	CallbackUrl    string                 `protobuf:"bytes,7,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1163,22 +1267,40 @@ func (x *OrphanedClaimReleasedPayload) GetPriorClaimedBy() string {
 	return ""
 }
 
-func (x *OrphanedClaimReleasedPayload) GetClaimedAt() *timestamppb.Timestamp {
+func (x *OrphanedClaimReleasedPayload) GetLastProgressAt() *timestamppb.Timestamp {
 	if x != nil {
-		return x.ClaimedAt
+		return x.LastProgressAt
 	}
 	return nil
 }
 
+func (x *OrphanedClaimReleasedPayload) GetErrorClass() string {
+	if x != nil {
+		return x.ErrorClass
+	}
+	return ""
+}
+
+func (x *OrphanedClaimReleasedPayload) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *OrphanedClaimReleasedPayload) GetCallbackUrl() string {
+	if x != nil {
+		return x.CallbackUrl
+	}
+	return ""
+}
+
 type OrphanedClaimLostRacePayload struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	SupervisorId        string                 `protobuf:"bytes,1,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
-	DispatchId          string                 `protobuf:"bytes,2,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
-	OwnershipKind       string                 `protobuf:"bytes,3,opt,name=ownership_kind,json=ownershipKind,proto3" json:"ownership_kind,omitempty"`
-	CurrentClaimedBy    string                 `protobuf:"bytes,4,opt,name=current_claimed_by,json=currentClaimedBy,proto3" json:"current_claimed_by,omitempty"`
-	WinningSupervisorId string                 `protobuf:"bytes,5,opt,name=winning_supervisor_id,json=winningSupervisorId,proto3" json:"winning_supervisor_id,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SupervisorId  string                 `protobuf:"bytes,1,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
+	DispatchId    string                 `protobuf:"bytes,2,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OrphanedClaimLostRacePayload) Reset() {
@@ -1221,27 +1343,6 @@ func (x *OrphanedClaimLostRacePayload) GetSupervisorId() string {
 func (x *OrphanedClaimLostRacePayload) GetDispatchId() string {
 	if x != nil {
 		return x.DispatchId
-	}
-	return ""
-}
-
-func (x *OrphanedClaimLostRacePayload) GetOwnershipKind() string {
-	if x != nil {
-		return x.OwnershipKind
-	}
-	return ""
-}
-
-func (x *OrphanedClaimLostRacePayload) GetCurrentClaimedBy() string {
-	if x != nil {
-		return x.CurrentClaimedBy
-	}
-	return ""
-}
-
-func (x *OrphanedClaimLostRacePayload) GetWinningSupervisorId() string {
-	if x != nil {
-		return x.WinningSupervisorId
 	}
 	return ""
 }
@@ -1300,7 +1401,6 @@ func (x *WorkRejectedPayload) GetErrors() *structpb.Struct {
 
 type UnresolvedExecutorPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	ExecutorName  string                 `protobuf:"bytes,2,opt,name=executor_name,json=executorName,proto3" json:"executor_name,omitempty"`
 	SupervisorId  string                 `protobuf:"bytes,3,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1337,13 +1437,6 @@ func (*UnresolvedExecutorPayload) Descriptor() ([]byte, []int) {
 	return file_events_proto_rawDescGZIP(), []int{12}
 }
 
-func (x *UnresolvedExecutorPayload) GetNodeId() string {
-	if x != nil {
-		return x.NodeId
-	}
-	return ""
-}
-
 func (x *UnresolvedExecutorPayload) GetExecutorName() string {
 	if x != nil {
 		return x.ExecutorName
@@ -1363,11 +1456,10 @@ type LockAcquiredPayload struct {
 	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`
 	LockName      string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
 	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
-	ScopeData     *structpb.Struct       `protobuf:"bytes,4,opt,name=scope_data,json=scopeData,proto3" json:"scope_data,omitempty"`
-	ClaimId       string                 `protobuf:"bytes,5,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	SupervisorId  string                 `protobuf:"bytes,6,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
 	HolderId      string                 `protobuf:"bytes,7,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`
-	Resumed       bool                   `protobuf:"varint,8,opt,name=resumed,proto3" json:"resumed,omitempty"`
+	Alias         string                 `protobuf:"bytes,9,opt,name=alias,proto3" json:"alias,omitempty"`
+	Intent        string                 `protobuf:"bytes,10,opt,name=intent,proto3" json:"intent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1423,20 +1515,6 @@ func (x *LockAcquiredPayload) GetProducerName() string {
 	return ""
 }
 
-func (x *LockAcquiredPayload) GetScopeData() *structpb.Struct {
-	if x != nil {
-		return x.ScopeData
-	}
-	return nil
-}
-
-func (x *LockAcquiredPayload) GetClaimId() string {
-	if x != nil {
-		return x.ClaimId
-	}
-	return ""
-}
-
 func (x *LockAcquiredPayload) GetSupervisorId() string {
 	if x != nil {
 		return x.SupervisorId
@@ -1451,11 +1529,18 @@ func (x *LockAcquiredPayload) GetHolderId() string {
 	return ""
 }
 
-func (x *LockAcquiredPayload) GetResumed() bool {
+func (x *LockAcquiredPayload) GetAlias() string {
 	if x != nil {
-		return x.Resumed
+		return x.Alias
 	}
-	return false
+	return ""
+}
+
+func (x *LockAcquiredPayload) GetIntent() string {
+	if x != nil {
+		return x.Intent
+	}
+	return ""
 }
 
 type LockReleasedPayload struct {
@@ -1463,10 +1548,10 @@ type LockReleasedPayload struct {
 	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`
 	LockName      string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
 	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
-	ClaimId       string                 `protobuf:"bytes,4,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	HolderId      string                 `protobuf:"bytes,5,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`
 	SupervisorId  string                 `protobuf:"bytes,6,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
 	Action        string                 `protobuf:"bytes,7,opt,name=action,proto3" json:"action,omitempty"`
+	Alias         string                 `protobuf:"bytes,8,opt,name=alias,proto3" json:"alias,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1522,13 +1607,6 @@ func (x *LockReleasedPayload) GetProducerName() string {
 	return ""
 }
 
-func (x *LockReleasedPayload) GetClaimId() string {
-	if x != nil {
-		return x.ClaimId
-	}
-	return ""
-}
-
 func (x *LockReleasedPayload) GetHolderId() string {
 	if x != nil {
 		return x.HolderId
@@ -1550,17 +1628,26 @@ func (x *LockReleasedPayload) GetAction() string {
 	return ""
 }
 
+func (x *LockReleasedPayload) GetAlias() string {
+	if x != nil {
+		return x.Alias
+	}
+	return ""
+}
+
 type LockOrphanReapedPayload struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	LockKind          string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`
-	LockName          string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
-	ProducerName      string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
-	ClaimId           string                 `protobuf:"bytes,4,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	HolderId          string                 `protobuf:"bytes,5,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`
-	PriorSupervisorId string                 `protobuf:"bytes,6,opt,name=prior_supervisor_id,json=priorSupervisorId,proto3" json:"prior_supervisor_id,omitempty"`
-	ExpiredAt         *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=expired_at,json=expiredAt,proto3" json:"expired_at,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`
+	LockName      string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
+	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	ClaimHandleId string                 `protobuf:"bytes,8,opt,name=claim_handle_id,json=claimHandleId,proto3" json:"claim_handle_id,omitempty"`
+	SupervisorId  string                 `protobuf:"bytes,9,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
+	HolderNodeId  string                 `protobuf:"bytes,10,opt,name=holder_node_id,json=holderNodeId,proto3" json:"holder_node_id,omitempty"`
+	ClaimedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
+	Intent        string                 `protobuf:"bytes,12,opt,name=intent,proto3" json:"intent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LockOrphanReapedPayload) Reset() {
@@ -1614,38 +1701,51 @@ func (x *LockOrphanReapedPayload) GetProducerName() string {
 	return ""
 }
 
-func (x *LockOrphanReapedPayload) GetClaimId() string {
+func (x *LockOrphanReapedPayload) GetExpiresAt() *timestamppb.Timestamp {
 	if x != nil {
-		return x.ClaimId
-	}
-	return ""
-}
-
-func (x *LockOrphanReapedPayload) GetHolderId() string {
-	if x != nil {
-		return x.HolderId
-	}
-	return ""
-}
-
-func (x *LockOrphanReapedPayload) GetPriorSupervisorId() string {
-	if x != nil {
-		return x.PriorSupervisorId
-	}
-	return ""
-}
-
-func (x *LockOrphanReapedPayload) GetExpiredAt() *timestamppb.Timestamp {
-	if x != nil {
-		return x.ExpiredAt
+		return x.ExpiresAt
 	}
 	return nil
+}
+
+func (x *LockOrphanReapedPayload) GetClaimHandleId() string {
+	if x != nil {
+		return x.ClaimHandleId
+	}
+	return ""
+}
+
+func (x *LockOrphanReapedPayload) GetSupervisorId() string {
+	if x != nil {
+		return x.SupervisorId
+	}
+	return ""
+}
+
+func (x *LockOrphanReapedPayload) GetHolderNodeId() string {
+	if x != nil {
+		return x.HolderNodeId
+	}
+	return ""
+}
+
+func (x *LockOrphanReapedPayload) GetClaimedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ClaimedAt
+	}
+	return nil
+}
+
+func (x *LockOrphanReapedPayload) GetIntent() string {
+	if x != nil {
+		return x.Intent
+	}
+	return ""
 }
 
 type AttributesSubstitutedPayload struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	SubstitutedFields []string               `protobuf:"bytes,1,rep,name=substituted_fields,json=substitutedFields,proto3" json:"substituted_fields,omitempty"`
-	OmittedFields     []string               `protobuf:"bytes,2,rep,name=omitted_fields,json=omittedFields,proto3" json:"omitted_fields,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1683,13 +1783,6 @@ func (*AttributesSubstitutedPayload) Descriptor() ([]byte, []int) {
 func (x *AttributesSubstitutedPayload) GetSubstitutedFields() []string {
 	if x != nil {
 		return x.SubstitutedFields
-	}
-	return nil
-}
-
-func (x *AttributesSubstitutedPayload) GetOmittedFields() []string {
-	if x != nil {
-		return x.OmittedFields
 	}
 	return nil
 }
@@ -1754,50 +1847,6 @@ func (x *AttributesCommittedPayload) GetChangeSummary() string {
 	return ""
 }
 
-type AttributesValidationFailedPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Errors        []*structpb.Struct     `protobuf:"bytes,2,rep,name=errors,proto3" json:"errors,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *AttributesValidationFailedPayload) Reset() {
-	*x = AttributesValidationFailedPayload{}
-	mi := &file_events_proto_msgTypes[18]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AttributesValidationFailedPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AttributesValidationFailedPayload) ProtoMessage() {}
-
-func (x *AttributesValidationFailedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[18]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use AttributesValidationFailedPayload.ProtoReflect.Descriptor instead.
-func (*AttributesValidationFailedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{18}
-}
-
-func (x *AttributesValidationFailedPayload) GetErrors() []*structpb.Struct {
-	if x != nil {
-		return x.Errors
-	}
-	return nil
-}
-
 type ClaimAcquiredPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
@@ -1811,7 +1860,7 @@ type ClaimAcquiredPayload struct {
 
 func (x *ClaimAcquiredPayload) Reset() {
 	*x = ClaimAcquiredPayload{}
-	mi := &file_events_proto_msgTypes[19]
+	mi := &file_events_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1823,7 +1872,7 @@ func (x *ClaimAcquiredPayload) String() string {
 func (*ClaimAcquiredPayload) ProtoMessage() {}
 
 func (x *ClaimAcquiredPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[19]
+	mi := &file_events_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1836,7 +1885,7 @@ func (x *ClaimAcquiredPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimAcquiredPayload.ProtoReflect.Descriptor instead.
 func (*ClaimAcquiredPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{19}
+	return file_events_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ClaimAcquiredPayload) GetClaimId() string {
@@ -1885,7 +1934,7 @@ type ClaimHeldPayload struct {
 
 func (x *ClaimHeldPayload) Reset() {
 	*x = ClaimHeldPayload{}
-	mi := &file_events_proto_msgTypes[20]
+	mi := &file_events_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1897,7 +1946,7 @@ func (x *ClaimHeldPayload) String() string {
 func (*ClaimHeldPayload) ProtoMessage() {}
 
 func (x *ClaimHeldPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[20]
+	mi := &file_events_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1910,7 +1959,7 @@ func (x *ClaimHeldPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimHeldPayload.ProtoReflect.Descriptor instead.
 func (*ClaimHeldPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{20}
+	return file_events_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ClaimHeldPayload) GetClaimId() string {
@@ -1945,7 +1994,7 @@ type ClaimResolvedPayload struct {
 
 func (x *ClaimResolvedPayload) Reset() {
 	*x = ClaimResolvedPayload{}
-	mi := &file_events_proto_msgTypes[21]
+	mi := &file_events_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1957,7 +2006,7 @@ func (x *ClaimResolvedPayload) String() string {
 func (*ClaimResolvedPayload) ProtoMessage() {}
 
 func (x *ClaimResolvedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[21]
+	mi := &file_events_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1970,7 +2019,7 @@ func (x *ClaimResolvedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimResolvedPayload.ProtoReflect.Descriptor instead.
 func (*ClaimResolvedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{21}
+	return file_events_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ClaimResolvedPayload) GetAction() string {
@@ -2006,7 +2055,7 @@ type TemplateResolutionFailedPayload struct {
 
 func (x *TemplateResolutionFailedPayload) Reset() {
 	*x = TemplateResolutionFailedPayload{}
-	mi := &file_events_proto_msgTypes[22]
+	mi := &file_events_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2018,7 +2067,7 @@ func (x *TemplateResolutionFailedPayload) String() string {
 func (*TemplateResolutionFailedPayload) ProtoMessage() {}
 
 func (x *TemplateResolutionFailedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[22]
+	mi := &file_events_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2031,7 +2080,7 @@ func (x *TemplateResolutionFailedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TemplateResolutionFailedPayload.ProtoReflect.Descriptor instead.
 func (*TemplateResolutionFailedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{22}
+	return file_events_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *TemplateResolutionFailedPayload) GetDirective() string {
@@ -2062,11 +2111,2159 @@ func (x *TemplateResolutionFailedPayload) GetReason() string {
 	return ""
 }
 
+type AuthAccessAttemptedPayload struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	KeyId                *string                `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3,oneof" json:"key_id,omitempty"`
+	KeyName              string                 `protobuf:"bytes,2,opt,name=key_name,json=keyName,proto3" json:"key_name,omitempty"`
+	IdentityKind         string                 `protobuf:"bytes,3,opt,name=identity_kind,json=identityKind,proto3" json:"identity_kind,omitempty"`
+	ProtocolSkin         string                 `protobuf:"bytes,4,opt,name=protocol_skin,json=protocolSkin,proto3" json:"protocol_skin,omitempty"`
+	Action               string                 `protobuf:"bytes,5,opt,name=action,proto3" json:"action,omitempty"`
+	RequestPath          string                 `protobuf:"bytes,6,opt,name=request_path,json=requestPath,proto3" json:"request_path,omitempty"`
+	RequestMethod        string                 `protobuf:"bytes,7,opt,name=request_method,json=requestMethod,proto3" json:"request_method,omitempty"`
+	RequestParams        *structpb.Struct       `protobuf:"bytes,8,opt,name=request_params,json=requestParams,proto3" json:"request_params,omitempty"`
+	RequestParamsInvalid bool                   `protobuf:"varint,9,opt,name=request_params_invalid,json=requestParamsInvalid,proto3" json:"request_params_invalid,omitempty"`
+	ResponseStatus       int32                  `protobuf:"varint,10,opt,name=response_status,json=responseStatus,proto3" json:"response_status,omitempty"`
+	Mode                 string                 `protobuf:"bytes,11,opt,name=mode,proto3" json:"mode,omitempty"`
+	Executed             bool                   `protobuf:"varint,12,opt,name=executed,proto3" json:"executed,omitempty"`
+	DurationMs           int64                  `protobuf:"varint,13,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	ClientIp             string                 `protobuf:"bytes,14,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	UserAgent            string                 `protobuf:"bytes,15,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *AuthAccessAttemptedPayload) Reset() {
+	*x = AuthAccessAttemptedPayload{}
+	mi := &file_events_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthAccessAttemptedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthAccessAttemptedPayload) ProtoMessage() {}
+
+func (x *AuthAccessAttemptedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthAccessAttemptedPayload.ProtoReflect.Descriptor instead.
+func (*AuthAccessAttemptedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *AuthAccessAttemptedPayload) GetKeyId() string {
+	if x != nil && x.KeyId != nil {
+		return *x.KeyId
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetKeyName() string {
+	if x != nil {
+		return x.KeyName
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetIdentityKind() string {
+	if x != nil {
+		return x.IdentityKind
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetProtocolSkin() string {
+	if x != nil {
+		return x.ProtocolSkin
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetRequestPath() string {
+	if x != nil {
+		return x.RequestPath
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetRequestMethod() string {
+	if x != nil {
+		return x.RequestMethod
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetRequestParams() *structpb.Struct {
+	if x != nil {
+		return x.RequestParams
+	}
+	return nil
+}
+
+func (x *AuthAccessAttemptedPayload) GetRequestParamsInvalid() bool {
+	if x != nil {
+		return x.RequestParamsInvalid
+	}
+	return false
+}
+
+func (x *AuthAccessAttemptedPayload) GetResponseStatus() int32 {
+	if x != nil {
+		return x.ResponseStatus
+	}
+	return 0
+}
+
+func (x *AuthAccessAttemptedPayload) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetExecuted() bool {
+	if x != nil {
+		return x.Executed
+	}
+	return false
+}
+
+func (x *AuthAccessAttemptedPayload) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *AuthAccessAttemptedPayload) GetClientIp() string {
+	if x != nil {
+		return x.ClientIp
+	}
+	return ""
+}
+
+func (x *AuthAccessAttemptedPayload) GetUserAgent() string {
+	if x != nil {
+		return x.UserAgent
+	}
+	return ""
+}
+
+type AuthAccessDeniedPayload struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	KeyId                *string                `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3,oneof" json:"key_id,omitempty"`
+	KeyName              *string                `protobuf:"bytes,2,opt,name=key_name,json=keyName,proto3,oneof" json:"key_name,omitempty"`
+	IdentityKind         *string                `protobuf:"bytes,3,opt,name=identity_kind,json=identityKind,proto3,oneof" json:"identity_kind,omitempty"`
+	ProtocolSkin         string                 `protobuf:"bytes,4,opt,name=protocol_skin,json=protocolSkin,proto3" json:"protocol_skin,omitempty"`
+	Action               *string                `protobuf:"bytes,5,opt,name=action,proto3,oneof" json:"action,omitempty"`
+	RequestPath          string                 `protobuf:"bytes,6,opt,name=request_path,json=requestPath,proto3" json:"request_path,omitempty"`
+	RequestMethod        string                 `protobuf:"bytes,7,opt,name=request_method,json=requestMethod,proto3" json:"request_method,omitempty"`
+	RequestParams        *structpb.Struct       `protobuf:"bytes,8,opt,name=request_params,json=requestParams,proto3" json:"request_params,omitempty"`
+	RequestParamsInvalid bool                   `protobuf:"varint,9,opt,name=request_params_invalid,json=requestParamsInvalid,proto3" json:"request_params_invalid,omitempty"`
+	ResponseStatus       int32                  `protobuf:"varint,10,opt,name=response_status,json=responseStatus,proto3" json:"response_status,omitempty"`
+	Mode                 *string                `protobuf:"bytes,11,opt,name=mode,proto3,oneof" json:"mode,omitempty"`
+	Executed             bool                   `protobuf:"varint,12,opt,name=executed,proto3" json:"executed,omitempty"`
+	DurationMs           int64                  `protobuf:"varint,13,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	ClientIp             string                 `protobuf:"bytes,14,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	UserAgent            string                 `protobuf:"bytes,15,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
+	DenialReason         string                 `protobuf:"bytes,16,opt,name=denial_reason,json=denialReason,proto3" json:"denial_reason,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *AuthAccessDeniedPayload) Reset() {
+	*x = AuthAccessDeniedPayload{}
+	mi := &file_events_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthAccessDeniedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthAccessDeniedPayload) ProtoMessage() {}
+
+func (x *AuthAccessDeniedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthAccessDeniedPayload.ProtoReflect.Descriptor instead.
+func (*AuthAccessDeniedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *AuthAccessDeniedPayload) GetKeyId() string {
+	if x != nil && x.KeyId != nil {
+		return *x.KeyId
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetKeyName() string {
+	if x != nil && x.KeyName != nil {
+		return *x.KeyName
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetIdentityKind() string {
+	if x != nil && x.IdentityKind != nil {
+		return *x.IdentityKind
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetProtocolSkin() string {
+	if x != nil {
+		return x.ProtocolSkin
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetAction() string {
+	if x != nil && x.Action != nil {
+		return *x.Action
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetRequestPath() string {
+	if x != nil {
+		return x.RequestPath
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetRequestMethod() string {
+	if x != nil {
+		return x.RequestMethod
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetRequestParams() *structpb.Struct {
+	if x != nil {
+		return x.RequestParams
+	}
+	return nil
+}
+
+func (x *AuthAccessDeniedPayload) GetRequestParamsInvalid() bool {
+	if x != nil {
+		return x.RequestParamsInvalid
+	}
+	return false
+}
+
+func (x *AuthAccessDeniedPayload) GetResponseStatus() int32 {
+	if x != nil {
+		return x.ResponseStatus
+	}
+	return 0
+}
+
+func (x *AuthAccessDeniedPayload) GetMode() string {
+	if x != nil && x.Mode != nil {
+		return *x.Mode
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetExecuted() bool {
+	if x != nil {
+		return x.Executed
+	}
+	return false
+}
+
+func (x *AuthAccessDeniedPayload) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *AuthAccessDeniedPayload) GetClientIp() string {
+	if x != nil {
+		return x.ClientIp
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetUserAgent() string {
+	if x != nil {
+		return x.UserAgent
+	}
+	return ""
+}
+
+func (x *AuthAccessDeniedPayload) GetDenialReason() string {
+	if x != nil {
+		return x.DenialReason
+	}
+	return ""
+}
+
+type AuthKeyCreatedPayload struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	KeyId          string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyName        string                 `protobuf:"bytes,2,opt,name=key_name,json=keyName,proto3" json:"key_name,omitempty"`
+	Permissions    *structpb.Struct       `protobuf:"bytes,3,opt,name=permissions,proto3" json:"permissions,omitempty"`
+	CreatedByKeyId *string                `protobuf:"bytes,4,opt,name=created_by_key_id,json=createdByKeyId,proto3,oneof" json:"created_by_key_id,omitempty"`
+	ExpiresAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AuthKeyCreatedPayload) Reset() {
+	*x = AuthKeyCreatedPayload{}
+	mi := &file_events_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthKeyCreatedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthKeyCreatedPayload) ProtoMessage() {}
+
+func (x *AuthKeyCreatedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthKeyCreatedPayload.ProtoReflect.Descriptor instead.
+func (*AuthKeyCreatedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *AuthKeyCreatedPayload) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *AuthKeyCreatedPayload) GetKeyName() string {
+	if x != nil {
+		return x.KeyName
+	}
+	return ""
+}
+
+func (x *AuthKeyCreatedPayload) GetPermissions() *structpb.Struct {
+	if x != nil {
+		return x.Permissions
+	}
+	return nil
+}
+
+func (x *AuthKeyCreatedPayload) GetCreatedByKeyId() string {
+	if x != nil && x.CreatedByKeyId != nil {
+		return *x.CreatedByKeyId
+	}
+	return ""
+}
+
+func (x *AuthKeyCreatedPayload) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+type AuthKeyRevokedPayload struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	KeyId          string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyName        string                 `protobuf:"bytes,2,opt,name=key_name,json=keyName,proto3" json:"key_name,omitempty"`
+	RevokedByKeyId *string                `protobuf:"bytes,3,opt,name=revoked_by_key_id,json=revokedByKeyId,proto3,oneof" json:"revoked_by_key_id,omitempty"`
+	Reason         string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AuthKeyRevokedPayload) Reset() {
+	*x = AuthKeyRevokedPayload{}
+	mi := &file_events_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthKeyRevokedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthKeyRevokedPayload) ProtoMessage() {}
+
+func (x *AuthKeyRevokedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthKeyRevokedPayload.ProtoReflect.Descriptor instead.
+func (*AuthKeyRevokedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *AuthKeyRevokedPayload) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *AuthKeyRevokedPayload) GetKeyName() string {
+	if x != nil {
+		return x.KeyName
+	}
+	return ""
+}
+
+func (x *AuthKeyRevokedPayload) GetRevokedByKeyId() string {
+	if x != nil && x.RevokedByKeyId != nil {
+		return *x.RevokedByKeyId
+	}
+	return ""
+}
+
+func (x *AuthKeyRevokedPayload) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type AuthKeyRotatedPayload struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	KeyId          string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyName        string                 `protobuf:"bytes,2,opt,name=key_name,json=keyName,proto3" json:"key_name,omitempty"`
+	OldKeyId       string                 `protobuf:"bytes,3,opt,name=old_key_id,json=oldKeyId,proto3" json:"old_key_id,omitempty"`
+	NewKeyId       string                 `protobuf:"bytes,4,opt,name=new_key_id,json=newKeyId,proto3" json:"new_key_id,omitempty"`
+	RevokeAt       *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=revoke_at,json=revokeAt,proto3" json:"revoke_at,omitempty"`
+	RotatedByKeyId *string                `protobuf:"bytes,6,opt,name=rotated_by_key_id,json=rotatedByKeyId,proto3,oneof" json:"rotated_by_key_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AuthKeyRotatedPayload) Reset() {
+	*x = AuthKeyRotatedPayload{}
+	mi := &file_events_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthKeyRotatedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthKeyRotatedPayload) ProtoMessage() {}
+
+func (x *AuthKeyRotatedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthKeyRotatedPayload.ProtoReflect.Descriptor instead.
+func (*AuthKeyRotatedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *AuthKeyRotatedPayload) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *AuthKeyRotatedPayload) GetKeyName() string {
+	if x != nil {
+		return x.KeyName
+	}
+	return ""
+}
+
+func (x *AuthKeyRotatedPayload) GetOldKeyId() string {
+	if x != nil {
+		return x.OldKeyId
+	}
+	return ""
+}
+
+func (x *AuthKeyRotatedPayload) GetNewKeyId() string {
+	if x != nil {
+		return x.NewKeyId
+	}
+	return ""
+}
+
+func (x *AuthKeyRotatedPayload) GetRevokeAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.RevokeAt
+	}
+	return nil
+}
+
+func (x *AuthKeyRotatedPayload) GetRotatedByKeyId() string {
+	if x != nil && x.RotatedByKeyId != nil {
+		return *x.RotatedByKeyId
+	}
+	return ""
+}
+
+type AttributesSchemaFailedPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AttributesSchemaFailedPayload) Reset() {
+	*x = AttributesSchemaFailedPayload{}
+	mi := &file_events_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttributesSchemaFailedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttributesSchemaFailedPayload) ProtoMessage() {}
+
+func (x *AttributesSchemaFailedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttributesSchemaFailedPayload.ProtoReflect.Descriptor instead.
+func (*AttributesSchemaFailedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *AttributesSchemaFailedPayload) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type AttributeOverrideMatchedPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OverrideIndex int32                  `protobuf:"varint,1,opt,name=override_index,json=overrideIndex,proto3" json:"override_index,omitempty"`
+	NodeType      string                 `protobuf:"bytes,2,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
+	Fields        []string               `protobuf:"bytes,3,rep,name=fields,proto3" json:"fields,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AttributeOverrideMatchedPayload) Reset() {
+	*x = AttributeOverrideMatchedPayload{}
+	mi := &file_events_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttributeOverrideMatchedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttributeOverrideMatchedPayload) ProtoMessage() {}
+
+func (x *AttributeOverrideMatchedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttributeOverrideMatchedPayload.ProtoReflect.Descriptor instead.
+func (*AttributeOverrideMatchedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *AttributeOverrideMatchedPayload) GetOverrideIndex() int32 {
+	if x != nil {
+		return x.OverrideIndex
+	}
+	return 0
+}
+
+func (x *AttributeOverrideMatchedPayload) GetNodeType() string {
+	if x != nil {
+		return x.NodeType
+	}
+	return ""
+}
+
+func (x *AttributeOverrideMatchedPayload) GetFields() []string {
+	if x != nil {
+		return x.Fields
+	}
+	return nil
+}
+
+type BreakpointHitPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	BreakpointId  string                 `protobuf:"bytes,3,opt,name=breakpoint_id,json=breakpointId,proto3" json:"breakpoint_id,omitempty"`
+	HitId         string                 `protobuf:"bytes,4,opt,name=hit_id,json=hitId,proto3" json:"hit_id,omitempty"`
+	Checkpoint    string                 `protobuf:"bytes,5,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"`
+	Mode          string                 `protobuf:"bytes,6,opt,name=mode,proto3" json:"mode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BreakpointHitPayload) Reset() {
+	*x = BreakpointHitPayload{}
+	mi := &file_events_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BreakpointHitPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BreakpointHitPayload) ProtoMessage() {}
+
+func (x *BreakpointHitPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BreakpointHitPayload.ProtoReflect.Descriptor instead.
+func (*BreakpointHitPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *BreakpointHitPayload) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *BreakpointHitPayload) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *BreakpointHitPayload) GetBreakpointId() string {
+	if x != nil {
+		return x.BreakpointId
+	}
+	return ""
+}
+
+func (x *BreakpointHitPayload) GetHitId() string {
+	if x != nil {
+		return x.HitId
+	}
+	return ""
+}
+
+func (x *BreakpointHitPayload) GetCheckpoint() string {
+	if x != nil {
+		return x.Checkpoint
+	}
+	return ""
+}
+
+func (x *BreakpointHitPayload) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+type MessageDeadLetteredPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	MessageType   string                 `protobuf:"bytes,2,opt,name=message_type,json=messageType,proto3" json:"message_type,omitempty"`
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MessageDeadLetteredPayload) Reset() {
+	*x = MessageDeadLetteredPayload{}
+	mi := &file_events_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MessageDeadLetteredPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MessageDeadLetteredPayload) ProtoMessage() {}
+
+func (x *MessageDeadLetteredPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MessageDeadLetteredPayload.ProtoReflect.Descriptor instead.
+func (*MessageDeadLetteredPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *MessageDeadLetteredPayload) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *MessageDeadLetteredPayload) GetMessageType() string {
+	if x != nil {
+		return x.MessageType
+	}
+	return ""
+}
+
+func (x *MessageDeadLetteredPayload) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type FanOutDispatchedPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ParentRunId   string                 `protobuf:"bytes,1,opt,name=parent_run_id,json=parentRunId,proto3" json:"parent_run_id,omitempty"`
+	ChildRunIds   []string               `protobuf:"bytes,2,rep,name=child_run_ids,json=childRunIds,proto3" json:"child_run_ids,omitempty"`
+	ChildKeys     []string               `protobuf:"bytes,3,rep,name=child_keys,json=childKeys,proto3" json:"child_keys,omitempty"`
+	Parallelism   int32                  `protobuf:"varint,4,opt,name=parallelism,proto3" json:"parallelism,omitempty"`
+	PolicyKind    string                 `protobuf:"bytes,5,opt,name=policy_kind,json=policyKind,proto3" json:"policy_kind,omitempty"`
+	NumSubClaims  int32                  `protobuf:"varint,6,opt,name=num_sub_claims,json=numSubClaims,proto3" json:"num_sub_claims,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FanOutDispatchedPayload) Reset() {
+	*x = FanOutDispatchedPayload{}
+	mi := &file_events_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FanOutDispatchedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FanOutDispatchedPayload) ProtoMessage() {}
+
+func (x *FanOutDispatchedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FanOutDispatchedPayload.ProtoReflect.Descriptor instead.
+func (*FanOutDispatchedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *FanOutDispatchedPayload) GetParentRunId() string {
+	if x != nil {
+		return x.ParentRunId
+	}
+	return ""
+}
+
+func (x *FanOutDispatchedPayload) GetChildRunIds() []string {
+	if x != nil {
+		return x.ChildRunIds
+	}
+	return nil
+}
+
+func (x *FanOutDispatchedPayload) GetChildKeys() []string {
+	if x != nil {
+		return x.ChildKeys
+	}
+	return nil
+}
+
+func (x *FanOutDispatchedPayload) GetParallelism() int32 {
+	if x != nil {
+		return x.Parallelism
+	}
+	return 0
+}
+
+func (x *FanOutDispatchedPayload) GetPolicyKind() string {
+	if x != nil {
+		return x.PolicyKind
+	}
+	return ""
+}
+
+func (x *FanOutDispatchedPayload) GetNumSubClaims() int32 {
+	if x != nil {
+		return x.NumSubClaims
+	}
+	return 0
+}
+
+type FanOutChildrenCreatedPayload struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	ParentRunId        string                 `protobuf:"bytes,1,opt,name=parent_run_id,json=parentRunId,proto3" json:"parent_run_id,omitempty"`
+	ParentNodeId       string                 `protobuf:"bytes,2,opt,name=parent_node_id,json=parentNodeId,proto3" json:"parent_node_id,omitempty"`
+	ChildCount         int32                  `protobuf:"varint,3,opt,name=child_count,json=childCount,proto3" json:"child_count,omitempty"`
+	PartitionKeysCount int32                  `protobuf:"varint,4,opt,name=partition_keys_count,json=partitionKeysCount,proto3" json:"partition_keys_count,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *FanOutChildrenCreatedPayload) Reset() {
+	*x = FanOutChildrenCreatedPayload{}
+	mi := &file_events_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FanOutChildrenCreatedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FanOutChildrenCreatedPayload) ProtoMessage() {}
+
+func (x *FanOutChildrenCreatedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FanOutChildrenCreatedPayload.ProtoReflect.Descriptor instead.
+func (*FanOutChildrenCreatedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *FanOutChildrenCreatedPayload) GetParentRunId() string {
+	if x != nil {
+		return x.ParentRunId
+	}
+	return ""
+}
+
+func (x *FanOutChildrenCreatedPayload) GetParentNodeId() string {
+	if x != nil {
+		return x.ParentNodeId
+	}
+	return ""
+}
+
+func (x *FanOutChildrenCreatedPayload) GetChildCount() int32 {
+	if x != nil {
+		return x.ChildCount
+	}
+	return 0
+}
+
+func (x *FanOutChildrenCreatedPayload) GetPartitionKeysCount() int32 {
+	if x != nil {
+		return x.PartitionKeysCount
+	}
+	return 0
+}
+
+type SubClaimBeginCandidatePayload struct {
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	ParentClaimHandleId      string                 `protobuf:"bytes,1,opt,name=parent_claim_handle_id,json=parentClaimHandleId,proto3" json:"parent_claim_handle_id,omitempty"`
+	SubClaimHandleId         string                 `protobuf:"bytes,2,opt,name=sub_claim_handle_id,json=subClaimHandleId,proto3" json:"sub_claim_handle_id,omitempty"`
+	ProducerName             string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
+	CandidateHandleSizeBytes int64                  `protobuf:"varint,4,opt,name=candidate_handle_size_bytes,json=candidateHandleSizeBytes,proto3" json:"candidate_handle_size_bytes,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
+}
+
+func (x *SubClaimBeginCandidatePayload) Reset() {
+	*x = SubClaimBeginCandidatePayload{}
+	mi := &file_events_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubClaimBeginCandidatePayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubClaimBeginCandidatePayload) ProtoMessage() {}
+
+func (x *SubClaimBeginCandidatePayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubClaimBeginCandidatePayload.ProtoReflect.Descriptor instead.
+func (*SubClaimBeginCandidatePayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *SubClaimBeginCandidatePayload) GetParentClaimHandleId() string {
+	if x != nil {
+		return x.ParentClaimHandleId
+	}
+	return ""
+}
+
+func (x *SubClaimBeginCandidatePayload) GetSubClaimHandleId() string {
+	if x != nil {
+		return x.SubClaimHandleId
+	}
+	return ""
+}
+
+func (x *SubClaimBeginCandidatePayload) GetProducerName() string {
+	if x != nil {
+		return x.ProducerName
+	}
+	return ""
+}
+
+func (x *SubClaimBeginCandidatePayload) GetCandidateHandleSizeBytes() int64 {
+	if x != nil {
+		return x.CandidateHandleSizeBytes
+	}
+	return 0
+}
+
+type SubClaimAcquiredPayload struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	ParentClaimHandleId     string                 `protobuf:"bytes,1,opt,name=parent_claim_handle_id,json=parentClaimHandleId,proto3" json:"parent_claim_handle_id,omitempty"`
+	SubScopeDescriptorCount int32                  `protobuf:"varint,2,opt,name=sub_scope_descriptor_count,json=subScopeDescriptorCount,proto3" json:"sub_scope_descriptor_count,omitempty"`
+	ProducerName            string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *SubClaimAcquiredPayload) Reset() {
+	*x = SubClaimAcquiredPayload{}
+	mi := &file_events_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubClaimAcquiredPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubClaimAcquiredPayload) ProtoMessage() {}
+
+func (x *SubClaimAcquiredPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubClaimAcquiredPayload.ProtoReflect.Descriptor instead.
+func (*SubClaimAcquiredPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *SubClaimAcquiredPayload) GetParentClaimHandleId() string {
+	if x != nil {
+		return x.ParentClaimHandleId
+	}
+	return ""
+}
+
+func (x *SubClaimAcquiredPayload) GetSubScopeDescriptorCount() int32 {
+	if x != nil {
+		return x.SubScopeDescriptorCount
+	}
+	return 0
+}
+
+func (x *SubClaimAcquiredPayload) GetProducerName() string {
+	if x != nil {
+		return x.ProducerName
+	}
+	return ""
+}
+
+type SubgraphInternalCascadeFiredPayload struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	DelegateGraph      string                 `protobuf:"bytes,1,opt,name=delegate_graph,json=delegateGraph,proto3" json:"delegate_graph,omitempty"`
+	CallingRunId       string                 `protobuf:"bytes,2,opt,name=calling_run_id,json=callingRunId,proto3" json:"calling_run_id,omitempty"`
+	SettlingSignalType string                 `protobuf:"bytes,3,opt,name=settling_signal_type,json=settlingSignalType,proto3" json:"settling_signal_type,omitempty"`
+	Changed            bool                   `protobuf:"varint,4,opt,name=changed,proto3" json:"changed,omitempty"`
+	ChildCount         int32                  `protobuf:"varint,5,opt,name=child_count,json=childCount,proto3" json:"child_count,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *SubgraphInternalCascadeFiredPayload) Reset() {
+	*x = SubgraphInternalCascadeFiredPayload{}
+	mi := &file_events_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubgraphInternalCascadeFiredPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubgraphInternalCascadeFiredPayload) ProtoMessage() {}
+
+func (x *SubgraphInternalCascadeFiredPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubgraphInternalCascadeFiredPayload.ProtoReflect.Descriptor instead.
+func (*SubgraphInternalCascadeFiredPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *SubgraphInternalCascadeFiredPayload) GetDelegateGraph() string {
+	if x != nil {
+		return x.DelegateGraph
+	}
+	return ""
+}
+
+func (x *SubgraphInternalCascadeFiredPayload) GetCallingRunId() string {
+	if x != nil {
+		return x.CallingRunId
+	}
+	return ""
+}
+
+func (x *SubgraphInternalCascadeFiredPayload) GetSettlingSignalType() string {
+	if x != nil {
+		return x.SettlingSignalType
+	}
+	return ""
+}
+
+func (x *SubgraphInternalCascadeFiredPayload) GetChanged() bool {
+	if x != nil {
+		return x.Changed
+	}
+	return false
+}
+
+func (x *SubgraphInternalCascadeFiredPayload) GetChildCount() int32 {
+	if x != nil {
+		return x.ChildCount
+	}
+	return 0
+}
+
+type SubgraphDispatchedPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CallerRunId   string                 `protobuf:"bytes,1,opt,name=caller_run_id,json=callerRunId,proto3" json:"caller_run_id,omitempty"`
+	CallerNodeId  string                 `protobuf:"bytes,2,opt,name=caller_node_id,json=callerNodeId,proto3" json:"caller_node_id,omitempty"`
+	SubgraphName  string                 `protobuf:"bytes,3,opt,name=subgraph_name,json=subgraphName,proto3" json:"subgraph_name,omitempty"`
+	ChildAliases  []string               `protobuf:"bytes,4,rep,name=child_aliases,json=childAliases,proto3" json:"child_aliases,omitempty"`
+	ChildCount    int32                  `protobuf:"varint,5,opt,name=child_count,json=childCount,proto3" json:"child_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubgraphDispatchedPayload) Reset() {
+	*x = SubgraphDispatchedPayload{}
+	mi := &file_events_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubgraphDispatchedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubgraphDispatchedPayload) ProtoMessage() {}
+
+func (x *SubgraphDispatchedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubgraphDispatchedPayload.ProtoReflect.Descriptor instead.
+func (*SubgraphDispatchedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *SubgraphDispatchedPayload) GetCallerRunId() string {
+	if x != nil {
+		return x.CallerRunId
+	}
+	return ""
+}
+
+func (x *SubgraphDispatchedPayload) GetCallerNodeId() string {
+	if x != nil {
+		return x.CallerNodeId
+	}
+	return ""
+}
+
+func (x *SubgraphDispatchedPayload) GetSubgraphName() string {
+	if x != nil {
+		return x.SubgraphName
+	}
+	return ""
+}
+
+func (x *SubgraphDispatchedPayload) GetChildAliases() []string {
+	if x != nil {
+		return x.ChildAliases
+	}
+	return nil
+}
+
+func (x *SubgraphDispatchedPayload) GetChildCount() int32 {
+	if x != nil {
+		return x.ChildCount
+	}
+	return 0
+}
+
+type SubgraphExitCarryPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ParentRunId   string                 `protobuf:"bytes,1,opt,name=parent_run_id,json=parentRunId,proto3" json:"parent_run_id,omitempty"`
+	ExitRunId     string                 `protobuf:"bytes,2,opt,name=exit_run_id,json=exitRunId,proto3" json:"exit_run_id,omitempty"`
+	ExitNodeAlias string                 `protobuf:"bytes,3,opt,name=exit_node_alias,json=exitNodeAlias,proto3" json:"exit_node_alias,omitempty"`
+	Outcome       string                 `protobuf:"bytes,4,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubgraphExitCarryPayload) Reset() {
+	*x = SubgraphExitCarryPayload{}
+	mi := &file_events_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubgraphExitCarryPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubgraphExitCarryPayload) ProtoMessage() {}
+
+func (x *SubgraphExitCarryPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubgraphExitCarryPayload.ProtoReflect.Descriptor instead.
+func (*SubgraphExitCarryPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *SubgraphExitCarryPayload) GetParentRunId() string {
+	if x != nil {
+		return x.ParentRunId
+	}
+	return ""
+}
+
+func (x *SubgraphExitCarryPayload) GetExitRunId() string {
+	if x != nil {
+		return x.ExitRunId
+	}
+	return ""
+}
+
+func (x *SubgraphExitCarryPayload) GetExitNodeAlias() string {
+	if x != nil {
+		return x.ExitNodeAlias
+	}
+	return ""
+}
+
+func (x *SubgraphExitCarryPayload) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+type ClaimResolutionSettledPayload struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	ClaimHandleId       string                 `protobuf:"bytes,1,opt,name=claim_handle_id,json=claimHandleId,proto3" json:"claim_handle_id,omitempty"`
+	RunId               string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	FrameId             string                 `protobuf:"bytes,3,opt,name=frame_id,json=frameId,proto3" json:"frame_id,omitempty"`
+	ProducerName        string                 `protobuf:"bytes,4,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
+	ClaimScopeDataHash  string                 `protobuf:"bytes,5,opt,name=claim_scope_data_hash,json=claimScopeDataHash,proto3" json:"claim_scope_data_hash,omitempty"`
+	VersionId           string                 `protobuf:"bytes,6,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
+	ParentClaimHandleId *string                `protobuf:"bytes,7,opt,name=parent_claim_handle_id,json=parentClaimHandleId,proto3,oneof" json:"parent_claim_handle_id,omitempty"`
+	Cause               string                 `protobuf:"bytes,8,opt,name=cause,proto3" json:"cause,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ClaimResolutionSettledPayload) Reset() {
+	*x = ClaimResolutionSettledPayload{}
+	mi := &file_events_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClaimResolutionSettledPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClaimResolutionSettledPayload) ProtoMessage() {}
+
+func (x *ClaimResolutionSettledPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClaimResolutionSettledPayload.ProtoReflect.Descriptor instead.
+func (*ClaimResolutionSettledPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *ClaimResolutionSettledPayload) GetClaimHandleId() string {
+	if x != nil {
+		return x.ClaimHandleId
+	}
+	return ""
+}
+
+func (x *ClaimResolutionSettledPayload) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ClaimResolutionSettledPayload) GetFrameId() string {
+	if x != nil {
+		return x.FrameId
+	}
+	return ""
+}
+
+func (x *ClaimResolutionSettledPayload) GetProducerName() string {
+	if x != nil {
+		return x.ProducerName
+	}
+	return ""
+}
+
+func (x *ClaimResolutionSettledPayload) GetClaimScopeDataHash() string {
+	if x != nil {
+		return x.ClaimScopeDataHash
+	}
+	return ""
+}
+
+func (x *ClaimResolutionSettledPayload) GetVersionId() string {
+	if x != nil {
+		return x.VersionId
+	}
+	return ""
+}
+
+func (x *ClaimResolutionSettledPayload) GetParentClaimHandleId() string {
+	if x != nil && x.ParentClaimHandleId != nil {
+		return *x.ParentClaimHandleId
+	}
+	return ""
+}
+
+func (x *ClaimResolutionSettledPayload) GetCause() string {
+	if x != nil {
+		return x.Cause
+	}
+	return ""
+}
+
+type ParkedResumeStartedPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ResumeReason  string                 `protobuf:"bytes,1,opt,name=resume_reason,json=resumeReason,proto3" json:"resume_reason,omitempty"`
+	SupervisorId  string                 `protobuf:"bytes,2,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ParkedResumeStartedPayload) Reset() {
+	*x = ParkedResumeStartedPayload{}
+	mi := &file_events_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ParkedResumeStartedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ParkedResumeStartedPayload) ProtoMessage() {}
+
+func (x *ParkedResumeStartedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ParkedResumeStartedPayload.ProtoReflect.Descriptor instead.
+func (*ParkedResumeStartedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *ParkedResumeStartedPayload) GetResumeReason() string {
+	if x != nil {
+		return x.ResumeReason
+	}
+	return ""
+}
+
+func (x *ParkedResumeStartedPayload) GetSupervisorId() string {
+	if x != nil {
+		return x.SupervisorId
+	}
+	return ""
+}
+
+type DebugOverrideAppliedPayload struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Action         string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	NodeType       string                 `protobuf:"bytes,2,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
+	GateState      string                 `protobuf:"bytes,3,opt,name=gate_state,json=gateState,proto3" json:"gate_state,omitempty"`
+	Actor          string                 `protobuf:"bytes,4,opt,name=actor,proto3" json:"actor,omitempty"`
+	RunsMutated    int32                  `protobuf:"varint,5,opt,name=runs_mutated,json=runsMutated,proto3" json:"runs_mutated,omitempty"`
+	AttributeKey   string                 `protobuf:"bytes,6,opt,name=attribute_key,json=attributeKey,proto3" json:"attribute_key,omitempty"`
+	AttributeValue *structpb.Value        `protobuf:"bytes,7,opt,name=attribute_value,json=attributeValue,proto3" json:"attribute_value,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DebugOverrideAppliedPayload) Reset() {
+	*x = DebugOverrideAppliedPayload{}
+	mi := &file_events_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DebugOverrideAppliedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DebugOverrideAppliedPayload) ProtoMessage() {}
+
+func (x *DebugOverrideAppliedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DebugOverrideAppliedPayload.ProtoReflect.Descriptor instead.
+func (*DebugOverrideAppliedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *DebugOverrideAppliedPayload) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *DebugOverrideAppliedPayload) GetNodeType() string {
+	if x != nil {
+		return x.NodeType
+	}
+	return ""
+}
+
+func (x *DebugOverrideAppliedPayload) GetGateState() string {
+	if x != nil {
+		return x.GateState
+	}
+	return ""
+}
+
+func (x *DebugOverrideAppliedPayload) GetActor() string {
+	if x != nil {
+		return x.Actor
+	}
+	return ""
+}
+
+func (x *DebugOverrideAppliedPayload) GetRunsMutated() int32 {
+	if x != nil {
+		return x.RunsMutated
+	}
+	return 0
+}
+
+func (x *DebugOverrideAppliedPayload) GetAttributeKey() string {
+	if x != nil {
+		return x.AttributeKey
+	}
+	return ""
+}
+
+func (x *DebugOverrideAppliedPayload) GetAttributeValue() *structpb.Value {
+	if x != nil {
+		return x.AttributeValue
+	}
+	return nil
+}
+
+type InstanceTerminatedPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Actor         string                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstanceTerminatedPayload) Reset() {
+	*x = InstanceTerminatedPayload{}
+	mi := &file_events_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstanceTerminatedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstanceTerminatedPayload) ProtoMessage() {}
+
+func (x *InstanceTerminatedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstanceTerminatedPayload.ProtoReflect.Descriptor instead.
+func (*InstanceTerminatedPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *InstanceTerminatedPayload) GetActor() string {
+	if x != nil {
+		return x.Actor
+	}
+	return ""
+}
+
+func (x *InstanceTerminatedPayload) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type TerminalSuccessSignalPayload struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Changed         bool                   `protobuf:"varint,1,opt,name=changed,proto3" json:"changed,omitempty"`
+	AttributesDelta *structpb.Struct       `protobuf:"bytes,2,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
+	ChangeSummary   string                 `protobuf:"bytes,3,opt,name=change_summary,json=changeSummary,proto3" json:"change_summary,omitempty"`
+	Tags            []string               `protobuf:"bytes,4,rep,name=tags,proto3" json:"tags,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TerminalSuccessSignalPayload) Reset() {
+	*x = TerminalSuccessSignalPayload{}
+	mi := &file_events_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalSuccessSignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalSuccessSignalPayload) ProtoMessage() {}
+
+func (x *TerminalSuccessSignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalSuccessSignalPayload.ProtoReflect.Descriptor instead.
+func (*TerminalSuccessSignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *TerminalSuccessSignalPayload) GetChanged() bool {
+	if x != nil {
+		return x.Changed
+	}
+	return false
+}
+
+func (x *TerminalSuccessSignalPayload) GetAttributesDelta() *structpb.Struct {
+	if x != nil {
+		return x.AttributesDelta
+	}
+	return nil
+}
+
+func (x *TerminalSuccessSignalPayload) GetChangeSummary() string {
+	if x != nil {
+		return x.ChangeSummary
+	}
+	return ""
+}
+
+func (x *TerminalSuccessSignalPayload) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+type TerminalErrorSignalPayload struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ErrorClass      string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
+	ErrorPayload    *structpb.Struct       `protobuf:"bytes,2,opt,name=error_payload,json=errorPayload,proto3" json:"error_payload,omitempty"`
+	Attempt         int32                  `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	RetriesSoFar    int32                  `protobuf:"varint,4,opt,name=retries_so_far,json=retriesSoFar,proto3" json:"retries_so_far,omitempty"`
+	AttributesDelta *structpb.Struct       `protobuf:"bytes,5,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
+	Tags            []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TerminalErrorSignalPayload) Reset() {
+	*x = TerminalErrorSignalPayload{}
+	mi := &file_events_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalErrorSignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalErrorSignalPayload) ProtoMessage() {}
+
+func (x *TerminalErrorSignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalErrorSignalPayload.ProtoReflect.Descriptor instead.
+func (*TerminalErrorSignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *TerminalErrorSignalPayload) GetErrorClass() string {
+	if x != nil {
+		return x.ErrorClass
+	}
+	return ""
+}
+
+func (x *TerminalErrorSignalPayload) GetErrorPayload() *structpb.Struct {
+	if x != nil {
+		return x.ErrorPayload
+	}
+	return nil
+}
+
+func (x *TerminalErrorSignalPayload) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *TerminalErrorSignalPayload) GetRetriesSoFar() int32 {
+	if x != nil {
+		return x.RetriesSoFar
+	}
+	return 0
+}
+
+func (x *TerminalErrorSignalPayload) GetAttributesDelta() *structpb.Struct {
+	if x != nil {
+		return x.AttributesDelta
+	}
+	return nil
+}
+
+func (x *TerminalErrorSignalPayload) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+type TransientParkSignalPayload struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ResumeAt       *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`
+	Tags           []string               `protobuf:"bytes,2,rep,name=tags,proto3" json:"tags,omitempty"`
+	ScratchSize    int32                  `protobuf:"varint,3,opt,name=scratch_size,json=scratchSize,proto3" json:"scratch_size,omitempty"`
+	ScratchSpilled bool                   `protobuf:"varint,4,opt,name=scratch_spilled,json=scratchSpilled,proto3" json:"scratch_spilled,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TransientParkSignalPayload) Reset() {
+	*x = TransientParkSignalPayload{}
+	mi := &file_events_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransientParkSignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransientParkSignalPayload) ProtoMessage() {}
+
+func (x *TransientParkSignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransientParkSignalPayload.ProtoReflect.Descriptor instead.
+func (*TransientParkSignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *TransientParkSignalPayload) GetResumeAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ResumeAt
+	}
+	return nil
+}
+
+func (x *TransientParkSignalPayload) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+func (x *TransientParkSignalPayload) GetScratchSize() int32 {
+	if x != nil {
+		return x.ScratchSize
+	}
+	return 0
+}
+
+func (x *TransientParkSignalPayload) GetScratchSpilled() bool {
+	if x != nil {
+		return x.ScratchSpilled
+	}
+	return false
+}
+
+type TransientRetrySignalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Attempt       int32                  `protobuf:"varint,1,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Cap           int32                  `protobuf:"varint,2,opt,name=cap,proto3" json:"cap,omitempty"`
+	ErrorClass    string                 `protobuf:"bytes,3,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
+	DelayMs       int32                  `protobuf:"varint,4,opt,name=delay_ms,json=delayMs,proto3" json:"delay_ms,omitempty"`
+	ErrorPayload  *structpb.Struct       `protobuf:"bytes,5,opt,name=error_payload,json=errorPayload,proto3" json:"error_payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransientRetrySignalPayload) Reset() {
+	*x = TransientRetrySignalPayload{}
+	mi := &file_events_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransientRetrySignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransientRetrySignalPayload) ProtoMessage() {}
+
+func (x *TransientRetrySignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransientRetrySignalPayload.ProtoReflect.Descriptor instead.
+func (*TransientRetrySignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *TransientRetrySignalPayload) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *TransientRetrySignalPayload) GetCap() int32 {
+	if x != nil {
+		return x.Cap
+	}
+	return 0
+}
+
+func (x *TransientRetrySignalPayload) GetErrorClass() string {
+	if x != nil {
+		return x.ErrorClass
+	}
+	return ""
+}
+
+func (x *TransientRetrySignalPayload) GetDelayMs() int32 {
+	if x != nil {
+		return x.DelayMs
+	}
+	return 0
+}
+
+func (x *TransientRetrySignalPayload) GetErrorPayload() *structpb.Struct {
+	if x != nil {
+		return x.ErrorPayload
+	}
+	return nil
+}
+
+type TransientAwaitAsyncSignalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AsyncAckId    string                 `protobuf:"bytes,1,opt,name=async_ack_id,json=asyncAckId,proto3" json:"async_ack_id,omitempty"`
+	CallbackUrl   string                 `protobuf:"bytes,2,opt,name=callback_url,json=callbackUrl,proto3" json:"callback_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransientAwaitAsyncSignalPayload) Reset() {
+	*x = TransientAwaitAsyncSignalPayload{}
+	mi := &file_events_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransientAwaitAsyncSignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransientAwaitAsyncSignalPayload) ProtoMessage() {}
+
+func (x *TransientAwaitAsyncSignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransientAwaitAsyncSignalPayload.ProtoReflect.Descriptor instead.
+func (*TransientAwaitAsyncSignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *TransientAwaitAsyncSignalPayload) GetAsyncAckId() string {
+	if x != nil {
+		return x.AsyncAckId
+	}
+	return ""
+}
+
+func (x *TransientAwaitAsyncSignalPayload) GetCallbackUrl() string {
+	if x != nil {
+		return x.CallbackUrl
+	}
+	return ""
+}
+
+type TransientInfraSignalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	Details       *structpb.Struct       `protobuf:"bytes,2,opt,name=details,proto3" json:"details,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransientInfraSignalPayload) Reset() {
+	*x = TransientInfraSignalPayload{}
+	mi := &file_events_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransientInfraSignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransientInfraSignalPayload) ProtoMessage() {}
+
+func (x *TransientInfraSignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransientInfraSignalPayload.ProtoReflect.Descriptor instead.
+func (*TransientInfraSignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *TransientInfraSignalPayload) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *TransientInfraSignalPayload) GetDetails() *structpb.Struct {
+	if x != nil {
+		return x.Details
+	}
+	return nil
+}
+
+type TransientReleaseAndRequeueSignalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ErrorClass    string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
+	ErrorPayload  *structpb.Struct       `protobuf:"bytes,2,opt,name=error_payload,json=errorPayload,proto3" json:"error_payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransientReleaseAndRequeueSignalPayload) Reset() {
+	*x = TransientReleaseAndRequeueSignalPayload{}
+	mi := &file_events_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransientReleaseAndRequeueSignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransientReleaseAndRequeueSignalPayload) ProtoMessage() {}
+
+func (x *TransientReleaseAndRequeueSignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransientReleaseAndRequeueSignalPayload.ProtoReflect.Descriptor instead.
+func (*TransientReleaseAndRequeueSignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *TransientReleaseAndRequeueSignalPayload) GetErrorClass() string {
+	if x != nil {
+		return x.ErrorClass
+	}
+	return ""
+}
+
+func (x *TransientReleaseAndRequeueSignalPayload) GetErrorPayload() *structpb.Struct {
+	if x != nil {
+		return x.ErrorPayload
+	}
+	return nil
+}
+
+type AttributeChangedSignalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Value         *structpb.Value        `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	OldValue      *structpb.Value        `protobuf:"bytes,3,opt,name=old_value,json=oldValue,proto3" json:"old_value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AttributeChangedSignalPayload) Reset() {
+	*x = AttributeChangedSignalPayload{}
+	mi := &file_events_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttributeChangedSignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttributeChangedSignalPayload) ProtoMessage() {}
+
+func (x *AttributeChangedSignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttributeChangedSignalPayload.ProtoReflect.Descriptor instead.
+func (*AttributeChangedSignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *AttributeChangedSignalPayload) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *AttributeChangedSignalPayload) GetValue() *structpb.Value {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *AttributeChangedSignalPayload) GetOldValue() *structpb.Value {
+	if x != nil {
+		return x.OldValue
+	}
+	return nil
+}
+
+type SettlingSignalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ErrorClass    string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SettlingSignalPayload) Reset() {
+	*x = SettlingSignalPayload{}
+	mi := &file_events_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SettlingSignalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SettlingSignalPayload) ProtoMessage() {}
+
+func (x *SettlingSignalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SettlingSignalPayload.ProtoReflect.Descriptor instead.
+func (*SettlingSignalPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *SettlingSignalPayload) GetErrorClass() string {
+	if x != nil {
+		return x.ErrorClass
+	}
+	return ""
+}
+
 var File_events_proto protoreflect.FileDescriptor
 
 const file_events_proto_rawDesc = "" +
 	"\n" +
-	"\fevents.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf2\x10\n" +
+	"\fevents.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf9\x14\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -2093,16 +4290,21 @@ const file_events_proto_rawDesc = "" +
 	"\rlock_released\x18) \x01(\v2\x1e.rimsky.v1.LockReleasedPayloadH\x00R\flockReleased\x12R\n" +
 	"\x12lock_orphan_reaped\x18* \x01(\v2\".rimsky.v1.LockOrphanReapedPayloadH\x00R\x10lockOrphanReaped\x12`\n" +
 	"\x16attributes_substituted\x18+ \x01(\v2'.rimsky.v1.AttributesSubstitutedPayloadH\x00R\x15attributesSubstituted\x12Z\n" +
-	"\x14attributes_committed\x18, \x01(\v2%.rimsky.v1.AttributesCommittedPayloadH\x00R\x13attributesCommitted\x12p\n" +
-	"\x1cattributes_validation_failed\x18- \x01(\v2,.rimsky.v1.AttributesValidationFailedPayloadH\x00R\x1aattributesValidationFailed\x12H\n" +
+	"\x14attributes_committed\x18, \x01(\v2%.rimsky.v1.AttributesCommittedPayloadH\x00R\x13attributesCommitted\x12H\n" +
 	"\x0eclaim_acquired\x18. \x01(\v2\x1f.rimsky.v1.ClaimAcquiredPayloadH\x00R\rclaimAcquired\x12<\n" +
 	"\n" +
 	"claim_held\x18/ \x01(\v2\x1b.rimsky.v1.ClaimHeldPayloadH\x00R\tclaimHeld\x12H\n" +
 	"\x0eclaim_resolved\x180 \x01(\v2\x1f.rimsky.v1.ClaimResolvedPayloadH\x00R\rclaimResolved\x12j\n" +
-	"\x1atemplate_resolution_failed\x181 \x01(\v2*.rimsky.v1.TemplateResolutionFailedPayloadH\x00R\x18templateResolutionFailed\x128\n" +
+	"\x1atemplate_resolution_failed\x181 \x01(\v2*.rimsky.v1.TemplateResolutionFailedPayloadH\x00R\x18templateResolutionFailed\x12d\n" +
+	"\x18attributes_schema_failed\x187 \x01(\v2(.rimsky.v1.AttributesSchemaFailedPayloadH\x00R\x16attributesSchemaFailed\x12j\n" +
+	"\x1aattribute_override_matched\x188 \x01(\v2*.rimsky.v1.AttributeOverrideMatchedPayloadH\x00R\x18attributeOverrideMatched\x12R\n" +
+	"\x12fan_out_dispatched\x18; \x01(\v2\".rimsky.v1.FanOutDispatchedPayloadH\x00R\x10fanOutDispatched\x12w\n" +
+	"\x1fsubgraph_internal_cascade_fired\x18? \x01(\v2..rimsky.v1.SubgraphInternalCascadeFiredPayloadH\x00R\x1csubgraphInternalCascadeFired\x12[\n" +
+	"\x15parked_resume_started\x18C \x01(\v2%.rimsky.v1.ParkedResumeStartedPayloadH\x00R\x13parkedResumeStarted\x12W\n" +
+	"\x13instance_terminated\x18E \x01(\v2$.rimsky.v1.InstanceTerminatedPayloadH\x00R\x12instanceTerminated\x128\n" +
 	"\vpayload_raw\x18\x1e \x01(\v2\x17.google.protobuf.StructR\n" +
 	"payloadRawB\t\n" +
-	"\apayloadJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b\x1a\x10\x1bJ\x04\b\x1b\x10\x1cJ\x04\b\x1c\x10\x1dJ\x04\b\x1d\x10\x1eR\x06commitR\x13quality_rule_failedR\x0eheartbeat_lostR\x0eschedule_firedR\x13pure_cascade_commitR\x18schedule_dispatch_failed\"\xa5\x01\n" +
+	"\apayloadJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b\x1a\x10\x1bJ\x04\b\x1b\x10\x1cJ\x04\b\x1c\x10\x1dJ\x04\b\x1d\x10\x1eJ\x04\b-\x10.R\x06commitR\x13quality_rule_failedR\x0eheartbeat_lostR\x0eschedule_firedR\x13pure_cascade_commitR\x18schedule_dispatch_failedR\x1cattributes_validation_failed\"\xa5\x01\n" +
 	"\x12MessageSentPayload\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12$\n" +
 	"\x0esource_node_id\x18\x02 \x01(\tR\fsourceNodeId\x12$\n" +
@@ -2122,73 +4324,78 @@ const file_events_proto_rawDesc = "" +
 	"errorClass\x121\n" +
 	"\adetails\x18\x02 \x01(\v2\x17.google.protobuf.StructR\adetails\x12!\n" +
 	"\faction_taken\x18\x03 \x01(\tR\vactionTaken\x12\x19\n" +
-	"\bdelay_ms\x18\x05 \x01(\x03R\adelayMs\"9\n" +
+	"\bdelay_ms\x18\x05 \x01(\x03R\adelayMs\"Z\n" +
 	"\x12WorkStartedPayload\x12#\n" +
-	"\rsupervisor_id\x18\x01 \x01(\tR\fsupervisorId\"0\n" +
-	"\x14WorkCompletedPayload\x12\x18\n" +
-	"\aoutcome\x18\x01 \x01(\tR\aoutcome\"+\n" +
+	"\rsupervisor_id\x18\x01 \x01(\tR\fsupervisorId\x12\x1f\n" +
+	"\vdispatch_id\x18\x02 \x01(\tR\n" +
+	"dispatchId\"\x90\x01\n" +
+	"\x14WorkCompletedPayload\x12#\n" +
+	"\rsupervisor_id\x18\x02 \x01(\tR\fsupervisorId\x12\x1f\n" +
+	"\vdispatch_id\x18\x03 \x01(\tR\n" +
+	"dispatchId\x12#\n" +
+	"\rterminal_kind\x18\x04 \x01(\tR\fterminalKindJ\x04\b\x01\x10\x02R\aoutcome\"+\n" +
 	"\x11NoOpCommitPayload\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\"v\n" +
 	"\x17OperatorOverridePayload\x12\x16\n" +
 	"\x06action\x18\x01 \x01(\tR\x06action\x12\x14\n" +
 	"\x05actor\x18\x02 \x01(\tR\x05actor\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reasonJ\x04\b\x04\x10\x05R\x0frestore_version\"\xa4\x01\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reasonJ\x04\b\x04\x10\x05R\x0frestore_version\"\x9d\x02\n" +
 	"\x1cOrphanedClaimReleasedPayload\x12\x1f\n" +
 	"\vdispatch_id\x18\x01 \x01(\tR\n" +
 	"dispatchId\x12(\n" +
-	"\x10prior_claimed_by\x18\x02 \x01(\tR\x0epriorClaimedBy\x129\n" +
-	"\n" +
-	"claimed_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tclaimedAt\"\xed\x01\n" +
+	"\x10prior_claimed_by\x18\x02 \x01(\tR\x0epriorClaimedBy\x12D\n" +
+	"\x10last_progress_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0elastProgressAt\x12\x1f\n" +
+	"\verror_class\x18\x05 \x01(\tR\n" +
+	"errorClass\x12\x16\n" +
+	"\x06reason\x18\x06 \x01(\tR\x06reason\x12!\n" +
+	"\fcallback_url\x18\a \x01(\tR\vcallbackUrlJ\x04\b\x03\x10\x04R\n" +
+	"claimed_at\"\xb1\x01\n" +
 	"\x1cOrphanedClaimLostRacePayload\x12#\n" +
 	"\rsupervisor_id\x18\x01 \x01(\tR\fsupervisorId\x12\x1f\n" +
 	"\vdispatch_id\x18\x02 \x01(\tR\n" +
-	"dispatchId\x12%\n" +
-	"\x0eownership_kind\x18\x03 \x01(\tR\rownershipKind\x12,\n" +
-	"\x12current_claimed_by\x18\x04 \x01(\tR\x10currentClaimedBy\x122\n" +
-	"\x15winning_supervisor_id\x18\x05 \x01(\tR\x13winningSupervisorId\"^\n" +
+	"dispatchIdJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\x0eownership_kindR\x12current_claimed_byR\x15winning_supervisor_id\"^\n" +
 	"\x13WorkRejectedPayload\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x12/\n" +
-	"\x06errors\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06errors\"~\n" +
-	"\x19UnresolvedExecutorPayload\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12#\n" +
+	"\x06errors\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06errors\"t\n" +
+	"\x19UnresolvedExecutorPayload\x12#\n" +
 	"\rexecutor_name\x18\x02 \x01(\tR\fexecutorName\x12#\n" +
-	"\rsupervisor_id\x18\x03 \x01(\tR\fsupervisorId\"\xa3\x02\n" +
+	"\rsupervisor_id\x18\x03 \x01(\tR\fsupervisorIdJ\x04\b\x01\x10\x02R\anode_id\"\x89\x02\n" +
 	"\x13LockAcquiredPayload\x12\x1b\n" +
 	"\tlock_kind\x18\x01 \x01(\tR\blockKind\x12\x1b\n" +
 	"\tlock_name\x18\x02 \x01(\tR\blockName\x12#\n" +
-	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x126\n" +
-	"\n" +
-	"scope_data\x18\x04 \x01(\v2\x17.google.protobuf.StructR\tscopeData\x12\x19\n" +
-	"\bclaim_id\x18\x05 \x01(\tR\aclaimId\x12#\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x12#\n" +
 	"\rsupervisor_id\x18\x06 \x01(\tR\fsupervisorId\x12\x1b\n" +
-	"\tholder_id\x18\a \x01(\tR\bholderId\x12\x18\n" +
-	"\aresumed\x18\b \x01(\bR\aresumed\"\xe9\x01\n" +
+	"\tholder_id\x18\a \x01(\tR\bholderId\x12\x14\n" +
+	"\x05alias\x18\t \x01(\tR\x05alias\x12\x16\n" +
+	"\x06intent\x18\n" +
+	" \x01(\tR\x06intentJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\b\x10\tR\bclaim_idR\aresumed\"\xf4\x01\n" +
 	"\x13LockReleasedPayload\x12\x1b\n" +
 	"\tlock_kind\x18\x01 \x01(\tR\blockKind\x12\x1b\n" +
 	"\tlock_name\x18\x02 \x01(\tR\blockName\x12#\n" +
-	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x12\x19\n" +
-	"\bclaim_id\x18\x04 \x01(\tR\aclaimId\x12\x1b\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x12\x1b\n" +
 	"\tholder_id\x18\x05 \x01(\tR\bholderId\x12#\n" +
 	"\rsupervisor_id\x18\x06 \x01(\tR\fsupervisorId\x12\x16\n" +
-	"\x06action\x18\a \x01(\tR\x06action\"\x9b\x02\n" +
+	"\x06action\x18\a \x01(\tR\x06action\x12\x14\n" +
+	"\x05alias\x18\b \x01(\tR\x05aliasJ\x04\b\x04\x10\x05R\bclaim_id\"\xb5\x03\n" +
 	"\x17LockOrphanReapedPayload\x12\x1b\n" +
 	"\tlock_kind\x18\x01 \x01(\tR\blockKind\x12\x1b\n" +
 	"\tlock_name\x18\x02 \x01(\tR\blockName\x12#\n" +
-	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x12\x19\n" +
-	"\bclaim_id\x18\x04 \x01(\tR\aclaimId\x12\x1b\n" +
-	"\tholder_id\x18\x05 \x01(\tR\bholderId\x12.\n" +
-	"\x13prior_supervisor_id\x18\x06 \x01(\tR\x11priorSupervisorId\x129\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x129\n" +
 	"\n" +
-	"expired_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\texpiredAt\"\x87\x01\n" +
+	"expires_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12&\n" +
+	"\x0fclaim_handle_id\x18\b \x01(\tR\rclaimHandleId\x12#\n" +
+	"\rsupervisor_id\x18\t \x01(\tR\fsupervisorId\x12$\n" +
+	"\x0eholder_node_id\x18\n" +
+	" \x01(\tR\fholderNodeId\x129\n" +
+	"\n" +
+	"claimed_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tclaimedAt\x12\x16\n" +
+	"\x06intent\x18\f \x01(\tR\x06intentJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\x06\x10\aR\bclaim_idR\tholder_idR\x13prior_supervisor_id\"v\n" +
 	"\x1cAttributesSubstitutedPayload\x12-\n" +
-	"\x12substituted_fields\x18\x01 \x03(\tR\x11substitutedFields\x12%\n" +
-	"\x0eomitted_fields\x18\x02 \x03(\tR\romittedFieldsJ\x04\b\x03\x10\x04R\vrun_attempt\"\x84\x01\n" +
+	"\x12substituted_fields\x18\x01 \x03(\tR\x11substitutedFieldsJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\x0eomitted_fieldsR\vrun_attempt\"\x84\x01\n" +
 	"\x1aAttributesCommittedPayload\x12\x18\n" +
 	"\achanged\x18\x01 \x01(\bR\achanged\x12%\n" +
 	"\x0eupdated_fields\x18\x02 \x03(\tR\rupdatedFields\x12%\n" +
-	"\x0echange_summary\x18\x03 \x01(\tR\rchangeSummary\"a\n" +
-	"!AttributesValidationFailedPayload\x12/\n" +
-	"\x06errors\x18\x02 \x03(\v2\x17.google.protobuf.StructR\x06errorsJ\x04\b\x01\x10\x02R\x05phase\"\xa5\x01\n" +
+	"\x0echange_summary\x18\x03 \x01(\tR\rchangeSummary\"\xa5\x01\n" +
 	"\x14ClaimAcquiredPayload\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12#\n" +
 	"\rproducer_name\x18\x02 \x01(\tR\fproducerName\x12\x12\n" +
@@ -2208,7 +4415,209 @@ const file_events_proto_rawDesc = "" +
 	"\tdirective\x18\x01 \x01(\tR\tdirective\x12\x12\n" +
 	"\x04site\x18\x02 \x01(\tR\x04site\x12\x14\n" +
 	"\x05field\x18\x03 \x01(\tR\x05field\x12\x16\n" +
-	"\x06reason\x18\x04 \x01(\tR\x06reason*\xd8\x0f\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\"\xb6\x04\n" +
+	"\x1aAuthAccessAttemptedPayload\x12\x1a\n" +
+	"\x06key_id\x18\x01 \x01(\tH\x00R\x05keyId\x88\x01\x01\x12\x19\n" +
+	"\bkey_name\x18\x02 \x01(\tR\akeyName\x12#\n" +
+	"\ridentity_kind\x18\x03 \x01(\tR\fidentityKind\x12#\n" +
+	"\rprotocol_skin\x18\x04 \x01(\tR\fprotocolSkin\x12\x16\n" +
+	"\x06action\x18\x05 \x01(\tR\x06action\x12!\n" +
+	"\frequest_path\x18\x06 \x01(\tR\vrequestPath\x12%\n" +
+	"\x0erequest_method\x18\a \x01(\tR\rrequestMethod\x12>\n" +
+	"\x0erequest_params\x18\b \x01(\v2\x17.google.protobuf.StructR\rrequestParams\x124\n" +
+	"\x16request_params_invalid\x18\t \x01(\bR\x14requestParamsInvalid\x12'\n" +
+	"\x0fresponse_status\x18\n" +
+	" \x01(\x05R\x0eresponseStatus\x12\x12\n" +
+	"\x04mode\x18\v \x01(\tR\x04mode\x12\x1a\n" +
+	"\bexecuted\x18\f \x01(\bR\bexecuted\x12\x1f\n" +
+	"\vduration_ms\x18\r \x01(\x03R\n" +
+	"durationMs\x12\x1b\n" +
+	"\tclient_ip\x18\x0e \x01(\tR\bclientIp\x12\x1d\n" +
+	"\n" +
+	"user_agent\x18\x0f \x01(\tR\tuserAgentB\t\n" +
+	"\a_key_id\"\x9f\x05\n" +
+	"\x17AuthAccessDeniedPayload\x12\x1a\n" +
+	"\x06key_id\x18\x01 \x01(\tH\x00R\x05keyId\x88\x01\x01\x12\x1e\n" +
+	"\bkey_name\x18\x02 \x01(\tH\x01R\akeyName\x88\x01\x01\x12(\n" +
+	"\ridentity_kind\x18\x03 \x01(\tH\x02R\fidentityKind\x88\x01\x01\x12#\n" +
+	"\rprotocol_skin\x18\x04 \x01(\tR\fprotocolSkin\x12\x1b\n" +
+	"\x06action\x18\x05 \x01(\tH\x03R\x06action\x88\x01\x01\x12!\n" +
+	"\frequest_path\x18\x06 \x01(\tR\vrequestPath\x12%\n" +
+	"\x0erequest_method\x18\a \x01(\tR\rrequestMethod\x12>\n" +
+	"\x0erequest_params\x18\b \x01(\v2\x17.google.protobuf.StructR\rrequestParams\x124\n" +
+	"\x16request_params_invalid\x18\t \x01(\bR\x14requestParamsInvalid\x12'\n" +
+	"\x0fresponse_status\x18\n" +
+	" \x01(\x05R\x0eresponseStatus\x12\x17\n" +
+	"\x04mode\x18\v \x01(\tH\x04R\x04mode\x88\x01\x01\x12\x1a\n" +
+	"\bexecuted\x18\f \x01(\bR\bexecuted\x12\x1f\n" +
+	"\vduration_ms\x18\r \x01(\x03R\n" +
+	"durationMs\x12\x1b\n" +
+	"\tclient_ip\x18\x0e \x01(\tR\bclientIp\x12\x1d\n" +
+	"\n" +
+	"user_agent\x18\x0f \x01(\tR\tuserAgent\x12#\n" +
+	"\rdenial_reason\x18\x10 \x01(\tR\fdenialReasonB\t\n" +
+	"\a_key_idB\v\n" +
+	"\t_key_nameB\x10\n" +
+	"\x0e_identity_kindB\t\n" +
+	"\a_actionB\a\n" +
+	"\x05_mode\"\x85\x02\n" +
+	"\x15AuthKeyCreatedPayload\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x19\n" +
+	"\bkey_name\x18\x02 \x01(\tR\akeyName\x129\n" +
+	"\vpermissions\x18\x03 \x01(\v2\x17.google.protobuf.StructR\vpermissions\x12.\n" +
+	"\x11created_by_key_id\x18\x04 \x01(\tH\x00R\x0ecreatedByKeyId\x88\x01\x01\x129\n" +
+	"\n" +
+	"expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAtB\x14\n" +
+	"\x12_created_by_key_id\"\xa7\x01\n" +
+	"\x15AuthKeyRevokedPayload\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x19\n" +
+	"\bkey_name\x18\x02 \x01(\tR\akeyName\x12.\n" +
+	"\x11revoked_by_key_id\x18\x03 \x01(\tH\x00R\x0erevokedByKeyId\x88\x01\x01\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reasonB\x14\n" +
+	"\x12_revoked_by_key_id\"\x84\x02\n" +
+	"\x15AuthKeyRotatedPayload\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x19\n" +
+	"\bkey_name\x18\x02 \x01(\tR\akeyName\x12\x1c\n" +
+	"\n" +
+	"old_key_id\x18\x03 \x01(\tR\boldKeyId\x12\x1c\n" +
+	"\n" +
+	"new_key_id\x18\x04 \x01(\tR\bnewKeyId\x127\n" +
+	"\trevoke_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\brevokeAt\x12.\n" +
+	"\x11rotated_by_key_id\x18\x06 \x01(\tH\x00R\x0erotatedByKeyId\x88\x01\x01B\x14\n" +
+	"\x12_rotated_by_key_id\"9\n" +
+	"\x1dAttributesSchemaFailedPayload\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"}\n" +
+	"\x1fAttributeOverrideMatchedPayload\x12%\n" +
+	"\x0eoverride_index\x18\x01 \x01(\x05R\roverrideIndex\x12\x1b\n" +
+	"\tnode_type\x18\x02 \x01(\tR\bnodeType\x12\x16\n" +
+	"\x06fields\x18\x03 \x03(\tR\x06fields\"\xc0\x01\n" +
+	"\x14BreakpointHitPayload\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12\x17\n" +
+	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12#\n" +
+	"\rbreakpoint_id\x18\x03 \x01(\tR\fbreakpointId\x12\x15\n" +
+	"\x06hit_id\x18\x04 \x01(\tR\x05hitId\x12\x1e\n" +
+	"\n" +
+	"checkpoint\x18\x05 \x01(\tR\n" +
+	"checkpoint\x12\x12\n" +
+	"\x04mode\x18\x06 \x01(\tR\x04mode\"v\n" +
+	"\x1aMessageDeadLetteredPayload\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageId\x12!\n" +
+	"\fmessage_type\x18\x02 \x01(\tR\vmessageType\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xe9\x01\n" +
+	"\x17FanOutDispatchedPayload\x12\"\n" +
+	"\rparent_run_id\x18\x01 \x01(\tR\vparentRunId\x12\"\n" +
+	"\rchild_run_ids\x18\x02 \x03(\tR\vchildRunIds\x12\x1d\n" +
+	"\n" +
+	"child_keys\x18\x03 \x03(\tR\tchildKeys\x12 \n" +
+	"\vparallelism\x18\x04 \x01(\x05R\vparallelism\x12\x1f\n" +
+	"\vpolicy_kind\x18\x05 \x01(\tR\n" +
+	"policyKind\x12$\n" +
+	"\x0enum_sub_claims\x18\x06 \x01(\x05R\fnumSubClaims\"\xbb\x01\n" +
+	"\x1cFanOutChildrenCreatedPayload\x12\"\n" +
+	"\rparent_run_id\x18\x01 \x01(\tR\vparentRunId\x12$\n" +
+	"\x0eparent_node_id\x18\x02 \x01(\tR\fparentNodeId\x12\x1f\n" +
+	"\vchild_count\x18\x03 \x01(\x05R\n" +
+	"childCount\x120\n" +
+	"\x14partition_keys_count\x18\x04 \x01(\x05R\x12partitionKeysCount\"\xe7\x01\n" +
+	"\x1dSubClaimBeginCandidatePayload\x123\n" +
+	"\x16parent_claim_handle_id\x18\x01 \x01(\tR\x13parentClaimHandleId\x12-\n" +
+	"\x13sub_claim_handle_id\x18\x02 \x01(\tR\x10subClaimHandleId\x12#\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x12=\n" +
+	"\x1bcandidate_handle_size_bytes\x18\x04 \x01(\x03R\x18candidateHandleSizeBytes\"\xb0\x01\n" +
+	"\x17SubClaimAcquiredPayload\x123\n" +
+	"\x16parent_claim_handle_id\x18\x01 \x01(\tR\x13parentClaimHandleId\x12;\n" +
+	"\x1asub_scope_descriptor_count\x18\x02 \x01(\x05R\x17subScopeDescriptorCount\x12#\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\"\xdf\x01\n" +
+	"#SubgraphInternalCascadeFiredPayload\x12%\n" +
+	"\x0edelegate_graph\x18\x01 \x01(\tR\rdelegateGraph\x12$\n" +
+	"\x0ecalling_run_id\x18\x02 \x01(\tR\fcallingRunId\x120\n" +
+	"\x14settling_signal_type\x18\x03 \x01(\tR\x12settlingSignalType\x12\x18\n" +
+	"\achanged\x18\x04 \x01(\bR\achanged\x12\x1f\n" +
+	"\vchild_count\x18\x05 \x01(\x05R\n" +
+	"childCount\"\xd0\x01\n" +
+	"\x19SubgraphDispatchedPayload\x12\"\n" +
+	"\rcaller_run_id\x18\x01 \x01(\tR\vcallerRunId\x12$\n" +
+	"\x0ecaller_node_id\x18\x02 \x01(\tR\fcallerNodeId\x12#\n" +
+	"\rsubgraph_name\x18\x03 \x01(\tR\fsubgraphName\x12#\n" +
+	"\rchild_aliases\x18\x04 \x03(\tR\fchildAliases\x12\x1f\n" +
+	"\vchild_count\x18\x05 \x01(\x05R\n" +
+	"childCount\"\xa0\x01\n" +
+	"\x18SubgraphExitCarryPayload\x12\"\n" +
+	"\rparent_run_id\x18\x01 \x01(\tR\vparentRunId\x12\x1e\n" +
+	"\vexit_run_id\x18\x02 \x01(\tR\texitRunId\x12&\n" +
+	"\x0fexit_node_alias\x18\x03 \x01(\tR\rexitNodeAlias\x12\x18\n" +
+	"\aoutcome\x18\x04 \x01(\tR\aoutcome\"\xdb\x02\n" +
+	"\x1dClaimResolutionSettledPayload\x12&\n" +
+	"\x0fclaim_handle_id\x18\x01 \x01(\tR\rclaimHandleId\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x19\n" +
+	"\bframe_id\x18\x03 \x01(\tR\aframeId\x12#\n" +
+	"\rproducer_name\x18\x04 \x01(\tR\fproducerName\x121\n" +
+	"\x15claim_scope_data_hash\x18\x05 \x01(\tR\x12claimScopeDataHash\x12\x1d\n" +
+	"\n" +
+	"version_id\x18\x06 \x01(\tR\tversionId\x128\n" +
+	"\x16parent_claim_handle_id\x18\a \x01(\tH\x00R\x13parentClaimHandleId\x88\x01\x01\x12\x14\n" +
+	"\x05cause\x18\b \x01(\tR\x05causeB\x19\n" +
+	"\x17_parent_claim_handle_id\"f\n" +
+	"\x1aParkedResumeStartedPayload\x12#\n" +
+	"\rresume_reason\x18\x01 \x01(\tR\fresumeReason\x12#\n" +
+	"\rsupervisor_id\x18\x02 \x01(\tR\fsupervisorId\"\x90\x02\n" +
+	"\x1bDebugOverrideAppliedPayload\x12\x16\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\x12\x1b\n" +
+	"\tnode_type\x18\x02 \x01(\tR\bnodeType\x12\x1d\n" +
+	"\n" +
+	"gate_state\x18\x03 \x01(\tR\tgateState\x12\x14\n" +
+	"\x05actor\x18\x04 \x01(\tR\x05actor\x12!\n" +
+	"\fruns_mutated\x18\x05 \x01(\x05R\vrunsMutated\x12#\n" +
+	"\rattribute_key\x18\x06 \x01(\tR\fattributeKey\x12?\n" +
+	"\x0fattribute_value\x18\a \x01(\v2\x16.google.protobuf.ValueR\x0eattributeValue\"I\n" +
+	"\x19InstanceTerminatedPayload\x12\x14\n" +
+	"\x05actor\x18\x01 \x01(\tR\x05actor\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xb7\x01\n" +
+	"\x1cTerminalSuccessSignalPayload\x12\x18\n" +
+	"\achanged\x18\x01 \x01(\bR\achanged\x12B\n" +
+	"\x10attributes_delta\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\x12%\n" +
+	"\x0echange_summary\x18\x03 \x01(\tR\rchangeSummary\x12\x12\n" +
+	"\x04tags\x18\x04 \x03(\tR\x04tags\"\x93\x02\n" +
+	"\x1aTerminalErrorSignalPayload\x12\x1f\n" +
+	"\verror_class\x18\x01 \x01(\tR\n" +
+	"errorClass\x12<\n" +
+	"\rerror_payload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\ferrorPayload\x12\x18\n" +
+	"\aattempt\x18\x03 \x01(\x05R\aattempt\x12$\n" +
+	"\x0eretries_so_far\x18\x04 \x01(\x05R\fretriesSoFar\x12B\n" +
+	"\x10attributes_delta\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\x12\x12\n" +
+	"\x04tags\x18\x06 \x03(\tR\x04tags\"\xb5\x01\n" +
+	"\x1aTransientParkSignalPayload\x127\n" +
+	"\tresume_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bresumeAt\x12\x12\n" +
+	"\x04tags\x18\x02 \x03(\tR\x04tags\x12!\n" +
+	"\fscratch_size\x18\x03 \x01(\x05R\vscratchSize\x12'\n" +
+	"\x0fscratch_spilled\x18\x04 \x01(\bR\x0escratchSpilled\"\xdb\x01\n" +
+	"\x1bTransientRetrySignalPayload\x12\x18\n" +
+	"\aattempt\x18\x01 \x01(\x05R\aattempt\x12\x10\n" +
+	"\x03cap\x18\x02 \x01(\x05R\x03cap\x12\x1f\n" +
+	"\verror_class\x18\x03 \x01(\tR\n" +
+	"errorClass\x12\x19\n" +
+	"\bdelay_ms\x18\x04 \x01(\x05R\adelayMs\x12<\n" +
+	"\rerror_payload\x18\x05 \x01(\v2\x17.google.protobuf.StructR\ferrorPayloadJ\x04\b\x06\x10\aR\x10discarded_claims\"g\n" +
+	" TransientAwaitAsyncSignalPayload\x12 \n" +
+	"\fasync_ack_id\x18\x01 \x01(\tR\n" +
+	"asyncAckId\x12!\n" +
+	"\fcallback_url\x18\x02 \x01(\tR\vcallbackUrl\"h\n" +
+	"\x1bTransientInfraSignalPayload\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x121\n" +
+	"\adetails\x18\x02 \x01(\v2\x17.google.protobuf.StructR\adetails\"\x88\x01\n" +
+	"'TransientReleaseAndRequeueSignalPayload\x12\x1f\n" +
+	"\verror_class\x18\x01 \x01(\tR\n" +
+	"errorClass\x12<\n" +
+	"\rerror_payload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\ferrorPayload\"\x94\x01\n" +
+	"\x1dAttributeChangedSignalPayload\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
+	"\x05value\x18\x02 \x01(\v2\x16.google.protobuf.ValueR\x05value\x123\n" +
+	"\told_value\x18\x03 \x01(\v2\x16.google.protobuf.ValueR\boldValue\"8\n" +
+	"\x15SettlingSignalPayload\x12\x1f\n" +
+	"\verror_class\x18\x01 \x01(\tR\n" +
+	"errorClass*\xda\x0f\n" +
 	"\x0fOperationalKind\x12 \n" +
 	"\x1cOPERATIONAL_KIND_UNSPECIFIED\x10\x00\x12*\n" +
 	"&OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED\x10\x01\x12'\n" +
@@ -2237,8 +4646,7 @@ const file_events_proto_rawDesc = "" +
 	"(OPERATIONAL_KIND_CLAIM_RESOLUTION_COMMIT\x10#\x12-\n" +
 	")OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON\x10$\x12+\n" +
 	"'OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED\x10(\x12)\n" +
-	"%OPERATIONAL_KIND_ATTRIBUTES_COMMITTED\x10)\x121\n" +
-	"-OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED\x10*\x12-\n" +
+	"%OPERATIONAL_KIND_ATTRIBUTES_COMMITTED\x10)\x12-\n" +
 	")OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED\x10+\x12/\n" +
 	"+OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED\x10/\x12/\n" +
 	"+OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED\x10,\x12/\n" +
@@ -2256,7 +4664,7 @@ const file_events_proto_rawDesc = "" +
 	"$OPERATIONAL_KIND_SUBGRAPH_DISPATCHED\x10K\x12(\n" +
 	"$OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY\x10L\x12*\n" +
 	"&OPERATIONAL_KIND_PARKED_RESUME_STARTED\x10Q\x12+\n" +
-	"'OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED\x10R\"\x04\b\x0e\x10\x0e\"\x04\bP\x10P*\x1fOPERATIONAL_KIND_HEARTBEAT_LOST*\x1dOPERATIONAL_KIND_PARK_TIMEOUTBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
+	"'OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED\x10R\"\x04\b\x0e\x10\x0e\"\x04\b*\x10*\"\x04\bP\x10P*\x1fOPERATIONAL_KIND_HEARTBEAT_LOST*-OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED*\x1dOPERATIONAL_KIND_PARK_TIMEOUTBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_events_proto_rawDescOnce sync.Once
@@ -2271,37 +4679,66 @@ func file_events_proto_rawDescGZIP() []byte {
 }
 
 var file_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_events_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_events_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
 var file_events_proto_goTypes = []any{
-	(OperationalKind)(0),                      // 0: rimsky.v1.OperationalKind
-	(*Event)(nil),                             // 1: rimsky.v1.Event
-	(*MessageSentPayload)(nil),                // 2: rimsky.v1.MessageSentPayload
-	(*MessageReceivedPayload)(nil),            // 3: rimsky.v1.MessageReceivedPayload
-	(*StateTransitionPayload)(nil),            // 4: rimsky.v1.StateTransitionPayload
-	(*ErrorPayload)(nil),                      // 5: rimsky.v1.ErrorPayload
-	(*WorkStartedPayload)(nil),                // 6: rimsky.v1.WorkStartedPayload
-	(*WorkCompletedPayload)(nil),              // 7: rimsky.v1.WorkCompletedPayload
-	(*NoOpCommitPayload)(nil),                 // 8: rimsky.v1.NoOpCommitPayload
-	(*OperatorOverridePayload)(nil),           // 9: rimsky.v1.OperatorOverridePayload
-	(*OrphanedClaimReleasedPayload)(nil),      // 10: rimsky.v1.OrphanedClaimReleasedPayload
-	(*OrphanedClaimLostRacePayload)(nil),      // 11: rimsky.v1.OrphanedClaimLostRacePayload
-	(*WorkRejectedPayload)(nil),               // 12: rimsky.v1.WorkRejectedPayload
-	(*UnresolvedExecutorPayload)(nil),         // 13: rimsky.v1.UnresolvedExecutorPayload
-	(*LockAcquiredPayload)(nil),               // 14: rimsky.v1.LockAcquiredPayload
-	(*LockReleasedPayload)(nil),               // 15: rimsky.v1.LockReleasedPayload
-	(*LockOrphanReapedPayload)(nil),           // 16: rimsky.v1.LockOrphanReapedPayload
-	(*AttributesSubstitutedPayload)(nil),      // 17: rimsky.v1.AttributesSubstitutedPayload
-	(*AttributesCommittedPayload)(nil),        // 18: rimsky.v1.AttributesCommittedPayload
-	(*AttributesValidationFailedPayload)(nil), // 19: rimsky.v1.AttributesValidationFailedPayload
-	(*ClaimAcquiredPayload)(nil),              // 20: rimsky.v1.ClaimAcquiredPayload
-	(*ClaimHeldPayload)(nil),                  // 21: rimsky.v1.ClaimHeldPayload
-	(*ClaimResolvedPayload)(nil),              // 22: rimsky.v1.ClaimResolvedPayload
-	(*TemplateResolutionFailedPayload)(nil),   // 23: rimsky.v1.TemplateResolutionFailedPayload
-	(*timestamppb.Timestamp)(nil),             // 24: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                   // 25: google.protobuf.Struct
+	(OperationalKind)(0),                            // 0: rimsky.v1.OperationalKind
+	(*Event)(nil),                                   // 1: rimsky.v1.Event
+	(*MessageSentPayload)(nil),                      // 2: rimsky.v1.MessageSentPayload
+	(*MessageReceivedPayload)(nil),                  // 3: rimsky.v1.MessageReceivedPayload
+	(*StateTransitionPayload)(nil),                  // 4: rimsky.v1.StateTransitionPayload
+	(*ErrorPayload)(nil),                            // 5: rimsky.v1.ErrorPayload
+	(*WorkStartedPayload)(nil),                      // 6: rimsky.v1.WorkStartedPayload
+	(*WorkCompletedPayload)(nil),                    // 7: rimsky.v1.WorkCompletedPayload
+	(*NoOpCommitPayload)(nil),                       // 8: rimsky.v1.NoOpCommitPayload
+	(*OperatorOverridePayload)(nil),                 // 9: rimsky.v1.OperatorOverridePayload
+	(*OrphanedClaimReleasedPayload)(nil),            // 10: rimsky.v1.OrphanedClaimReleasedPayload
+	(*OrphanedClaimLostRacePayload)(nil),            // 11: rimsky.v1.OrphanedClaimLostRacePayload
+	(*WorkRejectedPayload)(nil),                     // 12: rimsky.v1.WorkRejectedPayload
+	(*UnresolvedExecutorPayload)(nil),               // 13: rimsky.v1.UnresolvedExecutorPayload
+	(*LockAcquiredPayload)(nil),                     // 14: rimsky.v1.LockAcquiredPayload
+	(*LockReleasedPayload)(nil),                     // 15: rimsky.v1.LockReleasedPayload
+	(*LockOrphanReapedPayload)(nil),                 // 16: rimsky.v1.LockOrphanReapedPayload
+	(*AttributesSubstitutedPayload)(nil),            // 17: rimsky.v1.AttributesSubstitutedPayload
+	(*AttributesCommittedPayload)(nil),              // 18: rimsky.v1.AttributesCommittedPayload
+	(*ClaimAcquiredPayload)(nil),                    // 19: rimsky.v1.ClaimAcquiredPayload
+	(*ClaimHeldPayload)(nil),                        // 20: rimsky.v1.ClaimHeldPayload
+	(*ClaimResolvedPayload)(nil),                    // 21: rimsky.v1.ClaimResolvedPayload
+	(*TemplateResolutionFailedPayload)(nil),         // 22: rimsky.v1.TemplateResolutionFailedPayload
+	(*AuthAccessAttemptedPayload)(nil),              // 23: rimsky.v1.AuthAccessAttemptedPayload
+	(*AuthAccessDeniedPayload)(nil),                 // 24: rimsky.v1.AuthAccessDeniedPayload
+	(*AuthKeyCreatedPayload)(nil),                   // 25: rimsky.v1.AuthKeyCreatedPayload
+	(*AuthKeyRevokedPayload)(nil),                   // 26: rimsky.v1.AuthKeyRevokedPayload
+	(*AuthKeyRotatedPayload)(nil),                   // 27: rimsky.v1.AuthKeyRotatedPayload
+	(*AttributesSchemaFailedPayload)(nil),           // 28: rimsky.v1.AttributesSchemaFailedPayload
+	(*AttributeOverrideMatchedPayload)(nil),         // 29: rimsky.v1.AttributeOverrideMatchedPayload
+	(*BreakpointHitPayload)(nil),                    // 30: rimsky.v1.BreakpointHitPayload
+	(*MessageDeadLetteredPayload)(nil),              // 31: rimsky.v1.MessageDeadLetteredPayload
+	(*FanOutDispatchedPayload)(nil),                 // 32: rimsky.v1.FanOutDispatchedPayload
+	(*FanOutChildrenCreatedPayload)(nil),            // 33: rimsky.v1.FanOutChildrenCreatedPayload
+	(*SubClaimBeginCandidatePayload)(nil),           // 34: rimsky.v1.SubClaimBeginCandidatePayload
+	(*SubClaimAcquiredPayload)(nil),                 // 35: rimsky.v1.SubClaimAcquiredPayload
+	(*SubgraphInternalCascadeFiredPayload)(nil),     // 36: rimsky.v1.SubgraphInternalCascadeFiredPayload
+	(*SubgraphDispatchedPayload)(nil),               // 37: rimsky.v1.SubgraphDispatchedPayload
+	(*SubgraphExitCarryPayload)(nil),                // 38: rimsky.v1.SubgraphExitCarryPayload
+	(*ClaimResolutionSettledPayload)(nil),           // 39: rimsky.v1.ClaimResolutionSettledPayload
+	(*ParkedResumeStartedPayload)(nil),              // 40: rimsky.v1.ParkedResumeStartedPayload
+	(*DebugOverrideAppliedPayload)(nil),             // 41: rimsky.v1.DebugOverrideAppliedPayload
+	(*InstanceTerminatedPayload)(nil),               // 42: rimsky.v1.InstanceTerminatedPayload
+	(*TerminalSuccessSignalPayload)(nil),            // 43: rimsky.v1.TerminalSuccessSignalPayload
+	(*TerminalErrorSignalPayload)(nil),              // 44: rimsky.v1.TerminalErrorSignalPayload
+	(*TransientParkSignalPayload)(nil),              // 45: rimsky.v1.TransientParkSignalPayload
+	(*TransientRetrySignalPayload)(nil),             // 46: rimsky.v1.TransientRetrySignalPayload
+	(*TransientAwaitAsyncSignalPayload)(nil),        // 47: rimsky.v1.TransientAwaitAsyncSignalPayload
+	(*TransientInfraSignalPayload)(nil),             // 48: rimsky.v1.TransientInfraSignalPayload
+	(*TransientReleaseAndRequeueSignalPayload)(nil), // 49: rimsky.v1.TransientReleaseAndRequeueSignalPayload
+	(*AttributeChangedSignalPayload)(nil),           // 50: rimsky.v1.AttributeChangedSignalPayload
+	(*SettlingSignalPayload)(nil),                   // 51: rimsky.v1.SettlingSignalPayload
+	(*timestamppb.Timestamp)(nil),                   // 52: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                         // 53: google.protobuf.Struct
+	(*structpb.Value)(nil),                          // 54: google.protobuf.Value
 }
 var file_events_proto_depIdxs = []int32{
-	24, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
+	52, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
 	2,  // 1: rimsky.v1.Event.message_sent:type_name -> rimsky.v1.MessageSentPayload
 	3,  // 2: rimsky.v1.Event.message_received:type_name -> rimsky.v1.MessageReceivedPayload
 	4,  // 3: rimsky.v1.Event.state_transition:type_name -> rimsky.v1.StateTransitionPayload
@@ -2319,25 +4756,44 @@ var file_events_proto_depIdxs = []int32{
 	16, // 15: rimsky.v1.Event.lock_orphan_reaped:type_name -> rimsky.v1.LockOrphanReapedPayload
 	17, // 16: rimsky.v1.Event.attributes_substituted:type_name -> rimsky.v1.AttributesSubstitutedPayload
 	18, // 17: rimsky.v1.Event.attributes_committed:type_name -> rimsky.v1.AttributesCommittedPayload
-	19, // 18: rimsky.v1.Event.attributes_validation_failed:type_name -> rimsky.v1.AttributesValidationFailedPayload
-	20, // 19: rimsky.v1.Event.claim_acquired:type_name -> rimsky.v1.ClaimAcquiredPayload
-	21, // 20: rimsky.v1.Event.claim_held:type_name -> rimsky.v1.ClaimHeldPayload
-	22, // 21: rimsky.v1.Event.claim_resolved:type_name -> rimsky.v1.ClaimResolvedPayload
-	23, // 22: rimsky.v1.Event.template_resolution_failed:type_name -> rimsky.v1.TemplateResolutionFailedPayload
-	25, // 23: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
-	25, // 24: rimsky.v1.MessageSentPayload.params:type_name -> google.protobuf.Struct
-	25, // 25: rimsky.v1.MessageReceivedPayload.params:type_name -> google.protobuf.Struct
-	25, // 26: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
-	24, // 27: rimsky.v1.OrphanedClaimReleasedPayload.claimed_at:type_name -> google.protobuf.Timestamp
-	25, // 28: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
-	25, // 29: rimsky.v1.LockAcquiredPayload.scope_data:type_name -> google.protobuf.Struct
-	24, // 30: rimsky.v1.LockOrphanReapedPayload.expired_at:type_name -> google.protobuf.Timestamp
-	25, // 31: rimsky.v1.AttributesValidationFailedPayload.errors:type_name -> google.protobuf.Struct
-	32, // [32:32] is the sub-list for method output_type
-	32, // [32:32] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	19, // 18: rimsky.v1.Event.claim_acquired:type_name -> rimsky.v1.ClaimAcquiredPayload
+	20, // 19: rimsky.v1.Event.claim_held:type_name -> rimsky.v1.ClaimHeldPayload
+	21, // 20: rimsky.v1.Event.claim_resolved:type_name -> rimsky.v1.ClaimResolvedPayload
+	22, // 21: rimsky.v1.Event.template_resolution_failed:type_name -> rimsky.v1.TemplateResolutionFailedPayload
+	28, // 22: rimsky.v1.Event.attributes_schema_failed:type_name -> rimsky.v1.AttributesSchemaFailedPayload
+	29, // 23: rimsky.v1.Event.attribute_override_matched:type_name -> rimsky.v1.AttributeOverrideMatchedPayload
+	32, // 24: rimsky.v1.Event.fan_out_dispatched:type_name -> rimsky.v1.FanOutDispatchedPayload
+	36, // 25: rimsky.v1.Event.subgraph_internal_cascade_fired:type_name -> rimsky.v1.SubgraphInternalCascadeFiredPayload
+	40, // 26: rimsky.v1.Event.parked_resume_started:type_name -> rimsky.v1.ParkedResumeStartedPayload
+	42, // 27: rimsky.v1.Event.instance_terminated:type_name -> rimsky.v1.InstanceTerminatedPayload
+	53, // 28: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
+	53, // 29: rimsky.v1.MessageSentPayload.params:type_name -> google.protobuf.Struct
+	53, // 30: rimsky.v1.MessageReceivedPayload.params:type_name -> google.protobuf.Struct
+	53, // 31: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
+	52, // 32: rimsky.v1.OrphanedClaimReleasedPayload.last_progress_at:type_name -> google.protobuf.Timestamp
+	53, // 33: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
+	52, // 34: rimsky.v1.LockOrphanReapedPayload.expires_at:type_name -> google.protobuf.Timestamp
+	52, // 35: rimsky.v1.LockOrphanReapedPayload.claimed_at:type_name -> google.protobuf.Timestamp
+	53, // 36: rimsky.v1.AuthAccessAttemptedPayload.request_params:type_name -> google.protobuf.Struct
+	53, // 37: rimsky.v1.AuthAccessDeniedPayload.request_params:type_name -> google.protobuf.Struct
+	53, // 38: rimsky.v1.AuthKeyCreatedPayload.permissions:type_name -> google.protobuf.Struct
+	52, // 39: rimsky.v1.AuthKeyCreatedPayload.expires_at:type_name -> google.protobuf.Timestamp
+	52, // 40: rimsky.v1.AuthKeyRotatedPayload.revoke_at:type_name -> google.protobuf.Timestamp
+	54, // 41: rimsky.v1.DebugOverrideAppliedPayload.attribute_value:type_name -> google.protobuf.Value
+	53, // 42: rimsky.v1.TerminalSuccessSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
+	53, // 43: rimsky.v1.TerminalErrorSignalPayload.error_payload:type_name -> google.protobuf.Struct
+	53, // 44: rimsky.v1.TerminalErrorSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
+	52, // 45: rimsky.v1.TransientParkSignalPayload.resume_at:type_name -> google.protobuf.Timestamp
+	53, // 46: rimsky.v1.TransientRetrySignalPayload.error_payload:type_name -> google.protobuf.Struct
+	53, // 47: rimsky.v1.TransientInfraSignalPayload.details:type_name -> google.protobuf.Struct
+	53, // 48: rimsky.v1.TransientReleaseAndRequeueSignalPayload.error_payload:type_name -> google.protobuf.Struct
+	54, // 49: rimsky.v1.AttributeChangedSignalPayload.value:type_name -> google.protobuf.Value
+	54, // 50: rimsky.v1.AttributeChangedSignalPayload.old_value:type_name -> google.protobuf.Value
+	51, // [51:51] is the sub-list for method output_type
+	51, // [51:51] is the sub-list for method input_type
+	51, // [51:51] is the sub-list for extension type_name
+	51, // [51:51] is the sub-list for extension extendee
+	0,  // [0:51] is the sub-list for field type_name
 }
 
 func init() { file_events_proto_init() }
@@ -2363,19 +4819,30 @@ func file_events_proto_init() {
 		(*Event_LockOrphanReaped)(nil),
 		(*Event_AttributesSubstituted)(nil),
 		(*Event_AttributesCommitted)(nil),
-		(*Event_AttributesValidationFailed)(nil),
 		(*Event_ClaimAcquired)(nil),
 		(*Event_ClaimHeld)(nil),
 		(*Event_ClaimResolved)(nil),
 		(*Event_TemplateResolutionFailed)(nil),
+		(*Event_AttributesSchemaFailed)(nil),
+		(*Event_AttributeOverrideMatched)(nil),
+		(*Event_FanOutDispatched)(nil),
+		(*Event_SubgraphInternalCascadeFired)(nil),
+		(*Event_ParkedResumeStarted)(nil),
+		(*Event_InstanceTerminated)(nil),
 	}
+	file_events_proto_msgTypes[22].OneofWrappers = []any{}
+	file_events_proto_msgTypes[23].OneofWrappers = []any{}
+	file_events_proto_msgTypes[24].OneofWrappers = []any{}
+	file_events_proto_msgTypes[25].OneofWrappers = []any{}
+	file_events_proto_msgTypes[26].OneofWrappers = []any{}
+	file_events_proto_msgTypes[38].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_events_proto_rawDesc), len(file_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   23,
+			NumMessages:   51,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

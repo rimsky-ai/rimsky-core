@@ -24,9 +24,7 @@ Rimsky ships under two licenses, divided by a single boundary:
   packages a consumer implements or links against to speak to Rimsky. It is
   deliberately permissive so that anyone can build a service that talks to
   Rimsky, or embed the protocol surface, without taking on copyleft
-  obligations. `examples/` — copy-and-modify protocol examples — carries the
-  same Apache terms, as a deliberate carve-out kept permissive so consumers
-  can build on them.
+  obligations.
 
 - **Everything else Rimsky ships is AGPL-3.0-or-later, or a Fall Guy
   Consulting commercial license.** The orchestrator binaries *and* the
@@ -56,7 +54,7 @@ precisely so that path is open to everyone.
 
 ## What each license requires
 
-**Apache 2.0** (`lib/protocols/`, plus the `examples/` carve-out).
+**Apache 2.0** (`lib/protocols/`).
 Permissive. You may use, modify, and redistribute under the Apache terms,
 including in closed-source products. Preserve the license and copyright
 notices and the `NOTICE` file; see `LICENSE.apache`.

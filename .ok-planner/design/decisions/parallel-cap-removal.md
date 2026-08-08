@@ -6,7 +6,7 @@ decision: parallel-cap-removal
 
 ## Choice
 
-No module carries a test-parallelism cap as scheduling insurance: tests synchronize on observable state (the services tests wait on observable subscription state, see `decision:subscription-mounting-state`), never on throttled parallelism. The one admitted cap bounds a real shared resource — the docker-stack e2e suites (services, examples) carry a docker-daemon-saturation cap on concurrent stack boots — and any such cap must be accompanied by a comment naming the contention it guards.
+No module carries a test-parallelism cap as scheduling insurance: tests synchronize on observable state (the services tests wait on observable subscription state, see `decision:subscription-mounting-state`), never on throttled parallelism. The one admitted cap bounds a real shared resource — every suite that boots containers against the one docker daemon (the services module's stack suites, and the root and foundation modules' testcontainers-backed scenario and persistence suites) carries a saturation cap on concurrent boots — and any such cap must be accompanied by a comment naming the contention it guards.
 
 ## Rationale
 

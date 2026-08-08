@@ -26,7 +26,7 @@ var detectors = []struct {
 	{"deadline-poll", regexp.MustCompile(`for\s+time\.Since\(`)},
 }
 
-var scanRoots = []string{"cmd", "lib", "test", "tools", "examples"}
+var scanRoots = []string{"cmd", "lib", "test", "tools"}
 
 func isTestCode(rel string) bool {
 	if !strings.HasSuffix(rel, ".go") {

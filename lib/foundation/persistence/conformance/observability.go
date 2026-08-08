@@ -10,9 +10,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
@@ -165,7 +167,7 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 			return store.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &id,
 				Kind:       c.kind,
-				Payload:    map[string]any{},
+				Payload:    eventpayload.New(&genv1.StateTransitionPayload{}),
 			}, tx)
 		}); err != nil {
 			t.Fatalf("append %s: %v", c.wire, err)
@@ -195,17 +197,17 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 	keyA := uuid.NewString()
 	keyB := uuid.NewString()
 
-	rows := []map[string]any{
-		{"key_id": keyA, "key_name": "alpha", "action": "instance:create", "response_status": 201, "mode": "execute", "request_path": "/instances"},
-		{"key_id": keyA, "key_name": "alpha", "action": "instance:read", "response_status": 200, "mode": "execute", "request_path": "/instances/abc"},
-		{"key_id": keyB, "key_name": "beta", "action": "auth:create", "response_status": 200, "mode": "dry_run", "request_path": "/auth/keys"},
-		{"key_id": keyB, "key_name": "beta", "action": "auth:revoke", "response_status": 403, "mode": "execute", "request_path": "/auth/keys/xyz"},
+	rows := []*genv1.AuthAccessAttemptedPayload{
+		{KeyId: &keyA, KeyName: "alpha", Action: "instance:create", ResponseStatus: 201, Mode: "execute", RequestPath: "/instances"},
+		{KeyId: &keyA, KeyName: "alpha", Action: "instance:read", ResponseStatus: 200, Mode: "execute", RequestPath: "/instances/abc"},
+		{KeyId: &keyB, KeyName: "beta", Action: "auth:create", ResponseStatus: 200, Mode: "dry_run", RequestPath: "/auth/keys"},
+		{KeyId: &keyB, KeyName: "beta", Action: "auth:revoke", ResponseStatus: 403, Mode: "execute", RequestPath: "/auth/keys/xyz"},
 	}
 	for _, p := range rows {
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
 			return store.Events().Append(ctx, persistence.EventAppendInput{
 				Kind:    events.KindAuthAccessAttempted(),
-				Payload: p,
+				Payload: eventpayload.New(p),
 			}, tx)
 		}); err != nil {
 			t.Fatalf("append auth row: %v", err)
@@ -246,7 +248,7 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 	if len(got) != 1 {
 		t.Fatalf("ActionExact = %d rows, want 1", len(got))
 	}
-	if a, _ := got[0].Payload["action"].(string); a != "instance:create" {
+	if a, _ := got[0].Payload.Map()["action"].(string); a != "instance:create" {
 		t.Fatalf("ActionExact row action = %q, want instance:create", a)
 	}
 
@@ -275,7 +277,7 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 	if len(got) != 1 {
 		t.Fatalf("RequestPath /instances = %d rows, want 1", len(got))
 	}
-	if a, _ := got[0].Payload["action"].(string); a != "instance:create" {
+	if a, _ := got[0].Payload.Map()["action"].(string); a != "instance:create" {
 		t.Fatalf("RequestPath row action = %q, want instance:create", a)
 	}
 	if got := list(persistence.EventListFilter{KindIn: kindIn, AuditPayload: persistence.EventAuditPayloadFilter{RequestPath: sp("/auth/keys/xyz")}}); len(got) != 1 {
@@ -289,7 +291,7 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 	if len(got) != 1 {
 		t.Fatalf("KeyID(B)+Status(200) = %d rows, want 1", len(got))
 	}
-	if a, _ := got[0].Payload["action"].(string); a != "auth:create" {
+	if a, _ := got[0].Payload.Map()["action"].(string); a != "auth:create" {
 		t.Fatalf("composed-filter row action = %q, want auth:create", a)
 	}
 }

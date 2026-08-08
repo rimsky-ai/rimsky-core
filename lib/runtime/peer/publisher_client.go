@@ -75,6 +75,19 @@ func (c *PublisherClient) ListSubscriptions(ctx context.Context) ([]clientiface.
 	return out, nil
 }
 
+// @concept: publisher
+func (c *PublisherClient) SupportedKinds(ctx context.Context) ([]string, error) {
+	resp, err := c.rpc.Capabilities(ctx, &emptypb.Empty{})
+	if err != nil {
+		return nil, fmt.Errorf("remote publisher %q: Publisher.Capabilities handshake: %w", c.name, err)
+	}
+	out := make([]string, 0, len(resp.GetSupportedKinds()))
+	for _, k := range resp.GetSupportedKinds() {
+		out = append(out, k.GetKind())
+	}
+	return out, nil
+}
+
 func (c *PublisherClient) Close() {
 	if c.conn != nil {
 		_ = c.conn.Close()

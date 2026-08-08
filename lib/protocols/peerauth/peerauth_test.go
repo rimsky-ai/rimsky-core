@@ -342,3 +342,37 @@ func TestLoadConfigFromEnvReadsThePinnedCARoot(t *testing.T) {
 		t.Fatalf("ControlAPICARoot = %q, want /etc/rimsky/ca.pem", cfg.ControlAPICARoot)
 	}
 }
+
+// @concept: peer-auth
+func TestEnrollRefusesPlaintextControlAPIByDefault(t *testing.T) {
+	_, err := Load(context.Background(), Config{
+		Mode:          enroll.PeerAuthMTLS,
+		ControlAPIURL: "http://control-api:8080",
+		APIKey:        "secret",
+		Label:         "svc",
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("a plaintext control-API URL must be refused before the api-key and a generated private key leave the process")
+	}
+	if !strings.Contains(err.Error(), EnvAllowPlaintextEnrollment) {
+		t.Fatalf("the refusal must name the opt-out an operator can set; got %v", err)
+	}
+}
+
+// @concept: peer-auth
+func TestEnrollAcceptsPlaintextControlAPIWhenExplicitlyAllowed(t *testing.T) {
+	cfg := Config{
+		Mode:                     enroll.PeerAuthMTLS,
+		ControlAPIURL:            "http://control-api:8080",
+		APIKey:                   "secret",
+		Label:                    "svc",
+		AllowPlaintextEnrollment: true,
+	}
+	client, err := enrollHTTPClient(cfg)
+	if err != nil {
+		t.Fatalf("an explicit opt-in must be honoured: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected a plain HTTP client for the opted-in plaintext hop")
+	}
+}

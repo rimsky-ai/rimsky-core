@@ -14,6 +14,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func seedEventAt(t *testing.T, ctx context.Context, store persistence.Tables, k events.Kind, occurredAt time.Time) {
@@ -21,7 +24,7 @@ func seedEventAt(t *testing.T, ctx context.Context, store persistence.Tables, k 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.Events().Append(ctx, persistence.EventAppendInput{
 			Kind:       k,
-			Payload:    map[string]any{},
+			Payload:    eventpayload.New(&genv1.StateTransitionPayload{}),
 			OccurredAt: &occurredAt,
 		}, tx)
 	}); err != nil {

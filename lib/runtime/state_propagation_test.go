@@ -523,12 +523,12 @@ func TestParentSettlementSignal_FailedArmIsSchemaConformant(t *testing.T) {
 		t.Fatalf("type: got %q", sig.Type)
 	}
 	for _, k := range []string{"error_class", "error_payload", "attempt", "retries_so_far", "attributes_delta", "tags"} {
-		if _, ok := sig.Payload[k]; !ok {
+		if _, ok := sig.Payload.Map()[k]; !ok {
 			t.Fatalf("payload missing schema key %q; payload=%+v", k, sig.Payload)
 		}
 	}
-	if sig.Payload["error_class"] != "aggregate/strict_failed" {
-		t.Errorf("error_class: got %v", sig.Payload["error_class"])
+	if sig.Payload.Map()["error_class"] != "aggregate/strict_failed" {
+		t.Errorf("error_class: got %v", sig.Payload.Map()["error_class"])
 	}
 }
 
@@ -542,15 +542,15 @@ func TestParentSettlementSignal_SuccessArmIsSchemaConformant(t *testing.T) {
 		t.Fatalf("type: got %q", sig.Type)
 	}
 	for _, k := range []string{"changed", "attributes_delta", "change_summary", "tags"} {
-		if _, ok := sig.Payload[k]; !ok {
+		if _, ok := sig.Payload.Map()[k]; !ok {
 			t.Fatalf("payload missing schema key %q; payload=%+v", k, sig.Payload)
 		}
 	}
-	if sig.Payload["changed"] != true {
-		t.Errorf("changed: got %v", sig.Payload["changed"])
+	if sig.Payload.Map()["changed"] != true {
+		t.Errorf("changed: got %v", sig.Payload.Map()["changed"])
 	}
-	if sig.Payload["change_summary"] != "aggregated_settlement" {
-		t.Errorf("change_summary: got %v", sig.Payload["change_summary"])
+	if sig.Payload.Map()["change_summary"] != "aggregated_settlement" {
+		t.Errorf("change_summary: got %v", sig.Payload.Map()["change_summary"])
 	}
 }
 

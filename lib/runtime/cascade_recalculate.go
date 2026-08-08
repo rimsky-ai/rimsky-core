@@ -14,6 +14,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type RecalculateArgs struct {
@@ -56,11 +59,11 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			InstanceID: &target.InstanceID,
 			NodeID:     &args.TargetNodeID,
 			Kind:       events.KindMessageReceived(),
-			Payload: map[string]any{
-				"type":           "recalculate",
-				"source_node_id": sourceStr,
-				"target_node_id": args.TargetNodeID.String(),
-			},
+			Payload: eventpayload.New(&genv1.MessageReceivedPayload{
+				Type:         "recalculate",
+				SourceNodeId: sourceStr,
+				TargetNodeId: args.TargetNodeID.String(),
+			}),
 		}, tx)
 	}); err != nil {
 		log.Warn("RecalculateNode: message_received audit event append failed",

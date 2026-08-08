@@ -13,6 +13,9 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // @concept: error-policy
@@ -65,7 +68,7 @@ func applyErrorPolicyWithScratchAndSettleHook(
 	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.NodeRunID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: persist evaluator state: %w", err)
 	}
-	sig := errorPolicySignal(errorClass, payload, attributesDel, tags, resolved.Kind, resolved.NewState.RetryCounter, resolved.DelayMs)
+	sig := errorPolicySignal(errorClass, payload, attributesDel, tags, resolved.Kind, resolved.NewState.RetryCounter, maxRetries, resolved.DelayMs)
 	decision := policyDecision{Kind: resolved.Kind, DelayMs: resolved.DelayMs, Signal: sig}
 
 	if decision.IsRetry() {
@@ -334,10 +337,10 @@ func applyTerminalInfraError(
 	}
 	infraSig := signalpkg.Signal{
 		Type: signalpkg.TypePath("transient/infra/" + errorClass),
-		Payload: map[string]any{
-			"reason":  errorClass,
-			"details": payload,
-		},
+		Payload: eventpayload.New(&genv1.TransientInfraSignalPayload{
+			Reason:  errorClass,
+			Details: signalpkg.MustStruct(payload),
+		}),
 	}
 	if err := emitSignalInTxOnce(ctx, args, acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, infraSig, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: emit signal: %w", err)
@@ -479,27 +482,28 @@ func requiredClaimProducersForAcq(acq *acquisition) []string {
 }
 
 // @concept: signal
-func errorPolicySignal(errorClass string, errorPayload map[string]any, attributesDelta map[string]any, tags []string, resolvedKind string, retriesSoFar int, delayMs int) signalpkg.Signal {
+func errorPolicySignal(errorClass string, errorPayload map[string]any, attributesDelta map[string]any, tags []string, resolvedKind string, retriesSoFar int, retryCap int, delayMs int) signalpkg.Signal {
 	switch resolvedKind {
 	case spec.ActionRetry:
 		typ := signalpkg.TypePath(fmt.Sprintf("transient/retry/%d/%s", retriesSoFar, errorClass))
 		return signalpkg.Signal{
 			Type: typ,
-			Payload: map[string]any{
-				"attempt":       retriesSoFar,
-				"error_class":   errorClass,
-				"delay_ms":      delayMs,
-				"error_payload": errorPayload,
-			},
+			Payload: eventpayload.New(&genv1.TransientRetrySignalPayload{
+				Attempt:      int32(retriesSoFar),
+				Cap:          int32(retryCap),
+				ErrorClass:   errorClass,
+				DelayMs:      int32(delayMs),
+				ErrorPayload: signalpkg.MustStruct(errorPayload),
+			}),
 		}
 	case spec.ActionReleaseAndRequeue:
 		typ := signalpkg.TypePath("transient/release_and_requeue/" + errorClass)
 		return signalpkg.Signal{
 			Type: typ,
-			Payload: map[string]any{
-				"error_class":   errorClass,
-				"error_payload": errorPayload,
-			},
+			Payload: eventpayload.New(&genv1.TransientReleaseAndRequeueSignalPayload{
+				ErrorClass:   errorClass,
+				ErrorPayload: signalpkg.MustStruct(errorPayload),
+			}),
 		}
 	default:
 		return signalpkg.BuildTerminalErrorSignal(errorClass, errorPayload, retriesSoFar, retriesSoFar, attributesDelta, tags)

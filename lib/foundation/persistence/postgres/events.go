@@ -14,6 +14,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 )
 
 func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput, tx persistence.Tx) error {
@@ -22,11 +24,7 @@ func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput
 	if kindWire == "" {
 		return fmt.Errorf("events.append: empty kind (zero events.Kind value)")
 	}
-	payload := in.Payload
-	if payload == nil {
-		payload = map[string]any{}
-	}
-	payloadBytes, err := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(in.Payload.Map())
 	if err != nil {
 		return fmt.Errorf("events.append: marshal payload: %w", err)
 	}
@@ -135,9 +133,9 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 			if err := json.Unmarshal(payload, &m); err != nil {
 				return persistence.EventListResult{}, fmt.Errorf("events.list: unmarshal payload: %w", err)
 			}
-			r.Payload = m
+			r.Payload = eventpayload.Decoded(m)
 		} else {
-			r.Payload = map[string]any{}
+			r.Payload = eventpayload.Decoded(map[string]any{})
 		}
 		out = append(out, r)
 	}
@@ -200,9 +198,9 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 			if err := json.Unmarshal(payload, &m); err != nil {
 				return nil, fmt.Errorf("events.lastTerminalByNodes: unmarshal payload: %w", err)
 			}
-			r.Payload = m
+			r.Payload = eventpayload.Decoded(m)
 		} else {
-			r.Payload = map[string]any{}
+			r.Payload = eventpayload.Decoded(map[string]any{})
 		}
 		if nodeID != nil {
 			out[*nodeID] = r

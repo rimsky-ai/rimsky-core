@@ -4,6 +4,7 @@
 package node
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -78,6 +79,57 @@ func TestValidateRetryBackoff_AcceptsCanonicalAndUnset(t *testing.T) {
 					t.Fatalf("unexpected retry-backoff vocabulary error: %+v", e)
 				}
 			}
+		})
+	}
+}
+
+// @concept: error-policy
+func TestValidateRetryBackoff_RejectsBadNumerics(t *testing.T) {
+	cases := []struct {
+		name    string
+		backoff *foundationspec.RetryBackoffConfig
+		wantAt  string
+	}{
+		{"negative_base", &foundationspec.RetryBackoffConfig{BaseDelayMs: -1}, "nodes[1].retry_backoff.base_delay_ms"},
+		{"zero_base_with_kind", &foundationspec.RetryBackoffConfig{Kind: foundationspec.BackoffExponential}, "nodes[1].retry_backoff.base_delay_ms"},
+		{"zero_base_with_ceiling", &foundationspec.RetryBackoffConfig{MaxDelayMs: 5000}, "nodes[1].retry_backoff.base_delay_ms"},
+		{"negative_ceiling", &foundationspec.RetryBackoffConfig{BaseDelayMs: 100, MaxDelayMs: -1}, "nodes[1].retry_backoff.max_delay_ms"},
+		{"ceiling_below_base", &foundationspec.RetryBackoffConfig{BaseDelayMs: 5000, MaxDelayMs: 100}, "nodes[1].retry_backoff.max_delay_ms"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name: "demo", Version: "1",
+				Nodes: []TemplateNodeDef{
+					{Type: "a", Executor: "h"},
+					{Type: "b", Executor: "h", RetryBackoff: tc.backoff},
+				},
+			}
+			res := ValidateTemplate(spec, RegistryHooks{})
+			require.False(t, res.Ok())
+			hasErrorAt(t, res, tc.wantAt)
+		})
+	}
+}
+
+// @concept: error-policy
+func TestValidateRetryBackoff_AcceptsSaneNumerics(t *testing.T) {
+	cases := []*foundationspec.RetryBackoffConfig{
+		{BaseDelayMs: 100},
+		{Kind: foundationspec.BackoffExponential, BaseDelayMs: 100, MaxDelayMs: 30000},
+		{Kind: foundationspec.BackoffLinear, BaseDelayMs: 100, MaxDelayMs: 100},
+	}
+	for i, backoff := range cases {
+		t.Run(fmt.Sprintf("case_%d", i), func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name: "demo", Version: "1",
+				Nodes: []TemplateNodeDef{
+					{Type: "a", Executor: "h"},
+					{Type: "b", Executor: "h", RetryBackoff: backoff},
+				},
+			}
+			res := ValidateTemplate(spec, RegistryHooks{})
+			require.True(t, res.Ok(), "sane backoff numerics must register cleanly; got: %+v", res.Errors)
 		})
 	}
 }

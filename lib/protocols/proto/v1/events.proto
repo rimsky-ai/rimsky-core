@@ -40,7 +40,8 @@ enum OperationalKind {
   OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON = 36;
   OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED = 40;
   OPERATIONAL_KIND_ATTRIBUTES_COMMITTED = 41;
-  OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED = 42;
+  reserved 42;
+  reserved "OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED";
   OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED = 43;
   OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED = 47;
   OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED = 44;
@@ -71,7 +72,8 @@ message Event {
   string kind = 5;
   reserved 16, 18, 19, 24, 26, 27;
   reserved "commit", "quality_rule_failed", "heartbeat_lost", "schedule_fired", "pure_cascade_commit", "schedule_dispatch_failed";
-  reserved 28, 29;
+  reserved 28, 29, 45;
+  reserved "attributes_validation_failed";
   oneof payload {
     MessageSentPayload message_sent = 10;
     MessageReceivedPayload message_received = 11;
@@ -91,11 +93,17 @@ message Event {
     LockOrphanReapedPayload lock_orphan_reaped = 42;
     AttributesSubstitutedPayload attributes_substituted = 43;
     AttributesCommittedPayload attributes_committed = 44;
-    AttributesValidationFailedPayload attributes_validation_failed = 45;
     ClaimAcquiredPayload claim_acquired = 46;
     ClaimHeldPayload claim_held = 47;
     ClaimResolvedPayload claim_resolved = 48;
     TemplateResolutionFailedPayload template_resolution_failed = 49;
+
+    AttributesSchemaFailedPayload attributes_schema_failed = 55;
+    AttributeOverrideMatchedPayload attribute_override_matched = 56;
+    FanOutDispatchedPayload fan_out_dispatched = 59;
+    SubgraphInternalCascadeFiredPayload subgraph_internal_cascade_fired = 63;
+    ParkedResumeStartedPayload parked_resume_started = 67;
+    InstanceTerminatedPayload instance_terminated = 69;
 
   }
   google.protobuf.Struct payload_raw = 30;
@@ -130,10 +138,15 @@ message ErrorPayload {
 
 message WorkStartedPayload {
   string supervisor_id = 1;
+  string dispatch_id = 2;
 }
 
 message WorkCompletedPayload {
-  string outcome = 1;
+  reserved 1;
+  reserved "outcome";
+  string supervisor_id = 2;
+  string dispatch_id = 3;
+  string terminal_kind = 4;
 }
 
 message NoOpCommitPayload {
@@ -151,15 +164,19 @@ message OperatorOverridePayload {
 message OrphanedClaimReleasedPayload {
   string dispatch_id = 1;
   string prior_claimed_by = 2;
-  google.protobuf.Timestamp claimed_at = 3;
+  reserved 3;
+  reserved "claimed_at";
+  google.protobuf.Timestamp last_progress_at = 4;
+  string error_class = 5;
+  string reason = 6;
+  string callback_url = 7;
 }
 
 message OrphanedClaimLostRacePayload {
   string supervisor_id = 1;
   string dispatch_id = 2;
-  string ownership_kind = 3;
-  string current_claimed_by = 4;
-  string winning_supervisor_id = 5;
+  reserved 3, 4, 5;
+  reserved "ownership_kind", "current_claimed_by", "winning_supervisor_id";
 }
 
 message WorkRejectedPayload {
@@ -168,7 +185,8 @@ message WorkRejectedPayload {
 }
 
 message UnresolvedExecutorPayload {
-  string node_id = 1;
+  reserved 1;
+  reserved "node_id";
   string executor_name = 2;
   string supervisor_id = 3;
 }
@@ -177,36 +195,44 @@ message LockAcquiredPayload {
   string lock_kind = 1;
   string lock_name = 2;
   string producer_name = 3;
-  google.protobuf.Struct scope_data = 4;
-  string claim_id = 5;
+  reserved 4, 5, 8;
+  reserved "claim_id", "resumed";
   string supervisor_id = 6;
   string holder_id = 7;
-  bool resumed = 8;
+  string alias = 9;
+  string intent = 10;
 }
 
 message LockReleasedPayload {
   string lock_kind = 1;
   string lock_name = 2;
   string producer_name = 3;
-  string claim_id = 4;
+  reserved 4;
+  reserved "claim_id";
   string holder_id = 5;
   string supervisor_id = 6;
   string action = 7;
+  string alias = 8;
 }
 
 message LockOrphanReapedPayload {
   string lock_kind = 1;
   string lock_name = 2;
   string producer_name = 3;
-  string claim_id = 4;
-  string holder_id = 5;
-  string prior_supervisor_id = 6;
-  google.protobuf.Timestamp expired_at = 7;
+  reserved 4, 5, 6;
+  reserved "claim_id", "holder_id", "prior_supervisor_id";
+  google.protobuf.Timestamp expires_at = 7;
+  string claim_handle_id = 8;
+  string supervisor_id = 9;
+  string holder_node_id = 10;
+  google.protobuf.Timestamp claimed_at = 11;
+  string intent = 12;
 }
 
 message AttributesSubstitutedPayload {
   repeated string substituted_fields = 1;
-  repeated string omitted_fields = 2;
+  reserved 2;
+  reserved "omitted_fields";
   reserved 3;
   reserved "run_attempt";
 }
@@ -215,12 +241,6 @@ message AttributesCommittedPayload {
   bool changed = 1;
   repeated string updated_fields = 2;
   string change_summary = 3;
-}
-
-message AttributesValidationFailedPayload {
-  reserved 1;
-  reserved "phase";
-  repeated google.protobuf.Struct errors = 2;
 }
 
 message ClaimAcquiredPayload {
@@ -248,4 +268,231 @@ message TemplateResolutionFailedPayload {
   string site = 2;
   string field = 3;
   string reason = 4;
+}
+
+message AuthAccessAttemptedPayload {
+  optional string key_id = 1;
+  string key_name = 2;
+  string identity_kind = 3;
+  string protocol_skin = 4;
+  string action = 5;
+  string request_path = 6;
+  string request_method = 7;
+  google.protobuf.Struct request_params = 8;
+  bool request_params_invalid = 9;
+  int32 response_status = 10;
+  string mode = 11;
+  bool executed = 12;
+  int64 duration_ms = 13;
+  string client_ip = 14;
+  string user_agent = 15;
+}
+
+message AuthAccessDeniedPayload {
+  optional string key_id = 1;
+  optional string key_name = 2;
+  optional string identity_kind = 3;
+  string protocol_skin = 4;
+  optional string action = 5;
+  string request_path = 6;
+  string request_method = 7;
+  google.protobuf.Struct request_params = 8;
+  bool request_params_invalid = 9;
+  int32 response_status = 10;
+  optional string mode = 11;
+  bool executed = 12;
+  int64 duration_ms = 13;
+  string client_ip = 14;
+  string user_agent = 15;
+  string denial_reason = 16;
+}
+
+message AuthKeyCreatedPayload {
+  string key_id = 1;
+  string key_name = 2;
+  google.protobuf.Struct permissions = 3;
+  optional string created_by_key_id = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+message AuthKeyRevokedPayload {
+  string key_id = 1;
+  string key_name = 2;
+  optional string revoked_by_key_id = 3;
+  string reason = 4;
+}
+
+message AuthKeyRotatedPayload {
+  string key_id = 1;
+  string key_name = 2;
+  string old_key_id = 3;
+  string new_key_id = 4;
+  google.protobuf.Timestamp revoke_at = 5;
+  optional string rotated_by_key_id = 6;
+}
+
+message AttributesSchemaFailedPayload {
+  string message = 1;
+}
+
+message AttributeOverrideMatchedPayload {
+  int32 override_index = 1;
+  string node_type = 2;
+  repeated string fields = 3;
+}
+
+message BreakpointHitPayload {
+  string instance_id = 1;
+  string node_id = 2;
+  string breakpoint_id = 3;
+  string hit_id = 4;
+  string checkpoint = 5;
+  string mode = 6;
+}
+
+message MessageDeadLetteredPayload {
+  string message_id = 1;
+  string message_type = 2;
+  string reason = 3;
+}
+
+message FanOutDispatchedPayload {
+  string parent_run_id = 1;
+  repeated string child_run_ids = 2;
+  repeated string child_keys = 3;
+  int32 parallelism = 4;
+  string policy_kind = 5;
+  int32 num_sub_claims = 6;
+}
+
+message FanOutChildrenCreatedPayload {
+  string parent_run_id = 1;
+  string parent_node_id = 2;
+  int32 child_count = 3;
+  int32 partition_keys_count = 4;
+}
+
+message SubClaimBeginCandidatePayload {
+  string parent_claim_handle_id = 1;
+  string sub_claim_handle_id = 2;
+  string producer_name = 3;
+  int64 candidate_handle_size_bytes = 4;
+}
+
+message SubClaimAcquiredPayload {
+  string parent_claim_handle_id = 1;
+  int32 sub_scope_descriptor_count = 2;
+  string producer_name = 3;
+}
+
+message SubgraphInternalCascadeFiredPayload {
+  string delegate_graph = 1;
+  string calling_run_id = 2;
+  string settling_signal_type = 3;
+  bool changed = 4;
+  int32 child_count = 5;
+}
+
+message SubgraphDispatchedPayload {
+  string caller_run_id = 1;
+  string caller_node_id = 2;
+  string subgraph_name = 3;
+  repeated string child_aliases = 4;
+  int32 child_count = 5;
+}
+
+message SubgraphExitCarryPayload {
+  string parent_run_id = 1;
+  string exit_run_id = 2;
+  string exit_node_alias = 3;
+  string outcome = 4;
+}
+
+message ClaimResolutionSettledPayload {
+  string claim_handle_id = 1;
+  string run_id = 2;
+  string frame_id = 3;
+  string producer_name = 4;
+  string claim_scope_data_hash = 5;
+  string version_id = 6;
+  optional string parent_claim_handle_id = 7;
+  string cause = 8;
+}
+
+message ParkedResumeStartedPayload {
+  string resume_reason = 1;
+  string supervisor_id = 2;
+}
+
+message DebugOverrideAppliedPayload {
+  string action = 1;
+  string node_type = 2;
+  string gate_state = 3;
+  string actor = 4;
+  int32 runs_mutated = 5;
+  string attribute_key = 6;
+  google.protobuf.Value attribute_value = 7;
+}
+
+message InstanceTerminatedPayload {
+  string actor = 1;
+  string reason = 2;
+}
+
+message TerminalSuccessSignalPayload {
+  bool changed = 1;
+  google.protobuf.Struct attributes_delta = 2;
+  string change_summary = 3;
+  repeated string tags = 4;
+}
+
+message TerminalErrorSignalPayload {
+  string error_class = 1;
+  google.protobuf.Struct error_payload = 2;
+  int32 attempt = 3;
+  int32 retries_so_far = 4;
+  google.protobuf.Struct attributes_delta = 5;
+  repeated string tags = 6;
+}
+
+message TransientParkSignalPayload {
+  google.protobuf.Timestamp resume_at = 1;
+  repeated string tags = 2;
+  int32 scratch_size = 3;
+  bool scratch_spilled = 4;
+}
+
+message TransientRetrySignalPayload {
+  int32 attempt = 1;
+  int32 cap = 2;
+  string error_class = 3;
+  int32 delay_ms = 4;
+  google.protobuf.Struct error_payload = 5;
+  reserved 6;
+  reserved "discarded_claims";
+}
+
+message TransientAwaitAsyncSignalPayload {
+  string async_ack_id = 1;
+  string callback_url = 2;
+}
+
+message TransientInfraSignalPayload {
+  string reason = 1;
+  google.protobuf.Struct details = 2;
+}
+
+message TransientReleaseAndRequeueSignalPayload {
+  string error_class = 1;
+  google.protobuf.Struct error_payload = 2;
+}
+
+message AttributeChangedSignalPayload {
+  string key = 1;
+  google.protobuf.Value value = 2;
+  google.protobuf.Value old_value = 3;
+}
+
+message SettlingSignalPayload {
+  string error_class = 1;
 }

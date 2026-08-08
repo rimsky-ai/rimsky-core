@@ -12,6 +12,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type WakeReason string
@@ -137,10 +140,10 @@ func resumeParkedRunInTx(
 	if err := persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &nodeID, InstanceID: &instanceID,
 		Kind: events.KindParkedResumeStarted(),
-		Payload: map[string]any{
-			"resume_reason": string(reason),
-			"supervisor_id": supervisorID,
-		},
+		Payload: eventpayload.New(&genv1.ParkedResumeStartedPayload{
+			ResumeReason: string(reason),
+			SupervisorId: supervisorID,
+		}),
 	}, tx); err != nil {
 		return false, err
 	}

@@ -128,3 +128,38 @@ func TestRunAuthLogin_UsesDefaultEndpoint(t *testing.T) {
 		t.Fatalf("endpoint changed unexpectedly: %q", cfg.Contexts["dev"].Endpoint)
 	}
 }
+
+// @concept: api-key
+func TestRunAuthLogin_StoredKeyIsCarriedByLaterCommands(t *testing.T) {
+	var sawAuthorization string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/auth/status":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"mode":"authenticated","active_key_count":1,"admin_count":1}`))
+		case "/v1/health":
+			sawAuthorization = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("RIMSKY_CONTEXT", "")
+	t.Setenv("RIMSKY_API_KEY", "")
+
+	withStdin(t, srv.URL+"\nsecret-key-123\n")
+	if got := RunAuthLogin(context.Background(), nil); got != 0 {
+		t.Fatalf("login exit %d, want 0", got)
+	}
+
+	if got := RunHealth(context.Background(), nil); got != 0 {
+		t.Fatalf("health exit %d, want 0", got)
+	}
+	if sawAuthorization != "Bearer secret-key-123" {
+		t.Fatalf("a command run after login must carry the stored key; got Authorization=%q", sawAuthorization)
+	}
+}

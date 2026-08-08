@@ -134,7 +134,7 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		"3 child commits, parent Abandons at the threshold so no parent commit event = 3 commit events")
 	require.Equal(t, 2, len(abandonPage.Events),
 		"1 child abandon + 1 auto-fired parent abandon (threshold reached) = 2 abandon events")
-	require.Equal(t, "natural", abandonPage.Events[0].Payload["cause"],
+	require.Equal(t, "natural", abandonPage.Events[0].Payload.Map()["cause"],
 		"abandon event must carry cause=natural")
 }
 

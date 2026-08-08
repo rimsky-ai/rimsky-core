@@ -17,6 +17,9 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func emitAttributeChangesForRunInTx(
@@ -49,10 +52,11 @@ func emitAttributeChangesForRunInTx(
 	for key, value := range changes {
 		attrSig := signalpkg.Signal{
 			Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
-			Payload: map[string]any{
-				"key":   key,
-				"value": value,
-			},
+			Payload: eventpayload.New(&genv1.AttributeChangedSignalPayload{
+				Key:      key,
+				Value:    signalpkg.MustValue(value),
+				OldValue: signalpkg.MustValue(prior[key]),
+			}),
 		}
 		if err := emitSignalInTxWithFilter(ctx, args, nodeID, nodeType, runID, instanceID, frameID, attrSig, visited, filter, tx); err != nil {
 			return err

@@ -7,8 +7,13 @@ import (
 	"encoding/json"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 var (
@@ -98,4 +103,116 @@ type KeyRotatedPayload struct {
 	NewKeyID       shared.UUID  `json:"new_key_id"`
 	RevokeAt       time.Time    `json:"revoke_at"`
 	RotatedByKeyID *shared.UUID `json:"rotated_by_key_id"`
+}
+
+func KeyRevokedProto(p KeyRevokedPayload) *genv1.AuthKeyRevokedPayload {
+	return &genv1.AuthKeyRevokedPayload{
+		KeyId:          p.KeyID.String(),
+		KeyName:        p.KeyName,
+		RevokedByKeyId: uuidStringPtr(p.RevokedByKeyID),
+		Reason:         string(p.Reason),
+	}
+}
+
+func KeyCreatedProto(p KeyCreatedPayload) *genv1.AuthKeyCreatedPayload {
+	return &genv1.AuthKeyCreatedPayload{
+		KeyId:          p.KeyID.String(),
+		KeyName:        p.KeyName,
+		Permissions:    jsonStruct(p.Permissions),
+		CreatedByKeyId: uuidStringPtr(p.CreatedByKeyID),
+		ExpiresAt:      timePtrProto(p.ExpiresAt),
+	}
+}
+
+func KeyRotatedProto(p KeyRotatedPayload) *genv1.AuthKeyRotatedPayload {
+	return &genv1.AuthKeyRotatedPayload{
+		KeyId:          p.KeyID.String(),
+		KeyName:        p.KeyName,
+		OldKeyId:       p.OldKeyID.String(),
+		NewKeyId:       p.NewKeyID.String(),
+		RevokeAt:       timestamppb.New(p.RevokeAt),
+		RotatedByKeyId: uuidStringPtr(p.RotatedByKeyID),
+	}
+}
+
+func AccessAttemptedProto(p AccessAttemptedPayload) *genv1.AuthAccessAttemptedPayload {
+	return &genv1.AuthAccessAttemptedPayload{
+		KeyId:                uuidStringPtr(p.KeyID),
+		KeyName:              p.KeyName,
+		IdentityKind:         string(p.IdentityKind),
+		ProtocolSkin:         p.ProtocolSkin,
+		Action:               p.Action,
+		RequestPath:          p.RequestPath,
+		RequestMethod:        p.RequestMethod,
+		RequestParams:        rawStruct(p.RequestParams),
+		RequestParamsInvalid: p.RequestParamsInvalid,
+		ResponseStatus:       int32(p.ResponseStatus),
+		Mode:                 string(p.Mode),
+		Executed:             p.Executed,
+		DurationMs:           p.DurationMS,
+		ClientIp:             p.ClientIP,
+		UserAgent:            p.UserAgent,
+	}
+}
+
+func AccessDeniedProto(p AccessDeniedPayload) *genv1.AuthAccessDeniedPayload {
+	out := &genv1.AuthAccessDeniedPayload{
+		KeyId:                uuidStringPtr(p.KeyID),
+		KeyName:              p.KeyName,
+		ProtocolSkin:         p.ProtocolSkin,
+		Action:               p.Action,
+		RequestPath:          p.RequestPath,
+		RequestMethod:        p.RequestMethod,
+		RequestParams:        rawStruct(p.RequestParams),
+		RequestParamsInvalid: p.RequestParamsInvalid,
+		ResponseStatus:       int32(p.ResponseStatus),
+		Executed:             p.Executed,
+		DurationMs:           p.DurationMS,
+		ClientIp:             p.ClientIP,
+		UserAgent:            p.UserAgent,
+		DenialReason:         string(p.DenialReason),
+	}
+	if p.IdentityKind != nil {
+		k := string(*p.IdentityKind)
+		out.IdentityKind = &k
+	}
+	if p.Mode != nil {
+		m := string(*p.Mode)
+		out.Mode = &m
+	}
+	return out
+}
+
+func uuidStringPtr(id *shared.UUID) *string {
+	if id == nil {
+		return nil
+	}
+	s := id.String()
+	return &s
+}
+
+func timePtrProto(t *time.Time) *timestamppb.Timestamp {
+	if t == nil {
+		return nil
+	}
+	return timestamppb.New(*t)
+}
+
+func jsonStruct(v any) *structpb.Struct {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return rawStruct(raw)
+}
+
+func rawStruct(raw json.RawMessage) *structpb.Struct {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := &structpb.Struct{}
+	if err := protojson.Unmarshal(raw, out); err != nil {
+		return nil
+	}
+	return out
 }

@@ -41,7 +41,7 @@ func TestWallclockVerdictRatchet(t *testing.T) {
 			}
 			t.Errorf("%s has %d wall-clock verdict idiom(s), baseline allows %d — the ratchet is one-way: "+
 				"a deadline that fails a test is a load-dependent verdict, not a verdict. Block on the awaited "+
-				"signal or poll until success (the suite-level timeout is the only backstop). For a sleep that "+
+				"signal or poll until success (the test guard's no-progress watchdog is the only backstop). For a sleep that "+
 				"is genuinely not a verdict input (fixture pacing), suppress the site with %q plus a justification.",
 				file, n, allowed, scan.SuppressionMarker)
 		}

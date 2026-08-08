@@ -20,6 +20,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type SubgraphInternalCascadeArgs struct {
@@ -192,26 +195,26 @@ func applyTerminalCompleteSubgraphCaller(
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: events.KindSubgraphInternalCascadeFired(),
-		Payload: map[string]any{
-			"delegate_graph":       acq.NodeDef.Delegate,
-			"calling_run_id":       acq.NodeRunID.String(),
-			"settling_signal_type": settlingSig,
-			"changed":              t.Changed,
-			"child_count":          len(internalNodes),
-		},
+		Payload: eventpayload.New(&genv1.SubgraphInternalCascadeFiredPayload{
+			DelegateGraph:      acq.NodeDef.Delegate,
+			CallingRunId:       acq.NodeRunID.String(),
+			SettlingSignalType: settlingSig,
+			Changed:            t.Changed,
+			ChildCount:         int32(len(internalNodes)),
+		}),
 	}, tx); err != nil {
 		return nil, err
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: events.KindSubgraphDispatched(),
-		Payload: map[string]any{
-			"caller_run_id":  acq.NodeRunID.String(),
-			"caller_node_id": acq.NodeID.String(),
-			"subgraph_name":  acq.NodeDef.Delegate,
-			"child_aliases":  childAliases,
-			"child_count":    len(internalNodes),
-		},
+		Payload: eventpayload.New(&genv1.SubgraphDispatchedPayload{
+			CallerRunId:  acq.NodeRunID.String(),
+			CallerNodeId: acq.NodeID.String(),
+			SubgraphName: acq.NodeDef.Delegate,
+			ChildAliases: childAliases,
+			ChildCount:   int32(len(internalNodes)),
+		}),
 	}, tx); err != nil {
 		return nil, err
 	}

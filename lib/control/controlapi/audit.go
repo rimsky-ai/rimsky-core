@@ -12,7 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 	eventskinds "github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
@@ -48,7 +51,7 @@ func (s *AuthState) emitAttempted(
 		ClientIP:             clientIP(r),
 		UserAgent:            r.Header.Get("User-Agent"),
 	}
-	s.insertEvent(auth.EventAccessAttempted, p)
+	s.insertEvent(auth.EventAccessAttempted, auth.AccessAttemptedProto(p))
 }
 
 func (s *AuthState) emitDenied(
@@ -89,34 +92,24 @@ func (s *AuthState) emitDenied(
 		a := action
 		p.Action = &a
 	}
-	s.insertEvent(auth.EventAccessDenied, p)
+	s.insertEvent(auth.EventAccessDenied, auth.AccessDeniedProto(p))
 }
 
 func (s *AuthState) EmitKeyCreated(ctx context.Context, p auth.KeyCreatedPayload) {
-	s.insertEvent(auth.EventKeyCreated, p)
+	s.insertEvent(auth.EventKeyCreated, auth.KeyCreatedProto(p))
 }
 
 func (s *AuthState) EmitKeyRevoked(ctx context.Context, p auth.KeyRevokedPayload) {
-	s.insertEvent(auth.EventKeyRevoked, p)
+	s.insertEvent(auth.EventKeyRevoked, auth.KeyRevokedProto(p))
 }
 
 func (s *AuthState) EmitKeyRotated(ctx context.Context, p auth.KeyRotatedPayload) {
-	s.insertEvent(auth.EventKeyRotated, p)
+	s.insertEvent(auth.EventKeyRotated, auth.KeyRotatedProto(p))
 }
 
 const auditWriteTimeout = 2 * time.Second
 
-func (s *AuthState) insertEvent(kind string, payload any) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		s.Logger.Error("audit.marshal", "kind", kind, "err", err.Error())
-		return
-	}
-	payloadMap := map[string]any{}
-	if err := json.Unmarshal(data, &payloadMap); err != nil {
-		s.Logger.Error("audit.unmarshal-to-map", "kind", kind, "err", err.Error())
-		return
-	}
+func (s *AuthState) insertEvent(kind string, payload proto.Message) {
 	typedKind, err := eventskinds.ParseKindString(kind)
 	if err != nil {
 		s.Logger.Error("audit.kind-parse", "kind", kind, "err", err.Error())
@@ -127,7 +120,7 @@ func (s *AuthState) insertEvent(kind string, payload any) {
 	if err := s.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return s.Tables.Events().Append(ctx, persistence.EventAppendInput{
 			Kind:    typedKind,
-			Payload: payloadMap,
+			Payload: eventpayload.New(payload),
 		}, tx)
 	}); err != nil {
 		s.Logger.Error("audit.insert", "kind", kind, "err", err.Error())

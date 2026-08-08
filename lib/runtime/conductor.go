@@ -10,6 +10,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // @decision: three-dispatch-deadlines
@@ -71,16 +76,14 @@ func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 		if o.AsyncCallbackURL != nil {
 			callbackURL = *o.AsyncCallbackURL
 		}
-		payload := map[string]any{
-			"dispatch_id":      o.ID.String(),
-			"prior_claimed_by": prior,
-			"last_progress_at": lastProgress,
-			"error_class":      errorClass,
-			"reason":           releaseReason,
-		}
-		if callbackURL != "" {
-			payload["callback_url"] = callbackURL
-		}
+		payload := eventpayload.New(&genv1.OrphanedClaimReleasedPayload{
+			DispatchId:     o.ID.String(),
+			PriorClaimedBy: prior,
+			LastProgressAt: timestamppb.New(lastProgress),
+			ErrorClass:     errorClass,
+			Reason:         releaseReason,
+			CallbackUrl:    callbackURL,
+		})
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: instancePtr,

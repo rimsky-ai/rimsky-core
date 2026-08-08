@@ -94,7 +94,7 @@ func lastAttemptedRow(t *testing.T, tables persistence.Tables) map[string]any {
 	if len(res.Events) == 0 {
 		t.Fatalf("no auth.access_attempted row present after request")
 	}
-	return res.Events[0].Payload
+	return res.Events[0].Payload.Map()
 }
 
 func TestGate_DryRunFlagSetsModeAndReadExecutes(t *testing.T) {

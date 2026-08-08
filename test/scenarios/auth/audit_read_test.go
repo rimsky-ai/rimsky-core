@@ -487,7 +487,7 @@ func allAuditPayloads(t *testing.T, f *authFixture) []map[string]any {
 				return err
 			}
 			for _, e := range rl.Events {
-				out = append(out, e.Payload)
+				out = append(out, e.Payload.Map())
 			}
 		}
 		return nil

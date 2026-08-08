@@ -22,6 +22,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 const (
@@ -136,15 +140,15 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			mutatedRuns = n
-			payload := map[string]any{
-				"action":          body.Action,
-				"node_type":       body.NodeType,
-				"gate_state":      gateState,
-				"actor":           actor,
-				"runs_mutated":    mutatedRuns,
-				"attribute_key":   body.AttributeKey,
-				"attribute_value": body.AttributeValue,
-			}
+			payload := eventpayload.New(&genv1.DebugOverrideAppliedPayload{
+				Action:         body.Action,
+				NodeType:       body.NodeType,
+				GateState:      gateState,
+				Actor:          actor,
+				RunsMutated:    int32(mutatedRuns),
+				AttributeKey:   body.AttributeKey,
+				AttributeValue: signalpkg.MustValue(body.AttributeValue),
+			})
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &instUUID,
 				Kind:       events.KindDebugOverrideApplied(),

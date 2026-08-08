@@ -21,7 +21,7 @@ func repoRoot(t *testing.T) string {
 }
 
 func TestComposeManifestExampleLoads(t *testing.T) {
-	manifestPath := filepath.Join(repoRoot(t), "examples", "compose", "rimsky-compose.yml")
+	manifestPath := filepath.Join(repoRoot(t), "test", "fixtures", "compose", "rimsky-compose.yml")
 
 	m, err := LoadManifest(manifestPath)
 	if err != nil {

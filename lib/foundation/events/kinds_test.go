@@ -69,7 +69,6 @@ func TestOperationalKindRoundTrip(t *testing.T) {
 		{"claim_resolution.abandon", genv1.OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON, "claim_resolution.abandon"},
 		{"attributes_substituted", genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED, "attributes_substituted"},
 		{"attributes_committed", genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_COMMITTED, "attributes_committed"},
-		{"attributes_validation_failed", genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED, "attributes_validation_failed"},
 		{"attributes_schema_failed", genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED, "attributes_schema_failed"},
 		{"attribute_override_matched", genv1.OperationalKind_OPERATIONAL_KIND_ATTRIBUTE_OVERRIDE_MATCHED, "attribute_override_matched"},
 		{"template_resolution_failed", genv1.OperationalKind_OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED, "template_resolution_failed"},

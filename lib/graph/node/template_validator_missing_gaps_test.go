@@ -539,3 +539,64 @@ func TestCheckAttributeDirectiveBody_Error_UnrecognizedDirectivePrefix(t *testin
 	checkAttributeDirectiveBody("bogus.thing", "p", map[string]int{}, nil, nil, nil, res)
 	require.True(t, findErrorContains(res.Errors, "must start with claim.|params.|nodes.|messages.|child.|env."))
 }
+
+// @concept: publisher
+func TestValidatePublishers_Error_KindPeerDoesNotAdvertise(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1",
+		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "h"}},
+		Messages: []MessageSchema{{Type: "ev/out"}},
+		Publishers: []PublisherSpec{
+			{Name: "pub-a", Kind: "htpp", MessageType: "ev/out"},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{
+		PublisherDeclaredKinds: func(name string) ([]string, bool) {
+			if name != "pub-a" {
+				return nil, false
+			}
+			return []string{"http", "webhook"}, true
+		},
+	})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "publishers[0].kind")
+	require.True(t, findErrorContains(res.Errors, "publisher_unadvertised_kind"))
+	require.True(t, findErrorContains(res.Errors, `[http webhook]`),
+		"the refusal must name what the peer does advertise; got: %+v", res.Errors)
+}
+
+// @concept: publisher
+func TestValidatePublishers_AcceptsKindPeerAdvertises(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1",
+		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "h"}},
+		Messages: []MessageSchema{{Type: "ev/out"}},
+		Publishers: []PublisherSpec{
+			{Name: "pub-a", Kind: "http", MessageType: "ev/out"},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{
+		PublisherDeclaredKinds: func(string) ([]string, bool) { return []string{"http", "webhook"}, true },
+	})
+	require.True(t, res.Ok(), "an advertised kind must register cleanly; got: %+v", res.Errors)
+}
+
+// @concept: publisher
+func TestValidatePublishers_UnreachablePeerDoesNotBlockRegistration(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1",
+		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "h"}},
+		Messages: []MessageSchema{{Type: "ev/out"}},
+		Publishers: []PublisherSpec{
+			{Name: "pub-a", Kind: "anything", MessageType: "ev/out"},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{
+		PublisherDeclaredKinds: func(string) ([]string, bool) { return nil, false },
+	})
+	require.True(t, res.Ok(),
+		"a peer whose capabilities could not be read must not turn into a kind refusal; got: %+v", res.Errors)
+}

@@ -70,7 +70,7 @@ func WaitForEvent(ctx context.Context, t testing.TB, db persistence.Tables, m Ma
 		}
 		if poll%40 == 0 {
 			t.Logf("eventwait.WaitForEvent: still polling for matcher {%s} (observed: %d matched, last err=%v) — "+
-				"blocks until the event appears; the suite-level timeout is the only backstop",
+				"blocks until the event appears; the test guard's no-progress watchdog is the only backstop",
 				m, len(matched), err)
 		}
 		time.Sleep(pollInterval)

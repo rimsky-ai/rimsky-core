@@ -4,115 +4,69 @@
 package signal
 
 import (
-	"reflect"
+	"encoding/json"
+	"fmt"
 	"strings"
-	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // @concept: terminal-tag
-type TerminalSuccessPayload struct {
-	Changed         bool           `json:"changed"`
-	AttributesDelta map[string]any `json:"attributes_delta"`
-	ChangeSummary   string         `json:"change_summary,omitempty"`
-	Tags            []string       `json:"tags,omitempty"`
+func BuildTerminalErrorSignal(errorClass string, errorPayload map[string]any, attempt int, retriesSoFar int, attributesDelta map[string]any, tags []string) Signal {
+	return Signal{
+		Type: TypePath("terminal/error/" + errorClass),
+		Payload: eventpayload.New(&genv1.TerminalErrorSignalPayload{
+			ErrorClass:      errorClass,
+			ErrorPayload:    MustStruct(errorPayload),
+			Attempt:         int32(attempt),
+			RetriesSoFar:    int32(retriesSoFar),
+			AttributesDelta: MustStruct(orEmptyMap(attributesDelta)),
+			Tags:            tags,
+		}),
+	}
 }
 
 // @concept: terminal-tag
-type TerminalErrorPayload struct {
-	ErrorClass      string         `json:"error_class"`
-	ErrorPayload    map[string]any `json:"error_payload,omitempty"`
-	Attempt         int            `json:"attempt"`
-	RetriesSoFar    int            `json:"retries_so_far"`
-	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
-	Tags            []string       `json:"tags,omitempty"`
-}
-
-type TransientParkPayload struct {
-	ResumeAt       time.Time `json:"resume_at"`
-	Tags           []string  `json:"tags,omitempty"`
-	ScratchSize    int       `json:"scratch_size"`
-	ScratchSpilled bool      `json:"scratch_spilled"`
-}
-
-type TransientRetryPayload struct {
-	Attempt         int            `json:"attempt"`
-	Cap             int            `json:"cap"`
-	ErrorClass      string         `json:"error_class"`
-	DiscardedClaims bool           `json:"discarded_claims"`
-	DelayMs         int            `json:"delay_ms"`
-	ErrorPayload    map[string]any `json:"error_payload,omitempty"`
-}
-
-type TransientAwaitAsyncPayload struct {
-	AsyncAckID  string `json:"async_ack_id"`
-	CallbackURL string `json:"callback_url"`
-}
-
-type AttributeChangedPayload struct {
-	Key      string `json:"key"`
-	Value    any    `json:"value"`
-	OldValue any    `json:"old_value,omitempty"`
-}
-
-func BuildTerminalErrorSignal(errorClass string, errorPayload map[string]any, attempt int, retriesSoFar int, attributesDelta map[string]any, tags []string) Signal {
-	p := TerminalErrorPayload{
-		ErrorClass:      errorClass,
-		ErrorPayload:    errorPayload,
-		Attempt:         attempt,
-		RetriesSoFar:    retriesSoFar,
-		AttributesDelta: orEmptyMap(attributesDelta),
-		Tags:            tags,
-	}
-	return Signal{
-		Type:    TypePath("terminal/error/" + errorClass),
-		Payload: PayloadMap(p),
-	}
-}
-
 func BuildTerminalSuccessSignal(changed bool, attributesDelta map[string]any, changeSummary string, tags []string) Signal {
-	p := TerminalSuccessPayload{
-		Changed:         changed,
-		AttributesDelta: orEmptyMap(attributesDelta),
-		ChangeSummary:   changeSummary,
-		Tags:            tags,
-	}
 	return Signal{
-		Type:    TypePath("terminal/success"),
-		Payload: PayloadMap(p),
+		Type: TypePath("terminal/success"),
+		Payload: eventpayload.New(&genv1.TerminalSuccessSignalPayload{
+			Changed:         changed,
+			AttributesDelta: MustStruct(orEmptyMap(attributesDelta)),
+			ChangeSummary:   changeSummary,
+			Tags:            tags,
+		}),
 	}
 }
 
-func PayloadMap(p any) map[string]any {
-	v := reflect.ValueOf(p)
-	t := v.Type()
-	out := make(map[string]any, t.NumField())
-	for i := 0; i < t.NumField(); i++ {
-		name, ok := jsonFieldName(t.Field(i))
-		if !ok {
-			continue
-		}
-		out[name] = v.Field(i).Interface()
+func MustStruct(m map[string]any) *structpb.Struct {
+	if m == nil {
+		return nil
 	}
+	out := &structpb.Struct{}
+	unmarshalJSONInto(m, out)
 	return out
 }
 
-func jsonFieldName(f reflect.StructField) (string, bool) {
-	if !f.IsExported() {
-		return "", false
+func MustValue(v any) *structpb.Value {
+	out := &structpb.Value{}
+	unmarshalJSONInto(v, out)
+	return out
+}
+
+func unmarshalJSONInto(v any, dst protoreflect.ProtoMessage) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("signal: value of type %T is not JSON-representable: %v", v, err))
 	}
-	name := f.Name
-	if tag, ok := f.Tag.Lookup("json"); ok && tag != "" {
-		if comma := strings.IndexByte(tag, ','); comma >= 0 {
-			tag = tag[:comma]
-		}
-		if tag == "-" {
-			return "", false
-		}
-		if tag != "" {
-			name = tag
-		}
+	if err := protojson.Unmarshal(raw, dst); err != nil {
+		panic(fmt.Sprintf("signal: value of type %T does not fit %T: %v", v, dst, err))
 	}
-	return name, true
 }
 
 func orEmptyMap(m map[string]any) map[string]any {
@@ -122,7 +76,7 @@ func orEmptyMap(m map[string]any) map[string]any {
 	return m
 }
 
-func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
+func PayloadSchemaForType(t TypePath) (protoreflect.MessageDescriptor, bool) {
 	s := string(t)
 	if s == "" {
 		return nil, false
@@ -130,17 +84,21 @@ func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 	trimmed := strings.TrimSuffix(s, "*")
 	switch {
 	case s == "terminal/success":
-		return reflect.TypeOf(TerminalSuccessPayload{}), true
+		return descriptorOf(&genv1.TerminalSuccessSignalPayload{}), true
 	case s == "transient/park":
-		return reflect.TypeOf(TransientParkPayload{}), true
+		return descriptorOf(&genv1.TransientParkSignalPayload{}), true
 	case s == "transient/await_async":
-		return reflect.TypeOf(TransientAwaitAsyncPayload{}), true
+		return descriptorOf(&genv1.TransientAwaitAsyncSignalPayload{}), true
 	case strings.HasPrefix(trimmed, "terminal/error/"):
-		return reflect.TypeOf(TerminalErrorPayload{}), true
+		return descriptorOf(&genv1.TerminalErrorSignalPayload{}), true
 	case strings.HasPrefix(trimmed, "transient/retry/"):
-		return reflect.TypeOf(TransientRetryPayload{}), true
+		return descriptorOf(&genv1.TransientRetrySignalPayload{}), true
 	case strings.HasPrefix(trimmed, "attribute/") && strings.HasSuffix(trimmed, "/changed"):
-		return reflect.TypeOf(AttributeChangedPayload{}), true
+		return descriptorOf(&genv1.AttributeChangedSignalPayload{}), true
 	}
 	return nil, false
+}
+
+func descriptorOf(m protoreflect.ProtoMessage) protoreflect.MessageDescriptor {
+	return m.ProtoReflect().Descriptor()
 }

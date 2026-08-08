@@ -161,7 +161,7 @@ func (h *breakpointAuditHarness) lastAttemptedRow(t *testing.T) map[string]any {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Events, "no auth.access_attempted row present after request")
-	return res.Events[0].Payload
+	return res.Events[0].Payload.Map()
 }
 
 func TestBreakpointRoute_AccessAttemptedCarriesBreakpointAndHitID(t *testing.T) {

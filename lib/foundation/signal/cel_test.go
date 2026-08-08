@@ -6,6 +6,8 @@ package signal
 import (
 	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 )
 
 func TestCompileWhen_NilOnEmpty(t *testing.T) {
@@ -36,7 +38,7 @@ func TestCompileWhen_AcceptsValidExact(t *testing.T) {
 	}
 	ok, err := p.Eval(Signal{
 		Type:    "terminal/error/http/timeout",
-		Payload: map[string]any{"error_class": "http/timeout"},
+		Payload: eventpayload.Decoded(map[string]any{"error_class": "http/timeout"}),
 	})
 	if err != nil {
 		t.Fatalf("Eval: %v", err)
@@ -46,7 +48,7 @@ func TestCompileWhen_AcceptsValidExact(t *testing.T) {
 	}
 	ok, _ = p.Eval(Signal{
 		Type:    "terminal/error/http/timeout",
-		Payload: map[string]any{"error_class": "other"},
+		Payload: eventpayload.Decoded(map[string]any{"error_class": "other"}),
 	})
 	if ok {
 		t.Fatalf("Eval mismatch: expected false")
@@ -113,10 +115,10 @@ func TestCompileWhen_AttributesDeltaOnError(t *testing.T) {
 	}
 	ok, err := p.Eval(Signal{
 		Type: "terminal/error/agent/rate_limited",
-		Payload: map[string]any{
+		Payload: eventpayload.Decoded(map[string]any{
 			"error_class":      "agent/rate_limited",
 			"attributes_delta": map[string]any{"transient": true},
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("Eval error AttributesDelta: %v", err)
@@ -147,10 +149,10 @@ func TestCompileWhenWithBodyFields_AcceptsDeclaredAttributesDeltaField(t *testin
 	}
 	ok, err := p.Eval(Signal{
 		Type: "terminal/error/agent/rate_limited",
-		Payload: map[string]any{
+		Payload: eventpayload.Decoded(map[string]any{
 			"error_class":      "agent/rate_limited",
 			"attributes_delta": map[string]any{"transient": true},
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("Eval: %v", err)
@@ -170,14 +172,14 @@ func TestCompileWhen_PrefixBindsDyn(t *testing.T) {
 	}
 	ok, _ := p.Eval(Signal{
 		Type:    "terminal/success",
-		Payload: map[string]any{"changed": true},
+		Payload: eventpayload.Decoded(map[string]any{"changed": true}),
 	})
 	if ok {
 		t.Fatalf("Eval missing key: expected false")
 	}
 	ok, _ = p.Eval(Signal{
 		Type:    "terminal/error/x",
-		Payload: map[string]any{"error_class": "x"},
+		Payload: eventpayload.Decoded(map[string]any{"error_class": "x"}),
 	})
 	if !ok {
 		t.Fatalf("Eval matching: expected true")

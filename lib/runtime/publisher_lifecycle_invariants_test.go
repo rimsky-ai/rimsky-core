@@ -31,6 +31,8 @@ type lifecycleFakeClient struct {
 
 func (c *lifecycleFakeClient) Name() string { return c.name }
 
+func (*lifecycleFakeClient) SupportedKinds(context.Context) ([]string, error) { return nil, nil }
+
 func (c *lifecycleFakeClient) Subscribe(context.Context, clientiface.SubscribeRequest) error {
 	return nil
 }

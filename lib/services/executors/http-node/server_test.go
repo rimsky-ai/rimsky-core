@@ -23,6 +23,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 )
 
 func newRequest(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {
@@ -704,9 +706,9 @@ func TestExecute_ProbeCancelSignalsObservedThenAcknowledgedAndSurfacesCanceled(t
 	acknowledged := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch strings.TrimPrefix(r.URL.Path, "/v1/callback/") {
-		case "cancel-observed":
+		case stubmode.CancelObservedAck:
 			close(observed)
-		case "cancel-acknowledged":
+		case stubmode.CancelAcknowledgedAck:
 			close(acknowledged)
 		}
 		w.WriteHeader(http.StatusNoContent)

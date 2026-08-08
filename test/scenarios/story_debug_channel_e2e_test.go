@@ -389,7 +389,7 @@ func readLatestDebugOverrideAudit(t *testing.T, h *scenario.Harness, instanceID 
 			return err
 		}
 		require.NotEmpty(t, out.Events, "expected at least one debug.override.applied row")
-		payload = out.Events[len(out.Events)-1].Payload
+		payload = out.Events[len(out.Events)-1].Payload.Map()
 		return nil
 	}))
 	return payload

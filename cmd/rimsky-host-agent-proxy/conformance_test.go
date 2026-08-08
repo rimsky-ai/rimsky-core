@@ -25,6 +25,8 @@ import (
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	stub "github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 )
 
 type conformanceExecStub struct {
@@ -37,7 +39,7 @@ func newConformanceExecStub() *conformanceExecStub {
 
 func (s *conformanceExecStub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	attrs := req.GetAttributes().AsMap()
-	if _, invalid := attrs["_invalid"]; invalid {
+	if _, invalid := attrs[stubmode.MalformedShapeAttribute]; invalid {
 		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
 			ErrorClass: "conformance_stub/malformed_attributes",
 		}}}, nil

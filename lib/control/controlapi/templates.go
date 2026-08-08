@@ -178,6 +178,24 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) (node.RegistryHooks
 			return deps.ClaimProducerDeclaredErrorClasses(name)
 		}
 	}
+	if deps.Publishers != nil {
+		// @concept: publisher
+		hooks.PublisherDeclaredKinds = func(name string) ([]string, bool) {
+			if isLateBind(name) {
+				return nil, false
+			}
+			client, ok := deps.Publishers.Get(name)
+			if !ok {
+				return nil, false
+			}
+			kinds, err := client.SupportedKinds(context.Background())
+			if err != nil {
+				infra.record(fmt.Errorf("publisher %q capabilities: %w", name, err))
+				return nil, false
+			}
+			return kinds, true
+		}
+	}
 	hooks.NamedLockDeclared = func(name string) bool {
 		_, ok := deps.NamedLocks.Get(name)
 		return ok

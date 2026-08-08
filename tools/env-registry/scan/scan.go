@@ -16,7 +16,7 @@ import (
 
 var literalPattern = regexp.MustCompile(`"(RIMSKY_[A-Z0-9_]+)"`)
 
-var liveRoots = []string{"cmd", "lib", "examples"}
+var liveRoots = []string{"cmd", "lib"}
 
 func isLiveGoFile(rel string) bool {
 	if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {

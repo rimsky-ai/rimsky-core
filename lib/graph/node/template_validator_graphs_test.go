@@ -309,6 +309,46 @@ func TestCanonicalizeGraphs_RejectUnknownEntry(t *testing.T) {
 		"expected subgraph_unknown_entry rejection; got: %v", msgs)
 }
 
+// @concept: delegation
+func TestCanonicalizeGraphs_RejectUnknownDelegateTarget(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m", Delegate: "ghost"}}},
+			{
+				Name:  "sub",
+				Entry: "a",
+				Exit:  "b",
+				Nodes: []TemplateNodeDef{{Type: "a"}, {Type: "b"}},
+			},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	require.True(t, hasErrorContaining(msgs, "subgraph_unknown_delegate_target"),
+		"a delegate naming no declared sub-graph must be refused at registration; got: %v", msgs)
+}
+
+// @concept: delegation
+func TestCanonicalizeGraphs_AcceptsDeclaredDelegateTarget(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "tmpl",
+		Version: "1",
+		Graphs: []GraphSpec{
+			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m", Delegate: "sub"}}},
+			{
+				Name:  "sub",
+				Entry: "a",
+				Exit:  "b",
+				Nodes: []TemplateNodeDef{{Type: "a"}, {Type: "b"}},
+			},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	require.False(t, hasErrorContaining(msgs, "subgraph_unknown_delegate_target"),
+		"a delegate naming a declared sub-graph must not be refused; got: %v", msgs)
+}
+
 func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "tmpl",

@@ -94,7 +94,7 @@ func TestApplyTerminalComplete_HeldTransitionDoesNotDoubleAuditTerminalSuccess(t
 	rows := signalAuditRows(t, tables, acq.NodeID, "terminal/success")
 	require.Equal(t, 1, len(rows),
 		"no double-emit: the deferred settlement is the run's one and only terminal audit")
-	require.Equal(t, "auto-terminal/Commit", rows[0].Payload["change_summary"],
+	require.Equal(t, "auto-terminal/Commit", rows[0].Payload.Map()["change_summary"],
 		"a non-poisoned holder resolution must be labelled as a commit, derived from the holder's own "+
 			"portfolio status rather than any caller-supplied outcome value")
 }

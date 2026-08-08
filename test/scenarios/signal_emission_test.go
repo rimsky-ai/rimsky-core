@@ -43,9 +43,9 @@ func TestSignalEmission_TerminalSuccess(t *testing.T) {
 		"expected one rimsky_events row with kind=terminal/success; got kinds=%v", kindsOf(rows))
 	for _, e := range rows {
 		if e.KindRaw == "terminal/success" {
-			require.Equal(t, true, e.Payload["changed"],
+			require.Equal(t, true, e.Payload.Map()["changed"],
 				"terminal/success.payload.changed should be true (executor returned changed=true)")
-			require.Equal(t, "ok-summary", e.Payload["change_summary"],
+			require.Equal(t, "ok-summary", e.Payload.Map()["change_summary"],
 				"terminal/success.payload.change_summary should mirror executor's summary")
 			break
 		}
@@ -111,8 +111,8 @@ func TestSignalEmission_Park(t *testing.T) {
 		if e.KindRaw != "transient/park" {
 			continue
 		}
-		require.NotNil(t, e.Payload["resume_at"], "park payload should carry resume_at")
-		switch v := e.Payload["resume_at"].(type) {
+		require.NotNil(t, e.Payload.Map()["resume_at"], "park payload should carry resume_at")
+		switch v := e.Payload.Map()["resume_at"].(type) {
 		case string:
 			require.NotEmpty(t, v, "resume_at string should be non-empty")
 		case time.Time:
@@ -152,10 +152,10 @@ func TestSignalEmission_TerminalErrorCarriesAttributesDelta(t *testing.T) {
 		if e.KindRaw != "terminal/error/stub/foo" {
 			continue
 		}
-		delta, ok := e.Payload["attributes_delta"].(map[string]any)
+		delta, ok := e.Payload.Map()["attributes_delta"].(map[string]any)
 		require.True(t, ok,
 			"terminal/error.payload.attributes_delta should be a map; got %T (%+v)",
-			e.Payload["attributes_delta"], e.Payload)
+			e.Payload.Map()["attributes_delta"], e.Payload)
 		require.Equal(t, "stub/foo", delta["last_class"],
 			"executor-supplied attributes_delta should ride the terminal/error signal payload")
 		require.Equal(t, 3.0, delta["retry_count"],
@@ -190,7 +190,7 @@ func TestSignalEmission_TransientParkAuditOnlyNoAttributesDelta(t *testing.T) {
 		if e.KindRaw != "transient/park" {
 			continue
 		}
-		_, hasDelta := e.Payload["attributes_delta"]
+		_, hasDelta := e.Payload.Map()["attributes_delta"]
 		require.False(t, hasDelta,
 			"transient/park signal payload must NOT carry attributes_delta — park is audit-only and the delta is merged to the per-run row directly; payload=%+v",
 			e.Payload)

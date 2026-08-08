@@ -18,6 +18,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath, changed bool) signalpkg.Signal {
@@ -353,7 +356,7 @@ func cancelInFlightRunTreeChild(
 	}
 	auditSig := signalpkg.Signal{
 		Type:    signalpkg.TypePath(cascade.SettlingSignalSiblingFailed),
-		Payload: map[string]any{"error_class": "sibling_failed"},
+		Payload: eventpayload.New(&genv1.SettlingSignalPayload{ErrorClass: "sibling_failed"}),
 	}
 	var now time.Time
 	if args.Clock != nil {

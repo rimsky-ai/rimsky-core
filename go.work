@@ -5,5 +5,4 @@ use (
 	./lib/foundation
 	./lib/protocols
 	./lib/services
-	./examples
 )

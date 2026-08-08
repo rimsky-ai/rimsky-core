@@ -14,9 +14,9 @@ import (
 	"testing"
 )
 
-const composeRunSuccessManifestRel = "examples/compose/sample-manifest/rimsky-compose-success.yml"
+const composeRunSuccessManifestRel = "test/fixtures/compose/sample-manifest/rimsky-compose-success.yml"
 
-const composeRunLiveManifestRel = "examples/compose/sample-manifest/rimsky-compose-live.yml"
+const composeRunLiveManifestRel = "test/fixtures/compose/sample-manifest/rimsky-compose-live.yml"
 
 func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 	binDir := t.TempDir()

@@ -245,13 +245,13 @@ func TestDryRun_ReadIsNoOpExecutedTrue(t *testing.T) {
 			return err
 		}
 		for _, e := range rl.Events {
-			action, _ := e.Payload["action"].(string)
-			mode, _ := e.Payload["mode"].(string)
+			action, _ := e.Payload.Map()["action"].(string)
+			mode, _ := e.Payload.Map()["mode"].(string)
 			if action != "auth:read" || mode != string(auth.ModeDryRun) {
 				continue
 			}
 			foundReadDryRun = true
-			if exec, _ := e.Payload["executed"].(bool); !exec {
+			if exec, _ := e.Payload.Map()["executed"].(bool); !exec {
 				t.Errorf("dry_run READ row should have executed=true (the read ran): %+v", e.Payload)
 			}
 		}

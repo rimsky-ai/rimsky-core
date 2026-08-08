@@ -18,6 +18,9 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func ForceFailInFlightRunsForInstance(
@@ -65,7 +68,7 @@ func forceFailRunInstanceKilled(
 	}
 	auditSig := signalpkg.Signal{
 		Type:    signalpkg.TypePath(cascade.SettlingSignalInstanceKilled),
-		Payload: map[string]any{"error_class": "instance_killed"},
+		Payload: eventpayload.New(&genv1.SettlingSignalPayload{ErrorClass: "instance_killed"}),
 	}
 	var now time.Time
 	if args.Clock != nil {

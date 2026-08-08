@@ -5,7 +5,6 @@ project_name: rimsky
 git:
   ignore_tags:
     - "lib/*"
-    - "examples/*"
 
 before:
   hooks:

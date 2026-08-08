@@ -102,6 +102,19 @@ func (id *Identity) ServerTLSConfig() *tls.Config {
 }
 
 // @concept: peer-auth
+// @concept: host-agent-proxy
+func (id *Identity) ServerOnlyTLSConfig() *tls.Config {
+	if !id.Enabled() {
+		return nil
+	}
+	return &tls.Config{
+		MinVersion:     tls.VersionTLS12,
+		ClientAuth:     tls.NoClientCert,
+		GetCertificate: id.getCertificate,
+	}
+}
+
+// @concept: peer-auth
 func (id *Identity) ClientTLSConfig() *tls.Config {
 	if !id.Enabled() {
 		return nil

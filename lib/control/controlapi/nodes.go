@@ -15,6 +15,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // @concept: node
@@ -183,9 +186,9 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 				InstanceID: &resetInstanceID,
 				NodeID:     &id,
 				Kind:       events.KindOperatorOverride(),
-				Payload: map[string]any{
-					"action": "reset",
-				},
+				Payload: eventpayload.New(&genv1.OperatorOverridePayload{
+					Action: "reset",
+				}),
 			}, tx)
 		}); err != nil {
 			auditLogger := deps.Logger

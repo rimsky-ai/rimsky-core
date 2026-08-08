@@ -124,6 +124,8 @@ func buildLockSpecs(
 			RunScopeID: runScopeIDString(runScopeID),
 			// @concept: claim-lifetime
 			Lifetime: sref.Lifetime,
+			// @concept: inertness
+			Data: sref.Data,
 		})
 	}
 	return out, heldClaims, nil

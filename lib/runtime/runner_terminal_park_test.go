@@ -20,17 +20,17 @@ func TestParkTerminalSignal(t *testing.T) {
 	if got.Type != signalpkg.TypePath("transient/park") {
 		t.Fatalf("park type: got %q", got.Type)
 	}
-	if got.Payload["resume_at"].(time.Time) != resume {
-		t.Fatalf("resume_at: got %v", got.Payload["resume_at"])
+	if got.Payload.Map()["resume_at"].(string) != resume.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("resume_at: got %v", got.Payload.Map()["resume_at"])
 	}
-	tags := got.Payload["tags"].([]string)
+	tags := got.Payload.Map()["tags"].([]any)
 	if len(tags) != 1 || tags[0] != "await_remote" {
 		t.Fatalf("tags: got %v", tags)
 	}
-	if _, present := got.Payload["parked_reason_label"]; present {
+	if _, present := got.Payload.Map()["parked_reason_label"]; present {
 		t.Fatalf("parked_reason_label must not appear in the park payload")
 	}
-	if _, present := got.Payload["parked_reason_note"]; present {
+	if _, present := got.Payload.Map()["parked_reason_note"]; present {
 		t.Fatalf("parked_reason_note must not appear in the park payload")
 	}
 }
@@ -69,15 +69,15 @@ func TestParkTerminalSignal_RecordsScratchSizeAndSpillFlagNeverBytes(t *testing.
 
 func assertParkScratchAudit(t *testing.T, sig signalpkg.Signal, wantSize int, wantSpilled bool) {
 	t.Helper()
-	size, ok := sig.Payload["scratch_size"].(int)
-	if !ok || size != wantSize {
-		t.Fatalf("scratch_size: got %v want %d", sig.Payload["scratch_size"], wantSize)
+	size, ok := sig.Payload.Map()["scratch_size"].(float64)
+	if !ok || int(size) != wantSize {
+		t.Fatalf("scratch_size: got %v want %d", sig.Payload.Map()["scratch_size"], wantSize)
 	}
-	spilled, ok := sig.Payload["scratch_spilled"].(bool)
+	spilled, ok := sig.Payload.Map()["scratch_spilled"].(bool)
 	if !ok || spilled != wantSpilled {
-		t.Fatalf("scratch_spilled: got %v want %v", sig.Payload["scratch_spilled"], wantSpilled)
+		t.Fatalf("scratch_spilled: got %v want %v", sig.Payload.Map()["scratch_spilled"], wantSpilled)
 	}
-	for k := range sig.Payload {
+	for k := range sig.Payload.Map() {
 		if k == "scratch" || k == "scratch_bytes" || k == "payload" {
 			t.Fatalf("park audit payload must never carry raw scratch/payload bytes, found key %q", k)
 		}

@@ -100,7 +100,7 @@ func (e RimskyEndpoint) WaitForExecutorPeerReachable(t testing.TB, name string) 
 		}
 		if poll%40 == 0 {
 			t.Logf("harness: still waiting for executor peer %q to become reachable (last observed: %s) — the helper "+
-				"blocks until the capability probe succeeds; the suite-level timeout is the only backstop", name, last)
+				"blocks until the capability probe succeeds; the test guard's no-progress watchdog is the only backstop", name, last)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}

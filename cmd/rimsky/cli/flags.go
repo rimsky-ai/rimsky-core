@@ -63,11 +63,19 @@ func RegisterCommonFlags(fs *flag.FlagSet, out *CommonFlags) {
 	fs.BoolVar(&out.NoColor, "no-color", false, "disable ANSI color")
 }
 
+// @concept: api-key
 func (c *CommonFlags) ResolveAPIKey(envKey string) string {
 	if c.Key != "" {
 		return c.Key
 	}
-	return envKey
+	if envKey != "" {
+		return envKey
+	}
+	cfgPath, err := DefaultConfigPath()
+	if err != nil {
+		return ""
+	}
+	return ResolveAPIKeyFromContext(cfgPath)
 }
 
 func (c *CommonFlags) ResolveFormat() error {

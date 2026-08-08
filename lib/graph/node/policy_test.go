@@ -58,7 +58,7 @@ func TestEvaluate_PassReturnsPass(t *testing.T) {
 }
 
 func TestEvaluate_GiveUpReturnsGiveUpWithReason(t *testing.T) {
-	policy := &ErrorTypePolicy{Action: spec.ActionGiveUp, ReasonTemplate: "fatal_oops"}
+	policy := &ErrorTypePolicy{Action: spec.ActionGiveUp, Reason: "fatal_oops"}
 	r := Evaluate(policy, EvaluatorState{}, 10, BackoffConfig{}, nil)
 	require.Equal(t, spec.ActionGiveUp, r.Kind)
 	require.Equal(t, "fatal_oops", r.Reason)

@@ -6,12 +6,33 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/matcher"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
+
+type attributeOverrideMatch struct {
+	Index  int
+	Fields []string
+}
+
+func overlayFieldNames(overlay map[string]any) []string {
+	if len(overlay) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(overlay))
+	for k := range overlay {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
 
 // @concept: attribute
 func applyAttributeOverrides(
@@ -22,7 +43,7 @@ func applyAttributeOverrides(
 	graph string,
 	childKey string,
 	logger shared.Logger,
-) (merged map[string]any, matched []int) {
+) (merged map[string]any, matched []attributeOverrideMatch) {
 	mergedAny := shared.DeepMergeJSON(resolved, nil)
 	if len(overrides) == 0 {
 		if m, ok := mergedAny.(map[string]any); ok {
@@ -56,7 +77,7 @@ func applyAttributeOverrides(
 			if overlay != nil {
 				mergedAny = shared.DeepMergeJSON(mergedAny, overlay)
 			}
-			matched = append(matched, i)
+			matched = append(matched, attributeOverrideMatch{Index: i, Fields: overlayFieldNames(overlay)})
 		}
 	}
 
@@ -151,17 +172,22 @@ func emitOverrideMatchEventsAfterMerge(
 	persist matchEventPersist,
 	logger shared.Logger,
 	instanceID shared.UUID,
-	matched []int,
+	nodeType string,
+	matched []attributeOverrideMatch,
 ) error {
 	if len(matched) == 0 {
 		return nil
 	}
 	err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		for _, idx := range matched {
+		for _, m := range matched {
 			if err := persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &instanceID,
 				Kind:       events.KindAttributeOverrideMatched(),
-				Payload:    map[string]any{"override_index": idx},
+				Payload: eventpayload.New(&genv1.AttributeOverrideMatchedPayload{
+					OverrideIndex: int32(m.Index),
+					NodeType:      nodeType,
+					Fields:        m.Fields,
+				}),
 			}, tx); err != nil {
 				return err
 			}
@@ -170,9 +196,14 @@ func emitOverrideMatchEventsAfterMerge(
 	})
 	if err != nil {
 		if logger != nil {
+			indices := make([]int, len(matched))
+			for i, m := range matched {
+				indices[i] = m.Index
+			}
 			logger.Warn("instance.attribute_override_match_event_failed",
 				"instance_id", instanceID.String(),
-				"matched_indices", matched,
+				"node_type", nodeType,
+				"matched_indices", indices,
 				"error", err.Error())
 		}
 		return fmt.Errorf("emit attribute-override match events: %w", err)

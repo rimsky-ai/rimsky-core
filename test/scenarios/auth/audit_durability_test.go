@@ -93,9 +93,9 @@ func countAttemptedRows(t *testing.T, f *authFixture, keyName, method, path stri
 			t.Fatalf("Events.List: %v", err)
 		}
 		for _, e := range page.Events {
-			kn, _ := e.Payload["key_name"].(string)
-			m, _ := e.Payload["request_method"].(string)
-			p, _ := e.Payload["request_path"].(string)
+			kn, _ := e.Payload.Map()["key_name"].(string)
+			m, _ := e.Payload.Map()["request_method"].(string)
+			p, _ := e.Payload.Map()["request_path"].(string)
 			if kn == keyName && m == method && p == path {
 				count++
 			}

@@ -111,8 +111,8 @@ func builtinSchemas() map[string][]byte {
 		"lineage_claim_descendants": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["claim_handle_id"]}`),
 		"lineage_prune":             []byte(`{"type":"object","properties":{"before":{"type":"string","description":"RFC3339 timestamp"}},"required":["before"]}`),
 
-		"parked_node_list":   []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`),
-		"waitset_list":       obj,
+		"parked_node_list":   obj,
+		"waitset_list":       []byte(`{"type":"object","properties":{"frame":{"type":"string","description":"frame UUID (required)"},"receiver_run":{"type":"string","description":"narrow to one receiver node-run"}},"required":["frame"]}`),
 		"claim_holders_list": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"}},"required":["claim_handle_id"]}`),
 
 		"asset_list":                    []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),

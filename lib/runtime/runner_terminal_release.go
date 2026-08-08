@@ -13,6 +13,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func releaseLocksInTx(
@@ -262,23 +265,23 @@ func releaseActionString(success bool) string {
 func emitLockReleased(
 	ctx context.Context, args RunArgs, acq *acquisition, lk AcquiredLock, action string, tx persistence.Tx,
 ) error {
-	payload := map[string]any{
-		"holder_id":     lk.ClaimHandleID.String(),
-		"supervisor_id": args.SupervisorID,
-		"action":        action,
+	payload := &genv1.LockReleasedPayload{
+		HolderId:     lk.ClaimHandleID.String(),
+		SupervisorId: args.SupervisorID,
+		Action:       action,
 	}
 	switch sp := lk.Spec.(type) {
 	case locks.NamedLockSpec:
-		payload["lock_kind"] = string(persistence.LockKindNamed)
-		payload["lock_name"] = sp.Name
+		payload.LockKind = string(persistence.LockKindNamed)
+		payload.LockName = sp.Name
 	case claimproducer.ClaimSpec:
-		payload["lock_kind"] = string(persistence.LockKindScope)
-		payload["producer_name"] = sp.ProducerName
-		payload["alias"] = sp.Alias
+		payload.LockKind = string(persistence.LockKindScope)
+		payload.ProducerName = sp.ProducerName
+		payload.Alias = sp.Alias
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: events.KindLockReleased(), Payload: payload,
+		Kind: events.KindLockReleased(), Payload: eventpayload.New(payload),
 	}, tx); err != nil {
 		return fmt.Errorf("emitLockReleased: %w", err)
 	}

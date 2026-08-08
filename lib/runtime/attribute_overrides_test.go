@@ -46,11 +46,23 @@ func (r recordingMatchEventPersist) Transaction(ctx context.Context, fn func(ctx
 
 func (r recordingMatchEventPersist) Events() persistence.EventTable { return r.events }
 
+func matchedIndexes(matched []attributeOverrideMatch) []int {
+	if len(matched) == 0 {
+		return nil
+	}
+	out := make([]int, len(matched))
+	for i, m := range matched {
+		out[i] = m.Index
+	}
+	return out
+}
+
 func TestEmitOverrideMatchEventsAfterMerge_MatchedIndicesEachAppendOneEvent(t *testing.T) {
 	instanceID := shared.UUID(uuid.New())
 	recorder := &recordingEventTable{}
 
-	err := emitOverrideMatchEventsAfterMerge(context.Background(), recordingMatchEventPersist{events: recorder}, shared.SilentLogger{}, instanceID, []int{2, 0})
+	err := emitOverrideMatchEventsAfterMerge(context.Background(), recordingMatchEventPersist{events: recorder}, shared.SilentLogger{}, instanceID, "area-pass",
+		[]attributeOverrideMatch{{Index: 2, Fields: []string{"model", "prompt"}}, {Index: 0, Fields: []string{"budget"}}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,6 +70,7 @@ func TestEmitOverrideMatchEventsAfterMerge_MatchedIndicesEachAppendOneEvent(t *t
 		t.Fatalf("expected 2 appended events, got %d", len(recorder.appended))
 	}
 	wantIndices := []int{2, 0}
+	wantFields := [][]any{{"model", "prompt"}, {"budget"}}
 	for i, in := range recorder.appended {
 		if in.Kind != events.KindAttributeOverrideMatched() {
 			t.Fatalf("event %d Kind = %v, want %v", i, in.Kind, events.KindAttributeOverrideMatched())
@@ -65,9 +78,33 @@ func TestEmitOverrideMatchEventsAfterMerge_MatchedIndicesEachAppendOneEvent(t *t
 		if in.InstanceID == nil || *in.InstanceID != instanceID {
 			t.Fatalf("event %d InstanceID = %v, want %v", i, in.InstanceID, instanceID)
 		}
-		if got := in.Payload["override_index"]; got != wantIndices[i] {
+		if got := in.Payload.Map()["override_index"]; got != float64(wantIndices[i]) {
 			t.Fatalf("event %d payload[override_index] = %v, want %v", i, got, wantIndices[i])
 		}
+		if got := in.Payload.Map()["node_type"]; got != "area-pass" {
+			t.Fatalf("event %d payload[node_type] = %v, want %q", i, got, "area-pass")
+		}
+		if got := in.Payload.Map()["fields"]; !reflect.DeepEqual(got, wantFields[i]) {
+			t.Fatalf("event %d payload[fields] = %#v, want %#v", i, got, wantFields[i])
+		}
+	}
+}
+
+func TestApplyAttributeOverrides_MatchCarriesTheOverlaidFieldNames(t *testing.T) {
+	ov := map[string]any{
+		"by_match": []any{
+			map[string]any{
+				"matcher": map[string]any{"node_type": "fix"},
+				"overlay": map[string]any{"model": "opus", "budget": 3},
+			},
+		},
+	}
+	_, matched := applyAttributeOverrides(map[string]any{}, ov, "e", "fix", "main", "", shared.SilentLogger{})
+	if len(matched) != 1 {
+		t.Fatalf("expected exactly one match, got %#v", matched)
+	}
+	if !reflect.DeepEqual(matched[0].Fields, []string{"budget", "model"}) {
+		t.Fatalf("match fields = %#v, want the overlay's field names sorted", matched[0].Fields)
 	}
 }
 
@@ -389,7 +426,7 @@ func TestEmitOverrideMatchEventsAfterMerge_TransactionFailurePropagates(t *testi
 	capLog := shared.NewCapturingLogger()
 	instanceID := shared.UUID(uuid.New())
 
-	err := emitOverrideMatchEventsAfterMerge(context.Background(), failingMatchEventPersist{err: wantErr}, capLog, instanceID, []int{0})
+	err := emitOverrideMatchEventsAfterMerge(context.Background(), failingMatchEventPersist{err: wantErr}, capLog, instanceID, "area-pass", []attributeOverrideMatch{{Index: 0}})
 	if err == nil {
 		t.Fatal("expected error to propagate when the match-event transaction fails")
 	}
@@ -401,7 +438,7 @@ func TestEmitOverrideMatchEventsAfterMerge_TransactionFailurePropagates(t *testi
 
 func TestEmitOverrideMatchEventsAfterMerge_NoMatchesIsNoop(t *testing.T) {
 	instanceID := shared.UUID(uuid.New())
-	err := emitOverrideMatchEventsAfterMerge(context.Background(), failingMatchEventPersist{err: errors.New("must not be called")}, shared.SilentLogger{}, instanceID, nil)
+	err := emitOverrideMatchEventsAfterMerge(context.Background(), failingMatchEventPersist{err: errors.New("must not be called")}, shared.SilentLogger{}, instanceID, "area-pass", nil)
 	if err != nil {
 		t.Fatalf("expected no-op for empty matched indices, got %v", err)
 	}
@@ -446,7 +483,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if got["x"] != "applied" {
 			t.Fatalf("overlay not applied: %#v", got)
 		}
-		if !reflect.DeepEqual(matched, []int{0}) {
+		if !reflect.DeepEqual(matchedIndexes(matched), []int{0}) {
 			t.Fatalf("matched = %#v", matched)
 		}
 		got2, matched2 := applyAttributeOverrides(resolved, ov, "e", "other", "main", "", logger)
@@ -472,7 +509,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		}
 		got, matched := applyAttributeOverrides(resolved, ov, "e", "fix", "main", "", logger)
-		if got["x"] != "applied" || !reflect.DeepEqual(matched, []int{0}) {
+		if got["x"] != "applied" || !reflect.DeepEqual(matchedIndexes(matched), []int{0}) {
 			t.Fatalf("got=%#v matched=%#v want overlay applied", got, matched)
 		}
 		got2, matched2 := applyAttributeOverrides(resolved, ov, "e", "other", "main", "", logger)
@@ -497,11 +534,11 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		}
 		got1, matched1 := applyAttributeOverrides(resolved, ov, "exec-a", "node-a", "main", "", logger)
-		if got1["flag"] != true || !reflect.DeepEqual(matched1, []int{0}) {
+		if got1["flag"] != true || !reflect.DeepEqual(matchedIndexes(matched1), []int{0}) {
 			t.Fatalf("dispatch A: got=%#v matched=%#v", got1, matched1)
 		}
 		got2, matched2 := applyAttributeOverrides(resolved, ov, "exec-b", "node-b", "worker", "k1", logger)
-		if got2["flag"] != true || !reflect.DeepEqual(matched2, []int{0}) {
+		if got2["flag"] != true || !reflect.DeepEqual(matchedIndexes(matched2), []int{0}) {
 			t.Fatalf("dispatch B: got=%#v matched=%#v", got2, matched2)
 		}
 	})
@@ -533,7 +570,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if got["first"] != "only" || got["second"] != "only" {
 			t.Fatalf("non-conflicting overlay paths must both apply: %#v", got)
 		}
-		if !reflect.DeepEqual(matched, []int{0, 1}) {
+		if !reflect.DeepEqual(matchedIndexes(matched), []int{0, 1}) {
 			t.Fatalf("matched = %#v want [0, 1]", matched)
 		}
 	})
@@ -548,7 +585,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		}
 		got1, matched1 := applyAttributeOverrides(map[string]any{}, ov, "e", "n", "main", "k1", logger)
-		if got1["tag"] != "for-k1" || !reflect.DeepEqual(matched1, []int{0}) {
+		if got1["tag"] != "for-k1" || !reflect.DeepEqual(matchedIndexes(matched1), []int{0}) {
 			t.Fatalf("child_key=k1: got=%#v matched=%#v", got1, matched1)
 		}
 		got2, matched2 := applyAttributeOverrides(map[string]any{}, ov, "e", "n", "main", "k2", logger)
@@ -575,11 +612,11 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		}
 		got1, matched1 := applyAttributeOverrides(map[string]any{}, ov, "e", "n", "main", "", logger)
-		if got1["where"] != "main" || !reflect.DeepEqual(matched1, []int{0}) {
+		if got1["where"] != "main" || !reflect.DeepEqual(matchedIndexes(matched1), []int{0}) {
 			t.Fatalf("graph=main: got=%#v matched=%#v", got1, matched1)
 		}
 		got2, matched2 := applyAttributeOverrides(map[string]any{}, ov, "e", "n", "worker", "", logger)
-		if got2["where"] != "worker" || !reflect.DeepEqual(matched2, []int{1}) {
+		if got2["where"] != "worker" || !reflect.DeepEqual(matchedIndexes(matched2), []int{1}) {
 			t.Fatalf("graph=worker: got=%#v matched=%#v", got2, matched2)
 		}
 	})
@@ -607,7 +644,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		}
 		got, matched := applyAttributeOverrides(resolved, ov, "e", "n", "main", "", logger)
-		if got["hit"] != "yes" || !reflect.DeepEqual(matched, []int{0}) {
+		if got["hit"] != "yes" || !reflect.DeepEqual(matchedIndexes(matched), []int{0}) {
 			t.Fatalf("all primitives matched: got=%#v matched=%#v", got, matched)
 		}
 		resolved2 := map[string]any{
@@ -646,7 +683,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 			},
 		}
 		got, matched := applyAttributeOverrides(resolved, ov, "claude-agent", "n", "main", "", logger)
-		if got["hit"] != "yes" || !reflect.DeepEqual(matched, []int{0}) {
+		if got["hit"] != "yes" || !reflect.DeepEqual(matchedIndexes(matched), []int{0}) {
 			t.Fatalf("L3 visible to L5 matcher: got=%#v matched=%#v", got, matched)
 		}
 	})
@@ -671,7 +708,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if _, ok := got["hit"]; ok {
 			t.Fatalf("second L5 entry must NOT fire (matcher reads pre-L5 snapshot): %#v", got)
 		}
-		if !reflect.DeepEqual(matched, []int{0}) {
+		if !reflect.DeepEqual(matchedIndexes(matched), []int{0}) {
 			t.Fatalf("only first L5 entry should match: %#v", matched)
 		}
 	})
@@ -720,7 +757,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if got["valid_hit"] != "yes" {
 			t.Fatalf("valid entry must still fire: got=%#v", got)
 		}
-		if !reflect.DeepEqual(matched, []int{1}) {
+		if !reflect.DeepEqual(matchedIndexes(matched), []int{1}) {
 			t.Fatalf("matched must contain only the valid index 1: got=%#v", matched)
 		}
 		var sawWarn bool
@@ -756,7 +793,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if got["hit"] != "yes" {
 			t.Fatalf("valid entry must still fire: got=%#v", got)
 		}
-		if !reflect.DeepEqual(matched, []int{1}) {
+		if !reflect.DeepEqual(matchedIndexes(matched), []int{1}) {
 			t.Fatalf("matched must contain only the valid index 1 (preserves original index): got=%#v", matched)
 		}
 		var sawWarn bool

@@ -12,6 +12,9 @@ import (
 type PublisherClient interface {
 	Name() string
 
+	// @concept: publisher
+	SupportedKinds(ctx context.Context) ([]string, error)
+
 	Subscribe(ctx context.Context, req SubscribeRequest) error
 
 	Unsubscribe(ctx context.Context, subscriptionID shared.UUID) error

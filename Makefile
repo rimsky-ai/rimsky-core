@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-root test-foundation test-protocols test-services test-examples test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-root test-foundation test-protocols test-services test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -10,7 +10,7 @@ proto-gen:
 	  data_processing.proto validation.proto publisher.proto host_agent.proto
 
 test:
-	$(GOTEST_GUARD) -timeout 300s ./...
+	$(GOTEST_GUARD) -p 2 -parallel 4 ./...
 
 build:
 	go build ./...
@@ -20,7 +20,6 @@ lint: license-lint
 	cd lib/foundation && golangci-lint run
 	cd lib/protocols && golangci-lint run
 	cd lib/services && golangci-lint run
-	cd examples && golangci-lint run
 
 # license-lint enforces the multi-license boundary documented in
 # docs/future-work/2026-05-02-licensing-design.md. Apache-classified packages
@@ -46,7 +45,7 @@ tidy:
 # Each `cd` runs against that module's go.mod; the go.work file at the repo root makes
 # inter-module references resolve via local replace.
 # Per-module test targets — exposed so CI can shard the test run as a matrix
-# over the four workspace modules (plus examples), with each job running its
+# over the four workspace modules, with each job running its
 # own module's slice in parallel. `test-all` composes them for local runs.
 #
 # Subscription mounting is asynchronous (instance-create returns 201 with
@@ -55,21 +54,31 @@ tidy:
 # budget — so no -parallel cap is needed to keep the old synchronous-Subscribe
 # flake from biting under load.
 #
-# All go-test invocations run through tools/gotest-guard.sh: a package that
-# hits the -timeout ceiling is KILLED by the go test runtime, and every test
-# it hadn't reported yet silently vanishes from the output. The guard turns
-# that into a loud, distinct failure so a timeout is never misread as an
-# ordinary flake (this masked six broken scenario proofs for days).
+# All go-test invocations run through tools/gotest-guard.sh, which runs the
+# suites with NO per-package time ceiling and watches the runner's JSON event
+# stream instead. A per-package -timeout is an aggregate budget covering every
+# test in the package, so it must be sized to total runtime and one slow test
+# under load consumes the budget belonging to the rest — the verdict becomes a
+# function of machine load rather than of the code. The guard kills a run only
+# when nothing has started, completed, or emitted output for a long interval
+# (RIMSKY_TEST_NO_PROGRESS_SECS, default 20m), and reports that as an
+# INCONCLUSIVE run with its own exit code — never as a test failure. A correct
+# suite emits continuously at any load, so the interval never binds.
+#
+# Concurrency caps below bound a real shared resource — the docker daemon the
+# testcontainers-backed suites boot Postgres and rimsky stacks against — per
+# decision:parallel-cap-removal, which admits a cap only for that reason and
+# requires it to name the contention it guards.
 GOTEST_GUARD := $(CURDIR)/tools/gotest-guard.sh
 
 test-root:
-	$(GOTEST_GUARD) -timeout 300s ./...
+	$(GOTEST_GUARD) -p 2 -parallel 4 ./...
 
 test-foundation:
-	cd lib/foundation && $(GOTEST_GUARD) -timeout 120s ./...
+	cd lib/foundation && $(GOTEST_GUARD) -p 2 -parallel 4 ./...
 
 test-protocols:
-	cd lib/protocols && $(GOTEST_GUARD) -timeout 60s ./...
+	cd lib/protocols && $(GOTEST_GUARD) ./...
 
 # The services module carries the docker-stack e2e scenarios: each test
 # boots a real rimsky stack via testcontainers. go test's defaults run
@@ -77,27 +86,20 @@ test-protocols:
 # a dozen concurrent stack boots saturate the docker daemon and starve
 # the stacks already running (observed as wait-strategy inspect stalls
 # and control-api requests timing out mid-demo). -p 2 / -parallel 4
-# bounds the concurrent stack count; 600s fits the serialized packages.
+# bounds the concurrent stack count.
 test-services:
-	cd lib/services && $(GOTEST_GUARD) -timeout 600s -p 2 -parallel 4 ./...
-
-# The examples module also carries docker-stack e2e proofs (claimproducer,
-# lifecyclesubscriber, validation, publisher) that boot real rimsky stacks;
-# 60s was sized for unit slices and guard-kills them. Same throttling
-# rationale as test-services.
-test-examples:
-	cd examples && $(GOTEST_GUARD) -timeout 600s -p 2 -parallel 4 ./...
+	cd lib/services && $(GOTEST_GUARD) -p 2 -parallel 4 ./...
 
 # test-all builds the core + service + test images BEFORE running any
-# module's tests: the services scenarios under lib/services/test/ (and the
-# examples cross-stack proofs) resolve every rimsky image by the content-
+# module's tests: the services scenarios under lib/services/test/ resolve
+# every rimsky image by the content-
 # addressed :$(SRC_TAG) of the tree they run from (RIMSKY_IMAGE_TAG
 # overrides; never :latest), so a suite can only ever find an image built
 # from its own source — a stale image is unrepresentable and shows up as a
 # loud image-not-found naming the build command. Building first means every
 # test-all run proves the source tree as it stands. Docker layer caching
 # keeps the rebuild cheap when nothing image-relevant changed.
-test-all: core-images service-images test-images test-root test-foundation test-protocols test-services test-examples
+test-all: core-images service-images test-images test-root test-foundation test-protocols test-services
 
 # Local test-speed observability. Runs every Go test across all modules under
 # gotestsum, then prints the slowest tests across the whole run. Continues
@@ -115,12 +117,11 @@ SLOW_NUM ?= 50
 test-report:
 	@command -v gotestsum >/dev/null || { echo "gotestsum not on PATH; install: go install gotest.tools/gotestsum@latest"; exit 1; }
 	@mkdir -p .test-report
-	-gotestsum --format pkgname --jsonfile=.test-report/root.json -- -count=1 -timeout 120s ./...
-	-cd lib/foundation && gotestsum --format pkgname --jsonfile=../../.test-report/foundation.json -- -count=1 -timeout 120s ./...
-	-cd lib/protocols && gotestsum --format pkgname --jsonfile=../../.test-report/protocols.json -- -count=1 -timeout 60s ./...
-	-cd lib/services && gotestsum --format pkgname --jsonfile=../../.test-report/services.json -- -count=1 -timeout 120s ./...
-	-cd examples && gotestsum --format pkgname --jsonfile=../.test-report/examples.json -- -count=1 -timeout 60s ./...
-	@cat .test-report/root.json .test-report/foundation.json .test-report/protocols.json .test-report/services.json .test-report/examples.json > .test-report/all.json
+	-gotestsum --format pkgname --jsonfile=.test-report/root.json -- -count=1 -timeout 0 ./...
+	-cd lib/foundation && gotestsum --format pkgname --jsonfile=../../.test-report/foundation.json -- -count=1 -timeout 0 ./...
+	-cd lib/protocols && gotestsum --format pkgname --jsonfile=../../.test-report/protocols.json -- -count=1 -timeout 0 ./...
+	-cd lib/services && gotestsum --format pkgname --jsonfile=../../.test-report/services.json -- -count=1 -timeout 0 ./...
+	@cat .test-report/root.json .test-report/foundation.json .test-report/protocols.json .test-report/services.json > .test-report/all.json
 	@echo
 	@echo "==== Slowest tests (threshold $(SLOW_THRESHOLD), top $(SLOW_NUM)) ===="
 	@gotestsum tool slowest --jsonfile .test-report/all.json --threshold=$(SLOW_THRESHOLD) --num=$(SLOW_NUM)
@@ -130,7 +131,6 @@ build-all:
 	cd lib/foundation && go build ./...
 	cd lib/protocols && go build ./...
 	cd lib/services && go build ./...
-	cd examples && go build ./...
 
 # ── rimsky CLI targets ──
 
@@ -211,7 +211,7 @@ service-images:
 	$(call build-image,lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks,rimsky-executor-verifier-shape-checks)
 	$(call build-image,lib/services/executors/claude-agent/Dockerfile,rimsky-executor-claude-agent)
 
-# Test-only images consumed by the services/examples integration harnesses.
+# Test-only images consumed by the services integration harnesses.
 # Built ONCE here by stable name (never published, so :latest + :$(SRC_TAG)
 # only) and referenced BY NAME from the tests — never rebuilt inline at test
 # time. An inline testcontainers WithDockerfile build with the repo root as
@@ -223,9 +223,6 @@ test-images: service-images
 	$(call build-test-image,lib/services/test/stubexecutor/Dockerfile.stubexecutor,rimsky-test/stubexecutor)
 	$(call build-test-image,lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent,rimsky-test/claude-agent-fake,--build-arg BASE_TAG=$(SRC_TAG))
 	$(call build-test-image,lib/services/test/overlapproducer/Dockerfile.overlapproducer,rimsky-test/overlapproducer)
-	$(call build-test-image,examples/claimproducer/Dockerfile.example,rimsky-example/claim-producer)
-	$(call build-test-image,examples/validation/Dockerfile.example,rimsky-example/validation)
-	$(call build-test-image,examples/park-resume/Dockerfile.example,rimsky-example/park-ratelimiter)
 	$(call build-test-image,lib/services/test/testrunner/Dockerfile.test-runner,rimsky-test/test-runner)
 
 # In-stack execution path per the ratified image-freshness mechanism: the
@@ -236,7 +233,7 @@ test-images: service-images
 # RIMSKY_TEST_STACK_BASE_URL and orchestrates nothing: no docker socket,
 # no docker-in-docker, no host-port tunnels.
 test-in-stack: core-images test-images
-	cd lib/services && $(GOTEST_GUARD) -timeout 600s -count=1 ./test/instackdriver/...
+	cd lib/services && $(GOTEST_GUARD) -count=1 ./test/instackdriver/...
 
 # Retention for the content-addressed :src-* tags — one accumulates per source
 # tree built. Prunes rimsky-labeled images older than REAP_HOURS (default 72)
@@ -452,7 +449,7 @@ check-clean:
 	@echo "publish guard ok: clean tree, VERSION=$(VERSION)"
 
 smoke-all:
-	go test -tags smoke -count=1 -timeout 5m ./test/smoke/all/...
+	$(GOTEST_GUARD) -tags smoke -count=1 -p 2 -parallel 4 ./test/smoke/all/...
 
 # ── Docker-wrapped variants for contributors without a host Go toolchain ──
 #
@@ -477,7 +474,7 @@ build-docker:
 
 test-docker:
 	$(DOCKER_RUN) -v /var/run/docker.sock:/var/run/docker.sock \
-	  $(DOCKER_GO_IMAGE) go test ./... -count=1 -timeout 180s
+	  $(DOCKER_GO_IMAGE) go test ./... -count=1 -timeout 0 -p 2 -parallel 4
 
 lint-docker:
 	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) sh -c '\

@@ -30,17 +30,6 @@ func main() {
 
 	state := newProxyState()
 
-	creds, err := proxyServerCredentials(cfg)
-	if err != nil {
-		slog.Error("proxy TLS config invalid", "error", err)
-		os.Exit(1)
-	}
-	var agentCreds []grpc.ServerOption
-	if creds != nil {
-		agentCreds = append(agentCreds, grpc.Creds(creds))
-		slog.Info("agent-facing TLS enabled", "cert", cfg.TLSCertPath)
-	}
-
 	controlAPIClient, err := controlAPIHTTPClient(cfg, 10*time.Second)
 	if err != nil {
 		slog.Error("control-API client config invalid", "error", err)
@@ -55,6 +44,18 @@ func main() {
 		os.Exit(1)
 	}
 	identity.StartMaintain(ctx, "host-agent-proxy")
+
+	// @concept: peer-auth
+	creds, credSource, err := proxyServerCredentials(cfg, identity)
+	if err != nil {
+		slog.Error("proxy TLS config invalid", "error", err)
+		os.Exit(1)
+	}
+	var agentCreds []grpc.ServerOption
+	if creds != nil {
+		agentCreds = append(agentCreds, grpc.Creds(creds))
+		slog.Info("agent-facing TLS enabled", "source", credSource)
+	}
 
 	servers := buildProxyServers(cfg, state, identity, controlAPIClient, agentCreds)
 

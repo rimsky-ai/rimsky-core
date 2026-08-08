@@ -4,13 +4,17 @@
 // @concept: signal
 package signal
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+)
 
 type TypePath string
 
 type Signal struct {
 	Type    TypePath
-	Payload map[string]any
+	Payload eventpayload.Payload
 }
 
 type TopLevelKind string

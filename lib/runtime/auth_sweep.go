@@ -7,13 +7,14 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 )
 
 func SweepRotationGrace(
@@ -100,23 +101,9 @@ func registeredAuthMutationHooks() []AuthMutationHook {
 }
 
 func emitKeyRevoked(ctx context.Context, tables persistence.Tables, log shared.Logger, p auth.KeyRevokedPayload, tx persistence.Tx) error {
-	data, err := json.Marshal(p)
-	if err != nil {
-		if log != nil {
-			log.Error("auth.key_revoked.marshal", "key_id", p.KeyID.String(), "err", err.Error())
-		}
-		return err
-	}
-	payloadMap := map[string]any{}
-	if err := json.Unmarshal(data, &payloadMap); err != nil {
-		if log != nil {
-			log.Error("auth.key_revoked.unmarshal", "key_id", p.KeyID.String(), "err", err.Error())
-		}
-		return err
-	}
 	if err := tables.Events().Append(ctx, persistence.EventAppendInput{
 		Kind:    events.KindAuthKeyRevoked(),
-		Payload: payloadMap,
+		Payload: eventpayload.New(auth.KeyRevokedProto(p)),
 	}, tx); err != nil {
 		if log != nil {
 			log.Error("auth.key_revoked.append", "key_id", p.KeyID.String(), "err", err.Error())

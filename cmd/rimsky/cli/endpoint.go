@@ -86,3 +86,19 @@ func resolveManifestContext(cfgPath, manifestContext string) (string, error) {
 	}
 	return ctx.Endpoint, nil
 }
+
+// @concept: api-key
+func ResolveAPIKeyFromContext(cfgPath string) string {
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	name := os.Getenv("RIMSKY_CONTEXT")
+	if name == "" {
+		name = cfg.CurrentContext
+	}
+	if name == "" {
+		return ""
+	}
+	return cfg.Contexts[name].APIKey
+}

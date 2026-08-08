@@ -17,6 +17,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func producerErrorClassOf(err error) string {
@@ -191,10 +194,10 @@ func tryAcquireBatch(
 			if !resumesStaleRecoveredDispatch(acq) {
 				if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 					NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-					Kind: events.KindWorkStarted(), Payload: map[string]any{
-						"supervisor_id": args.SupervisorID,
-						"dispatch_id":   acq.NodeRunID.String(),
-					},
+					Kind: events.KindWorkStarted(), Payload: eventpayload.New(&genv1.WorkStartedPayload{
+						SupervisorId: args.SupervisorID,
+						DispatchId:   acq.NodeRunID.String(),
+					}),
 				}, tx); err != nil {
 					return err
 				}
@@ -608,7 +611,9 @@ func tryAcquire(
 	}
 
 	// @concept: executor
-	loadScratchIntoAcquisition(ctx, args, &out, cand, tx)
+	if err := loadScratchIntoAcquisition(ctx, args, &out, cand, tx); err != nil {
+		return acquisition{PartialLocks: acquiredLocks}, false, err
+	}
 	return out, true, nil
 }
 

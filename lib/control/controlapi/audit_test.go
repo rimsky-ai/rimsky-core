@@ -51,34 +51,7 @@ func TestInsertEvent_HappyPathPersistsRow(t *testing.T) {
 
 	rows := eventsByKind(t, h, auth.EventKeyCreated)
 	require.Len(t, rows, 1)
-	require.Equal(t, "test-key", rows[0].Payload["key_name"])
-}
-
-func TestInsertEvent_MarshalErrorLogsAndDoesNotPersist(t *testing.T) {
-	t.Parallel()
-	s, h, cleanup := newAuditTestState(t)
-	defer cleanup()
-	h.logger.Clear()
-
-	type unmarshalable struct {
-		Ch chan int `json:"ch"`
-	}
-	s.insertEvent(auth.EventKeyCreated, unmarshalable{Ch: make(chan int)})
-
-	require.Empty(t, eventsByKind(t, h, auth.EventKeyCreated), "a payload that fails json.Marshal must not be silently dropped into a row")
-	requireLoggedError(t, h, "audit.marshal")
-}
-
-func TestInsertEvent_NonObjectPayloadLogsUnmarshalErrorAndDoesNotPersist(t *testing.T) {
-	t.Parallel()
-	s, h, cleanup := newAuditTestState(t)
-	defer cleanup()
-	h.logger.Clear()
-
-	s.insertEvent(auth.EventKeyCreated, 42)
-
-	require.Empty(t, eventsByKind(t, h, auth.EventKeyCreated), "a non-object payload must not be silently dropped into a row")
-	requireLoggedError(t, h, "audit.unmarshal-to-map")
+	require.Equal(t, "test-key", rows[0].Payload.Map()["key_name"])
 }
 
 func TestInsertEvent_UnknownKindLogsParseErrorAndDoesNotPersist(t *testing.T) {
@@ -87,7 +60,7 @@ func TestInsertEvent_UnknownKindLogsParseErrorAndDoesNotPersist(t *testing.T) {
 	defer cleanup()
 	h.logger.Clear()
 
-	s.insertEvent("totally_made_up_kind", auth.KeyCreatedPayload{KeyName: "x"})
+	s.insertEvent("totally_made_up_kind", auth.KeyCreatedProto(auth.KeyCreatedPayload{KeyName: "x"}))
 
 	require.Empty(t, eventsByKind(t, h, "totally_made_up_kind"))
 	requireLoggedError(t, h, "audit.kind-parse")
@@ -130,12 +103,12 @@ func TestEmitAttempted_ExecutedComputation(t *testing.T) {
 			rows := eventsByKind(t, h, auth.EventAccessAttempted)
 			var found *persistence.EventRow
 			for i := range rows {
-				if rows[i].Payload["key_name"] == ident.KeyName {
+				if rows[i].Payload.Map()["key_name"] == ident.KeyName {
 					found = &rows[i]
 				}
 			}
 			require.NotNil(t, found, "emitAttempted must persist an access_attempted row")
-			require.Equal(t, tc.wantExecuted, found.Payload["executed"])
+			require.Equal(t, tc.wantExecuted, found.Payload.Map()["executed"])
 		})
 	}
 }
@@ -151,13 +124,13 @@ func TestEmitDenied_OptionalIdentityAndActionFields(t *testing.T) {
 	rows := eventsByKind(t, h, auth.EventAccessDenied)
 	var anonRow *persistence.EventRow
 	for i := range rows {
-		if rows[i].Payload["denial_reason"] == string(auth.DenialNoToken) && rows[i].Payload["key_name"] == nil {
+		if rows[i].Payload.Map()["denial_reason"] == string(auth.DenialNoToken) && rows[i].Payload.Map()["key_name"] == nil {
 			anonRow = &rows[i]
 		}
 	}
 	require.NotNil(t, anonRow, "an identity-less denial must omit key_name/identity_kind/action rather than emit zero values")
-	require.Nil(t, anonRow.Payload["action"])
-	require.Nil(t, anonRow.Payload["identity_kind"])
+	require.Nil(t, anonRow.Payload.Map()["action"])
+	require.Nil(t, anonRow.Payload.Map()["identity_kind"])
 
 	keyID := mustParseUUID(t, "22222222-2222-2222-2222-222222222222")
 	ident := auth.Identity{KeyID: &keyID, KeyName: "named-key", Kind: auth.IdentityAPIKey}
@@ -167,11 +140,11 @@ func TestEmitDenied_OptionalIdentityAndActionFields(t *testing.T) {
 	rows = eventsByKind(t, h, auth.EventAccessDenied)
 	var namedRow *persistence.EventRow
 	for i := range rows {
-		if rows[i].Payload["key_name"] == "named-key" {
+		if rows[i].Payload.Map()["key_name"] == "named-key" {
 			namedRow = &rows[i]
 		}
 	}
 	require.NotNil(t, namedRow, "a denial with a resolved identity must carry key_name/identity_kind/action")
-	require.Equal(t, "instance:create", namedRow.Payload["action"])
-	require.Equal(t, string(auth.IdentityAPIKey), namedRow.Payload["identity_kind"])
+	require.Equal(t, "instance:create", namedRow.Payload.Map()["action"])
+	require.Equal(t, string(auth.IdentityAPIKey), namedRow.Payload.Map()["identity_kind"])
 }

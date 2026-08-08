@@ -26,6 +26,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type harness struct {
@@ -631,7 +634,7 @@ func TestOperatorReset_AppendsOperatorOverrideAuditEvent(t *testing.T) {
 	require.Len(t, res.Events, 1, "reset must append exactly one operator_override audit event")
 	require.NotNil(t, res.Events[0].NodeID)
 	require.Equal(t, nodeRow.ID.String(), res.Events[0].NodeID.String())
-	require.Equal(t, "reset", res.Events[0].Payload["action"])
+	require.Equal(t, "reset", res.Events[0].Payload.Map()["action"])
 }
 
 func TestOperatorKill_RouteRemoved(t *testing.T) {
@@ -660,7 +663,7 @@ func TestEventsList(t *testing.T) {
 			InstanceID: &inst.ID,
 			NodeID:     &nodeRow.ID,
 			Kind:       events.KindOperatorOverride(),
-			Payload:    map[string]any{"action": "ev-test"},
+			Payload:    eventpayload.New(&genv1.OperatorOverridePayload{Action: "ev-test"}),
 		}, tx)
 	}))
 

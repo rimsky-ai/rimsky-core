@@ -240,7 +240,7 @@ func assertTemplateResolutionFailedEventWithSite(
 			return err
 		}
 		for _, ev := range res.Events {
-			site, _ := ev.Payload["site"].(string)
+			site, _ := ev.Payload.Map()["site"].(string)
 			if site == wantSite {
 				found = true
 				return nil

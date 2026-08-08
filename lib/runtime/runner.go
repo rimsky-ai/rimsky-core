@@ -18,6 +18,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type RunnerResult struct {
@@ -302,12 +305,12 @@ func emitAttributeFailureEvent(
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &nodeID, InstanceID: &instanceID,
 			Kind: kind,
-			Payload: map[string]any{
-				"directive": directive,
-				"site":      site,
-				"field":     field,
-				"reason":    reason,
-			},
+			Payload: eventpayload.New(&genv1.TemplateResolutionFailedPayload{
+				Directive: directive,
+				Site:      site,
+				Field:     field,
+				Reason:    reason,
+			}),
 		}, tx)
 	}); err != nil && args.Logger != nil {
 		args.Logger.Warn("emitAttributeFailureEvent: append event failed",

@@ -10,15 +10,15 @@
 | `RIMSKY_AGENT_IDENTITY_FILE` | `lib/runtime/hostagent/identity.go` |
 | `RIMSKY_AGENT_LABEL` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_LISTEN` | `lib/runtime/hostagent/config.go` |
-| `RIMSKY_AGENT_PORT` | `examples/compose/stub-executor/main.go` |
+| `RIMSKY_AGENT_PORT` | `lib/runtime/hostagent/spawn.go` |
 | `RIMSKY_AGENT_REAP_GRACE_SEC` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_REGISTER_ACK_TIMEOUT_SEC` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_ROUTING_LABEL` | `lib/runtime/hostagent/spawn.go` |
 | `RIMSKY_AGENT_STATUS_FILE` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_TLS` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_TLS_CA` | `lib/runtime/hostagent/config.go` |
+| `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT` | `lib/protocols/peerauth/config.go` |
 | `RIMSKY_API_KEY` | `cmd/rimsky/cli/admin.go` |
-| `RIMSKY_ATOMIC_STAGING_ROOT` | `examples/atomic-staging-fs-producer/cmd/main.go` |
 | `RIMSKY_CALLBACK_TOKEN` | `lib/services/executors/claude-agent/agentrun.go` |
 | `RIMSKY_CALLBACK_URL` | `lib/services/executors/claude-agent/agentrun.go` |
 | `RIMSKY_CA_ENCRYPTION_KEY` | `lib/foundation/pki/encryption.go` |
@@ -48,7 +48,6 @@
 | `RIMSKY_EXECUTOR_STUB_MODE` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_HOST_AGENT_PROXY_URL` | `lib/runtime/hostagent/config.go` |
-| `RIMSKY_LISTEN_ADDR` | `examples/atomic-staging-fs-producer/cmd/main.go` |
 | `RIMSKY_LOG_BINARY` | `cmd/internal/roleboot/roleboot.go` |
 | `RIMSKY_LOG_LEVEL` | `cmd/internal/roleboot/roleboot.go` |
 | `RIMSKY_METRICS_HOST` | `lib/control/launch/scheduler.go` |
@@ -92,5 +91,3 @@
 | `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST` | `lib/control/launch/supervisor.go` |
 | `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT` | `lib/control/launch/supervisor.go` |
 | `RIMSKY_SUPERVISOR_CONFIG` | `cmd/rimsky/cli/compose/run.go` |
-| `RIMSKY_SWEEP_INTERVAL` | `examples/atomic-staging-fs-producer/cmd/main.go` |
-| `RIMSKY_SWEEP_TTL` | `examples/atomic-staging-fs-producer/cmd/main.go` |

@@ -38,8 +38,8 @@ func TestOnboardingDemo_RunSettlesIdle(t *testing.T) {
 	binPath := filepath.Join(t.TempDir(), "rimsky")
 	buildOnboardingRimskyCLI(t, binPath)
 
-	demoScript := repoExampleSpecPath(t, "examples/onboarding-demo.sh")
-	repoExampleSpecPath(t, "examples/onboarding-template.yaml")
+	demoScript := repoExampleSpecPath(t, "test/fixtures/demos/onboarding-demo.sh")
+	repoExampleSpecPath(t, "test/fixtures/demos/onboarding-template.yaml")
 
 	stdout, exitCode := runDemoScript(t, ctx, demoScript, binPath, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {

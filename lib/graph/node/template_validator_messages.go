@@ -178,7 +178,8 @@ func sendsMessageRequiredSet(schema map[string]any) map[string]struct{} {
 }
 
 // @concept: message-schema
-func validatePublishers(spec *TemplateSpec, declaredMessages map[string]struct{}, res *ValidationResult) {
+// @concept: publisher
+func validatePublishers(spec *TemplateSpec, declaredMessages map[string]struct{}, hooks RegistryHooks, res *ValidationResult) {
 	seenNames := make(map[string]struct{}, len(spec.Publishers))
 	for i, p := range spec.Publishers {
 		base := fmt.Sprintf("publishers[%d]", i)
@@ -194,10 +195,22 @@ func validatePublishers(spec *TemplateSpec, declaredMessages map[string]struct{}
 		} else {
 			seenNames[p.Name] = struct{}{}
 		}
-		if strings.TrimSpace(p.Kind) == "" {
+		kind := strings.TrimSpace(p.Kind)
+		if kind == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".kind", Msg: "kind is required",
 			})
+		} else if hooks.PublisherDeclaredKinds != nil && strings.TrimSpace(p.Name) != "" {
+			if advertised, ok := hooks.PublisherDeclaredKinds(p.Name); ok && !containsString(advertised, kind) {
+				sorted := append([]string(nil), advertised...)
+				sort.Strings(sorted)
+				res.Errors = append(res.Errors, ValidationError{
+					Path: base + ".kind",
+					Msg: fmt.Sprintf(
+						"publisher_unadvertised_kind: publisher %q does not advertise kind %q in its capabilities handshake (advertised: %v)",
+						p.Name, kind, sorted),
+				})
+			}
 		}
 		mt := strings.TrimSpace(p.MessageType)
 		if mt == "" {
@@ -396,4 +409,13 @@ func extractPayloadTagLiterals(when string) []string {
 		}
 	}
 	return tags
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
 }
