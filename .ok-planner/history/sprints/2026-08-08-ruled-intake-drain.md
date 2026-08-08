@@ -1,3 +1,7 @@
+---
+closed: 54e085ff1cf790bd4f3014b5bf505f610913eac5
+---
+
 # Sprint: ruled intake drain — examples removal, payload typing, load-independent suite
 
 ## Intent
