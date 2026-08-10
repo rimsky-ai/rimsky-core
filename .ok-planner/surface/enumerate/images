@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../../.."
+git grep -h -o -E '\$\(REGISTRY\)/[a-z0-9-]+' -- Makefile \
+  | sed -E 's#^\$\(REGISTRY\)/##' | sort -u

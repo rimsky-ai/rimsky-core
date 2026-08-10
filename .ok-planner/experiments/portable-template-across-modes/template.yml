@@ -1,0 +1,33 @@
+name: portable-across-modes
+version: "1"
+description: |
+  One template file, run unedited against an all-in-one deployment and
+  against a multi-container deployment. It names the bundled
+  verifier-shape-checks executor and carries its own inline dataset, so
+  nothing about the file refers to a deployment shape.
+nodes:
+  - type: verifier
+    executor: verifier-shape-checks
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            default:
+              - kind: no_nulls
+                config:
+                  field: id
+              - kind: pk_unique
+                config:
+                  field: id
+          rows:
+            type: array
+            default:
+              - id: alpha
+                value: 1
+              - id: beta
+                value: 2
+        required:
+          - checks
+          - rows

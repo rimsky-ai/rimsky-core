@@ -1,0 +1,22 @@
+name: shape-checks-fail
+version: "1"
+message_queue_mode: backlog
+nodes:
+  - type: verify
+    executor: verifier-shape-checks
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            default:
+              - kind: no_nulls
+                config:
+                  fields:
+                    - id
+                severity: error
+          rows:
+            type: array
+            default:
+              - id: null

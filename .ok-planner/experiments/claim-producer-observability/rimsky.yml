@@ -1,0 +1,13 @@
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+
+claim_producers:
+  "file-store":
+    endpoint: "grpc://host.docker.internal:19450"
+    observability_endpoint: "grpc://host.docker.internal:19450"
+    write_semantics_allowed: ["sync"]
+
+named_locks: {}
+executors: {}

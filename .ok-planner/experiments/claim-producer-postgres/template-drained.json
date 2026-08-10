@@ -1,0 +1,67 @@
+{
+  "name": "pg-queue-drained",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "worker",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "queue-store",
+          "selector": "@queue",
+          "intent": "rw",
+          "alias": "item"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        },
+        "pg/claim_unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19489/rec/worker"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "watcher",
+      "executor": "http-node",
+      "subscribes": [
+        {
+          "node": "worker",
+          "type": "terminal/error/pg/*",
+          "force_upstream_refresh": false
+        }
+      ],
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19489/rec/watcher"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

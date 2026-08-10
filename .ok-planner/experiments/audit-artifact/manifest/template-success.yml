@@ -1,0 +1,16 @@
+name: audit-artifact-success
+version: "1"
+message_queue_mode: backlog
+nodes:
+  - type: worker
+    executor: peer
+    attributes:
+      schema:
+        type: object
+        properties:
+          outcome:
+            type: string
+            default: ok
+          echo:
+            type: string
+            default: success-leg

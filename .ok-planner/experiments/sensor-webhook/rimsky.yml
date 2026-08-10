@@ -1,0 +1,14 @@
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+claim_producers: {}
+named_locks: {}
+executors: {}
+publishers:
+  "hook-hmac":
+    endpoint: "webhook-sensor:9084"
+    protocols: ["publisher"]
+  "hook-secret":
+    endpoint: "webhook-sensor:9084"
+    protocols: ["publisher"]

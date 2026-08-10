@@ -1,0 +1,15 @@
+name: audit-idle
+version: v1
+nodes:
+  - type: root
+    executor: verifier-shape-checks
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            default:
+              - kind: row_count_absolute
+                config:
+                  min: 0

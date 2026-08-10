@@ -1,0 +1,17 @@
+name: audit-gate-bad-url-type
+version: v1
+defaults:
+  attributes:
+    by_executor:
+      verifier-shape-checks:
+        checks:
+          - kind: row_count_absolute
+            config:
+              min: 0
+      verifier-http:
+        url: 12345
+nodes:
+  - type: shape
+    executor: verifier-shape-checks
+  - type: fetch
+    executor: verifier-http

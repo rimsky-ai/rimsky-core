@@ -1,0 +1,26 @@
+name: audit-fanout-failing
+version: v1
+nodes:
+  - type: partitioned
+    executor: verifier-http
+    claim_producers:
+      - name: claim-producer-filesystem
+        selector: data
+        intent: rw
+        alias: parent
+    error_types:
+      "acquire/unavailable":
+        action: give_up
+    fan_out:
+      claim: parent
+      partition_request: '{"list":[{"key":"p1"},{"key":"p2"},{"key":"p3"}]}'
+      parallelism: 3
+      error_policy:
+        kind: strict
+    attributes:
+      schema:
+        type: object
+        properties:
+          url:
+            type: string
+            default: "http://host.docker.internal:18999/fail"

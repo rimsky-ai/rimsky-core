@@ -1,0 +1,16 @@
+name: audit-artifact-failure
+version: "1"
+message_queue_mode: backlog
+nodes:
+  - type: worker
+    executor: peer
+    attributes:
+      schema:
+        type: object
+        properties:
+          outcome:
+            type: string
+            default: fail
+          echo:
+            type: string
+            default: failure-leg

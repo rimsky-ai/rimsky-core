@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../../.."
+awk '
+  /^service [A-Za-z]+ *\{/ { svc = $2 }
+  svc && match($0, /^[ \t]*rpc [A-Za-z]+/) {
+    n = split($0, parts, /[ \t(]+/)
+    for (i = 1; i <= n; i++) if (parts[i] == "rpc") { print svc "." parts[i+1]; break }
+  }
+  /^\}/ { svc = "" }
+' lib/protocols/proto/v1/*.proto | sort -u

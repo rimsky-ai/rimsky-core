@@ -1,0 +1,78 @@
+{
+  "name": "durable-asset",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "acquirer",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "asset-store",
+          "selector": "{{params.selector}}",
+          "intent": "rw",
+          "alias": "asset",
+          "lifetime": "durable"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19479/rec/acquirer"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.asset.address}}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "co-holder",
+      "executor": "http-node",
+      "holds": {
+        "asset": {
+          "from": "acquirer"
+        }
+      },
+      "subscribes": [
+        {
+          "node": "acquirer",
+          "type": "terminal/success",
+          "force_upstream_refresh": false
+        }
+      ],
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19479/rec/co-holder"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.asset.address}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

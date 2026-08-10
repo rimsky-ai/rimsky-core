@@ -1,0 +1,121 @@
+{
+  "name": "pg-staged-pass",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "stager",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "staged-store",
+          "selector": "analytics_production",
+          "intent": "rw",
+          "alias": "staged"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19489/stage"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "staging_schema": {
+              "type": "string",
+              "source": "{{claim.staged.address}}"
+            },
+            "rows": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "verifier",
+      "executor": "pg-verifier",
+      "holds": {
+        "staged": {
+          "from": "stager"
+        }
+      },
+      "subscribes": [
+        {
+          "node": "stager",
+          "type": "terminal/success",
+          "force_upstream_refresh": false
+        }
+      ],
+      "error_types": {
+        "pg/verifier_check_failed/row_count_ratio": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "type": "string",
+              "source": "{{claim.staged.address}}"
+            },
+            "table": {
+              "type": "string",
+              "default": "items"
+            },
+            "checks": {
+              "type": "array",
+              "default": [
+                {
+                  "kind": "row_count_ratio",
+                  "config": {
+                    "baseline": 10,
+                    "low": 0.9,
+                    "high": 1.1
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "watcher",
+      "executor": "http-node",
+      "subscribes": [
+        {
+          "node": "verifier",
+          "type": "terminal/error/pg/*",
+          "force_upstream_refresh": false
+        }
+      ],
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19489/rec/watcher"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+name: audit-subscriptions
+version: v1
+nodes:
+  - type: source
+    executor: verifier-shape-checks
+    attributes:
+      schema: &checks
+        type: object
+        properties:
+          checks:
+            type: array
+            default:
+              - kind: row_count_absolute
+                config:
+                  min: 0
+  - type: exact-hit
+    executor: verifier-shape-checks
+    subscribes:
+      - node: source
+        type: "terminal/success"
+        force_upstream_refresh: false
+    attributes:
+      schema: *checks
+  - type: wildcard-hit
+    executor: verifier-shape-checks
+    subscribes:
+      - node: source
+        type: "terminal/*"
+        force_upstream_refresh: false
+    attributes:
+      schema: *checks
+  - type: type-miss
+    executor: verifier-shape-checks
+    subscribes:
+      - node: source
+        type: "terminal/error/*"
+        force_upstream_refresh: false
+    attributes:
+      schema: *checks
+  - type: predicate-hit
+    executor: verifier-shape-checks
+    subscribes:
+      - node: source
+        type: "terminal/*"
+        force_upstream_refresh: false
+        when: 'payload.attributes_delta.verifier_pass == true'
+    attributes:
+      schema: *checks
+  - type: predicate-miss
+    executor: verifier-shape-checks
+    subscribes:
+      - node: source
+        type: "terminal/*"
+        force_upstream_refresh: false
+        when: 'payload.attributes_delta.verifier_rows > 0'
+    attributes:
+      schema: *checks

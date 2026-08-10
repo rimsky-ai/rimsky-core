@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../../.."
+git grep -h -o -E 'RIMSKY_[A-Z0-9_]+' -- \
+  ':!lib/protocols/proto/v1/gen/' ':!*.md' ':!.ok-planner/' ':!.ok-plumbline/' \
+  ':!*_test.go' ':!test/' ':!lib/services/test/' \
+  | sort -u

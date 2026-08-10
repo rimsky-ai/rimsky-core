@@ -1,0 +1,5 @@
+name: spawned-local-service
+version: "1"
+nodes:
+  - type: worker
+    executor: devsvc

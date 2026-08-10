@@ -1,0 +1,54 @@
+{
+  "name": "fs-expand-folder-fanout",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "partitioned",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "claim-producer-filesystem",
+          "selector": "data/inbox",
+          "intent": "rw",
+          "alias": "parent"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "fan_out": {
+        "claim": "parent",
+        "partition_request": "{\"expand_folder\":{\"kind\":\"files\"}}",
+        "parallelism": 3,
+        "error_policy": {
+          "kind": "strict"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19429/rec/partitioned"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "partition": {
+              "type": "string",
+              "source": "{{child.partition_key}}"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.parent.address}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

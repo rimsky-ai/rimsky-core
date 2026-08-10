@@ -1,0 +1,17 @@
+name: audit-gate-valid
+version: v1
+defaults:
+  attributes:
+    by_executor:
+      verifier-shape-checks:
+        checks:
+          - kind: row_count_absolute
+            config:
+              min: 0
+      verifier-http:
+        url: "https://example.invalid/probe"
+nodes:
+  - type: shape
+    executor: verifier-shape-checks
+  - type: fetch
+    executor: verifier-http

@@ -1,0 +1,24 @@
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+
+claim_producers:
+  "sync-producer":
+    endpoint: "grpc://host.docker.internal:19411"
+    write_semantics_allowed: ["sync"]
+  "staged-producer":
+    endpoint: "grpc://host.docker.internal:19412"
+    write_semantics_allowed: ["staged_async"]
+  "blocking-producer":
+    endpoint: "grpc://host.docker.internal:19413"
+    write_semantics_allowed: ["blocking_async"]
+  "readonly-producer":
+    endpoint: "grpc://host.docker.internal:19414"
+    write_semantics_allowed: ["read_only"]
+  "scarce":
+    endpoint: "grpc://host.docker.internal:19415"
+    write_semantics_allowed: ["sync"]
+
+named_locks: {}
+executors: {}

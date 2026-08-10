@@ -1,0 +1,20 @@
+project: audit-artifact
+
+templates:
+  - path: ./template-success.yml
+    tag: succeed
+    state: deployed
+  - path: ./template-failure.yml
+    tag: fail
+    state: deployed
+
+instances:
+  - template: succeed
+    name: ok
+  - template: fail
+    name: oops
+
+executors:
+  peer:
+    transport: grpc
+    endpoint: "127.0.0.1:9091"

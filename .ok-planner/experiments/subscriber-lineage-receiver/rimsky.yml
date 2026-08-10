@@ -1,0 +1,7 @@
+persistence:
+  driver: postgres
+  postgres:
+    dsn: "postgres://u:p@rimsky-db:5432/rimsky?sslmode=disable"
+claim_producers: {}
+named_locks: {}
+executors: {}

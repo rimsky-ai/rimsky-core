@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../../.."
+
+CORPUS=$(mktemp)
+trap 'rm -f "$CORPUS"' EXIT
+git ls-files -- 'cmd/rimsky' \
+  | grep -E '\.go$' | grep -v '_test\.go$' \
+  | xargs cat > "$CORPUS"
+
+body_of() {
+  awk -v fn="$1" '
+    !inside && $0 ~ "^func (\\([^)]*\\) )?" fn "\\(" {
+      inside = 1
+      print
+      if ($0 ~ /\{.*\}[ \t]*$/) exit
+      next
+    }
+    inside { print; if (/^\}/) exit }
+  ' "$CORPUS"
+}
+
+case_arms() {
+  awk '
+    match($0, /^[ \t]+case "[a-z][a-z0-9-]*"/) {
+      line = $0
+      while (match(line, /"[a-z][a-z0-9-]*"/)) {
+        verb = substr(line, RSTART + 1, RLENGTH - 2)
+        if (verb != "help") print verb
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  '
+}
+
+callee_for_arm() {
+  printf '%s\n' "$1" | awk -v arm="$2" '
+    $0 ~ "case \"" arm "\"" { grab = 1; next }
+    grab {
+      rest = $0
+      while (match(rest, /([a-z][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*\(/)) {
+        tok = substr(rest, RSTART, RLENGTH - 1)
+        sub(/^[a-z][A-Za-z0-9_]*\./, "", tok)
+        if (tok !~ /^(Exit|Background|Fprintln|Fprintf|Printf|Println|TODO)$/) { print tok; exit }
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      grab = 0
+    }
+  ' | head -1
+}
+
+forwarded_symbol() {
+  printf '%s\n' "$1" | awk '
+    NR == 1 {
+      if (match($0, /\{[ \t]*return .*\}[ \t]*$/)) { inline = substr($0, RSTART); stmts = 1 }
+      next
+    }
+    /^\}/ { next }
+    /^[ \t]*$/ { next }
+    { stmts++; last = $0 }
+    END {
+      if (stmts != 1) exit
+      line = (inline != "") ? inline : last
+      if (match(line, /return ([a-z][A-Za-z0-9_]*\.)?[A-Z][A-Za-z0-9_]*\(/)) {
+        tok = substr(line, RSTART + 7, RLENGTH - 8)
+        sub(/^[a-z][A-Za-z0-9_]*\./, "", tok)
+        print tok
+      }
+    }
+  '
+}
+
+resolves() { [ -n "$(body_of "$1")" ]; }
+
+emit() {
+  local prefix="$1" fn="$2" depth="$3" body arms forward arm callee
+  if [ "$depth" -gt 6 ]; then
+    echo "cli-verbs: dispatch chain deeper than 6 at $fn (cycle?)" >&2
+    exit 1
+  fi
+
+  body=$(body_of "$fn")
+  if [ -z "$body" ]; then
+    echo "cli-verbs: cannot resolve dispatch target $fn in cmd/rimsky" >&2
+    exit 1
+  fi
+
+  arms=$(printf '%s\n' "$body" | case_arms || true)
+
+  if [ -z "$arms" ]; then
+    forward=$(forwarded_symbol "$body")
+    if [ -n "$forward" ] && resolves "$forward"; then
+      emit "$prefix" "$forward" $((depth + 1))
+    else
+      printf '%s\n' "$prefix"
+    fi
+    return
+  fi
+
+  while IFS= read -r arm; do
+    [ -z "$arm" ] && continue
+    callee=$(callee_for_arm "$body" "$arm")
+    if [ -n "$callee" ] && resolves "$callee"; then
+      emit "$prefix $arm" "$callee" $((depth + 1))
+    else
+      printf '%s %s\n' "$prefix" "$arm"
+    fi
+  done <<<"$arms"
+}
+
+emit rimsky main 0 | sort -u

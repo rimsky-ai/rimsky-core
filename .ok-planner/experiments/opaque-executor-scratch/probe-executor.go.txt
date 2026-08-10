@@ -1,0 +1,139 @@
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"net"
+	"os"
+	"sync/atomic"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+)
+
+type server struct {
+	genv1.UnimplementedExecutorServer
+	genv1.UnimplementedExecutorObservabilityServer
+	parkScratch  []byte
+	retryScratch []byte
+	staleScratch []byte
+	acks         atomic.Int64
+}
+
+func (s *server) Capabilities(context.Context, *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
+	return &genv1.ObservabilityCapabilities{
+		ExpectedAttributesSchema: []byte(`{"type":"object"}`),
+		DeclaredTags:             []string{"probe_parked"},
+		DeclaredErrorClasses:     []string{"probe/transient"},
+	}, nil
+}
+
+func delta(fields map[string]any) *structpb.Struct {
+	out, err := structpb.NewStruct(fields)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+func (s *server) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+	seen := req.GetScratch()
+	switch req.GetNodeType() {
+	case "parker":
+		if len(seen) == 0 {
+			return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
+				ResumeAt: timestamppb.New(time.Now().Add(2 * time.Second)),
+				Scratch:  s.parkScratch,
+				Tags:     []string{"probe_parked"},
+			}}}, nil
+		}
+		return success("park_resume", seen, req), nil
+	case "staler":
+		if len(seen) == 0 {
+			return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
+				ResumeAt: timestamppb.New(time.Now().Add(1 * time.Second)),
+				Scratch:  s.staleScratch,
+				Tags:     []string{"probe_parked"},
+			}}}, nil
+		}
+		if req.GetPriorDispatchDisposition() != genv1.PriorDispatchDisposition_PRIOR_STALE_RECOVERY {
+			return &genv1.Outcome{Outcome: &genv1.Outcome_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
+				AsyncAckId: fmt.Sprintf("probe-ack-%d", s.acks.Add(1)),
+			}}}, nil
+		}
+		return success("stale_recovery", seen, req), nil
+	case "retrier":
+		if len(seen) == 0 {
+			return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+				ErrorClass: "probe/transient",
+				Payload:    delta(map[string]any{"leg": "first"}),
+				Scratch:    s.retryScratch,
+			}}}, nil
+		}
+		return success("retry", seen, req), nil
+	}
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		Changed:       true,
+		ChangeSummary: "fresh",
+		AttributesDelta: delta(map[string]any{
+			"scratch_was_empty": len(seen) == 0,
+			"observed_dispatch": req.GetDispatchId(),
+		}),
+	}}}, nil
+}
+
+func success(leg string, seen []byte, req *genv1.ExecuteRequest) *genv1.Outcome {
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		Changed:       true,
+		ChangeSummary: leg,
+		AttributesDelta: delta(map[string]any{
+			"leg":                  leg,
+			"observed_scratch_sha256": digestOf(seen),
+			"observed_scratch_len":    float64(len(seen)),
+			"observed_dispatch":    req.GetDispatchId(),
+			"observed_disposition": req.GetPriorDispatchDisposition().String(),
+		}),
+	}}}
+}
+
+func digestOf(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func mustDecode(name string) []byte {
+	raw, err := base64.StdEncoding.DecodeString(os.Getenv(name))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "probe-executor: "+name+" is not base64")
+		os.Exit(2)
+	}
+	return raw
+}
+
+func main() {
+	listener, err := net.Listen("tcp", "0.0.0.0:"+os.Getenv("PROBE_EXECUTOR_PORT"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "probe-executor: listen: "+err.Error())
+		os.Exit(2)
+	}
+	s := &server{
+		parkScratch:  mustDecode("PROBE_PARK_SCRATCH"),
+		retryScratch: mustDecode("PROBE_RETRY_SCRATCH"),
+		staleScratch: mustDecode("PROBE_STALE_SCRATCH"),
+	}
+	srv := grpc.NewServer()
+	genv1.RegisterExecutorServer(srv, s)
+	genv1.RegisterExecutorObservabilityServer(srv, s)
+	fmt.Println("probe-executor listening")
+	if err := srv.Serve(listener); err != nil {
+		fmt.Fprintln(os.Stderr, "probe-executor: serve: "+err.Error())
+		os.Exit(2)
+	}
+}

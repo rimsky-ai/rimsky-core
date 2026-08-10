@@ -1,0 +1,11 @@
+root: /workspace
+host: 127.0.0.1
+grpc_port: 9200
+http_port: 9210
+sweep_interval_seconds: 60
+pick_policies:
+  "queue":
+    root: "queue"
+    on_commit: recycle
+    on_give_up: recycle
+    visibility_timeout_seconds: 300

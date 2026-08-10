@@ -1,0 +1,41 @@
+name: audit-subgraph
+version: v1
+graphs:
+  - name: main
+    nodes:
+      - type: caller
+        delegate: worker
+        attributes:
+          schema: &checks
+            type: object
+            properties:
+              checks:
+                type: array
+                default:
+                  - kind: row_count_absolute
+                    config:
+                      min: 0
+  - name: worker
+    entry: inner-entry
+    exit: inner-exit
+    nodes:
+      - type: inner-entry
+        executor: verifier-shape-checks
+        attributes:
+          schema: *checks
+      - type: inner-mid
+        executor: verifier-shape-checks
+        subscribes:
+          - node: inner-entry
+            type: "terminal/*"
+            force_upstream_refresh: false
+        attributes:
+          schema: *checks
+      - type: inner-exit
+        executor: verifier-shape-checks
+        subscribes:
+          - node: inner-mid
+            type: "terminal/*"
+            force_upstream_refresh: false
+        attributes:
+          schema: *checks

@@ -1,0 +1,19 @@
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+
+claim_producers:
+  "queue-store":
+    endpoint: "grpc://cp-queue:9101"
+    write_semantics_allowed: ["sync"]
+  "staged-store":
+    endpoint: "grpc://cp-staged:9101"
+    write_semantics_allowed: ["staged_async"]
+
+named_locks: {}
+
+executors:
+  "pg-verifier":
+    transport: grpc
+    endpoint: "grpc://cp-staged:9101"

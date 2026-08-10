@@ -1,0 +1,11 @@
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+claim_producers: {}
+named_locks: {}
+executors: {}
+publishers:
+  "tick":
+    endpoint: "cron-sensor:9081"
+    protocols: ["publisher"]

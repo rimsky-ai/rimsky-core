@@ -1,0 +1,94 @@
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from harness import (boot, call, check, counter_node, deltas, deploy,  # noqa: E402
+                     endpoint_log, finish, live_runs, new_instance, new_network, quiet,
+                     send_message, show, start_endpoint, starts, sub, teardown, timeline,
+                     wait_until)
+
+SUBNET = "172.31.95.0/24"
+ENDPOINT_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "rate-limited-endpoint.py")
+
+
+def spec(endpoint_host):
+    return {
+        "name": "exp-resume-preserves-snapshot",
+        "version": "1",
+        "nodes": [
+            counter_node("emitter"),
+            {"type": "worker", "executor": "http-node",
+             "subscribes": [sub("emitter", "terminal/success"),
+                            sub("emitter", "attribute/count/changed")],
+             "attributes": {"schema": {"type": "object", "properties": {
+                 "url": {"type": "string", "default": "http://%s:8000/work" % endpoint_host},
+                 "method": {"type": "string", "default": "POST"},
+                 "seen": {"type": "integer",
+                          "source": "{{nodes.emitter.attribute.count}}"}}}}},
+        ],
+    }
+
+
+def work_requests(log_base):
+    return [r for r in endpoint_log(log_base) if r["path"].startswith("/work")]
+
+
+def main():
+    network = new_network(SUBNET)
+    endpoint, log_base = start_endpoint(network, ENDPOINT_SOURCE)
+    boot(env={"RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST": SUBNET}, network=network)
+    iid = new_instance(deploy(spec(endpoint)))
+
+    send_message(iid)
+    wait_until(lambda: [r for r in live_runs(iid) if r["state"] == "parked"])
+    reqs = wait_until(lambda: work_requests(log_base) or None)
+    check("the executor was dispatched with the upstream value of its own moment",
+          reqs[0]["body"] == {"seen": 1}, json.dumps(reqs[0]))
+    parked_run = [r for r in live_runs(iid) if r["state"] == "parked"][0]["id"]
+    park = [r for r in timeline(iid) if r["kind"] == "transient/park"][0]
+    check("that dispatch parked rather than failing",
+          park["payload"]["tags"] == ["rate_limited"], json.dumps(park["payload"]))
+
+    call("POST", "/v1/instances/%s/pause" % iid, {})
+    call("POST", "/v1/instances/%s/debug/override" % iid,
+         {"action": "invalidate_node", "node_type": "emitter"})
+    call("POST", "/v1/instances/%s/resume" % iid, {})
+    wait_until(lambda: [d for d in deltas(timeline(iid), "emitter") if d.get("count") == 2] or None)
+    check("the upstream node re-ran and moved on to a new value while the work sat parked",
+          [d.get("count") for d in deltas(timeline(iid), "emitter")] == [1, 2],
+          json.dumps(deltas(timeline(iid), "emitter")))
+
+    wake = wait_until(lambda: [r for r in timeline(iid) if r["kind"] == "parked_resume_started"])
+    check("the parked work was woken rather than left asleep",
+          wake[0]["payload"].get("resume_reason") == "upstream_cascade",
+          json.dumps(wake[0]["payload"]))
+
+    tl = quiet(iid)
+    show(tl)
+    reqs = work_requests(log_base)
+    check("the woken work reached the executor again",
+          len(reqs) >= 2, json.dumps([r["body"] for r in reqs]))
+    check("the resumed executor saw the same substituted upstream value it parked with",
+          len(reqs) >= 2 and reqs[1]["body"] == {"seen": 1},
+          "parked with %s, resumed with %s"
+          % (json.dumps(reqs[0]["body"]), json.dumps(reqs[1]["body"]) if len(reqs) > 1 else "(nothing)"))
+    resumed_dispatch = starts(tl, "worker")[1]["payload"]["dispatch_id"] \
+        if len(starts(tl, "worker")) > 1 else None
+    check("the work that ran after the park is the parked unit of work, not a fresh one",
+          resumed_dispatch == parked_run,
+          "parked run %s, run that executed after the wake %s" % (parked_run, resumed_dispatch))
+    completed = [r["payload"].get("dispatch_id") for r in tl
+                 if r["node"] == "worker" and r["kind"] == "work_completed"]
+    check("the parked unit of work settled rather than being discarded",
+          parked_run in completed,
+          "parked run %s, runs that completed %s" % (parked_run, json.dumps(completed)))
+    finish()
+
+
+try:
+    main()
+finally:
+    teardown()

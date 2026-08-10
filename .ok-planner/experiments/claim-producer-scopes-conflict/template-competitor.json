@@ -1,0 +1,42 @@
+{
+  "name": "overlap-competitor",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "competitor",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "overlap-store",
+          "selector": "{{params.selector}}",
+          "intent": "rw",
+          "alias": "held"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19459/rec/competitor"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.held.address}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

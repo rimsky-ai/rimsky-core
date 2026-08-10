@@ -1,0 +1,5 @@
+root: /workspace
+host: 127.0.0.1
+grpc_port: 9200
+http_port: 9210
+sweep_interval_seconds: 60

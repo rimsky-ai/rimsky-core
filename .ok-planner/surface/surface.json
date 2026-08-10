@@ -1,0 +1,39 @@
+{
+  "kinds": [
+    {
+      "kind": "cli-verbs",
+      "enumerate": ".ok-planner/surface/enumerate/cli-verbs",
+      "expectedEmpty": false
+    },
+    {
+      "kind": "http-routes",
+      "enumerate": ".ok-planner/surface/enumerate/http-routes",
+      "expectedEmpty": false
+    },
+    {
+      "kind": "grpc-rpcs",
+      "enumerate": ".ok-planner/surface/enumerate/grpc-rpcs",
+      "expectedEmpty": false
+    },
+    {
+      "kind": "env-vars",
+      "enumerate": ".ok-planner/surface/enumerate/env-vars",
+      "expectedEmpty": false
+    },
+    {
+      "kind": "images",
+      "enumerate": ".ok-planner/surface/enumerate/images",
+      "expectedEmpty": false
+    },
+    {
+      "kind": "template-keys",
+      "enumerate": ".ok-planner/surface/enumerate/template-keys",
+      "expectedEmpty": false
+    },
+    {
+      "kind": "config-keys",
+      "enumerate": ".ok-planner/surface/enumerate/config-keys",
+      "expectedEmpty": false
+    }
+  ]
+}

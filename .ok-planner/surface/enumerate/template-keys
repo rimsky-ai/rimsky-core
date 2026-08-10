@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../../.."
+git grep -h -o -E 'yaml:"[a-z0-9_]+' -- 'lib/foundation/spec/' ':!*_test.go' \
+  | sed -E 's/^yaml:"//' | sort -u

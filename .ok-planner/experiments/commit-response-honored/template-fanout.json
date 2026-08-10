@@ -1,0 +1,88 @@
+{
+  "name": "commit-metadata-writeback",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "partitioned",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "versioned-store",
+          "selector": "/batch",
+          "intent": "rw",
+          "alias": "parent"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "fan_out": {
+        "claim": "parent",
+        "partition_request": "{\"list\": [{\"key\": \"p1\"}, {\"key\": \"p2\"}, {\"key\": \"p3\"}]}",
+        "parallelism": 1,
+        "error_policy": {
+          "kind": "strict"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19469/rec/partitioned"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "partition": {
+              "type": "string",
+              "source": "{{child.partition_key}}"
+            },
+            "producer_metadata": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "reader",
+      "executor": "http-node",
+      "subscribes": [
+        {
+          "node": "partitioned",
+          "type": "terminal/success",
+          "force_upstream_refresh": false
+        },
+        {
+          "node": "partitioned",
+          "type": "attribute/producer_metadata/changed",
+          "force_upstream_refresh": false
+        }
+      ],
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19469/rec/reader"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "meta": {
+              "type": "object",
+              "source": "{{nodes.partitioned.attribute.producer_metadata}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

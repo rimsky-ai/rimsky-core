@@ -1,0 +1,10 @@
+name: audit-gate-empty-checks
+version: v1
+defaults:
+  attributes:
+    by_executor:
+      verifier-shape-checks:
+        checks: []
+nodes:
+  - type: shape
+    executor: verifier-shape-checks

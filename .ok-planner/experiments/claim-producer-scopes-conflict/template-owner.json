@@ -1,0 +1,43 @@
+{
+  "name": "overlap-owner",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "owner",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "overlap-store",
+          "selector": "{{params.selector}}",
+          "intent": "rw",
+          "alias": "held",
+          "lifetime": "durable"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19459/rec/owner"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.held.address}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

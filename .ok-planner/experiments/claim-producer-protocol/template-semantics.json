@@ -1,0 +1,161 @@
+{
+  "name": "custom-producer-semantics",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "sync-writer",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "sync-producer",
+          "selector": "/regions/{{params.region}}",
+          "intent": "rw",
+          "alias": "held",
+          "data": {
+            "lease_hint": "sync"
+          }
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19419/rec/sync-writer"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.held.address}}"
+            },
+            "held_scope": {
+              "type": "string",
+              "source": "{{claim.held.claim_scope}}"
+            },
+            "held_region": {
+              "type": "string",
+              "source": "{{claim.held.payload.region}}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "staged-writer",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "staged-producer",
+          "selector": "/staged-area",
+          "intent": "rw",
+          "alias": "held"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19419/rec/staged-writer"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.held.address}}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "blocking-writer",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "blocking-producer",
+          "selector": "/blocking-area",
+          "intent": "rw",
+          "alias": "held"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19419/rec/blocking-writer"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.held.address}}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "readonly-reader",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "readonly-producer",
+          "selector": "/catalog",
+          "intent": "r",
+          "alias": "held"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19419/rec/readonly-reader"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.held.address}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

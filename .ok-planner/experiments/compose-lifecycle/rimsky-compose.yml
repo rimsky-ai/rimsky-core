@@ -1,0 +1,15 @@
+project: lifecycle-demo
+
+templates:
+  - path: ./template-a.yml
+    tag: alpha@1
+    state: deployed
+  - path: ./template-b.yml
+    tag: beta@1
+    state: deployed
+
+instances:
+  - template: alpha@1
+    name: one
+  - template: beta@1
+    name: two

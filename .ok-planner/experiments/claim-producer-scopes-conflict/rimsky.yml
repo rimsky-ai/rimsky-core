@@ -1,0 +1,12 @@
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+
+claim_producers:
+  "overlap-store":
+    endpoint: "grpc://host.docker.internal:19461"
+    write_semantics_allowed: ["sync"]
+
+named_locks: {}
+executors: {}

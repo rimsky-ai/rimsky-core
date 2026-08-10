@@ -1,0 +1,11 @@
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+claim_producers: {}
+named_locks: {}
+executors: {}
+retention:
+  recent_frames_kept: 1
+  trace_trailing: 2s
+  claim_handles_trailing: 2s

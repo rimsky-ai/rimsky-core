@@ -1,0 +1,54 @@
+{
+  "name": "overlap-fanout",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "partitioned",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "overlap-store",
+          "selector": "/inbox",
+          "intent": "rw",
+          "alias": "parent"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "fan_out": {
+        "claim": "parent",
+        "partition_request": "{\"list\": [{\"key\": \"a/p1\"}, {\"key\": \"b/p1\"}]}",
+        "parallelism": 2,
+        "error_policy": {
+          "kind": "strict"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19459/rec/partitioned"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "partition": {
+              "type": "string",
+              "source": "{{child.partition_key}}"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.parent.address}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

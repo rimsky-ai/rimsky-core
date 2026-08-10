@@ -1,0 +1,42 @@
+{
+  "name": "commit-version",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "writer",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "versioned-store",
+          "selector": "/versioned",
+          "intent": "rw",
+          "alias": "held"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19469/rec/writer"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.held.address}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

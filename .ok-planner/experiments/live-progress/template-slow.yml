@@ -1,0 +1,13 @@
+name: slow-http-fetch
+version: "1"
+message_queue_mode: backlog
+nodes:
+  - type: fetch
+    executor: http-node
+    attributes:
+      schema:
+        type: object
+        properties:
+          url:
+            type: string
+            default: http://127.0.0.1:18777/

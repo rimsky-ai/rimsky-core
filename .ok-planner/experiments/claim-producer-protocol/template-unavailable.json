@@ -1,0 +1,41 @@
+{
+  "name": "custom-producer-unavailable",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "waiting-writer",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "scarce",
+          "selector": "/contended",
+          "intent": "rw",
+          "alias": "held"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        },
+        "scarce/exhausted": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19419/rec/waiting-writer"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+project: outcome-success
+
+templates:
+  - path: ./template-success.yml
+    tag: pass
+    state: deployed
+
+instances:
+  - template: pass
+    name: alpha
+  - template: pass
+    name: beta

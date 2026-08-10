@@ -1,0 +1,146 @@
+{
+  "name": "claim-handoff-abandon",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "acquirer",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "stage-store",
+          "selector": "/stage/{{params.run}}",
+          "intent": "rw",
+          "alias": "staged"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19439/rec/acquirer"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.staged.address}}"
+            },
+            "held_scope": {
+              "type": "string",
+              "source": "{{claim.staged.claim_scope}}"
+            },
+            "held_region": {
+              "type": "string",
+              "source": "{{claim.staged.payload.region}}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "writer",
+      "executor": "http-node",
+      "holds": {
+        "staged": {
+          "from": "acquirer"
+        }
+      },
+      "subscribes": [
+        {
+          "node": "acquirer",
+          "type": "terminal/success",
+          "force_upstream_refresh": false
+        }
+      ],
+      "error_types": {
+        "http/server_error/500": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19439/rec/writer"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.staged.address}}"
+            },
+            "held_scope": {
+              "type": "string",
+              "source": "{{claim.staged.claim_scope}}"
+            },
+            "held_region": {
+              "type": "string",
+              "source": "{{claim.staged.payload.region}}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "verifier",
+      "executor": "http-node",
+      "holds": {
+        "staged": {
+          "from": "acquirer"
+        }
+      },
+      "subscribes": [
+        {
+          "node": "writer",
+          "type": "terminal/success",
+          "force_upstream_refresh": false
+        }
+      ],
+      "error_types": {
+        "http/server_error/500": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19439/fail"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "held_addr": {
+              "type": "string",
+              "source": "{{claim.staged.address}}"
+            },
+            "held_scope": {
+              "type": "string",
+              "source": "{{claim.staged.claim_scope}}"
+            },
+            "held_region": {
+              "type": "string",
+              "source": "{{claim.staged.payload.region}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

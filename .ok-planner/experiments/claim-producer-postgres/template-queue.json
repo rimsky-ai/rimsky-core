@@ -1,0 +1,49 @@
+{
+  "name": "pg-queue-pick",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "worker",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "queue-store",
+          "selector": "@queue",
+          "intent": "rw",
+          "alias": "item"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        },
+        "pg/claim_unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19489/rec/worker"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "item_id": {
+              "type": "string",
+              "source": "{{claim.item.address}}"
+            },
+            "topic": {
+              "type": "string",
+              "source": "{{claim.item.payload.topic}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

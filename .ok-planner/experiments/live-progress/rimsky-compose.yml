@@ -1,0 +1,15 @@
+project: live-demo
+
+templates:
+  - path: ./template-success.yml
+    tag: fast
+    state: deployed
+  - path: ./template-slow.yml
+    tag: slow
+    state: deployed
+
+instances:
+  - template: fast
+    name: quick
+  - template: slow
+    name: lagging

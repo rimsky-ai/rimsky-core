@@ -1,0 +1,7 @@
+connection: "postgres://store:store@substrate-pg:5432/storedb?sslmode=disable"
+write_semantics: staged_async
+host: 0.0.0.0
+grpc_port: 9101
+http_port: 9111
+sweep_interval_seconds: 30
+enable_executor: true

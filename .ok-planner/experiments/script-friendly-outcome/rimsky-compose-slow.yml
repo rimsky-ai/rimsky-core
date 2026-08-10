@@ -1,0 +1,10 @@
+project: outcome-bounded
+
+templates:
+  - path: ./template-slow.yml
+    tag: slow
+    state: deployed
+
+instances:
+  - template: slow
+    name: alpha

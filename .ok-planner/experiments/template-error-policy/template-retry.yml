@@ -1,0 +1,22 @@
+name: audit-error-policy-retry
+version: v1
+nodes:
+  - type: failing
+    executor: verifier-shape-checks
+    max_retries: 2
+    retry_backoff:
+      kind: linear
+      base_delay_ms: 100
+    error_types:
+      "verifier/check_failed/row_count_absolute":
+        action: retry
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            default:
+              - kind: row_count_absolute
+                config:
+                  min: 1
