@@ -94,6 +94,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.ok-plumbline/hooks/pre-write.js\"",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

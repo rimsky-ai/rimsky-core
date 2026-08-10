@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
 // SPDX-License-Identifier: Apache-2.0
-// Materialized by ok-plumbline v14.4.0 — plugin-owned, overwritten wholesale on converge by the front door's administration (/ok); do not hand-edit.
-
-// @story: edit-time-lint-enforcement
+// Materialized by ok-plumbline v15.2.0 — plugin-owned, overwritten wholesale on converge by the front door's administration (/ok); do not hand-edit.
 let fs, path, spawnSync;
 try {
   fs = require('fs');
@@ -13,14 +11,31 @@ try {
   process.exit(0);
 }
 
+const ROOT_MARKERS = [
+  '.ok-planner',
+  '.ok-plumbline',
+  '.ok-workspaces',
+  '.plumbline.json',
+  path.join('.claude', 'rules', 'plumbline-cheatsheet.md'),
+];
+const PLUMBLINE_MARKERS = [
+  '.ok-plumbline',
+  '.plumbline.json',
+  path.join('.claude', 'rules', 'plumbline-cheatsheet.md'),
+];
+
 function resolveProjectRoot() {
   const start = path.resolve(process.env.CLAUDE_PROJECT_DIR || process.cwd());
   let dir = start;
   while (dir !== path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, '.git'))) return { root: dir, inRepo: true };
+    if (ROOT_MARKERS.some((m) => fs.existsSync(path.join(dir, m)))) return dir;
     dir = path.dirname(dir);
   }
-  return { root: start, inRepo: false };
+  return start;
+}
+
+function hasPlumblinePresence(root) {
+  return PLUMBLINE_MARKERS.some((m) => fs.existsSync(path.join(root, m)));
 }
 
 function isInsideRoot(root, target) {
@@ -51,7 +66,6 @@ function formatRanges(ranges) {
 const BLOCKING_EXIT_CODE = 2;
 const AGENT_VISIBLE_CHANNEL = process.stderr;
 
-// @story: edit-time-lint-enforcement
 function blockWithViolationsOnAgentVisibleChannel(result) {
   if (result.stdout) AGENT_VISIBLE_CHANNEL.write(result.stdout);
   if (result.stderr) AGENT_VISIBLE_CHANNEL.write(result.stderr);
@@ -69,8 +83,8 @@ function main() {
   const file = event && event.tool_input && event.tool_input.file_path;
   if (!file || !fs.existsSync(file)) process.exit(0);
 
-  const { root, inRepo } = resolveProjectRoot();
-  if (!inRepo) process.exit(0);
+  const root = resolveProjectRoot();
+  if (!hasPlumblinePresence(root)) process.exit(0);
 
   const target = path.resolve(file);
   if (!isInsideRoot(root, target)) process.exit(0);
