@@ -22,7 +22,8 @@ ROOT=$(cd ../../.. && pwd)
 CLI="$ROOT/bin/rimsky"
 PEERSRC="$ROOT/.ok-planner/experiments/permissive-peer-build/peer"
 SERVE=exp-aa-serve
-PORT=${PORT:-18521}
+free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
+PORT=${PORT:-$(free_port)}
 WORK=$(mktemp -d)
 BASE="http://127.0.0.1:$PORT"
 # Keep the Go build caches pointed at the real home, then move HOME so the CLI

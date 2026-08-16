@@ -1,32 +1,32 @@
 ---
 audit: producer-class-routing
 artifact: story:producer-class-routing
-determination: supported
-compliance: noncompliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:06:40Z
 ---
 
-# Routing the acquisition error class the producer named, with the generic key as fallback
+# A producer's own acquisition error class is routable, with the generic acquire key as fallback
 
-Supported. Against an all-in-one deployment whose filesystem-backed claim
-producer was pointed at a missing root, every acquisition failed with the class
-that producer declares in its capabilities handshake, and the emitted terminal
-signal carried that class rather than a generic one. Five templates differing
-only in their error-class-to-action map were driven over that one failure: the
-one keying the producer's class to pass settled the node fresh while its generic
-acquire-family key said give up; the one with no producer-class entry and the
-generic key set to pass settled fresh too, so the generic key is the fallback;
-the one keying the producer's class to give up with both generic keys set to
-pass settled the node failed, so the producer's class outranks the generic key
-beside it. Registration accepted the producer's declared class without a
-warning and accepted an undeclared class with a warning naming it.
+Supported. Driven through the public surface against a released-image stack whose
+bundled filesystem producer is pointed at a root that does not exist, so every
+acquisition fails with the class that producer declares in its own handshake; one
+node template was registered five times changing only its error-class map. Seven
+checks, none failing. The producer's class reached the routing surface on the
+terminal signal rather than a generic one, and keying that class routed the run.
+With no producer-class entry, the generic acquire-family key routed the same
+failure, and with both declared the producer-class entry decided rather than the
+generic key beside it — fallback below, specific above. Whatever key did the
+routing, the emitted signal carried the producer's most specific class. The
+validator's vocabulary check agreed: the producer's declared class registered with
+no warning, while an undeclared class registered with a warning naming it and the
+vocabularies checked.
 
-## Compliance
+## Referrals
 
-The capability clause names a template key ("the template's error-types
-declaration"), a delivery-surface choice the story rules place in `decisions/`,
-and calls the generic fallback "documented", which is a claim about the
-documentation rather than about what the user can do; the compliant text is "I
-can route a producer-declared acquisition error class, and rely on the generic
-acquire-family keys as a fallback".
+- referral: the generic acquire-family keys are a documented fallback
+  established: the fallback behaves as the story says — measured by routing the
+    same producer failure through the generic key with no producer-class entry
+    present — while whether it is written down anywhere is not settled by this run
+  discipline: documentation

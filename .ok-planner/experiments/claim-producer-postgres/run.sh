@@ -183,6 +183,38 @@ has "signal=terminal/error/pg/verifier_check_failed/row_count_ratio" "$st" "the 
 st="$(settle "$G" watcher)"; echo "    $st"
 has "watcher fresh=1 failed=0" "$st" "a node subscribed to the producer's error classes ran on that signal"
 
+echo "--- the error classes the producer advertises, as an operator reads them"
+entry="$(curl -sS "$E/v1/observability/claim-producers" | python3 -c "
+import sys, json
+for e in json.load(sys.stdin)['claim_producers']:
+    if e['name'] == 'staged-store': print(json.dumps(e))")"
+declared="$(printf '%s' "$entry" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(json.dumps(d.get('observability_capabilities', {}).get('declared_error_classes', [])))")"
+echo "    advertised: $declared"
+has 'pg/claim_unavailable' "$declared" "the producer advertises its claim-unavailable class"
+has 'pg/swap_failed' "$declared" "the producer advertises its swap-failed class"
+has 'pg/not_atomically_replaceable' "$declared" "the producer advertises its not-atomically-replaceable class"
+n="$(printf '%s' "$declared" | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')"
+[ "$n" = "3" ] && ok "the advertisement carries exactly 3 classes" || bad "the advertisement carries $n classes, not 3"
+
+echo "--- a canonical schema another object depends on is refused, and nothing is destroyed"
+psql -c "CREATE SCHEMA IF NOT EXISTS analytics_swapfail;
+         CREATE TABLE IF NOT EXISTS analytics_swapfail.items (id INT PRIMARY KEY, label TEXT);
+         INSERT INTO analytics_swapfail.items (id, label) VALUES (1, 'stale') ON CONFLICT DO NOTHING;
+         CREATE SCHEMA IF NOT EXISTS reporting_ext;
+         CREATE OR REPLACE VIEW reporting_ext.items_view AS SELECT * FROM analytics_swapfail.items;" >/dev/null
+ok "an operator's own reporting view outside the canonical schema depends on it"
+S="$(start "$HERE/template-staged-dependent.json")" || bad "the dependent-schema template did not register"
+st="$(settle "$S" stager)"; echo "    $st"
+has "signal=terminal/error/pg/not_atomically_replaceable" "$st" "the claim is refused on the producer's not-atomically-replaceable class"
+st="$(settle "$S" watcher)"; echo "    $st"
+has "watcher fresh=1 failed=0" "$st" "a node subscribed to the producer's error classes ran on that signal"
+kept="$(psql -tAc "SELECT count(*) FROM analytics_swapfail.items;" | tr -d ' ')"
+[ "$kept" = "1" ] && ok "the canonical schema and its dependent are untouched" || bad "the canonical schema holds $kept rows"
+echo "    not exercised: pg/swap_failed — advertised, but no public-surface route provoked it in this run"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "EXPERIMENT PASS"; else echo "EXPERIMENT FAIL ($fails)"; fi
 exit "$fails"

@@ -1,30 +1,30 @@
 ---
 audit: dry-run-request-flag
 artifact: story:dry-run-request-flag
-determination: unclear
-compliance: compliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:25:00Z
+audited: 2026-08-16T04:52:00Z
 checked: 23
-unaccounted: 1
+unaccounted: 0
 ---
 
-# Every write submitted with the per-request dry-run flag
+# Every write the control API exposes can be previewed per request
 
-Unclear, because one member of the population could not be measured. The
-population is the write half of the control API's action registry, 23 actions.
-For 22 of them the flagged request returned a synthetic envelope naming exactly
-one would-have intent, left the state that write would have changed unchanged on
-re-read, and was then accepted live as a control — covering template
-register, deploy, undeploy and deregister; tag create, set and delete; instance
-create, pause, resume, kill, delete and debug-override; breakpoint create, delete
-and resume; node reset; message send; lineage prune; and api-key create, rotate
-and revoke. The 23rd, asset delete, needs a committed durable-lifetime claim
-handle to preview a delete of; the bundled filesystem claim producer was
-configured and a template acquired a claim through it with durable lifetime, but
-the instance's asset listing stayed empty after the run reached terminal, so the
-precondition never existed and no run was taken.
+Supported, with the whole population covered. The write half of the control
+API's action registry is 23 actions, and all 23 were driven against a fresh
+deployment: each was submitted as its real request with the per-request preview
+asked for, had to come back naming exactly one thing it would have done, had the
+state it would have changed re-read and required unchanged, and was then
+submitted live so that a preview obtained by failing validation could not pass
+for one. All 23 passed — template register, deploy, undeploy and deregister; tag
+create, move and delete; instance create, pause, resume, kill, terminate and
+debug-override; breakpoint create, delete and resume; node reset; message send;
+lineage prune; key create, rotate and revoke; and asset delete. The last needed
+a subject that does not exist on a default deployment, so the run stood up a
+claim producer advertising the data-processing protocol and materialized a
+durable claim through it before previewing the delete.
 
-## Unaccounted
+## Compliance
 
-- `asset:delete` — no run taken; the deployment produced no asset to preview a delete of.
+The body prescribes mechanism: "a per-request dry-run flag" names the request shape and "a synthetic envelope" names the response shape, both of which belong to a decision; compliant text would say the operator can ask for any write to be previewed rather than performed and see what it would have done, validated the same way as the real write and changing nothing.

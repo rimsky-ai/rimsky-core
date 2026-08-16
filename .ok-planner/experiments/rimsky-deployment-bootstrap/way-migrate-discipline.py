@@ -58,6 +58,13 @@ def role_mounts(config):
             (SUPERVISOR_MOUNT, "/etc/rimsky/supervisor-config.yml")]
 
 
+def create_database(pg, name):
+    docker("exec", pg, "createdb", "-U", "rimsky", name)
+    res = docker("exec", pg, "psql", "-U", "rimsky", "-d", "postgres", "-tAc",
+                 "select 1 from pg_database where datname = '%s'" % name)
+    return res.returncode == 0 and res.stdout.strip() == "1"
+
+
 def write_config(pghost, dbname):
     path = os.path.join(tempfile.mkdtemp(), "rimsky.yml")
     with open(path, "w") as fh:
@@ -93,7 +100,7 @@ def main():
         raise SystemExit("HARNESS ERROR: postgres failed to start: " + res.stderr)
     wait_until(lambda: docker("exec", pg, "pg_isready", "-U", "rimsky").returncode == 0)
     for db in ("skipdb", "forcedb"):
-        docker("exec", pg, "createdb", "-U", "rimsky", db)
+        wait_until(lambda name=db: create_database(pg, name))
 
     split = write_config(pg, "rimsky")
     sched = start(split, network, command=["rimsky-scheduler"])

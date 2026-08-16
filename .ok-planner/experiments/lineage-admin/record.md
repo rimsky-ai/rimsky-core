@@ -17,11 +17,11 @@ container.
 
 ## What was observed
 
-One workflow run left lineage records readable by run id, by producing claim
-producer, and by substitution source. The retention sweep then emptied the
-instance's frames while those lineage records remained — the state a long-lived
-deployment reaches, and the state in which the operator's prune has something to
-remove.
+Ten checks, none failing. One workflow run left lineage records readable by run
+id, by producing claim producer, and by substitution source. The probe then
+waits for the retention sweep to empty the instance's frames while those lineage
+records remain — the state a long-lived deployment reaches, and the state in
+which the operator's prune has something to remove.
 
 Pruning with a cutoff an hour older than every record deleted nothing, and every
 record was still readable afterwards. Pruning with a cutoff an hour newer
@@ -29,9 +29,8 @@ deleted four rows, at least as many as were readable, and afterwards the run id
 answered 404 and both the by-producer and by-source reads answered empty. A
 second workflow run recorded lineage again, and `--older-than` accepted an age in
 place of a timestamp and deleted those rows too. A cutoff that is not a timestamp
-and a prune with no cutoff were each refused 400.
+and a prune with no cutoff were each refused 400, the first naming the timestamp
+format it wanted and the second naming the missing field.
 
-One condition governs the prune beyond the cutoff: a lineage row whose node run
-or claim handle still exists is retained whatever the cutoff says. Before the
-retention sweep had emptied the frames, a prune with a cutoff an hour in the
-future deleted nothing.
+The probe prunes only after the frames have emptied; this run took no separate
+measurement of a prune issued before that point.

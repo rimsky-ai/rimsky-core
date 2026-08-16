@@ -1,17 +1,22 @@
 ---
 audit: script-friendly-outcome
 artifact: story:script-friendly-outcome
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:25:00Z
+audited: 2026-08-16T04:59:54Z
+checked: 3
+unaccounted: 0
 ---
 
-# A script branches on a one-shot run's outcome class without reading its output
+# The three outcome classes a surrounding script branches on
 
-Supported. Three one-shot runs driven from a shell `case` that reads only the
-exit status and discards the transcript produced all three classes the story
-names and produced them distinctly: an all-pass manifest exited 0, a manifest
-with one failing instance exited 1, and a manifest whose instance waits on a
-20-second upstream exited 2 under `--timeout 3s`. All 3 of the 3 classes the
-story enumerates were branched on with no output parsing.
+Supported across all three classes the story names. Each was provoked
+deliberately and read the way a script would: a manifest whose checks all pass, a
+manifest mixing a passing and a failing check, and a manifest whose node waits on
+a deliberately slow local server under a bound short enough to expire. The
+branching was a real shell `case` on the exit status with the transcript
+discarded outright, so nothing could have been settled by reading output. The
+three classes came back distinct and in the promised order — all succeeded,
+something failed, bounded out — with no two sharing a status, which is what makes
+them branchable at all. Three checks, none failing.

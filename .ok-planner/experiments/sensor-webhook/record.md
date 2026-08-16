@@ -14,7 +14,7 @@ template declares two message types, one node subscribed to both, and two
 publishers of kind `webhook`: one on path prefix `/hooks/secret` authenticated
 by a shared header, one on `/hooks/hmac` authenticated by an HMAC signature over
 a timestamp and the body with a sixty-second replay window and a delivery-id
-header for redelivery. `run.py` builds and removes everything.
+header for redelivery. `run.py` builds and removes everything. Re-run unchanged at this tree.
 
 ## What was observed
 

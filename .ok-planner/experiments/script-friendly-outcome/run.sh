@@ -17,7 +17,8 @@ set -u
 
 RIMSKY_BIN=${RIMSKY_BIN:?set RIMSKY_BIN to the rimsky CLI binary}
 HERE=$(cd "$(dirname "$0")" && pwd)
-SLOW_PORT=${SLOW_PORT:-18777}
+free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
+SLOW_PORT=${SLOW_PORT:-$(free_port)}
 WORK=$(mktemp -d)
 fail=0
 
@@ -25,13 +26,15 @@ python3 "$HERE/slow-server.py" 20 "$SLOW_PORT" &
 SLOW_PID=$!
 cleanup() { kill "$SLOW_PID" 2>/dev/null; }
 trap cleanup EXIT
-sleep 1
+until python3 -c "import socket,sys;s=socket.socket();sys.exit(0 if s.connect_ex(('127.0.0.1',$SLOW_PORT))==0 else 1)"; do sleep 0.1; done
 
 branch() { # branch <label> <expected-class> <manifest> [extra args...]
   local label=$1 want=$2 manifest=$3; shift 3
   local dir="$WORK/$label"
   mkdir -p "$dir/home"
   cp "$HERE"/*.yml "$dir/"
+  sed -i.bak "s|127.0.0.1:18777|127.0.0.1:$SLOW_PORT|" "$dir/template-slow.yml"
+  rm -f "$dir/template-slow.yml.bak"
   ( cd "$dir" && env -i PATH=/usr/bin:/bin HOME="$dir/home" TMPDIR=/tmp \
       RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST=127.0.0.0/8 \
       "$RIMSKY_BIN" compose run "$manifest" "$@" >/dev/null 2>"$dir/stderr.txt" )

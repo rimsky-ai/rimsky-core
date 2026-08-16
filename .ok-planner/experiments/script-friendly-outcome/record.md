@@ -11,7 +11,10 @@ Three `rimsky compose run` invocations from a shell `case` statement that reads
 only `$?` and discards the transcript entirely. Two manifests use the bundled
 `verifier-shape-checks` executor (all-pass, and one-pass-one-fail); the third
 uses the bundled `http-node` executor against a local server that sleeps 20
-seconds, run under `--timeout 3s`.
+seconds, run under `--timeout 3s`. The slow server binds a port the script picks
+free at start and substitutes into its copy of the template, so concurrent runs
+cannot collide, and the run blocks until that port accepts a connection rather
+than waiting a fixed interval.
 
 ## What was observed
 
@@ -22,5 +25,7 @@ The three classes came back distinct and in the expected order:
     slow manifest, --timeout 3s exit 2   the run was bounded out
 
 Every branch was taken on the exit status alone; nothing parsed a log line.
+
+Three checks, none failing.
 
 RESULT: PASS

@@ -16,8 +16,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 CLI="$ROOT/bin/rimsky"
 NAME="rimsky-exp-template-fan-out"
-PORT="${PORT:-18109}"
-SLOW_PORT="${SLOW_PORT:-18999}"
+PORT="${PORT:-$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')}"
+SLOW_PORT="${SLOW_PORT:-$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')}"
 E="http://127.0.0.1:$PORT"
 WS="$(mktemp -d)"
 
@@ -26,7 +26,11 @@ ok()   { echo "PASS  $*"; }
 bad()  { echo "FAIL  $*"; fails=$((fails+1)); }
 has()  { case "$2" in *"$1"*) ok "$3";; *) bad "$3 (missing '$1' in: $2)";; esac; }
 
-mkdir -p "$WS/data"
+mkdir -p "$WS/data" "$WS/templates"
+for t in template-parallel template-serial template-failing; do
+  sed "s/host\.docker\.internal:18999/host.docker.internal:$SLOW_PORT/" \
+    "$HERE/$t.yml" > "$WS/templates/$t.yml"
+done
 python3 "$HERE/slow_server.py" "$SLOW_PORT" &
 SLOW_PID=$!
 cleanup() { kill "$SLOW_PID" >/dev/null 2>&1; docker rm -f "$NAME" >/dev/null 2>&1; rm -rf "$WS"; }
@@ -78,7 +82,7 @@ settle() { until state "$1" | grep -qE "^partitioned (fresh=4 |fresh=0 failed=[1
 peak()   { curl -sS "http://127.0.0.1:$SLOW_PORT/peak"; }
 
 echo "--- one work unit per sub-claim, dispatched concurrently"
-A="$(start "$HERE/template-parallel.yml")" || bad "the fan-out template did not register"
+A="$(start "$WS/templates/template-parallel.yml")" || bad "the fan-out template did not register"
 ok "the fan-out template registers, deploys and instantiates: $A"
 settle "$A"
 ev="$(events "$A")"
@@ -106,14 +110,14 @@ kill "$SLOW_PID" >/dev/null 2>&1; wait "$SLOW_PID" 2>/dev/null
 python3 "$HERE/slow_server.py" "$SLOW_PORT" &
 SLOW_PID=$!
 until curl -sS "http://127.0.0.1:$SLOW_PORT/peak" >/dev/null 2>&1; do sleep 0.2; done
-B="$(start "$HERE/template-serial.yml")" || bad "the parallelism-1 template did not register"
+B="$(start "$WS/templates/template-serial.yml")" || bad "the parallelism-1 template did not register"
 settle "$B"
 p="$(peak)"; echo "concurrency observed: $p"
 has '"peak": 1' "$p" "with parallelism 1 the same three work units never overlap"
 has '"served": 3' "$p" "all three work units still ran"
 
 echo "--- the parent settles on the aggregated outcome when partitions fail"
-C="$(start "$HERE/template-failing.yml")" || bad "the failing template did not register"
+C="$(start "$WS/templates/template-failing.yml")" || bad "the failing template did not register"
 settle "$C"
 s="$(state "$C")"; echo "$s"
 printf '%s\n' "$s" | grep -qE '^partitioned fresh=0 failed=[1-9]' \

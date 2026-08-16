@@ -36,14 +36,18 @@ Five checks, none failing.
 The counter self-subscribes on its `loop` tag with `max: 4`, so it emits four
 rounds back to back inside one frame. The observer is gated by the counter's own
 in-flight run for the whole burst, so all four rounds queue before any observer
-dispatch happens. Nothing pauses or invalidates anything.
+dispatch happens. Nothing pauses or invalidates anything. The script polls the
+observability node-run listing throughout, so the order in which the observer's
+run rows are created and reach each state is printed beside the dispatch order.
 
 ### What was observed
 
 The counter produced rounds 1, 2, 3, 4. The observer dispatched four times, and
 each dispatch saw the count of its own round, so no round was coalesced away. The
 dispatch order was 4, 1, 2, 3: the newest round ran first, then the earlier rounds
-in order. This is reproducible and scales with the round count — with `max: 3` the
+in order. The polled run rows show the shape of it — the rows for rounds 1, 2 and
+3 sit queued while the row for round 4 is created ready to dispatch and overtakes
+them. This is reproducible and scales with the round count — with `max: 3` the
 order is 3, 1, 2, and with `max: 5` it is 5, 1, 2, 3, 4.
 
 Four checks, one failing: the arrival-order check.

@@ -1,22 +1,24 @@
 ---
 audit: opaque-executor-scratch
 artifact: story:opaque-executor-scratch
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:01:18Z
 ---
 
-# Executor-attached bytes come back on the next dispatch of the same node-run
+# An executor's opaque bytes survive re-dispatch of the same node-run, uninspected
 
-Supported. A third-party executor written against the public executor protocol
-and registered by configuration attached non-UTF-8 byte strings to settling
-outcomes, and read back on the next dispatch a byte string of the same length
-whose digest matched, on all three re-dispatch paths of the same node-run the
-runtime has: a park and its time-wake resume, an error routed to in-place retry,
-and a quiet dispatch reaped and recovered under `max_quiet_period`. Each pair
-carried one node-run id, so the bytes crossed a recovery rather than a new run.
-A first dispatch with no predecessor carried no scratch. The park's audit record
-carries the byte count and a spilled flag and not the bytes, and no record
-rimsky writes for itself carries any of the three strings in base64, hex or raw
-form.
+Supported. Measured with a third-party executor built for the run speaking the
+public executor protocol, attaching three distinct byte strings containing
+non-UTF-8 bytes and reporting back only the digest and length of whatever a later
+dispatch hands it. Ten checks, none failing. All three recovery paths carried the
+bytes: a park's resume, an error's retry, and a stale recovery of a dispatch the
+runtime reaped for quiet, each a second or third dispatch of the same node-run
+id, each stamped with its prior disposition, and each receiving back the exact
+length and digest of what its own earlier dispatch had attached — including the
+stale-recovery leg reading bytes attached two dispatches earlier. A dispatch with
+no predecessor carried none. The non-inspection claim was taken as a count:
+across the forty-six rimsky-authored records the run scanned, none carries any of
+the three byte strings in base64, hex or raw form, and the park's own audit
+record notes only the size.

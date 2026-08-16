@@ -13,7 +13,7 @@ runs the in-process `verifier-shape-checks` executor and emits a
 delta. Five subscriber nodes sit on that one signal: an exact type-path, a
 trailing-wildcard prefix, a non-matching type-path, a CEL predicate over the
 payload that holds, and one that does not. `run.sh` boots and removes the
-container.
+container, taking a free host port unless `PORT` names one.
 
 ## What was observed
 
@@ -23,3 +23,5 @@ and the node whose CEL predicate the payload satisfies each fired exactly once.
 The node subscribed on a different type-path did not fire, and neither did the
 node whose CEL predicate the payload fails — the predicate is evaluated against
 the arriving signal's payload and gates the firing.
+
+Six checks, none failing.

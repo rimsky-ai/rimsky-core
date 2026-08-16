@@ -1,28 +1,28 @@
 ---
 audit: subscriber-lineage-receiver
 artifact: story:subscriber-lineage-receiver
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:25:00Z
+audited: 2026-08-16T04:55:31Z
 ---
 
-# Run lineage reaches an external receiver as OpenLineage events
+# The bundled lineage subscriber delivers run lineage to an external receiver
 
-Supported. The bundled lineage subscriber came up on environment configuration
-alone against a Postgres-backed deployment and delivered to a receiver that
-records what it takes; no subscriber code was written in the run. One workflow
-produced four deliveries, all to the receiver's OpenLineage route: one per graph
-node, one for the message that woke the graph, and one for the claim the
-producing node committed. All four are run events carrying an event type, an
-event time, a producer URI, a schema URL, a run id and a job name; all four carry
-the configured namespace and the configured bearer credential. The run DAG and
-the data lineage both travel: the node events carry rimsky run facets naming
-their frame, the consuming node's event carries the substitution reference naming
-the upstream run its input came from, the committed claim appears as an output
-dataset in the claim producer's namespace, and the held claim appears as an input
-dataset on the producing node. Restarting the subscriber and running a second
-workflow added four more deliveries with no run id and job name repeated, so the
-restart resumed at the cursor. One limit the story does not state: the subscriber
-refuses to start against anything but a Postgres DSN, so a SQLite-backed
-deployment has no export path.
+Supported. Driven through the public surface on a private network carrying a
+Postgres database, a released-image orchestrator, the released OpenLineage
+subscriber configured only by environment variables, and a receiver that records
+every delivery it takes. Eleven checks, none failing. The receiver held nothing
+before the subscriber started, and one workflow run produced four deliveries:
+one per graph node, one for the message that woke the graph, and one for the
+claim the producing node committed. Every delivery was a well-formed run event
+with event type, event time, producer URI, schema URL, run id and job name,
+carried the namespace the operator configured, and arrived with the configured
+bearer credential. The run DAG and the data lineage both surfaced: the node
+events carry rimsky run facets naming the frame, the consuming node's event
+carries the substitution reference naming the upstream run its input came from,
+the committed claim appears as an output dataset in the producer's namespace and
+the same producer as an input dataset on the producing node's event. Restarting
+the subscriber and running a second workflow added four more deliveries, eight
+distinct in total, so a restart resumes at the cursor rather than replaying —
+and nothing in the run required writing a subscriber.

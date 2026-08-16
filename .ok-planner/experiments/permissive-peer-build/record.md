@@ -13,7 +13,7 @@ run materialises). It implements the executor protocol and its observability
 capability probe. The run builds it, inspects its dependency graph, then brings
 up a `rimsky-all-in-one` stack from the tree's own image tag with the peer
 declared as an ordinary gRPC executor and the peer itself running in an alpine
-container on the same docker network.
+container on the same docker network. Re-run unchanged at this tree.
 
 ## What was observed
 

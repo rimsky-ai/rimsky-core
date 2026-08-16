@@ -14,7 +14,7 @@ plaintext peer — one with the transport setting off, one with it required — 
 the setting is the only difference between them. The second stack declares a
 claim producer at the same plaintext peer with the setting required. The third
 stack runs under `peer_auth: mtls` with a second copy of the peer that enrolls
-and serves mutually-authenticated TLS.
+and serves mutually-authenticated TLS. Re-run unchanged at this tree.
 
 ## What was observed
 

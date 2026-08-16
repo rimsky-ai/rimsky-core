@@ -42,4 +42,4 @@ ListVersions verb. What that call returned here was empty, because this peer
 records versions against the sub-claim handles rather than the parent the asset
 route names; that is this peer's data model, not something the route decides.
 
-Eighteen checks, none failing.
+Seventeen checks, none failing.

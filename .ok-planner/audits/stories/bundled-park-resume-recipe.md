@@ -1,23 +1,26 @@
 ---
 audit: bundled-park-resume-recipe
 artifact: story:bundled-park-resume-recipe
-determination: unsupported
-compliance: compliant
+text: compliant
+implementation: unsupported
 commit: PENDING
-audited: 2026-08-10T07:30:00Z
+audited: 2026-08-16T05:10:09Z
 ---
 
-# Park-then-resume runs, but nothing ships that an evaluator can run
+# No shipped recipe drives park-then-resume, though the behaviour itself works
 
-Unsupported. The story promises a recipe an operator can copy and run; the tree
-ships none. Of the 102 committed runnable files outside the planner estate — every
-`.sh`, `.py`, `.md`, `.yml` and `.yaml` file the repository tracks — not one is a
-script that drives a node through a park and its resumed completion. Eight
-mention both parking and resuming, and all eight are prose: two service READMEs
-and six release notes. The README, which does carry a first-steps walkthrough
-naming a runnable onboarding template, names no park recipe. What the recipe
-would demonstrate does work: driven by hand against a zero-config all-in-one
-deployment and a rate-limited endpoint, the bundled outbound-HTTP executor parked
-the node on a 429, the park resumed on its own retry schedule, and the same run
-reached the endpoint again and settled successfully. The gap is the shipped
-artifact, not the behaviour.
+Unsupported. The story promises an evaluator something to copy and run; the tree
+ships no such thing. Every committed file outside the planner estate was
+enumerated — 1917 of them, 102 of them runnable scripts or manifests — and none
+drives a node through a park and its resume. The demos the tree does ship are the
+onboarding, cascade-send, client-context, frame-origin-audit and
+host-agent-control-plane walkthroughs, none of which parks anything; the README's
+first-steps walkthrough is the onboarding demo; there is no docs, examples or
+recipes directory, no build target that runs one, and the bundled HTTP-node
+executor's README describes parking in prose without a runnable sequence. The
+failure is the recipe, not the behaviour: the run drove park-then-resume itself
+on the bundled stack, where the HTTP-node executor parked a worker on a real
+rate-limited answer tagged as such, the park resumed on its own schedule, and the
+same run reached the upstream a second time and succeeded. An evaluator can
+therefore reach the behaviour only by authoring the template, a rate-limited
+endpoint and the wiring themselves, which is what the story exists to spare them.

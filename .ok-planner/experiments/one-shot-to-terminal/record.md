@@ -25,4 +25,6 @@ Afterwards the control-api port the run had allocated (read out of its own
 transcript) refused connections, so the invocation left nothing behind for the
 operator to tear down.
 
+Six checks, none failing.
+
 RESULT: PASS

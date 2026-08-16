@@ -18,11 +18,9 @@ executor.
 
 ## What was observed
 
-Every executor the deployment knows about answers at an `inproc://` address;
-none is reachable at a service address. The template registered, deployed and
-ran: the loop-counter emitted `count: 1`, the send node put one `util/ping`
-message in the ledger, and the passthrough receiver carried the message body
-into its own output attributes as `got: 1`. Each of the three kinds started
-exactly once and settled `terminal/success`.
-
-Eleven checks, none failing.
+Eleven checks, none failing. Every executor the deployment knows about answers
+at an `inproc://` address; none is reachable at a service address. The template
+registered, deployed and ran: the loop-counter emitted `count: 1`, the send node
+put one `util/ping` message in the ledger, and the passthrough receiver carried
+the message body into its own output attributes as `got: 1`. Each of the three
+kinds started exactly once and settled `terminal/success`.

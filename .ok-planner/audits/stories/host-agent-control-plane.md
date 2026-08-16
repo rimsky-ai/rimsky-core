@@ -1,32 +1,27 @@
 ---
 audit: host-agent-control-plane
 artifact: story:host-agent-control-plane
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:05:00Z
 ---
 
-# Starting, inspecting and stopping the agent, with its children reaped
+# An operator starts, inspects and stops the host-agent, and its children are reaped
 
-Supported, measured against a containerised deployment and its proxy with the
-agent running on the host. All three verbs answered: status reported the agent
-not running before it started; start returned 0 naming the pid and the proxy it
-connected to; status then reported connected, the same proxy, the time since
-connecting, and no spawned children. With one dispatch in flight, status listed
-exactly one child naming its run-scope, the binding path the operator declared
-and its spawn id, and that child was a live process on the machine. Stop
-returned 0, the child process was gone afterwards, no process anywhere still
-held the bound binary open, status reported not running again, and a second stop
-returned 0 rather than an error.
+Supported. All three lifecycle acts the story names were driven against a
+deployment with an agent proxy. Before starting, status reported the agent not
+running; starting it returned success and named the pid it started and the proxy
+it connected to; status then reported it connected, named that same proxy, gave
+the time since connecting, and reported no spawned children. An instance then
+bound a local binary and was woken, and status listed exactly one spawned child
+naming the run-scope it belongs to, the binding path the operator declared, and
+the spawn id, with the child process alive under the pid it had written.
+Stopping the agent returned success and reported it stopped; the child process
+was gone afterwards and no process anywhere on the machine still held the bound
+binary open; status reported not running again, and stopping an
+already-stopped agent returned success rather than an error.
 
 ## Compliance
 
-The story authoring rules put the delivery surface in a decision, not in the
-story. This body names it twice: "through the host-agent control-plane CLI
-surface" in the capability, and "from the same CLI that drives the rimsky stack"
-as the whole benefit. The compliant text states the need without the surface —
-"As an operator running rimsky-dispatched workflows on a dev machine, I can
-start the host-agent locally, check whether it is connected and what it is
-running, and stop it with its spawned children reaped, so that I can see and end
-the agent's work without hunting for processes it left behind."
+The body names the delivery surface, which belongs to a decision: "through the host-agent control-plane CLI surface", and the benefit clause is about that surface rather than the need ("so that I manage the agent's lifecycle from the same CLI that drives the rimsky stack"); compliant text would say the operator can start the agent, see whether it is connected and what it is running, and stop it so that its children are reaped, so that they can bring the agent up and down as they work without leaving orphaned processes behind.

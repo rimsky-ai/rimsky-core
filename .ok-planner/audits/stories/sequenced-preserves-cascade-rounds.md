@@ -1,27 +1,27 @@
 ---
 audit: sequenced-preserves-cascade-rounds
 artifact: story:sequenced-preserves-cascade-rounds
-determination: unsupported
-compliance: compliant
+text: compliant
+implementation: unsupported
 commit: PENDING
-audited: 2026-08-10T05:30:00Z
+audited: 2026-08-16T04:43:46Z
 ---
 
-# Sequenced mode delivers every round, but not always in arrival order
+# Sequenced mode dispatches every cascade round, but not always in arrival order
 
-Unsupported. The story promises that M cascade rounds produce M dispatches in
-arrival order. Two ways a sequenced receiver can fall behind its sender were
-driven through the control API, and the promise holds in one and fails in the
-other. Where the receiver's first round dispatched before the later rounds
-arrived — the receiver held at a pause-mode breakpoint while the sender was
-invalidated twice — the receiver dispatched three times seeing 1, then 2, then 3.
-Where the sender emitted its rounds back to back inside one frame, which is what
-a self-subscribing sender does and which gates the receiver for the whole burst,
-the receiver dispatched four times seeing 4, then 1, then 2, then 3: the newest
-round ran first and the earlier rounds followed in order. The count is right and
-each dispatch sees the inputs of its own round in both ways, so nothing is
-coalesced away; the ordering clause is the part a run contradicts. The
-out-of-order result is reproducible and scales with the round count — 3, 1, 2 at
-three rounds and 5, 1, 2, 3, 4 at five. An accumulator or a rapid-flip detector,
-the workloads the story names, consumes the rounds in the wrong order in that
-shape.
+Unsupported: the ordering half of the promise fails in one of the two shapes a
+sequenced receiver can fall behind in, driven through the control API of an
+all-in-one deployment. Where the receiver's own round is held at a pause-mode
+breakpoint while two further rounds queue behind it, three rounds produced three
+dispatches seeing one, two, then three, in arrival order. Where the sender
+instead bursts several rounds back to back inside one frame while the receiver
+is gated by the sender's in-flight run, every round still dispatched and every
+round's own inputs still reached the executor — nothing was coalesced — but the
+executor observed the newest round first and the earlier rounds after it, in the
+sequence four, one, two, three. Run rows read through the observability surface
+show why from the user's side: the earlier rounds sit queued while the last
+round's row is created ready to dispatch and overtakes them. The behavior is
+deterministic and scales with the burst, giving three-one-two at three rounds
+and five-one-two-three-four at five. A workload the story names as its reason —
+an audit trail, an accumulator, rapid-flip detection — reads a sequence that
+never happened.

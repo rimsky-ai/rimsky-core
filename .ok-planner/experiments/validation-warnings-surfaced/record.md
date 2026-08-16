@@ -34,7 +34,7 @@ the catalog held the same count before and after.
 its verdict to `ok: false`. `rimsky template register --warnings-as-errors`
 refused and printed the advisory.
 
-`rimsky template register` without the flag printed only
+`rimsky template register` without the flag still printed only
 `{"template_id": "sha256-…"}` under `-o json`. The HTTP response it was reading
 carried `validation_warnings`; the CLI's own projection of a successful
 registration drops them.

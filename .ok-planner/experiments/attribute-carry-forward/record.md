@@ -32,10 +32,25 @@ The fan-out opened three partitions keyed `p1`, `p2`, `p3`, and every partition'
 dispatch emitted count 1. No partition continued a sibling's count, so each
 partition run-scope also began at the schema's defaults.
 
-The story names three kinds of new run-scope; this experiment measures two of
-them (a fan-out partition and a new frame). The third, a sub-graph invocation,
-is not measured here: every probe that put a bundled node kind inside a
-delegated sub-graph left the sub-graph's child run enqueued and never
-dispatched, so no such probe reached a state that could be read either way.
-
 Five checks, none failing.
+
+## way-subgraph-scope.py
+
+### What it runs against
+
+The story names three kinds of new run-scope, and the third — a sub-graph
+invocation — needs its own way. This one drives two templates that differ in a
+single key. The first is a sub-graph whose internal node names an executor. The
+second is the same template with that node changed to the bundled stateful kind,
+so the count it emits would read out what its incoming bag held.
+
+### What was observed
+
+The first template settles: the caller dispatches, the internal node runs, the
+exit runs, and the frame completes. The second does not. The internal node's run
+is created and sits queued; it is never dispatched, no count is ever emitted, and
+the frame stays running indefinitely. The story's third run-scope kind therefore
+has no measurement — not because the reset was observed to fail, but because no
+run reaches a state that would show the incoming bag either way.
+
+Four checks, three failing.

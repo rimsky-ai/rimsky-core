@@ -286,6 +286,17 @@ def main():
     show(tl)
     check("the woken work settled", any(r["kind"] == "terminal/success" for r in tl if r["node"] == "worker"),
           json.dumps(deltas(tl, "worker")))
+    parked_run = parked[0]["id"]
+    started = [r["payload"]["dispatch_id"] for r in tl
+               if r["node"] == "worker" and r["kind"] == "work_started"]
+    check("the work that ran after the wake is the parked run itself, not a replacement",
+          len(started) > 1 and started[1] == parked_run,
+          "parked run %s, dispatches %s" % (parked_run, json.dumps(started)))
+    completed = [r["payload"].get("dispatch_id") for r in tl
+                 if r["node"] == "worker" and r["kind"] == "work_completed"]
+    check("the parked run settled rather than being discarded",
+          parked_run in completed,
+          "parked run %s, runs that completed %s" % (parked_run, json.dumps(completed)))
     finish()
 
 

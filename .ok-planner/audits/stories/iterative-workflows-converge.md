@@ -1,22 +1,22 @@
 ---
 audit: iterative-workflows-converge
 artifact: story:iterative-workflows-converge
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T04:47:08Z
 ---
 
-# Cycles declared in the template, terminating on a declared predicate
+# Declared graph cycles iterate, stay one unit of work, and stop on a declared condition
 
-Supported. Both graph shapes the story names ran to rest on a zero-config
-all-in-one deployment. A node subscribed to its own success signal under a
-predicate over its own output ran three rounds and stopped; a two-node cycle
-whose back edge carried the same predicate ran three rounds and stopped. In
-both templates the iterating node's round cap was set to 50, far above the
-three rounds observed, so the declared predicate and not a count ceiling is
-what terminated each cycle. A downstream node subscribed under the complementary
-predicate ran exactly once on the converged output in both templates, so
-iteration composes with the rest of the graph. Each whole cycle is one frame in
-the observability record, in state completed, and the two-node instance came to
-rest with no live node runs.
+Supported: a run through the control API of an all-in-one deployment drove both
+cyclic shapes the story names. A node re-running against its own output iterated
+three rounds and stopped, and a two-node cycle walking back to its start did the
+same with the back-edge node running once per round below the condition. In both
+legs the round ceiling available to the author was set far above the rounds
+actually run, so what stopped each cycle was the stop condition declared on the
+subscription and not a count. The converged output left each cycle for a
+downstream node, which ran exactly once, so iteration composes with the rest of
+the graph; each whole iteration reads back through observability as a single
+completed frame; and the instance came to rest with no live runs. Nine checks,
+none failing.

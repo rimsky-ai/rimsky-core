@@ -21,9 +21,9 @@ before and after.
 
 The same file registered, deployed and instantiated on both deployments, and the
 run verb printed an instance id in each. The watch verb returned 0 in each, and
-the verifier node reported one fresh run on each. The file's hash was unchanged
-after both runs, and both deployments content-addressed it to the same template
-hash, `sha256-9b644a3f…`.
+every node reported one fresh run on each. The file's hash was unchanged after
+both runs, and both deployments content-addressed it to the same template hash,
+`sha256-9b644a3f…`.
 
 Nine checks, none failing.
 

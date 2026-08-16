@@ -31,3 +31,5 @@ through the same grammar, so the value crossed a frame boundary in a message
 body.
 
 Seven checks, none failing.
+
+RESULT: PASS

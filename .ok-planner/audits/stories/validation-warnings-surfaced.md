@@ -1,33 +1,30 @@
 ---
 audit: validation-warnings-surfaced
 artifact: story:validation-warnings-surfaced
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T04:42:46Z
 ---
 
-# Static advisories carried back to the template author and promotable
+# A template author sees the static validator's advisories, and can make them blocking
 
-Supported. One template tripping a single static advisory and nothing else was
-put through both responses the story names, with and without the promotion
-flag, against a zero-config all-in-one deployment. The validation response
-carried the advisory and answered ok; with the flag it answered not-ok and
-still named the advisory. The registration response carried the advisory and
-registered the template; with the flag it refused with the advisory named, the
-flag echoed, and no template row persisted. The command-line lint verb printed
-the advisory and flipped its verdict under the flag, and the register verb
-refused under the flag with the advisory printed. One narrowing: the register
-verb's own rendering of a successful registration prints the template id alone,
-so a template author who registers from the command line and is not refused
-sees no advisory, while the response that verb read carries it.
+Supported. Driven through the public surface against a container of the
+released all-in-one image with a template that trips exactly one advisory — an
+error-class policy naming a class no executor and no producer declares — and
+nothing else. Five legs, thirteen checks, none failing: validation answered ok
+and carried the advisory; validation with the promotion flag answered not-ok
+and still named the advisory that flipped it; registration succeeded and
+carried the advisory; registration with the promotion flag was rejected, echoed
+the flag, named the advisory and persisted no template, with the catalog count
+unchanged either side. The same two paths through the operator CLI printed the
+advisory and flipped their verdict under the flag. One gap observed: a
+successful registration through the CLI without the flag prints only the
+template id, dropping the advisories the response it read carried — the author
+reaching for them through the lint path or the response itself still gets them.
 
 ## Compliance
 
-Two defects. The body names the delivery surface — the registration and
-validation responses — which is the decision's territory, not the story's. It
-also frames a change rather than a durable expectation: "the existing flag" and
-"advice the validator already computes" describe a gap being closed. Compliant
-text: "As a template author, I can see the advisories the validator computes
-about my template, and choose to have them refuse the template outright, so
-that I decide whether advice is worth acting on before I run anything."
+- The body prescribes mechanism — "promote them to errors with the existing flag" names a flag, an implementation choice decisions own, and "existing" is build-record language a durable story does not carry; the compliant capability is "make those advisories blocking".
+- The body names the delivery surface — "in the registration and validation responses" is where the product exposes the advisory, which belongs in decisions, not the story.
+- The benefit clause is framed on the implementation — "so advice the validator already computes reaches me" states what the product internally computes rather than what the author can then do; the compliant benefit is that the author fixes questionable declarations before running the template instead of discovering them at run time.

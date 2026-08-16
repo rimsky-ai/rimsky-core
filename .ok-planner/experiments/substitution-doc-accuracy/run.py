@@ -357,3 +357,4 @@ try:
     main()
 finally:
     teardown()
+finish()

@@ -21,7 +21,8 @@ NET=exp-diag-net
 STACK=exp-diag-stack
 PEER=exp-diag-peer
 PROD=exp-diag-producer
-PORT=${PORT:-19316}
+free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
+PORT=${PORT:-$(free_port)}
 WORK=$(mktemp -d)
 BASE="http://127.0.0.1:$PORT"
 
@@ -50,8 +51,9 @@ sed "s|RIMSKY_PROTOCOLS_PATH|$ROOT/lib/protocols|" "$WORK/peer/go.mod.tmpl" > "$
 rm "$WORK/peer/go.mod.tmpl"
 ARCH=$(docker info --format '{{.Architecture}}' | sed 's/aarch64/arm64/;s/x86_64/amd64/')
 ( cd "$WORK/peer" && GOWORK=off GOOS=linux GOARCH="$ARCH" CGO_ENABLED=0 GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off go build -o "$WORK/peer-linux" . ) || { note "peer build failed"; exit 1; }
-( cd "$ROOT" && go build -o "$WORK/rimsky" ./cmd/rimsky/ ) \
-  && check "the rimsky CLI builds" yes yes || check "the rimsky CLI builds" yes no
+CLI="$ROOT/bin/rimsky"
+[ -x "$CLI" ] && check "the released CLI binary is present" yes yes \
+  || check "the released CLI binary is present" yes no
 
 mkdir -p "$WORK/fsdata/notes" && printf 'content\n' > "$WORK/fsdata/notes/a.txt"
 cat > "$WORK/producer.yml" <<'YAML'
@@ -123,9 +125,9 @@ check "the roster's node is the claim holder" holder "$(body GET "/v1/nodes/$PAR
 check "the roster says when it parked and when it is due back" yes \
   "$(printf '%s' "$PARKED" | jq -r 'if (.[0].parked_at|length)>0 and (.[0].resume_at|length)>0 then "yes" else "no" end')"
 check "the CLI shows the same row" 1 \
-  "$("$WORK/rimsky" parked list --endpoint "$BASE" --instance "$IID" -o json | jq 'length')"
+  "$("$CLI" parked list --endpoint "$BASE" --instance "$IID" -o json | jq 'length')"
 check "the CLI names the same node" "$PARKED_ID" \
-  "$("$WORK/rimsky" parked list --endpoint "$BASE" --instance "$IID" -o json | jq -r '.[0].node_id')"
+  "$("$CLI" parked list --endpoint "$BASE" --instance "$IID" -o json | jq -r '.[0].node_id')"
 
 note
 note "== which frames the wedge is gripping =="

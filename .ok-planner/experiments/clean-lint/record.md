@@ -13,7 +13,7 @@ vendors at `.ok-plumbline/bin/plumbline` — the same binary the CI workflow poi
 `.ok-plumbline/config.json`, and then runs the same binary over three throwaway
 fixture trees it builds under a temporary directory, each carrying a copy of the
 repository's own lint configuration and one seeded file. It needs `node` on
-PATH and touches nothing in the repository.
+PATH and touches nothing in the repository. Re-run unchanged at this tree.
 
 ## What was observed
 

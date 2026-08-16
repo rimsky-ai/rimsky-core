@@ -13,7 +13,7 @@ publisher endpoint, a `rimsky-sensor-cron` container holding its firing state in
 a Postgres container. The template declares one message type, one node
 subscribed to it, and one publisher of kind `cron` whose config is the
 expression `* * * * *`. Everything is driven over the control API; `run.py`
-creates the network and containers and removes them.
+creates the network and containers and removes them. Re-run unchanged at this tree.
 
 ## What was observed
 

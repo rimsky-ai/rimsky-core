@@ -1,21 +1,25 @@
 ---
 audit: template-error-policy
 artifact: story:template-error-policy
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:20:00Z
+audited: 2026-08-16T05:06:40Z
+checked: 4
+unaccounted: 0
 ---
 
-# The four declared error-routing actions are honoured at the failing dispatch
+# All four declared routing actions are honoured at the error site
 
-Supported. Against a zero-config all-in-one deployment, all 4 actions of the
-vocabulary the story names were declared on the same node against the same
-deterministic executor error class and each was honoured: `pass` settled the run
-fresh while the settling signal still named the error class, `give_up` settled it
-failed, `retry` under a declared cap of two emitted one retry signal per attempt,
-took no third, and settled the run failed once the budget was spent, and
-`release_and_requeue` emitted a release-and-requeue signal per failure and put
-the run back for another dispatch without settling it either way. The measurement
-covers the executor-emitted error site, which is where all four actions are
-reachable from a template alone.
+Supported, with the population enumerated: all four actions the story names were
+driven and honoured, and none is unaccounted for. Measured against a container of
+the released all-in-one image on four templates that differ only in the routing
+action declared for one deterministic executor failure, so the action is the only
+variable. Ten checks, none failing. Under pass the run settled fresh while its
+settling signal still named the error class that was passed. Under give-up the
+run settled failed. Under retry with a declared cap of two, exactly two retries
+were taken and signalled, no third was, and the run settled failed once the budget
+was spent. Under release-and-requeue each failure emitted its own signal and the
+run was dispatched again, settling neither fresh nor failed — it went back for
+another attempt, which is what the action names. No handler code was written for
+any of the four.

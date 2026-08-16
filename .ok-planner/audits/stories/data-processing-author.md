@@ -1,25 +1,38 @@
 ---
 audit: data-processing-author
 artifact: story:data-processing-author
-determination: supported
-compliance: compliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:45:00Z
+audited: 2026-08-16T05:26:27Z
 ---
 
-# The typed-data mix-in is implementable and rimsky drives its whole lifecycle
+# A third-party producer carrying the typed-data mix-in, proved and then driven
 
-Supported. A third-party claim producer built against the protocols module alone
-advertised data_processing beside claim_producer on one config entry, and both
-halves of the story held. As written, the shipped conformance verbs drove every
-verb the story names and passed: all ten data-processing checks — capabilities,
-begin-then-commit per materialization, begin idempotency, the three abandon
-behaviours, and the list-versions, list-partitions and get-version-schema
-smokes — plus the claim-producer suite. As driven, two fan-out nodes made rimsky
-split the claim twice and stage one candidate per partition, five in all across
-a three-way and a two-way split, keyed by the partition keys the producer itself
-returned; the successful fan-out's three candidates were committed, the failing
-fan-out's two were abandoned, none was left staged, and exactly three versions
-remained, one per committed partition. Reading the fan-out's claim as an asset
-routed to the producer's own ListVersions verb, through both the control API and
-the CLI.
+Supported. A claim producer written for this audit as its own Go module,
+depending on the published protocols module alone, advertises the data-processing
+protocol alongside the claim-producer protocol, and all three ways the story
+names were taken against a stack and CLI from this tree. As written: the shipped
+conformance verb for data-processing passed all ten of its checks — capabilities,
+begin-then-commit, begin idempotency, the three abandon checks, the three listing
+smokes and concurrent writes — and the claim-producer conformance verb passed
+alongside it. As driven: two fan-out nodes over that producer made rimsky split
+twice and open one staging candidate per partition, five in all, keyed by the
+partition names the producer itself returned; the fan-out whose children settled
+had its three candidates committed, the fan-out whose children errored had its
+two abandoned, nothing was left staged, and exactly three versions existed
+afterwards, one per committed partition. Reading version history goes through the
+author's own listing surface: the fan-out's claim appears as an asset, and both
+the control API and the CLI asset-versions verb call the producer's own
+list-versions verb, so what a reader gets back is whatever the author's data
+model holds.
+
+## Compliance
+
+- The benefit clause restates the capability rather than saying why the author
+  wants it: after a capability clause that already names per-partition staging,
+  finalization, garbage collection and version-history surfacing, "so that I
+  support typed-data version lifecycle with partition-aware staging" adds nothing.
+  The compliant text names what the author gains — that readers of their store
+  see a partition's data only once it is complete, and a failed write leaves
+  nothing behind.

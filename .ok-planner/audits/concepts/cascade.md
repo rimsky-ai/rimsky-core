@@ -1,0 +1,12 @@
+---
+audit: cascade
+artifact: concept:cascade
+text: compliant
+implementation: supported
+commit: PENDING
+audited: 2026-08-16T04:46:57Z
+---
+
+# The cascade engine: one walk, two node-level behaviors, and its eight invariants
+
+Supported. The walk fires inline inside the settling terminal's own transaction and carries the sender's frame throughout, never opening a new one; the fallthrough behavior is detected per node by an unset executor and advanced by the scheduler tick's pure-cascade sweep under its own transition reason. The firing gate is a single predicate over the signal's top-level kind: it admits the terminal and attribute kinds and rejects everything else before any edge lookup runs, and the subscribable pattern set is computed from that same predicate rather than maintained separately, so the concept's claim that one predicate is the sole authority for both surfaces is structurally true rather than merely coincident; template registration runs the derived check on every declared subscription, and the transient kinds — including an explicit park subscription — are rejected there. The walker consults the two edge maps the concept names, the subscription map keyed by sender node-type and the upstream-refresh map keyed by receiver node-type, both feeding wait-set rows of one shape, with runtime-injected structural-root edges stored under the empty sender key and sub-graph internals excluded from that injection. A matching edge whose filter passes inserts a wait-set row unconditionally; the receiver run is resolved through the accumulate-or-queue gate exactly as stated — same sender run means accumulate, sender node absent from the pending's wait-set means accumulate, sender node already present from a different run means a new pending — and in-flight runs are never mutated except for the one parked carve-out, which wakes the parked receiver in the walk's transaction before the new pending is resolved. The receiver's run scope is always the sender's, leaving the two documented bridges (sub-graph entry, fan-out settlement) as the only crossings. Held terminals fire a member-filtered walk immediately and defer the non-member walk to the auto-terminal handler, which emits success on commit and the abandoned error class on abandon. Scenario suites cover the deferral during flight, the parked wake, the two backedge shapes, the held commit and abandon walks, the co-member gate skip, and the upstream-refresh pull.

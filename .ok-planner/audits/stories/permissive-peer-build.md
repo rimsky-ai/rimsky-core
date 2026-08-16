@@ -1,22 +1,24 @@
 ---
 audit: permissive-peer-build
 artifact: story:permissive-peer-build
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:45:00Z
+audited: 2026-08-16T05:25:00Z
 ---
 
-# A peer builds, links and runs without touching copyleft code
+# A third-party peer builds against the permissive module alone and exchanges verbs with a real stack
 
-Supported. A complete third-party executor was written as its own Go module
-requiring only the protocols module, and it built for the host and cross-built
-for the stack's platform. Its module graph names exactly one rimsky module — the
-protocols one — and every rimsky package it links is under that module; all 105
-Go files in that module declare Apache-2.0, while the root module it does not
-depend on declares AGPL, so the boundary the story rests on is the one the build
-respects. Run against a real stack, it exchanged the executor protocol's verbs in
-both directions: the discovery probe's capability call returned the peer's own
-declared error class, and two dispatches settled — one node successful with the
-peer's attribute writeback recorded, one node failed carrying the peer's own
-error class.
+Supported. A complete third-party service — its own module, requiring exactly
+one rimsky module — was built for the host and cross-built for the stack's
+platform, and its dependency graph was inspected: the one rimsky module it names
+is the protocols module, and every rimsky package it links is under that module.
+The licence boundary the story rests on was counted rather than assumed: all 105
+Go files in the protocols module declare the permissive licence, and the root
+module the peer does not depend on declares the copyleft one. Against a running
+stack that declared the peer as an ordinary gRPC executor, the protocol's verbs
+were exchanged in both directions: the discovery probe's capabilities call
+returned the peer's own declared error class, and two dispatches settled — one
+node fresh carrying the peer's success delta on the record, one node failed
+carrying the peer's own error class — with the peer's container log showing both
+executions.

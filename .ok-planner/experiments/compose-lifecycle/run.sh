@@ -17,7 +17,8 @@ set -u
 
 RIMSKY_BIN=${RIMSKY_BIN:?set RIMSKY_BIN to the rimsky CLI binary}
 TAG=${RIMSKY_IMAGE_TAG:?set RIMSKY_IMAGE_TAG}
-PORT=${PORT:-18122}
+free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
+PORT=${PORT:-$(free_port)}
 NAME=rimsky-exp-compose-lifecycle
 BASE="http://127.0.0.1:$PORT"
 PROJECT=lifecycle-demo

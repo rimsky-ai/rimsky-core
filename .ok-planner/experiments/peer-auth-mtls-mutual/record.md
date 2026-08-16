@@ -13,7 +13,7 @@ environment, and a bundled `rimsky-executor-http-node` brought up with
 `RIMSKY_PEER_AUTH=mtls` and the service key. The second is the same image on the
 default `none` with a plaintext peer. Handshakes are probed from the host with
 openssl; the deployment leaf used as a client certificate comes from the ruled
-enrollment route.
+enrollment route. Re-run unchanged at this tree.
 
 ## What was observed
 

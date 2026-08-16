@@ -156,7 +156,14 @@ func (p *producer) closeClaim(verb string, claimID string, scope, addr []byte) e
 	p.closed[claimID] = true
 	p.mu.Unlock()
 
-	p.record(call{Verb: verb, ClaimID: claimID, Selector: oc.selector, Scope: string(scope), Address: string(addr)})
+	sel := oc.selector
+	if sel == "" {
+		var decoded string
+		if err := json.Unmarshal(scope, &decoded); err == nil {
+			sel = decoded
+		}
+	}
+	p.record(call{Verb: verb, ClaimID: claimID, Selector: sel, Scope: string(scope), Address: string(addr)})
 
 	if p.nonIdempotent && alreadyClosed {
 		return status.Errorf(codes.FailedPrecondition, "%s: claim %s already terminal", verb, claimID)

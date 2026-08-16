@@ -23,9 +23,9 @@ settlement recalculates it.
 
 ## What was observed
 
-The plain agent node read a `dispatch_id` equal to the dispatch id rimsky
-recorded for that run, a non-empty `run_scope_id`, and a null
-`prior_dispatch_id` and `prior_dispatch_disposition`.
+Eight checks, none failing. The plain agent node read a `dispatch_id` equal to
+the dispatch id rimsky recorded for that run, a non-empty `run_scope_id`, and a
+null `prior_dispatch_id` and `prior_dispatch_disposition`.
 
 The blocking node's second dispatch read a non-null `prior_dispatch_id` and
 `prior_dispatch_disposition: stale_recovery`, and reported success on that
@@ -37,5 +37,3 @@ predecessor.
 
 Across the run the script observed three distinct dispositions — none,
 `stale_recovery` and `recalculate` — from the dispatch context alone.
-
-Eight checks, none failing.

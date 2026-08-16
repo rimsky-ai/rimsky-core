@@ -12,7 +12,7 @@ A private docker network carrying a `rimsky-all-in-one` orchestrator and a
 directory bind-mounted read-only. The template declares one message type, one
 node subscribed to it, and one publisher of kind `object-store` naming the
 bucket, the prefix `in/`, and a one-second poll interval. The run deposits files
-into the host directory. `run.py` builds and removes everything.
+into the host directory. `run.py` builds and removes everything. Re-run unchanged at this tree.
 
 ## What was observed
 

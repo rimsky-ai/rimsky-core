@@ -285,7 +285,8 @@ def drive(source_label, spec, want, params=None, message=None):
 
 
 def main():
-    boot_with_filesystem_producer(["data", "queue/job-a"])
+    boot_with_filesystem_producer(["data", "queue/job-a"],
+                                 extra_env={"EXP_FANOUT_KEY": "e"})
 
     upstream_items = [{"key": "u-1"}, {"key": "u-2"}, {"key": "u-3"}]
     drive("an upstream node attribute",
@@ -320,6 +321,13 @@ def main():
                                            "force_upstream_refresh": False}])]},
           ["m-1", "m-2", "m-3"],
           message=("batch/requested", {"items": [{"key": "m-1"}, {"key": "m-2"}, {"key": "m-3"}]}))
+
+    drive("a host-environment variable",
+          {"name": "exp-fanout-source-env", "version": "1",
+           "nodes": [fan_node('{"list":[{"key":"{{env.EXP_FANOUT_KEY}}-1"},'
+                              '{"key":"{{env.EXP_FANOUT_KEY}}-2"}]}')]},
+          ["e-1", "e-2"])
+    finish()
 
 
 try:

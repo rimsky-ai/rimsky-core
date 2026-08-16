@@ -7,12 +7,12 @@ commit: PENDING
 
 ## What it ran against
 
-A `rimsky-all-in-one` stack from the tree's own image tag, driven by a plain
-JSON-RPC client speaking the control API's MCP endpoint. The run mints the
-deployment's first admin key with `rimsky auth init`, then two narrower keys
-through the key-creation route: one holding every read, one holding a single
-grant no route in the sweep needs. `routes.tsv` carries the 82 ruled public
-control-API routes with a concrete request for each.
+A `rimsky-all-in-one` stack from the tree's own image tag, on a port picked free
+at start, driven by a plain JSON-RPC client speaking the control API's MCP
+endpoint. The run mints the deployment's first admin key with `rimsky auth init`,
+then two narrower keys through the key-creation route: one holding every read,
+one holding a single grant no route in the sweep needs. `routes.tsv` carries the
+85 ruled public control-API routes with a concrete request for each.
 
 The deployment's own audit log is the instrument for both mappings. Every
 gated request is recorded with the action it resolved to, the request path, the
@@ -23,7 +23,7 @@ from the product.
 
 ## What was observed
 
-Driving all 82 ruled routes over plain HTTP resolved them to 44 distinct gated
+Driving all 85 ruled routes over plain HTTP resolved them to 44 distinct gated
 actions. Each of the 44 was refused (401) without a token and refused (403)
 with the unrelated-grant key, so all 44 are permissioned. The three routes that
 answer without a permission — the liveness probe, the identity echo, and the CA
@@ -51,5 +51,7 @@ tool was refused — the same key getting 403 from the corresponding HTTP route.
 The deployment attributed the read-only key's MCP work to that key by name and
 id. Revoking the key ended its MCP session-opening with 401, identically to the
 HTTP route. An unknown tool name was refused rather than dispatched.
+
+Forty-six checks, none failing.
 
 RESULT: PASS

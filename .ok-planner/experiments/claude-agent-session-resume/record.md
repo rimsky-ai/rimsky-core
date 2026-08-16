@@ -25,14 +25,12 @@ configured the same way as the first.
 
 ## What was observed
 
-The main-graph agent node ran three times inside one frame, reporting turns 1,
-2 and 3. The first dispatch was spawned fresh; each later dispatch was spawned
-resuming the immediately prior dispatch's session id, and all three reported the
-name the first turn established. All three dispatches carried the same
-`run_scope_id`.
+Nine checks, none failing. The main-graph agent node ran three times inside one
+frame, reporting turns 1, 2 and 3. The first dispatch was spawned fresh; each
+later dispatch was spawned resuming the immediately prior dispatch's session id,
+and all three reported the name the first turn established. All three dispatches
+carried the same `run_scope_id`.
 
 The child graph's agent node ran once, in a `run_scope_id` different from the
 parent's. It was spawned fresh rather than resuming the parent's session, and
 its conversation carried its own memory rather than the parent's.
-
-Nine checks, none failing.

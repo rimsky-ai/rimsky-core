@@ -18,15 +18,13 @@ the abbreviated spelling, once with a deliberately non-canonical selector.
 
 ## What was observed
 
-With the canonical spelling `{{claim.<alias>.claim_scope}}` the node acquired,
-dispatched and settled carrying `data/inbox` — byte for byte the
-`claim_scope_data` the claim-handle ledger recorded for that live claim. With
-the selector written non-canonically as `./data/inbox/`, the directive still
-resolved to `data/inbox`, so the value follows the producer's canonical claim
-scope rather than the template's selector text. Registering the same template
-with the abbreviated `{{claim.<alias>.scope}}` was refused with HTTP 400 and a
-validation error naming the offending directive, the attribute path it sits on,
-and the three second segments the grammar admits; re-registering the canonical
-form on the identical shape succeeded.
-
-Six checks, none failing.
+Six checks, none failing. With the canonical spelling
+`{{claim.<alias>.claim_scope}}` the node acquired, dispatched and settled
+carrying `data/inbox` — byte for byte the `claim_scope_data` the claim-handle
+ledger recorded for that live claim. With the selector written non-canonically
+as `./data/inbox/`, the directive still resolved to `data/inbox`, so the value
+follows the producer's canonical claim scope rather than the template's selector
+text. Registering the same template with the abbreviated `{{claim.<alias>.scope}}`
+was refused with HTTP 400 and a validation error naming the offending directive,
+the attribute path it sits on, and the three second segments the grammar admits;
+re-registering the canonical form on the identical shape succeeded.

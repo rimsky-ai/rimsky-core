@@ -1,0 +1,12 @@
+---
+audit: cancel-siblings
+artifact: concept:cancel-siblings
+text: compliant
+implementation: supported
+commit: PENDING
+audited: 2026-08-16T05:09:41Z
+---
+
+# Proactive sibling cancellation under strict aggregation, and its supervisor scope
+
+Supported; all eight invariants check out. The walk is intrinsic to strict rather than configurable: the child-settlement path fires it on any abandoning child outcome, natural or forced, and only after reading the parent's snapshotted aggregation policy and finding it strict — a threshold policy, including one set to the full child count, never reaches the walker, and a scenario proves the surviving siblings under that policy keep running and commit. The policy is snapshotted onto the parent handle at sub-claim acquisition time, claimant-guarded like the parent's other field writes. Ordering matches the first invariant exactly: the triggering child's own producer verb is enqueued and its handle promoted first, then the parent's outcome counter is bumped, then the sibling walk runs, and only then does the settlement path re-read the parent and consider the parent's own resolution. Each sibling is force-abandoned through the same terminal-resolution entry point with a distinct sibling-cancel outcome, so the recursion re-runs the standard chain — producer verb, lineage write, descendant cancel, promotion — and the descendant walk fires inside that recursive frame before the sibling's own row is promoted or, under the ownership-bail source, deleted, bounding the recursion by claim-tree depth alone. Every candidate row is taken under a locking select held for the recursive call. The three skip classes are all present and in the concept's own terms: non-active rows are skipped both before and, defensively, after the lock; rows whose holder supervisor is not the acting one are filtered out; and the parent itself is gated on being active. Force-cancelled resolutions are written to the lineage ledger with a force-cancelled outcome and a cause that distinguishes a sibling cancel from a descendant cancel, asserted in both an end-to-end lineage scenario and the recursive-descendant runtime test. A malformed aggregation policy on the parent logs a warning and is treated as non-strict, with a test named for that fallback. The multi-supervisor scope is the claimant filter itself, covered by a test that seeds siblings under a second supervisor and asserts the walker leaves them alone.

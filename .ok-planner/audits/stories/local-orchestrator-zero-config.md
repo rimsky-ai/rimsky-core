@@ -1,20 +1,24 @@
 ---
 audit: local-orchestrator-zero-config
 artifact: story:local-orchestrator-zero-config
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:25:00Z
+audited: 2026-08-16T04:50:41Z
 ---
 
-# An ad-hoc template run with one binary, one command, and no configuration
+# Ad-hoc template run from one binary and one command, with no standing infrastructure
 
-Supported. Two `rimsky run <template>` invocations under `env -i` with an empty
-home directory and no docker involved each booted an in-process stack against a
-fresh local database and drove the template to terminal: the clean case exited 0
-with every node at `terminal/success`, and the case whose rows violate the
-declared check exited 1 with the node at
-`terminal/error/verifier/check_failed/no_nulls`. That error class is the bundled
-shape-check service's own, produced by its own check logic, so the run exercised
-a real bundled service rather than a stub; of the three credential-free bundled
-executors the boot registers in-process, the template named one and used it.
+Supported: the CLI binary alone drives an ad-hoc template to terminal with
+nothing else running. Both template cases were run in a deliberately hostile
+environment for the claim — a scrubbed process environment with no rimsky
+variables, an empty home directory so no stored configuration or endpoint could
+resolve, and a fresh working directory — with no docker, no compose stack, and no
+external executor process. Each run booted its own stack, migrated a fresh local
+database, registered and deployed the template, and drove an instance to terminal
+before returning. That the bundled services are real and not stubs was settled by
+a pass/fail pair rather than by a log line: the clean template exited zero with
+both nodes at success, while the same template with one null in the checked field
+exited non-zero with the node carrying the bundled verifier's own error class for
+its own check — an outcome only the service's own check logic produces. Six
+checks across two cases, none failing.

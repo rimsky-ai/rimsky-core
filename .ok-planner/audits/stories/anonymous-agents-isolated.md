@@ -1,21 +1,24 @@
 ---
 audit: anonymous-agents-isolated
 artifact: story:anonymous-agents-isolated
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:45:00Z
+audited: 2026-08-16T04:52:00Z
 ---
 
-# Two anonymous agents on one deployment stay each other's business
+# Two developers share an anonymous deployment without displacing or crossing each other
 
-Supported. Two host agents were started on one machine against one proxy on an
-anonymous-mode deployment, each with its own routing label and its own spawned
-service binary, and both stayed connected — the second registration displaced
-nothing. Each developer's instance was stamped with its own agent's routing
-identity, both dispatches settled successfully, and each carried the writeback of
-the binary its own agent spawned; each agent's log records exactly one spawn and
-exactly one execution, so neither saw the other's work. A third instance aimed at
+Supported. An anonymous-mode deployment with no keys minted, one agent proxy,
+and two host agents started on the machine with separate state directories,
+identities and routing labels. Both agents connected to the one proxy and both
+stayed connected — the second registration did not displace the first, and both
+reported connected before and after the work. Two instances were created, each
+naming one agent as its target, and the deployment stamped each instance with
+that agent's routing identity. Both dispatches settled fresh, each carrying the
+writeback of the binary its own agent spawned, and each agent's log showed
+exactly one spawn, one child announcing that agent's own label and exactly one
+execution, so neither agent saw the other's dispatch. A third instance aimed at
 an agent nobody was running settled failed with no writeback, and both agents'
 execution counts stayed at one, so an unroutable dispatch is not absorbed by
 somebody else's agent.

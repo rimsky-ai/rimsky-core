@@ -13,7 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 CLI="$ROOT/bin/rimsky"
 NAME="rimsky-exp-template-subscriptions"
-PORT="${PORT:-18107}"
+PORT="${PORT:-$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')}"
 E="http://127.0.0.1:$PORT"
 
 fails=0

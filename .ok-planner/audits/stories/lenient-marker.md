@@ -1,18 +1,21 @@
 ---
 audit: lenient-marker
 artifact: story:lenient-marker
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:39:46Z
 ---
 
-# A lenient substitution directive resolves to empty instead of failing the dispatch
+# A lenient substitution resolves a missing source to empty instead of failing the dispatch
 
-Supported. Against an all-in-one deployment driven through the control API, two
-templates differed only in the lenient marker on one directive, and in both the
-upstream the directive reads could not run. Without the marker the reading node
-settled `terminal/error/template_resolution_failed` and the error named the
-directive it could not resolve. With the marker the same node dispatched and
-settled successfully, its resolved bag carrying the marked property as the empty
-string and its own unrelated property at its declared value.
+Supported: a run through the control API of an all-in-one deployment registered
+two templates identical but for the lenient marker on one substitution directive.
+Each declares an optional upstream whose only subscription is to a message type
+nothing sends, so the receiver's read of it is a missing source at dispatch time.
+In both runs that upstream never ran. Without the marker the receiver settled on
+a template-resolution error naming the directive it could not resolve. With the
+marker the same receiver dispatched and settled successfully, its resolved bag
+carrying the marked property as the empty string and its own unrelated property
+at the declared value, so the leniency is scoped to the marked directive rather
+than the whole bag. Seven checks, none failing.

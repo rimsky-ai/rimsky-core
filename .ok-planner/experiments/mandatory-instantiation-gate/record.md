@@ -18,15 +18,17 @@ container.
 
 ## What was observed
 
-A template whose `checks` default is an empty array registered and deployed,
-and instance create was refused with HTTP 400: the body named the node
-(`nodes[shape].attributes`), the attribute (`/checks`) and the violated
-constraint (`minItems: minimum 1 items required, but found 0 items`) — a value
-constraint, not a shape mismatch. No instance was created. A two-executor
-template whose second service's `url` default is a number was likewise refused,
-naming `nodes[fetch].attributes`, `/url` and `expected string`. A template
-whose config satisfies both services' schemas created cleanly with both nodes.
+Seventeen checks, none failing. A template whose `checks` default is an empty
+array registered and deployed, and instance create was refused with HTTP 400:
+the body named the node (`nodes[shape].attributes`), the attribute (`/checks`)
+and the violated constraint (`minItems: minimum 1 items required, but found 0
+items`) — a value constraint, not a shape mismatch. No instance was created. A
+two-executor template whose second service's `url` default is a number was
+likewise refused, naming `nodes[fetch].attributes`, `/url` and `expected
+string`, so the gate is not limited to the first referenced service. A
+template whose config satisfies both services' schemas created cleanly with
+both nodes.
 
-The CLI relays only the summary line of the refusal — `400 template validation
-failed` — and drops the `validation_errors` detail that the control-api
-response carries.
+The CLI still relays only the summary line of the refusal — `400 template
+validation failed` — and drops the `validation_errors` detail that the
+control-api response carries.

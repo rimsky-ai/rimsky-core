@@ -283,6 +283,8 @@ def main():
         check("each surviving %s dispatch saw a distinct input bag" % mode,
               len({json.dumps(d, sort_keys=True) for d in bags}) == 4, json.dumps(bags))
 
+    finish()
+
 
 try:
     main()

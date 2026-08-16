@@ -301,6 +301,7 @@ def main():
     partition_counts = [c for c in counts(tl2, "partitioned") if c is not None]
     check("every partition's dispatch starts from the schema default rather than a sibling partition's value",
           partition_counts == [1, 1, 1], json.dumps(counts(tl2, "partitioned")))
+    finish()
 
 
 try:

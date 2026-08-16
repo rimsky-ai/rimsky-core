@@ -23,15 +23,13 @@ egress allowlist at all.
 
 ## What was observed
 
-The fetching node's response body became its output attributes verbatim
-(`id`, `count`, `nested`). The rate-limited node emitted one `transient/park`
-tagged `rate_limited` carrying a `resume_at` derived from the upstream's
-`Retry-After`, resumed by itself, ran a second time, and succeeded against the
-cleared upstream. The operator-configured error-class field produced
+Eleven checks, none failing. The fetching node's response body became its output
+attributes verbatim (`id`, `count`, `nested`). The rate-limited node emitted one
+`transient/park` tagged `rate_limited` carrying a `resume_at` derived from the
+upstream's `Retry-After`, resumed by itself, ran a second time, and succeeded
+against the cleared upstream. The operator-configured error-class field produced
 `terminal/error/http/request_invalid/quota_exhausted`; a per-node
 `error_class_field` overrode it to `.../bad_shape`; a body naming no class fell
 back to `.../_unspecified`. A node listing 429 in `expect_status` did not park
 and settled `terminal/success`. Without the egress allowlist the same
 private-address request failed `http/network_error`.
-
-Eleven checks, none failing.

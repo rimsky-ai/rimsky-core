@@ -16,6 +16,11 @@ for host-agent-late-bind-all-protocols; it logs the run-scope it was called for
 and its own pid, and the command's transcript carries that log because the
 spawned process writes to the command's own error stream.
 
+At this tree the experiment was repaired. Its leftover-process check counted any
+process whose command line contained the CLI's path, so an unrelated host-agent
+running concurrently on the same machine made it fail; the check now counts only
+processes running this command's own invocation.
+
 ## What was observed
 
 No process was running the binary before the command. The command exited 0. Its
@@ -25,9 +30,9 @@ the run named an installed service: the only executor the node could reach was
 the one the flag bound.
 
 When the command returned, the process that served the run was gone, no process
-anywhere was running the binary, and no rimsky process was left behind. A second
-invocation of the same command was served by a different pid, and that process
-was gone when it returned too.
+anywhere was running the binary, and no rimsky process from the command was left
+behind. A second invocation of the same command was served by a different pid,
+and that process was gone when it returned too.
 
 The same template run without the `--service` flag did not run at all: the
 command exited non-zero at template registration with a validation failure, so

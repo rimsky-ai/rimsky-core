@@ -1,24 +1,30 @@
 ---
 audit: sensor-webhook
 artifact: story:sensor-webhook
-determination: supported
-compliance: compliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:25:00Z
+audited: 2026-08-16T05:35:00Z
 ---
 
-# An external caller triggers a node by POSTing to an authenticated route
+# An external caller triggers a node by calling an authenticated endpoint, with no poll in between
 
-Supported. Two webhook subscriptions mounted live on one instance, one
-authenticated by a shared header and one by an HMAC signature over a timestamp
-and the body. Both authentication modes were exercised from outside the
-orchestrator's network against the sensor's published listener: an authenticated
-POST returned 200 and the message was already on the target instance when the
-call returned, so no poll interval sits between the call and the message, and the
-subscribed node ran. All five refusals the routes owe were taken: no credential,
-wrong credential, wrong signature, a correct signature timestamped outside the
-declared replay window, and a path no subscription declared, answered 401, 401,
-401, 401 and 404, and neither refused POST on the shared-header route became a
-message. A redelivery carrying a delivery id already seen returned 200 and
-produced no second message. The sensor's health route answered before any
-subscription existed. Every message the instance received came from the sensor.
+Supported. Fourteen checks against a deployment carrying the bundled webhook
+sensor, its listener published so the calls arrive from outside the network the
+orchestrator runs on. The sensor answered its health route before any
+subscription existed, and both declared subscriptions mounted live. An
+authenticated call on the declared path returned success and was already a
+message on the target instance when the call returned — no poll interval sits
+between the two — and the subscribed node ran on it. Authentication was measured
+in both declared forms: a call with no credential and a call with the wrong
+credential were each refused, and neither became a message; a correctly signed
+call was accepted and was likewise already a message, carrying its delivery id;
+a call signed with the wrong secret was refused, and a correctly signed call
+bearing a timestamp an hour old was refused by the declared replay window.
+Redelivering a body under a delivery id already seen was accepted and produced
+no second message, a call to a path no subscription declared was refused, and
+every message the instance held came from the sensor.
+
+## Compliance
+
+The body names the delivery surface — "expose authenticated HTTP routes that translate inbound POSTs into messages" — and routes and wire verbs belong to a decision; compliant text says the operator exposes authenticated endpoints and each accepted call becomes a message on the subscription's target instance.

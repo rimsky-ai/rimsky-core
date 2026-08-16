@@ -1,0 +1,12 @@
+---
+audit: control-api
+artifact: concept:control-api
+text: compliant
+implementation: supported
+commit: PENDING
+audited: 2026-08-16T05:06:31Z
+---
+
+# The operator interface: two skins on one port, the action registry as the auth ledger, and the eight invariants
+
+Supported. All eight invariants hold. The surface serves one wire version under a single namespaced prefix with no negotiation code and no second version mounted. Lifecycle firing is split exactly as claimed across three processes: the control plane fires the template and instance events and the administrative-termination scope fan-out, walking each frame's scope tree deepest-first with a per-peer idempotency row that causes an unacknowledged peer to be re-offered; the scheduler's frame engine fires the settlement-time root scope terminal; the supervisor fires the sub-graph and fan-out-partition scope terminals at rendezvous. The reserved compose prefix is refused server-side at all three sites that accept a tag or an instance key, admitted only for a request stamping the compose-origin header while holding the matching grant, and the origin check fails closed with no identity in context. The auth posture claim is the strongest-enforced: the registry carries a posture per action resolving to the permissioned default, three postures exist and only the health probe and the identity echo depart from it, the health probe's sole dependency is a persistence transaction, a router walk asserts every mounted route outside those two appears in the registry, a second walk drives every non-exempt route with no credential and requires a rejection, a grant naming either ungated action is refused at grant time while grants naming gated actions are admitted, and a pinned per-action route-count table with a matching action-count check makes a silently added route or alias fail. Gating cannot be constructed away: the constructor refuses to build a router without an auth state. The agentic skin is hosted in-process, gated at its endpoint, re-enters the same router through an in-process handler so the same action middleware runs, records the skin on every audit row, and exposes its breakpoint-hit resource surface behind an additional per-read grant check. Enrollment sits behind the named grant, binds the caller's key id into the issued leaf's subject, refuses a caller with no key id, and the control plane refuses to start when mutual TLS is on and the CA encryption key is absent or malformed, with a test asserting the error names the missing input.

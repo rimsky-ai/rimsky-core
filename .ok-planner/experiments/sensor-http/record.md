@@ -14,7 +14,7 @@ a static file server whose one JSON document the run rewrites from the host. The
 template declares four poll subscriptions against the same sensor pair: an
 unfiltered watch on the document, a watch on the same document narrowed by a
 JSON-path match, a watch on a URL that does not exist, and a watch routed to the
-un-allowlisted sensor. `run.py` builds and removes everything.
+un-allowlisted sensor. `run.py` builds and removes everything. Re-run unchanged at this tree.
 
 ## What was observed
 

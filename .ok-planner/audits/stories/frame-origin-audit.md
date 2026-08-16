@@ -1,30 +1,30 @@
 ---
 audit: frame-origin-audit
 artifact: story:frame-origin-audit
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:25:00Z
+audited: 2026-08-16T04:45:38Z
 ---
 
-# Every frame names the message that opened it, and which of the three kinds it was
+# Every frame names the message that opened it, and which kind of sender sent it
 
-Supported. One instance was driven to produce all three trigger kinds — an
-operator posting a declared message type, an external POST arriving through the
-bundled webhook sensor, and a node sending a message of its own — and opened
-three frames. All 3 name a triggering message id, a message type, a message
-sender and a message sender kind, and the three sender kinds are exactly
-`operator`, `publisher` and `instance`. All 3 read back individually with the
-same trigger the list gave, and all 3 triggering message ids resolved to a
-message whose type and sender kind match what the frame reported. Narrowing the
-frame list by one triggering message id returned that one frame. One naming
-difference is worth recording: the story's "cascade-sent message" is reported as
-sender kind `instance` with the sender `instance:<id>`.
+Supported. Driven through the public surface against a released-image
+orchestrator paired with the released webhook sensor on one network, on a
+template that produces all three trigger kinds in a single instance: an operator
+posts a declared message type, a node sends a message of its own when the woken
+node settles, and an external POST reaches the sensor as a publisher message.
+Ten checks, none failing. The instance opened three frames, and all three named
+a triggering message id, type, sender and sender kind; the three sender kinds
+were exactly the three origins the story enumerates, with the instance-sent one
+carrying the sending instance's id as its sender. Reading each frame
+individually returned the same trigger the list gave for all three, each
+triggering message id resolved to a message whose type and sender kind matched
+what the frame reported for all three, and narrowing the list by one triggering
+message returned that one frame. One naming difference: the story calls the
+third origin a cascade-sent message and the product reports it as sender kind
+`instance`.
 
 ## Compliance
 
-The capability clause names the delivery surface — "through the existing frame
-observability surface" — which the story rules place in decision territory; the
-compliant text ends the clause at the capability: "I can see for every frame what
-triggered it (an operator message, a publisher message, or a cascade-sent
-message),".
+- The body names the delivery surface — "through the existing frame observability surface" pins the capability to one surface, which decisions own, and "existing" is build-record language a durable story does not carry; the compliant clause drops it, leaving "I can see for every frame what triggered it".

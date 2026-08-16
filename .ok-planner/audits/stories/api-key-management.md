@@ -1,21 +1,31 @@
 ---
 audit: api-key-management
 artifact: story:api-key-management
-determination: supported
-compliance: compliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:45:00Z
+audited: 2026-08-16T04:39:20Z
 ---
 
-# The whole api-key lifecycle runs from the operator's own verbs
+# An operator runs the whole api-key lifecycle through the auth verbs
 
-Supported. All seven administration verbs the story names were driven against a
-fresh stack and each effect checked independently through the control API:
-bootstrap minted the first admin key on an anonymous deployment and refused a
-second attempt; minting with a role produced a key that could read and could not
-write; listing and inspection named every key, carried no plaintext field, and
-never echoed a live plaintext; revoking made the key's next request 401 while
-keeping it inspectable on request; rotating handed out a new plaintext that
-worked immediately and left the old key working until its grace window closed,
-after which the old key was refused and the new one still answered; and the
-status verb reported the mode and the key counts at each stage.
+Supported. All seven capabilities the story names were driven against a fresh
+all-in-one deployment through the seven public auth verbs, with each effect
+confirmed independently against the control API using the key in question.
+Status on the untouched deployment reported anonymous with zero keys;
+bootstrapping minted the admin key, printed its plaintext once, moved status to
+authenticated with one key and one admin, and a second bootstrap attempt exited
+non-zero. Minting with a read-only role produced a key that read instances (200)
+and could not register a template (403), so the role bound; an expiring key
+worked. Listing named all three keys, carried no field matching "plaintext", and
+neither listing nor inspection reproduced the live plaintext of the key being
+inspected, while inspection reported the key's name and its grant. Revoking made
+the key's next request 401, dropped it from the default listing, and kept it
+visible when revoked keys were requested. Rotating printed a new plaintext and
+the old key's revoke time; the new key worked immediately, the old key kept
+working inside the grace window and stopped being accepted once it closed, with
+the new key still answering.
+
+## Compliance
+
+The "so that" clause restates the activity rather than naming a need — "so that I administer credentials end-to-end" is the listed capabilities summed; compliant text would name what the operator gets from the lifecycle, e.g. "so that a credential I hand out can be scoped, replaced, or withdrawn without taking the deployment down."

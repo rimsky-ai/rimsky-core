@@ -14,7 +14,7 @@ instance binds both to the same binary — the local service built for
 host-agent-late-bind-all-protocols — under different environment, arguments and
 working directory. A second template and two more instances bind the same
 binary with a startup delay of twenty seconds and differ only in the timeout
-the binding declares.
+the binding declares. Re-run unchanged at this tree.
 
 ## What was observed
 

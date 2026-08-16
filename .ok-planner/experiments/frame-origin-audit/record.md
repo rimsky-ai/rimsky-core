@@ -16,11 +16,11 @@ as a publisher message. `run.py` builds and removes everything.
 
 ## What was observed
 
-The instance opened three frames. Each one names a triggering message id, a
-message type, a message sender and a message sender kind. The three sender kinds
-are exactly `operator`, `publisher` and `instance`: the operator-posted message,
-the webhook sensor's message, and the message the instance itself sent, which
-carries the sending instance's id as its sender.
+Ten checks, none failing. The instance opened three frames. Each one names a
+triggering message id, a message type, a message sender and a message sender
+kind. The three sender kinds are exactly `operator`, `publisher` and `instance`:
+the operator-posted message, the webhook sensor's message, and the message the
+instance itself sent, which carries the sending instance's id as its sender.
 
 Reading each frame on its own returned the same trigger as the list gave, for
 all three. Each frame's triggering message id resolved through the messages

@@ -17,7 +17,7 @@ through the `claim_producers` block of a mounted rimsky.yml. The nodes run on
 the bundled http-node executor, which posts its resolved attributes to a
 recorder on the host, so the values rimsky substituted into a dispatch are
 readable from outside the stack. The producer keeps its own log of every call
-it received and serves it over HTTP.
+it received and serves it over HTTP. Re-run unchanged at this tree.
 
 ## What was observed
 

@@ -368,19 +368,46 @@ def key_readable():
 probe("auth:revoke", "DELETE", "/v1/auth/keys/probe-key", snapshot=key_readable)
 
 print("############ asset writes ############")
-_, d = jget("/v1/instances/%s/assets" % FAIL_INST)
-assets = d.get("assets", [])
-if assets:
-    alias = assets[0].get("alias")
+# The subject of an asset delete has to be materialized first: a node that opens
+# a durable-lifetime claim on a producer advertising the data-processing protocol.
+SPEC_ASSET = {
+    "name": "dryrun-probe-asset", "version": "1", "message_queue_mode": "backlog",
+    "nodes": [{
+        "type": "materializer", "kind": "attribute_passthrough",
+        "claim_producers": [{"name": "content", "selector": "datasets/items",
+                             "intent": "rw", "alias": "dataset", "lifetime": "durable"}],
+        "error_types": {"acquire/unavailable": {"action": "give_up"}},
+        "attributes": {"schema": {"type": "object", "properties": {
+            "rows": {"type": "integer", "default": 3}}}},
+    }],
+}
 
-    def asset_present():
-        s, _ = jget("/v1/instances/%s/assets/%s" % (FAIL_INST, alias))
-        return s == 200
+HA = register_live(SPEC_ASSET)
+deploy_live(HA)
+ASSET_INST = create_instance_live(HA, "probe-asset")
+wake(ASSET_INST, "asset")
 
-    probe("asset:delete", "DELETE", "/v1/instances/%s/assets/%s" % (FAIL_INST, alias),
-          snapshot=asset_present)
-else:
-    skip("asset:delete", "no claim-backed asset exists on this deployment to delete")
+
+def assets_of(instance_id):
+    _, d = jget("/v1/instances/%s/assets" % instance_id)
+    return d.get("assets", d if isinstance(d, list) else [])
+
+
+assets = assets_of(ASSET_INST)
+while not assets:
+    time.sleep(0.5)
+    assets = assets_of(ASSET_INST)
+
+alias = assets[0].get("alias")
+
+
+def asset_present():
+    s, _ = jget("/v1/instances/%s/assets/%s" % (ASSET_INST, alias))
+    return s == 200
+
+
+probe("asset:delete", "DELETE", "/v1/instances/%s/assets/%s" % (ASSET_INST, alias),
+      snapshot=asset_present)
 
 print()
 passed = [a for a, v, _ in results if v == "pass"]

@@ -29,3 +29,5 @@ message per frame, and its node resolved one label per run. Neither mode put two
 bodies in one frame, so no run had to choose between them.
 
 Eight checks, none failing.
+
+RESULT: PASS

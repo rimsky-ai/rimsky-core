@@ -10,7 +10,8 @@ commit: PENDING
 `way-copy-and-run.sh` checks what the tree gives a newcomer to copy, then copies
 the shipped onboarding template and its walkthrough script out of the tree into a
 scratch directory and drives them against a `rimsky-all-in-one` container booted
-at `RIMSKY_IMAGE_TAG`. It uses the CLI binary built from this tree.
+at `RIMSKY_IMAGE_TAG` on an ephemeral port. It uses the CLI binary built from
+this tree.
 
 ## What was observed
 

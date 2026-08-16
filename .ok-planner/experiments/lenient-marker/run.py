@@ -288,6 +288,7 @@ def main():
           bag.get("from_optional") == "", json.dumps(bag))
     check("the node's other properties resolved normally",
           bag.get("always") == "own value", json.dumps(bag))
+    finish()
 
 
 try:

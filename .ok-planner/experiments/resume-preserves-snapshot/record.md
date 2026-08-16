@@ -43,7 +43,11 @@ The same shape, with the endpoint's `Retry-After` left at 3600 so the park canno
 resume on its own. Once the worker is parked, the script pauses the instance,
 invalidates the counter node through the debug-override channel, and resumes the
 instance — the public path by which an upstream node re-runs while work sits
-parked.
+parked. The pause is not optional: invalidating an instance that is neither
+paused nor at a breakpoint is refused, the control API answering that the
+instance is not in a debuggable state and naming the two states that are. A
+variant of this way that skipped the pause was therefore withdrawn — the product
+refuses that path, so nothing upstream ever re-ran and the park simply sat.
 
 ### What was observed
 

@@ -8,7 +8,7 @@
 #   4. anonymous mode is closed -> the same unauthenticated sweep is refused
 #   5. the minted key restores access, enrollment included
 #
-# Two stacks, because two of the 83 ruled control-API routes (POST /v1/enroll,
+# Two stacks, because two of the 85 ruled control-API routes (POST /v1/enroll,
 # GET /v1/ca-root) are mounted only when a deployment CA exists:
 #   MAIN  - the zero-config `rimsky-all-in-one` default, plain HTTP
 #   MTLS  - the same image with `peer_auth: mtls`, which stands up the CA

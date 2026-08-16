@@ -19,6 +19,9 @@ mounted `rimsky.yml` declaring the service under `executors:` with
 Templates go in through `POST /v1/templates`. `run.py` requires the CLI built at
 `bin/rimsky` and removes both containers.
 
+The role context this probe exercises is `executor`; it does not exercise the
+claim-producer or lifecycle-subscriber contexts.
+
 ## What was observed
 
 Five legs, nine checks, none failing.

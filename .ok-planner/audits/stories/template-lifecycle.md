@@ -1,24 +1,26 @@
 ---
 audit: template-lifecycle
 artifact: story:template-lifecycle
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:20:00Z
+audited: 2026-08-16T04:38:45Z
 ---
 
-# Register, deploy, instantiate, retire and remove a template through the CLI
+# An operator curates the catalog of workflows the stack offers
 
-Supported. Against a zero-config all-in-one deployment, all 5 curation steps the
-story names answered in one run: `template register` returned a template id and
-the catalog listed it as registered; `template deploy` moved it to deployed and
-`instance create` — refused before the deploy — then returned a live instance;
-`template undeploy` moved it to undeployed, after which every further create was
-refused; and `template rm` removed it from the catalog. Retirement and removal
-are both guarded by what is still using the template: `undeploy` is refused while
-an instance is live, `rm` is refused while the template is deployed, and `rm` is
-refused again while a terminated instance's record still references the template,
-succeeding once that record is deleted. That last refusal arrives as HTTP 500
-carrying the persistence layer's raw foreign-key text rather than a conflict
-naming the referencing records; the operation is correctly refused and the story
-promises nothing about the diagnosis.
+Supported. All five ways the story names — register a definition, mark it ready
+to run, create live instances of it, retire it, remove it — were driven through
+the public surface against a container of the released all-in-one image.
+Registering returned a content-addressed id and the catalog listed the
+definition as registered, with its stored spec readable back. Instance creation
+was refused before the definition was marked ready and accepted after. While an
+instance was live, retiring and removing were both refused; once the instance
+was killed, retiring took effect and further instance creation was refused;
+removal was refused while an instance record still referenced the definition
+and succeeded once that record was gone, after which the catalog no longer
+listed it. That last refusal arrives as a raw storage-constraint error rather
+than a conflict naming the referencing record — the operation is correctly
+refused, only its diagnosis is coarse. The body states a role, a capability set
+and a mandatory benefit, names no surface and no mechanism, and carries no
+history or forward-looking text.

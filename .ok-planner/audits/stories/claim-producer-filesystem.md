@@ -1,24 +1,24 @@
 ---
 audit: claim-producer-filesystem
 artifact: story:claim-producer-filesystem
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:45:00Z
+audited: 2026-08-16T05:22:00Z
 ---
 
-# Production claim semantics on plain files, with no database stood up
+# Claims on a plain filesystem, with fan-out over the store's own contents
 
-Supported. A stack booted from this tree's image with the bundled filesystem
-claim producer configured over a bind-mounted host directory, and no database
-was stood up for the claims. A node claiming the directory `data/reports` under
-the root received that directory itself as its address, its claim handle
-recorded realized write semantics `sync` and state `committed`, and the write
-its executor performed through that address is present at the same path on the
-host. Comparing the root's full listing before and after the run, the only entry
-the run added is the written file: the commit created no staging directory and
-swapped in no copy. A second node claimed a directory already holding three
-files and declared a fan-out that expands the folder; the producer returned
-three sub-scopes, the partition keys are the three file names, each work unit's
-claim addresses its own file, and the parent and all three work units settled
-fresh.
+Supported. A stack from this tree ran with the bundled filesystem claim
+producer configured over a bind-mounted host directory and no database beyond
+the image's own SQLite default, and both ways the story names were taken
+through the template surface and the control API. A node claiming a directory
+under the root received that directory itself as its claim address, its claim
+handle recorded realized write semantics of sync and state committed, and the
+executor's write landed at that address on the host: comparing the root's full
+listing before and after, the written file is the only entry the run added, so
+the commit staged nothing and swapped in no copy. A second node claimed a
+directory already holding three files and declared a fan-out over it; the
+producer's split returned three sub-scopes, the partition keys are the three
+file names, each work unit's claim addresses its own file, and the parent and
+all three work units settled fresh.

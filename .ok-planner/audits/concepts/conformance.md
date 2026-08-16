@@ -1,0 +1,12 @@
+---
+audit: conformance
+artifact: concept:conformance
+text: compliant
+implementation: unsupported
+commit: PENDING
+audited: 2026-08-16T05:21:03Z
+---
+
+# The per-protocol conformance subcommand family and the library behind it
+
+Unsupported, on the packaging clause; the rest of the concept is carried precisely. The CLI dispatches exactly the eight conformance subcommands the body enumerates — executor, the stub-mode probe, claim-producer, publisher, validation, data-processing, blob-backend, lifecycle-subscriber — with an unknown name exiting non-zero, and no protocol's suite is reachable as a flag on another's. The counts hold when re-derived: nine registered executor scenarios covering exactly the nine spans named, ten blob-backend checks matching the ten named one for one and run against the three named backends, seven publisher checks matching the six operations plus capabilities, a validation suite giving each of the four roles a happy-path check and an unknown-role check with the malformed-input check reserved to the executor role, and a lifecycle sanity pass issuing all six of the protocol's template- and instance-lifecycle notifications against synthetic identifiers (the seventh RPC is a run-scope notification, outside what the sentence claims). The claim-producer battery carries capabilities, both opens, uniformity, the split-scope and scope-conflict checks, and all three terminal verbs each with a repeat-call idempotency check. Every invariant checks out: the executor subcommand always probes stub mode before any scenario and refuses a live endpoint by default with only an allow-live override under which stub-requiring scenarios skip, and no strict flag exists; the stub-mode signature lives in one shared package that every scenario and every stub-capable in-tree executor imports, documented there as the contract a non-Go executor reproduces; the uniformity check is omitted rather than failed when consecutive opens return non-byte-equal scopes; the blob-backend subcommand sets the unified process role before constructing the memory backend; and a producer declaring no support for split-scope or scope-conflict is additionally probed on the raw wire past the client's own short-circuit. What fails is the parenthetical structural claim that the library carries one sub-package per protocol: seven of the eight suites do, but the lifecycle-subscriber suite lives inside the executor sub-package rather than its own, and the CLI reaches it through the executor package's import.

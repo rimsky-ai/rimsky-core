@@ -14,7 +14,7 @@ producer metadata `{"rows":7}`. It advertises no data-processing protocol, so
 everything observed comes from the base protocol alone. One template takes an
 ordinary claim. A second declares a fan-out into three partitions run one at a
 time, and a downstream node reads the fan-out parent's writeback by attribute
-reference and posts it to a recorder on the host.
+reference and posts it to a recorder on the host. Re-run unchanged at this tree.
 
 ## What was observed
 

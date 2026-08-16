@@ -24,15 +24,14 @@ once with the variable unset.
 
 ## What was observed
 
-With the allowlist set, the node declaring `VALIDATOR_TOKEN` read exactly that
-variable at the operator-set value, and the node declaring `REVIEWER_SEED` read
-exactly that one; neither read the other's variable. The node declaring
-`OPERATOR_ONLY_SECRET` failed its dispatch with `agent/attribute_invalid`, and
-the error payload named the variable, the instance, the node and the allowlist
-variable. None of the three plaintext secrets appears anywhere in the instance's
-event log, node-run rows, instance record, audit log, or per-node attributes.
+Ten checks, none failing. With the allowlist set, the node declaring
+`VALIDATOR_TOKEN` read exactly that variable at the operator-set value, and the
+node declaring `REVIEWER_SEED` read exactly that one; neither read the other's
+variable. The node declaring `OPERATOR_ONLY_SECRET` failed its dispatch with
+`agent/attribute_invalid`, and the error payload named the variable, the
+instance, the node and the allowlist variable. None of the three plaintext
+secrets appears anywhere in the instance's event log, node-run rows, instance
+record, audit log, or per-node attributes.
 
 With the allowlist unset, the same template's `OPERATOR_ONLY_SECRET` node read
 that variable, and the other two nodes still read only their own declarations.
-
-Ten checks, none failing.

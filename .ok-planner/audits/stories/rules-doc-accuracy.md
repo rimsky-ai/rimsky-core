@@ -1,29 +1,24 @@
 ---
 audit: rules-doc-accuracy
 artifact: story:rules-doc-accuracy
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:25:00Z
 ---
 
-# Cited paths in the contributor rules resolved against the checkout
+# Every path the contributor rules cite resolves, and the dead references stay out
 
-Supported. The rules file a contributor reads is tracked by git, so it ships in
-every checkout, and it was measured as it stands. All 10 of the tokens it
-quotes in a filesystem-path shape resolve to a real artifact in the tree; the
-population is every backtick-quoted token in the file, minus the Search Scoping
-line, filtered by the shape rule this project recognises. None of the 4 curated
-dead references appears anywhere in the file. All 4 make targets the file names
-are declared in the Makefile, and it names the image-rebuild step its
-verification section depends on.
+Supported. Six checks across four legs, taken from the file a contributor
+actually reads. Ten cited paths were in a filesystem-path shape and all ten
+resolve against the checkout; the population is non-empty, so the check has
+something to be wrong about. None of the four curated dead references appears in
+the file. All four build targets the rules name are declared in the build file,
+and the rules name the image-rebuild step the verification section depends on.
+The rules file itself is tracked, so the file measured is the one every
+contributor's checkout carries.
 
 ## Compliance
 
-The benefit clause is hedged where the outcome is observable: "unlikely to hit
-an obviously missing surface" states a probability rather than something a
-reader can settle by looking, and "I can trust that" names a state of mind
-rather than a capability. Compliant text: "As a contributor following the
-project's after-code-changes verification steps, I want every path and command
-those steps name to exist in my checkout, so that I can follow them without
-stopping to work out which reference has rotted."
+The body encodes the checking procedure rather than the need — "a path the rules cite in a recognized filesystem-path shape" and "a curated set of known-dead references never creeps back in" describe how the claim is verified, which belongs to the check, not the story.
+The benefit clause is hedged past the point of being settleable — "is unlikely to hit an obviously missing surface"; compliant text states the outcome plainly, e.g. "so that I can act on the documented steps without stopping to hunt for a file that is not there".

@@ -12,8 +12,9 @@ succeeds, one leg fails) against a third-party executor built from the protocols
 module: `rimsky compose run` over the manifest in `manifest/`, and `rimsky run`
 self-hosting an ad-hoc template. Each run's record is then read back by serving a
 copy of its artifact state through a `rimsky-all-in-one` container from the
-tree's own image tag and querying it with `rimsky instance get|nodes|events`,
-`rimsky node get` and the ruled event and observability routes.
+tree's own image tag, on a port picked free at start, and querying it with
+`rimsky instance get|nodes|events`, `rimsky node get` and the ruled event and
+observability routes.
 
 ## What was observed
 
@@ -34,3 +35,7 @@ returned the same event count, so reading did not change the record.
 The ad-hoc one-shot behaved the same way: exit 1, its own artifact directory, its
 instance terminal in the record, both legs' terminals replayed, and the success
 leg's writeback readable.
+
+Twenty-three checks, none failing.
+
+RESULT: PASS

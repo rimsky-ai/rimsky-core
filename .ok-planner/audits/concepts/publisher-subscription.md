@@ -1,0 +1,12 @@
+---
+audit: publisher-subscription
+artifact: concept:publisher-subscription
+text: compliant
+implementation: supported
+commit: PENDING
+audited: 2026-08-16T04:43:41Z
+---
+
+# The rimsky-side publisher binding row, its lifecycle, and its capability check
+
+Supported. The persisted subscription row carries exactly the fields the concept claims ownership of — instance, publisher name, kind, message type, resolved-config blob, lifecycle state, failure reason — and all four lifecycle states named by the concept (mounting, active, failed, stopped) exist as the only values the runtime writes. Instance creation inserts rows in the mounting state inside the creation transaction and performs no subscribe handshake, flipping a row straight to failed with a reason only for the two non-retryable classes the concept reserves that state for: an unregistered publisher name and a config blob whose parameter substitution fails. A reconciliation worker runs on a fixed interval with no attempt cap, drives the subscribe handshake for mounting rows and marks them active on success, and its startup pass re-drives mounting rows and recovers failed rows whose reason is the unregistered-publisher one once that name appears in the registry, leaving every other failure class alone. The resync matches each publisher's live subscription list only against the rows bearing that publisher's name, which is the composite identity the concept asserts rather than a single global namespace. Template validation rejects a publisher entry whose message type is absent from the template's message registry, so no instance and no row is created for it. The message-send endpoint's publisher path accepts active and mounting rows, rejects failed, stopped, unknown, and cross-instance subscription ids as forbidden, and derives the sender name from the row instead of the request. There is no reconfiguration verb on the subscription surface, and resync re-sends the row's stored resolved config verbatim. The resolved-config blob is written and read only by the runtime and the peer client, is absent from the instance response type, and appears in no log call, matching the never-logged and never-returned guarantee; the webhook sensor's own state store holds only an idempotency watermark, so the row is indeed the sole at-rest copy of that secret. Nine lifecycle invariant tests in the runtime package plus four sensor end-to-end scenarios exercise these paths.

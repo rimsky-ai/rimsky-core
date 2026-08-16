@@ -1,29 +1,29 @@
 ---
 audit: message-bus
 artifact: story:message-bus
-determination: supported
-compliance: noncompliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:25:00Z
+audited: 2026-08-16T05:03:56Z
+checked: 4
+unaccounted: 0
 ---
 
-# Sending with a dedup key, reading the history, and replaying without a duplicate
+# Sending into an instance's bus, reading it back, and replaying without duplicating
 
-Supported. Against a zero-config all-in-one deployment, a send carrying no dedup
-key was refused and a send carrying one was accepted; both replays under that
-same key — one repeating the body, one changing it — returned the original
-message identity, and the instance's history held one row for the key rather
-than three. The history listed both distinct sends attributed to the operator,
-the fetch-by-id route returned the row with its body and instance, an id never
-minted was not found, and both bodies reached the downstream node. All 4 clauses
-the story names were exercised on that run. The operator's second public read
-path is weaker: the CLI retrieves one message by id correctly, but its history
-verb returns only the newest row, so the history clause is reachable through one
-of the two public ways an operator reads the bus.
+Supported across all four capabilities the story names — send with a mandatory
+dedup key, see the history, retrieve one by id, and replay without producing a
+duplicate. The dedup key is genuinely mandatory: a send omitting it is refused
+outright. Replay was tested in the two ways that can come apart — the same key
+with an identical body and the same key with a different body — and both
+returned the identity the first send created, with the history holding one row
+for that key rather than three, so a replay neither duplicates nor smuggles a
+second body in under an accepted key. The history lists both distinct sends
+attributed to their sender, fetch-by-id returns the row with its body and
+instance, an id never minted is not found, and both bodies reached the
+downstream node, which is the "downstream nodes consume the bus" end of the
+promise. Thirteen checks, none failing.
 
-## Compliance
+## Remediation
 
-The benefit clause promises that downstream nodes consume the bus "reliably", an
-adjective only a human judgment can settle, where the story rules require an
-observable statement; the compliant text is "so that downstream nodes consume
-the bus and no replay slips through".
+- The history capability is obtained through the control-API history route; the CLI tail verb without follow returns only the newest row and drops the older ones, because it de-duplicates against a watermark assuming ascending arrival while the route returns newest-first.

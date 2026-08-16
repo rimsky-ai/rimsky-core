@@ -1,24 +1,36 @@
 ---
 audit: compose-lifecycle
 artifact: story:compose-lifecycle
-determination: supported
-compliance: compliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:25:00Z
+audited: 2026-08-16T04:59:54Z
+checked: 5
+unaccounted: 0
 ---
 
-# A manifest applied to a running rimsky, reconciled, inspected, and torn down
+# The five things an operator does with a compose manifest
 
-Supported. Against a running deployment, `compose plan` listed all 8 steps
-before anything was applied and named the namespaced identities it would create;
-`compose status` reported each of the 4 declared resources as missing from the
-API; `compose up` applied the 8 steps, after which every tag and instance
-carried the `compose:<project>:` prefix and both templates read deployed; a
-second `compose up` reported no changes, so the verb reconciles rather than
-re-applies; and one `compose down` removed instances, deployments, tags, and
-templates together. One measured limit bounds where this is reachable: the
-compose verbs send no credential, so against a deployment where authentication
-has been enabled they fail with 401 under every key-passing mechanism the CLI
-offers — endpoint-plus-key flags, the api-key environment variable, and an
-api-key stored in the current context — while an ordinary verb authenticates
-from that same context.
+Supported across all five capabilities the story names — plan, inspect status,
+apply and reconcile, namespace the resources, and tear down with one command. One
+manifest declaring two templates, their tags, and two instances was driven
+through the whole cycle against a running deployment. Planning listed all eight
+steps before anything existed and named the namespaced identities it would
+create; status reported every declared resource as missing from the deployment
+beforehand and in-manifest afterwards; applying performed the eight steps, and
+the tag, template, and instance listings then carried the compose prefix on every
+resource with the templates deployed. Reconciliation was settled by a second
+apply reporting no changes rather than repeating the work. One teardown command
+then removed instances, deployments, tags, and templates in eight steps, and both
+listings came back clean. The demonstration was taken on a deployment in the
+shipped default posture, which is the only posture where these verbs work: the
+compose verbs send no credential, so on a deployment with authentication enabled
+they fail unauthorized under every key-passing mechanism the CLI offers, while an
+ordinary verb with the same key succeeds. Eighteen checks, none failing.
+
+## Compliance
+
+- The body prescribes mechanism ("namespace the resources under a
+  compose-prefixed tag") — the naming scheme is the decision's territory; the
+  compliant text names the need, e.g. "keep the resources it manages
+  distinguishable from ones I authored by hand".

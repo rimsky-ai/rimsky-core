@@ -24,6 +24,9 @@ declared body schema.
 
 The instance's history holds only the two accepted messages, so nothing refused
 entered the bus, and the event log carries no dead-letter row. A template whose
-node reads a message type it never declared is refused at registration.
+node reads a message type it never declared is refused at registration, naming
+the substitution reference and the undeclared type.
 
 Eleven checks, none failing.
+
+RESULT: PASS

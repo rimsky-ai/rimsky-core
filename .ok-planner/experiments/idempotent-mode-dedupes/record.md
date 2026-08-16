@@ -17,6 +17,9 @@ differ). Each variant is run under `sequenced`, `idempotent-queue` and
 `idempotent-settled`. The count of `work_started` events on the receiver is the
 number of times its executor was reached.
 
+The probe reached the end of its checks without calling `finish()`, so it exited
+zero whatever the checks said. That call was added and the whole probe re-run.
+
 ## What was observed
 
 With identical inputs and no idempotent mode, all four cascade rounds reached

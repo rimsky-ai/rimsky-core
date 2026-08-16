@@ -1,25 +1,28 @@
 ---
 audit: claim-producer-observability
 artifact: story:claim-producer-observability
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:45:00Z
+audited: 2026-08-16T04:51:57Z
 ---
 
-# A dashboard reads producer-side state without a backplane of its own
+# A dashboard reads producer-side claim state off the producer itself
 
-Supported. The bundled filesystem claim producer ran as its own container over a
-seeded root, and a dashboard-shaped client drove its observability protocol from
-outside. All four of the story's asks answered: one claim's detail came back
-with its state, its opened-at time, its scope and its event history; the claim
-inventory paginated, with a request for two returning two and a cursor whose
-next page repeated none of them and whose walk reached every open claim; a
-stream opened on one claim replayed its state and then delivered that claim's
-commit while the stream stayed open, after which the claim read as committed;
-and both admin views the producer declares rendered, each with a column schema
-and a render hint, the parameterised one listing the seeded items, with an
-undeclared view name refused rather than answered. A stack pointed at the same
-producer reports it reachable and carries the same three capability flags and
-both admin-view declarations, so the dashboard learns what to render from the
-control API and reads the data from the producer.
+Supported. Driven through the public surface against the released filesystem
+claim producer running as its own container over a seeded workspace, with a
+dashboard-shaped gRPC client built for the run, and a released-image stack
+pointed at the same producer. Thirty-four checks, none failing. All four
+capabilities the story names answered: a claim's full detail came back open with
+its scope, its opened-at time and its event history; a stream opened on that
+claim replayed its state and then carried the commit as a live event while open,
+after which the claim read committed; the inventory paginated, a request for two
+returning two and a cursor, the next page repeating none of them and the walk
+reaching every open claim; and both admin views the producer declares rendered,
+each with a column schema and a render hint, the parameterised one listing the
+seeded items for its required parameter, while an undeclared view name was
+refused rather than fabricated. The control API's entry for the producer
+reported it reachable and carried the same three capability flags and both view
+declarations, so the dashboard discovers what to render from the control API and
+reads the data from the producer — the story's "without writing a custom
+backplane".

@@ -2,6 +2,7 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import sys
 import time
 import urllib.error
@@ -239,12 +240,40 @@ SPEC = {
 }
 
 
+def poll_run_creation(iid, stop, order):
+    seen = set()
+    while not stop.is_set():
+        try:
+            rows = call("GET", "/v1/observability/node-runs?instance_id=%s" % iid)[1]["node_runs"]
+        except Exception:
+            rows = []
+        for r in rows:
+            key = (r["id"], r["state"])
+            if key not in seen:
+                seen.add(key)
+                order.append((r["id"][:8], r["state"]))
+        time.sleep(0.05)
+
+
 def main():
     boot()
     iid = new_instance(deploy(SPEC))
+    order = []
+    stop = threading.Event()
+    poller = threading.Thread(target=poll_run_creation, args=(iid, stop, order), daemon=True)
+    poller.start()
     send_message(iid)
     tl = quiet(iid)
+    stop.set()
+    poller.join(timeout=2)
     show(tl)
+    print("  observer run rows, in the order each state was first seen:")
+    dispatch_ids = [r["payload"]["dispatch_id"][:8] for r in tl
+                    if r["node"] == "observer" and r["kind"] == "work_started"]
+    for run_id, state in order:
+        if run_id in dispatch_ids:
+            print("    %s %s" % (run_id, state))
+    print("  observer dispatch order: %s" % ", ".join(dispatch_ids))
     arrival = [d.get("count") for d in deltas(tl, "emitter")]
     dispatched = [d.get("seen") for d in deltas(tl, "observer")]
     check("the emitter produced %d distinct cascade rounds" % ROUNDS, arrival == list(range(1, ROUNDS + 1)),

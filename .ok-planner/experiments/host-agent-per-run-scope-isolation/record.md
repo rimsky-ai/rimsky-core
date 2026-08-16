@@ -15,7 +15,7 @@ and its executor is a late-bound service bound to the local binary built for
 host-agent-late-bind-all-protocols. The binding hands the binary a delay it
 holds each execution open for, so all three sibling run-scopes are in flight at
 once. The binary reports its pid, the run-scope it was called for, and a counter
-it keeps in its own memory across calls.
+it keeps in its own memory across calls. Re-run unchanged at this tree.
 
 ## What was observed
 

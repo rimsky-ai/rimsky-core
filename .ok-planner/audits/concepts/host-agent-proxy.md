@@ -1,0 +1,12 @@
+---
+audit: host-agent-proxy
+artifact: concept:host-agent-proxy
+text: compliant
+implementation: unsupported
+commit: PENDING
+audited: 2026-08-16T04:44:00Z
+---
+
+# The host-agent proxy's twelve invariants read against the proxy binary and its supervisor-facing handlers
+
+Eleven of the concept's twelve invariants hold; the TLS invariant does not, so the implementation verdict is unsupported. The proxy binary carries all the claimed machinery: the multi-protocol composition on one server (executor, executor-observability, claim-producer, claim-producer-observability, lifecycle-subscriber registered as five distinct handler types), one spawn per run-scope-and-binding created lazily on first dispatch under a single-flight guard and reaped on the run-scope-terminal callback, a per-instance binding cache filled by the instance-created lifecycle callback with a control-API cache-miss fallback and evicted on the instance-terminated callback, uniform routing by the instance's stamped routing identity with an agent-not-connected terminal when nobody is connected under it, silly-name assignment for anonymous registrations with label-collision rejection and generated fallback, latest-wins displacement for api-key identities that closes the prior connection and flags the displacement in the acknowledgment, registration verified against the control API's identity endpoint with a fail-closed refusal when no control-API URL is configured, dispatch failures surfaced only as executor-error outcomes and claim-producer status errors, callback-URL rewriting as the single URL rewrite, per-dispatch attribute-schema checking against the capabilities the spawned binary itself advertised, and executor plus claim-producer conformance suites run against the proxy behind an in-process agent double. The three protocols the concept says must be rejected loudly — publisher, validation, data-processing — are each rejected: the proxy never registers those services, and the agent fails the spawn naming the protocol, covered by a test over all three. The failing invariant is the flat claim that the agent-facing side is served over TLS against a pinned deployment-CA root: the proxy serves that listener in plaintext whenever peer authentication is off and no operator keypair is mounted, which is the default posture, and a test asserts that plaintext default explicitly; the agent likewise dials without TLS unless a separate opt-in switch and CA path are set. The mechanism exists and works when enabled, but the invariant as written is unconditional and the code is not.

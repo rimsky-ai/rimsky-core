@@ -1,34 +1,31 @@
 ---
 audit: claude-agent
 artifact: story:claude-agent
-determination: supported
-compliance: noncompliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:01:18Z
 ---
 
-# An operator wires an agentic node with per-node declarations, a sign-off gate and error classes
+# The bundled agent executor dispatches async work under operator bounds, a sign-off gate and declared error classes
 
-Supported. All four capabilities the story names were driven in one template
-against an all-in-one deployment carrying the bundled claude-agent executor.
-Every agent node's work was handed off asynchronously and settled later by
-callback. A node declaring an inline MCP server and an inline expose-env name
-got exactly those and nothing another node declared, while the two operator
-allowlists were set to one entry each. The sign-off gate committed the run whose
-signature covered the value the run wrote out, and refused with
-`agent/signoff_unobtained` both a signature bound to another dispatch and a
-signature taken over a value the run never wrote. The executor advertises
-thirteen declared error classes over the control API; of those, one routed by
-node policy settled the run fresh while its settling signal still named the
-class, one with no policy failed the run under its own name, a wildcard
-subscription over the family ran on that failure, and a class outside the
-vocabulary was refused at the callback surface.
-
-## Compliance
-
-The benefit clause promises "controllable, secure, observable agentic
-dispatches" — three adjectives describing how well the product owes something,
-which a story may not rest on. Compliant text names what the operator can then
-do, for example "so that I bound what each node's agent may reach, refuse any
-run whose output is not signed by a key I named, and route each declared failure
-class myself".
+Supported. Driven through the public surface against a released-image stack
+running the bundled agent executor with a stand-in agent binary speaking the same
+CLI and callback contract, on one template of seven nodes exercising each clause,
+with both operator allowlists set to one entry each. Twelve checks, none failing.
+The executor advertised thirteen declared error classes over the control API, and
+every agent node's work was handed off asynchronously and settled later by
+callback. The worker's agent received exactly its node's own inline MCP server
+plus the executor's callback server, and exactly its node's own declared
+environment variable at the operator-set value, so the per-node declaration and
+the operator bound met. The sign-off gate held in all three directions: the run
+whose signature covers the value it writes committed that same value, while a
+signature bound to another dispatch and a signature over a value the run never
+wrote both failed as sign-off unobtained. The error-class handling answered on
+every leg: a declared class routed by policy settled the run fresh while the
+signal still named the class, a declared class with no policy failed the run
+under its own name, a wildcard subscriber over the agent error family ran on that
+failure, and a class outside the declared vocabulary was refused at the callback
+surface with the dispatch failing under a declared class instead. Each adjective
+in the story's benefit rests on one of these measured clauses rather than on
+judgment.

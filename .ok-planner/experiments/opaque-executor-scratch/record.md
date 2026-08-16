@@ -27,17 +27,15 @@ re-dispatches the same node-run.
 
 ## What was observed
 
-The plain node's dispatch carried no scratch. The parking node emitted one
-`transient/park`, whose audit record carries only `scratch_size: 36` and
-`scratch_spilled: false` and not the bytes. Its resume was a second dispatch of
-the same node-run id and received back a byte string of the same length whose
-digest matches the bytes attached to the Park. The retrying node's recovery
-dispatch was likewise the same node-run id, was stamped
+Ten checks, none failing. The plain node's dispatch carried no scratch. The
+parking node emitted one `transient/park`, whose audit record carries only
+`scratch_size: 36` and `scratch_spilled: false` and not the bytes. Its resume
+was a second dispatch of the same node-run id and received back a byte string of
+the same length whose digest matches the bytes attached to the Park. The
+retrying node's recovery dispatch was likewise the same node-run id, was stamped
 `PRIOR_RETRY_AFTER_ERROR`, and received back the digest and length of the bytes
 attached to the Error. The quiet node's third dispatch was the same node-run id,
 was stamped `PRIOR_STALE_RECOVERY`, and received back the digest and length of
 the bytes its own first dispatch had attached to a Park two dispatches earlier.
-No record rimsky writes for itself carries any of the three byte strings in any
-of its base64, hex or raw forms.
-
-Ten checks, none failing.
+Across the forty-six rimsky-authored records the run scanned, none carries any
+of the three byte strings in any of its base64, hex or raw forms.

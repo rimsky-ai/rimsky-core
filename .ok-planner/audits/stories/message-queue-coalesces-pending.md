@@ -1,23 +1,30 @@
 ---
 audit: message-queue-coalesces-pending
 artifact: story:message-queue-coalesces-pending
-determination: supported
-compliance: compliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:25:00Z
+audited: 2026-08-16T05:03:56Z
 ---
 
-# Two instances of one template, one coalescing its queue and one keeping it
+# Choosing per instance whether pending wakes all survive or only the newest does
 
-Supported. Against a zero-config all-in-one deployment, two instances of a
-template that defaults to coalescing ran the same burst: one named no mode at
-create and reported coalesce, the other named backlog and reported backlog, so
-the choice is the operator's per instance. With the first frame held open on a
-pause-mode breakpoint, four numbered wakes arrived; the coalescing instance had
-cancelled the two it fell behind on and kept the newest, and the backlog
-instance had all three pending and none cancelled. After the drain the
-coalescing instance had delivered wakes 1 and 4 across two frames, never
-delivering a cancelled one, and its node saw those two payloads; the backlog
-instance delivered all 4 across four frames and its node saw every payload. Both
-of the story's outcomes therefore hold, each on the mode the operator chose for
-it, and a create naming a third mode is refused.
+Supported: the choice exists per instance and both branches behave as the story
+needs. Two instances of one template, whose default is the coalescing mode, ran
+the same burst of four numbered wakes while their first frame was held open, so
+the queue genuinely backed up rather than being raced. The instance naming no
+mode took the template default and the sibling naming the other mode overrode it,
+which is the per-instance part of the promise. While the frame was held the
+coalescing instance had cancelled the two middle wakes and kept only the newest,
+and the backlog instance had kept all of them; after the drain the coalescing
+instance had run the first and the latest across two frames and never delivered a
+cancelled wake, while the backlog instance ran all four in four frames. That is
+the benefit exactly — the slow instance tracked the latest wake instead of
+falling further behind. A mode outside the two is refused at create. Note that
+coalescing cancels payload-carrying wakes as readily as bare ones: every wake in
+this run carried a body conforming to the declared schema, and two were dropped.
+Twelve checks, none failing.
+
+## Compliance
+
+- The trailing clause ("while instances whose messages carry payload keep every one") reads as a product guarantee that payload-carrying messages are exempt from coalescing, which the product does not make and the run contradicts; the compliant text attributes the outcome to the choice, e.g. "so that a slow instance tracks the latest wake instead of falling arbitrarily far behind, and an instance that must keep every message can choose to".

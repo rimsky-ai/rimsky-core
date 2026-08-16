@@ -14,7 +14,7 @@ segment", so two scopes can be byte-unequal and still overlap. The producer
 logs every call it receives, including the scope pair of each conflict query
 and the answer it gave, and serves that log over HTTP. Templates declare
 selectors from an instance parameter, so one template drives every scope in the
-run.
+run. Re-run unchanged at this tree.
 
 ## What was observed
 

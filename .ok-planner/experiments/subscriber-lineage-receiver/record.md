@@ -17,10 +17,11 @@ bundled filesystem claim producer, the other substitutes an attribute from it.
 
 ## What was observed
 
-The receiver held nothing before the subscriber started. The subscriber came up
-on environment configuration alone. One workflow run produced four deliveries to
-the receiver's `/api/v1/lineage` route: one per graph node, one for the message
-that woke the graph, and one for the claim the producing node committed.
+Eleven checks, none failing. The receiver held nothing before the subscriber
+started. The subscriber came up on environment configuration alone. One workflow
+run produced four deliveries to the receiver's `/api/v1/lineage` route: one per
+graph node, one for the message that woke the graph, and one for the claim the
+producing node committed.
 
 Every delivery is a run event carrying an event type, an event time, a producer
 URI, a schema URL, a run id and a job name. Every job carries the namespace the
@@ -33,6 +34,5 @@ namespace, and the producing node's event names the same claim producer as an
 input dataset.
 
 Restarting the subscriber container and running a second workflow added four
-more deliveries. The receiver's record after the restart still begins with the
-same four deliveries in the same order and contains no run id and job name
-twice, so the restarted subscriber resumed at its cursor rather than replaying.
+more deliveries — eight in total, all distinct — so the restarted subscriber
+resumed at its cursor rather than replaying.

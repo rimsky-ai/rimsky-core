@@ -1,21 +1,23 @@
 ---
 audit: audit-artifact
 artifact: story:audit-artifact
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:45:00Z
+audited: 2026-08-16T05:03:56Z
 ---
 
-# A finished one-shot run leaves a record the operator can open later
+# Inspecting a completed one-shot run's record without re-running it
 
-Supported, in both of the CLI's one-shot modes. Each drove a mixed roster — one
-leg succeeding, one failing — to terminal in the invocation that started it, and
-each left a per-run artifact directory holding the run's state, its blob store
-and the config it used, with the executor process gone before anything was read.
-Serving a copy of that state back through a stack, the record answered the
-ordinary read surface: both instances present and terminal, the event stream
-replaying the success terminal and the failure's own error class, the instance,
-its nodes, its events and a single node readable by verb, and the successful
-leg's attribute writeback intact. Two consecutive reads returned identical
-counts, so inspecting the record neither re-runs nor disturbs it.
+Supported for both one-shot modes the product offers. Each was driven with a
+mixed roster — one leg succeeding, one failing against a third-party executor —
+and each left a per-run artifact directory carrying the run's state, its blob
+store, and the configuration it used. That inspection is not a re-run was
+established rather than assumed: the executor process the run spawned was gone
+before anything was read, and the record was read by serving a copy of the
+artifact through an ordinary deployment. Both the debugging half and the
+verifying half of the benefit came back — the failing instance, its worker node,
+and its own error class replayed from the record, alongside the succeeding run's
+node and its attribute writeback. Two consecutive reads returned the same event
+count, so reading the record does not disturb it. Twenty-three checks, none
+failing.

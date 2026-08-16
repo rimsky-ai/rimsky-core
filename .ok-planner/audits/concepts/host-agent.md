@@ -1,0 +1,12 @@
+---
+audit: host-agent
+artifact: concept:host-agent
+text: compliant
+implementation: unsupported
+commit: PENDING
+audited: 2026-08-16T04:44:00Z
+---
+
+# The host agent's eight invariants and its definitional TLS claim read against the agent package
+
+Six of the eight invariants hold, one is contradicted, and the definitional claim about the proxy hop is conditional in code, so the verdict is unsupported. What holds: the agent carries no capability configuration and bounds spawns by an optional operator-supplied path-glob allowlist that resolves symlinks before matching; the agent-to-child loopback runs mandatory mutual TLS in both directions off a self-contained local certificate authority generated at startup, separate from the deployment authority, with the child self-enrolling through a plaintext bootstrap endpoint against a per-spawn token the agent mints and validates, and the callback listener requiring and verifying a client certificate from that same local authority; spawned children inherit the full agent environment with per-binding overrides winning on a name collision, and the agent stamps the child's environment with the peer-auth mode, the bootstrap credential, the enroll endpoint pointing at its own local listener, and its routing label; stream close reaps every live child through a terminate-then-kill path bounded by a configurable grace period; the agent picks an operating-system-assigned port itself, tells the child through the environment, and polls until the child answers with no handshake back; and the anonymous routing identity is persisted to a local state file and re-presented on reconnect, with the status file the only other on-disk state and never read back to affect behavior. The contradicted invariant is path resolution: the concept says resolution happens at exec time with relative paths resolving against the spawn's working directory, but the agent resolves the binding path before exec by absolutizing it against its own working directory and resolving symlinks there, and a test names that anchoring to the agent's working directory rather than the remotely supplied one as the intended behavior. Separately, the definition's claim that the agent dials the proxy over TLS verifying a pinned deployment-CA root is opt-in: without an explicit switch and CA path the agent dials with insecure credentials and the api-key crosses that hop in cleartext.

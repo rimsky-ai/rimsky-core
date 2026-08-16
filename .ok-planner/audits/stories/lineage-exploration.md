@@ -1,25 +1,25 @@
 ---
 audit: lineage-exploration
 artifact: story:lineage-exploration
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:25:00Z
+audited: 2026-08-16T04:48:35Z
 ---
 
-# Walking run lineage both ways, by claim handle, and by source or producer
+# An operator walks lineage both directions and pivots by claim, source and producer
 
-Supported. One workflow run left two runs joined by an attribute substitution and
-one claim split into two sub-claims, and all four traversals the story names were
-taken over it. Backward: walking the consuming run reached the producing run its
-input came from. Forward: walking the producing run reached the consuming run. By
-claim handle: reading the parent claim returned its record with the producer's
-name and its outcome, walking it forward reached both sub-claims, and walking a
-sub-claim backward reached the claim it was split from. By pivot: querying by the
-substituted attribute and by the upstream run each returned the consuming run's
-record, and querying by the named claim producer returned its three committed
-claim records while a producer that committed nothing returned none. A depth
-given on a walk was honoured in the answer, and a run id with no lineage answered
-404 rather than an empty walk. The chain from the producing run through the
-substitution to the consuming run, and from the parent claim to its sub-claims,
-is the trace of how the data flowed.
+Supported. Driven through the public surface against a container of the released
+all-in-one image wired to the bundled filesystem claim producer, on one workflow
+whose producing node holds a claim and fans out over two partitions while its
+consuming node substitutes an attribute from it — so one run leaves a claim
+split into sub-claims and two runs joined by a substitution. Fourteen checks,
+none failing. All four pivots the story names answered: a run's own record read
+by run id; the walk backward from the consumer reaching the producer and the
+walk forward from the producer reaching the consumer, with a caller-given depth
+honoured; the claim-handle read returning the producer's name and outcome, its
+forward walk reaching both sub-claims and a sub-claim's backward walk reaching
+the claim it was split from; and the pivots by substitution source and by named
+producer, the latter returning that producer's three committed claims while a
+producer that committed nothing returned none. A run id with no lineage answered
+not-found rather than an empty walk.

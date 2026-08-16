@@ -1,20 +1,25 @@
 ---
 audit: fanout-any-substitution-source
 artifact: story:fanout-any-substitution-source
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:24:46Z
+checked: 5
+unaccounted: 0
 ---
 
-# A fan-out partition request substituted from each of the four sources the story names
+# A fan-out partition request resolves from every source kind it can take
 
-Supported. Against an all-in-one deployment with the bundled filesystem claim
-producer configured, four templates declared the same fan-out node and differed
-only in where the partition request read from. All four of the sources the story
-names resolved and partitioned the claim: an upstream node's attribute produced
-the three partitions that node had written, an instance param produced its two,
-the claim's own payload produced two keys built from the folder name the
-producer supplied, and a typed message's body produced its three. No run
-recorded a resolution error, and in each case the number of work units that
-reported a partition key equalled the number of partitions the source named.
+Supported: a run through the control API of an all-in-one deployment, with the
+bundled filesystem claim producer over a throwaway workspace, registered the same
+fan-out node five times differing only in where its partition request reads from.
+Each run partitioned exactly as its source named, with no resolution error
+anywhere: three partitions from an upstream node's attribute, two from an
+instance param, two from the claim's own payload interpolated into the keys, three
+from a typed message body, and two from a host-environment variable. In every case
+the number of work units reporting a partition key equalled the number of
+partitions the source named. The story names four sources; the substitution
+grammar carries six source kinds, of which five are testable here — the sixth, the
+per-child partition identifier, is the fan-out's own output and cannot be an input
+to the request that creates the partitions. Ten checks, none failing.

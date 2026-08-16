@@ -8,20 +8,20 @@ commit: PENDING
 ## What it ran against
 
 `peer/` is a complete third-party publisher: its own Go module whose only rimsky
-requirement is the protocols module, built the way the permissive-peer-build
-experiment's executor is. It serves the four publisher verbs, keeps its
-subscriptions in its own process, and posts messages into the workflows it is
-subscribed for through the control API. `run.sh` cross-builds it, runs it beside
-a `rimsky-all-in-one` stack from the tree's own image tag whose only knowledge
-of it is one `publishers:` entry, and drives everything else through the control
-API and the publisher's own state endpoint.
+requirement is the protocols module, built by the run the way the
+permissive-peer-build experiment's executor is. It serves the four publisher
+verbs, keeps its subscriptions in its own process, and posts messages into the
+workflows it is subscribed for through the control API. `run.sh` cross-builds
+it, runs it beside a `rimsky-all-in-one` stack from the tree's own image tag
+whose only knowledge of it is one `publishers:` entry, and drives everything
+else through the control API and the publisher's own state endpoint.
 
 ## What was observed
 
-The publisher's advertisement gates the templates that may name it: a template
-declaring a kind the publisher never advertised was rejected as
-`publisher_unadvertised_kind`. A template declaring the advertised kind
-registered and deployed.
+Twenty-three checks, none failing. The publisher's advertisement gates the
+templates that may name it: a template declaring a kind the publisher never
+advertised was rejected as `publisher_unadvertised_kind`. A template declaring
+the advertised kind registered and deployed.
 
 Creating an instance made rimsky call Subscribe exactly once, and the
 subscription carried the instance it was for, the template's kind, its message
@@ -37,5 +37,3 @@ id, and Unsubscribe had not been called. The publisher's next message landed the
 same way, running the subscribing node a second time. Terminating the instance
 released the subscription: Unsubscribe was called once and the publisher was
 left holding none.
-
-Nineteen checks, none failing.

@@ -1,23 +1,24 @@
 ---
 audit: claude-agent-mcp-servers-per-node
 artifact: story:claude-agent-mcp-servers-per-node
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T04:58:36Z
 ---
 
-# Per-node MCP declarations and the operator allowlist that bounds them
+# Per-node MCP declarations meet an operator allowlist, and neither side reaches into the other
 
-Supported. One template declaring three agent nodes, each naming a different
-single inline MCP server, was run twice against an all-in-one deployment
-carrying the bundled claude-agent executor: once with an operator allowlist
-naming two of the three servers, once with the allowlist unset. Each node's
-agent received exactly the server that node declared, plus the executor's own
-callback server, and never the server another node declared. The node naming the
-server outside the allowlist failed its dispatch, and the refusal named the
-server, the instance, the node and the allowlist variable. With the allowlist
-unset the same node ran and reached that same server, which is what makes the
-refusal the operator's act rather than the template's. Neither side reached into
-the other's territory: the operator never named a node, and no node changed what
-the allowlist admits.
+Supported. Driven through the public surface against a released-image stack
+running the bundled agent executor with a stand-in agent binary that reports the
+server configuration handed to it, on one template whose three agent nodes each
+declare a different single inline server, run twice — once with an operator
+allowlist naming two of the three, once with no allowlist. Seven checks, none
+failing. With the allowlist set, each permitted node's agent saw exactly its own
+declared server plus the executor's own callback server and never the other
+node's, while the node declaring the server outside the allowlist failed its
+dispatch with an attribute-invalid error naming the server, the instance, the node
+and the allowlist itself. With the allowlist unset the third node ran and its
+agent saw its own server, and the other two still saw only their own
+declarations — so the template author's per-node surface and the operator's
+boundary each hold without either widening the other.

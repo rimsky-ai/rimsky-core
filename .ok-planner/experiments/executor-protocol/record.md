@@ -18,6 +18,8 @@ else goes through the control API.
 
 ## What was observed
 
+Twenty-two checks, none failing.
+
 At startup the stack's discovery probe reached the peer and reported its whole
 advertisement back: both declared error classes, both declared tags, and the
 expected-attributes schema.
@@ -26,10 +28,9 @@ Rimsky then validated templates against that advertisement. A node declaring
 `echo` as an integer was rejected because the executor declares it a string and
 "the executor is authoritative on types"; a node declaring a property the peer's
 closed schema does not carry was rejected as undeclared; an `error_types` entry
-naming a class outside the peer's vocabulary came back as a warning saying the
-policy will only match if a peer emits that exact class; and a subscription
-filtering on a tag the peer never declared was rejected naming the sender and
-its executor.
+naming a class outside the peer's vocabulary came back as a warning; and a
+subscription filtering on a tag the peer never declared was rejected naming the
+sender and its executor.
 
 A template written to the advertisement registered, deployed, and ran. The
 success outcome settled the node fresh with the peer's attribute delta on the
@@ -42,5 +43,3 @@ once plus its two retries — before failing. Finally the declared tags proved
 load-bearing at run time: of two subscribers filtering on different declared
 tags of the same sender, the one matching the tag the peer emitted ran and the
 other never did.
-
-Twenty checks, none failing.

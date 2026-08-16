@@ -12,7 +12,7 @@ tag, locked down with an admin key. The standing service is the third-party peer
 built for permissive-peer-build, running in an alpine container with nothing but
 its api-key, the control-API URL and the deployment CA root in its environment.
 Handshakes are probed from the host with openssl, using a client leaf obtained
-from the ruled enrollment route.
+from the ruled enrollment route. Re-run unchanged at this tree.
 
 ## What was observed
 
@@ -38,3 +38,5 @@ Revoking the one key stopped issuance: the enrollment route answered the revoked
 key 401 with `revoked_token`, and a service restarted on it failed closed,
 exiting with "initial enroll ... failed (fail-closed)" rather than serving
 without credentials.
+
+EXPERIMENT PASS

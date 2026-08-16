@@ -17,12 +17,13 @@ routes. `run.py` builds and removes the container.
 
 ## What was observed
 
-Querying by the attribute the consuming node substituted returned that node's
-lineage record, whose substitution references name the upstream producing run.
-Reading that run id returned the same record. Walking the consuming run backward
-reached the producing run, and walking the producing run forward reached the
-consuming run. Querying by the producing run as a source returned the consuming
-run's record, and a depth given on the walk was honoured in the answer.
+Fourteen checks, none failing. Querying by the attribute the consuming node
+substituted returned that node's lineage record, whose substitution references
+name the upstream producing run. Reading that run id returned the same record.
+Walking the consuming run backward reached the producing run, and walking the
+producing run forward reached the consuming run. Querying by the producing run
+as a source returned the consuming run's record, and a depth given on the walk
+was honoured in the answer.
 
 Querying by the named claim producer returned its three committed claim records.
 Querying by a claim producer that committed nothing returned none. One of the

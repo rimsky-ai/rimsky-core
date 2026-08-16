@@ -1,40 +1,37 @@
 ---
 audit: claim-producer-postgres
 artifact: story:claim-producer-postgres
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:45:00Z
+audited: 2026-08-16T05:55:00Z
 ---
 
-# Postgres-backed claims that stage for real and check what was staged
+# Pick policies, atomic staging, verifier checks and subscribable error classes on the bundled postgres producer
 
-Supported. A Postgres database, two containers of the bundled postgres claim
-producer over it, and a stack pointed at both. The pick policy handed a distinct
-row to each of two claimants, each with its row's payload substituted into the
-node's dispatch, and a third claim against the drained policy settled the node
-on the producer's own claim-unavailable class, with a node subscribed to that
-producer's error classes running on the signal. A staged-async claim on a
-canonical schema resolved to a separate staging schema, its claim handle
-recorded staged-async rather than a downgrade to synchronous, the node wrote ten
-rows into the staging schema, a check declared as a row-count ratio against a
-baseline of ten ran over that staged content and passed, and after commit the
-canonical schema held the ten staged rows in place of the one it had while the
-staging schema no longer exists. A second staged claim wrote two rows against
-the same baseline: the checking node settled on the producer's per-check
-error class and a node subscribed to that producer's error classes ran on it.
-Two of the three error-class families the story names were driven end to end;
-the swap-failed family was not.
+Supported. A database, two instances of the bundled postgres producer over it —
+one with a pick policy, one staged with its verifier enabled — and a stack
+pointed at both. The pick policy handed a distinct seeded row to each of two
+claimants, each row's payload reaching its node's dispatch, and the claim
+handles record synchronous write semantics. A staged claim on the canonical
+schema resolved to a staging address distinct from it, its handle recording
+staged semantics rather than a downgrade, and after commit the canonical schema
+held the ten staged rows in place of the one it had while the staging schema no
+longer existed — swapped in, not copied. A row-count-ratio check run by a
+co-holding node over the staged content passed against a baseline of ten, and a
+second staged claim writing only two rows settled its checking node on the
+producer's per-check class, with a node subscribed to the producer's class
+namespace running on that signal. On error classes the run counts rather than
+assures: the producer advertises exactly three — claim-unavailable, swap-failed
+and not-atomically-replaceable — and two of the three were driven to fire and
+drive a subscriber, the drained pick policy giving claim-unavailable and a
+canonical schema carrying an external dependent giving
+not-atomically-replaceable with the schema and its dependent left untouched. The
+per-check verifier class the story names fires and is subscribable but is not
+among the three advertised, and swap-failed is advertised but no public-surface
+route provoked it in this run.
 
 ## Compliance
 
-The body prescribes mechanism — the staging schema swap, the aggregate-only
-shape of the verifier's queries, and the three error-class families by name —
-and its closing clause states a property of the implementation ("delivers
-staged_async semantically rather than as a no-op") rather than a user need.
-Compliant text: "As an operator wiring a workflow whose claims persist in
-PostgreSQL, I can use the bundled postgres claim producer to hand each claimant
-its own row, to write a whole new version of a dataset that only becomes visible
-once it is complete, to declare checks that must pass before it does, and to
-route on the failures the producer reports, so that my postgres workflows get
-the same claim guarantees as any other backend."
+The body enumerates mechanism: "row-locking claims", "(staging schema swap at commit)" and "a row-count-ratio check over aggregate-only queries" describe how the producer works, which belongs to a decision; compliant text names what the operator declares and observes without the internals.
+The benefit clause judges the implementation rather than naming a need — "so that I have a postgres-backed claim-producer that delivers staged-async semantically rather than as a no-op"; compliant text says what the operator gets, e.g. "so that a batch is visible to readers only once it has been written whole and checked".

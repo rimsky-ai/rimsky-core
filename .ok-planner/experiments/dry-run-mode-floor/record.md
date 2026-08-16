@@ -10,7 +10,8 @@ commit: PENDING
 A `rimsky-all-in-one` container from this tree's image set with authentication
 enabled, and three keys minted through `auth create-key --role-file`: one
 granting `tag:create` with `"mode": "dry_run"`, one granting `tag:create`
-unpinned, and one holding both the pinned grant and an unpinned `tag:*`.
+unpinned, and one holding both the pinned grant and an unpinned `tag:*`. Re-run
+unchanged at this tree.
 
 ## What was observed
 

@@ -1,26 +1,25 @@
 ---
 audit: template-subscriptions
 artifact: story:template-subscriptions
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:20:00Z
+audited: 2026-08-16T04:47:08Z
 ---
 
-# Subscriptions fire only on a matching type-path whose payload satisfies the predicate
+# Subscriptions match on a signal type-path and a payload predicate, and fire only on both
 
-Supported. Against a zero-config all-in-one deployment, one source node emitted a
-single terminal-success signal carrying its executor's attribute delta, and all 5
-subscription forms declared against it behaved as the story promises: the exact
-type-path fired, the trailing-wildcard prefix fired, the predicate the payload
-satisfies fired, the entry on a different type-path did not fire, and the
-predicate the payload fails did not fire. All 5 forms were admitted at
-registration, and the 2 non-firing nodes ended the run with zero node runs while
-the 3 firing nodes each ran once.
+Supported: a run through the CLI and control API of an all-in-one deployment
+registered a template carrying all five subscription forms the story implies —
+an exact type-path, a trailing-wildcard prefix, a non-matching type-path, a
+predicate the arriving payload satisfies, and a predicate it fails — all
+admitted at registration. The source node ran and emitted one terminal signal.
+The exact form, the wildcard form, and the satisfied-predicate form each fired
+exactly once; the node on a different type-path and the node whose predicate the
+payload fails did not fire at all, so both the path match and the payload
+condition gate the firing. Six checks, none failing.
 
 ## Compliance
 
-The capability clause names CEL, a specific expression-language choice with
-identifiable alternatives, which the story rules place in decision territory —
-and which no other story in the catalog names; the compliant text is "plus an
-optional predicate over the signal payload".
+Prescribes mechanism by naming the predicate's expression language, which is a decision-owned choice; the compliant text says the author declares a condition on the arriving event's contents.
+Prescribes mechanism by naming the matching syntax as exact or trailing-wildcard prefix; the compliant text says the author targets either one kind of upstream event or a family of them.

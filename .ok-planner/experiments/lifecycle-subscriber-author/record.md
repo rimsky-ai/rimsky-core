@@ -8,7 +8,7 @@ commit: PENDING
 ## What it ran against
 
 `peer/` is a third-party lifecycle subscriber: its own Go module whose only
-rimsky requirement is the protocols module, built the way the
+rimsky requirement is the protocols module, built by the run the way the
 permissive-peer-build experiment's executor is, and carrying that executor as
 its second role because a lifecycle subscriber is registered as a protocol
 alongside another peer role and only peers a template names receive the
@@ -20,13 +20,14 @@ transition.
 
 ## What was observed
 
-Nothing fired before anything happened. Then each control-API call had already
-delivered its callback by the time it returned — checked without waiting, which
-is what synchronous means from the caller's side — for template registered,
-template deployed, instance created, instance terminated (delivered on the
-instance delete that follows a terminate), template undeployed, and template
-deregistered. The run-scope terminal callback arrived from the runtime when the
-instance's frame settled.
+Thirty-seven checks, none failing. Nothing fired before anything happened. Then
+each control-API call had already delivered its callback by the time it returned
+— checked without waiting, which is what synchronous means from the caller's
+side — for template registered, template deployed, instance created, instance
+terminated (delivered on the instance delete that follows a terminate), template
+undeployed, and template deregistered: six of the seven. The run-scope terminal
+callback has no caller call to be synchronous with and arrived from the runtime
+when the instance's frame settled, which the run waited for.
 
 Each carried what the story names: the template hash on all four template
 callbacks and the spec on registration, the deployment's tags on deploy, and on
@@ -38,4 +39,3 @@ termination callback carried the instance, its template and the time it
 terminated.
 
 All seven distinct callbacks fired, in the order the transitions happened.
-Thirty checks, none failing.

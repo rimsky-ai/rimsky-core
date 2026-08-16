@@ -32,4 +32,10 @@ subscription side is not uniform: an `attribute/<key>/changed` edge on a message
 type is refused at registration, because message delivery only ever manifests as
 `terminal/success`.
 
+The interchangeability was exercised in the attribute-source context, where
+one node resolved both directives in a single dispatch; the run does not
+enumerate every context in which a nodes-directive is legal.
+
 Eight checks, none failing.
+
+RESULT: PASS

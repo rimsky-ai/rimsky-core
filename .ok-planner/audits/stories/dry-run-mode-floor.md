@@ -1,21 +1,23 @@
 ---
 audit: dry-run-mode-floor
 artifact: story:dry-run-mode-floor
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:25:00Z
+audited: 2026-08-16T04:39:20Z
 ---
 
-# An api-key whose grant pins a write action to dry-run
+# An operator mints a key whose grant pins a write to dry-run, and the holder cannot escalate it
 
-Supported. Three keys minted through the public key-creation verb settled it: a
-key granting one write action with dry-run mode returned the synthetic
-would-have envelope for a request that carried no flag at all, and the write did
-not land; the same key asking for a real write with the request flag set to
-false got the same envelope and the same absence, so the holder cannot escalate
-its own credential; a control key holding the same action unpinned performed the
-real write; and a key holding both the pinned grant and a second grant covering
-the same action executed for real, which is the proviso the story states. Both
-escalation routes a holder has — omitting the flag and setting it false — were
-exercised.
+Supported. Three keys were minted through the public key-creation verb against a
+fresh all-in-one deployment with authentication enabled: one granting a tag
+creation pinned to dry-run mode, one granting the same action unpinned, and one
+holding both the pinned grant and a wildcard grant covering the same action. The
+pinned key's plain creation request — carrying no mode flag at all — returned a
+synthetic would-have-created envelope and left nothing in the store; repeating it
+with the request's own dry-run flag set to false produced the same envelope and
+the same absence, so the holder cannot lift its own floor. The unpinned control
+key performed the real write and its tag persisted. The mixed key also performed
+the real write, which is exactly the proviso the story states: the floor holds
+only while no other grant authorizes execute mode on that action. The pinned key
+retained its read grant throughout.

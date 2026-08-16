@@ -15,10 +15,10 @@ first is also submitted to the validate route.
 
 ## What was observed
 
-Registration of the attribute-ref template was refused with HTTP 400 and no
-template id. The refusal carried a structured entry naming the ref
-`{{nodes.producer.attribute.bar}}`, the receiver node, the schema property the
-ref sits in, and the subscription entry that would cover it —
+Eight checks, none failing. Registration of the attribute-ref template was
+refused with HTTP 400 and no template id. The refusal carried a structured entry
+naming the ref `{{nodes.producer.attribute.bar}}`, the receiver node, the schema
+property the ref sits in, and the subscription entry that would cover it —
 `{node: producer, type: attribute/bar/changed, force_upstream_refresh: false}`.
 Adding exactly that entry to the same template made it register.
 
@@ -28,5 +28,3 @@ The typed-message template was refused the same way, naming
 
 The validate route returned the same finding with `ok: false` before any
 registration was attempted.
-
-Eight checks, none failing.

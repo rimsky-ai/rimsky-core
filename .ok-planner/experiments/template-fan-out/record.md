@@ -13,7 +13,10 @@ node's claim resolves against a producer advertising split-scope support. The
 fan-out work unit is the `verifier-http` executor pointed at a
 concurrency-observing HTTP endpoint the probe runs on the host: it holds each
 request open and reports the peak number in flight at once. `run.sh` starts the
-endpoint, boots the container, and removes both on exit.
+endpoint, boots the container, and removes both on exit. Both host ports default
+to free ones, and the three templates are materialized into the run's workspace
+with the endpoint's actual port substituted in, so the port the endpoint listens
+on and the port the templates dial cannot drift apart.
 
 ## What was observed
 
@@ -31,3 +34,5 @@ failed, the event log carried `terminal/error/aggregate/strict_failed`, and the
 partitions' claims were abandoned rather than committed. The number of clones
 that settle failed varies between runs under the `strict` policy, which
 force-cancels the remaining clones the moment the verdict is decided.
+
+Twelve checks, none failing.

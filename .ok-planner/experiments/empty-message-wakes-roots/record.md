@@ -25,3 +25,5 @@ for typed sends, carries the empty type, and opened a frame whose triggering
 message is that row.
 
 Nine checks, none failing.
+
+RESULT: PASS

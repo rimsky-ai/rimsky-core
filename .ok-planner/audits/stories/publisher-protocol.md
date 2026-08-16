@@ -1,23 +1,26 @@
 ---
 audit: publisher-protocol
 artifact: story:publisher-protocol
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:45:00Z
+audited: 2026-08-16T04:58:36Z
 ---
 
-# A custom publisher feeds workflows, and a rimsky restart does not re-issue it
+# A third-party publisher feeds workflows, and its subscriptions survive a restart unreissued
 
-Supported. A publisher written as its own module against the protocols module
-was wired into a stack by one config entry and behaved as a first-class peer: a
-template naming a kind it never advertised was rejected, and one naming its
-advertised kind registered. Creating an instance produced exactly one Subscribe
-call carrying the instance, kind, message type and resolved config, and the
-message the publisher posted woke the subscribing node, recorded as coming from
-the publisher with sender kind publisher and the publisher's own payload.
-Restarting rimsky did not re-issue anything: the restarted stack asked the
-publisher what it already held, after which Subscribe was still at one call, the
-same subscription id was still held, and Unsubscribe had not been called — and
-the publisher's next message ran the node a second time. Terminating the
-instance called Unsubscribe once and left the publisher holding none.
+Supported. Measured with a complete third-party publisher built for the run — its
+own Go module depending only on the published protocols module — running beside a
+released-image stack whose only knowledge of it is one declared publisher entry.
+Twenty-three checks, none failing. Its advertisement gated the catalog: a template
+naming a kind it never advertised was rejected, one naming the advertised kind
+registered and deployed. Creating an instance called Subscribe exactly once, with
+the subscription carrying the instance, the kind, the message type and the
+resolved config. The message the publisher then posted woke the subscribing node
+and was recorded as coming from that publisher with publisher sender kind rather
+than an operator, carrying the publisher's own payload. Restarting the stack
+re-issued nothing: it asked the publisher what it already held, after which
+Subscribe was still at one call, the same subscription id was still held, and
+Unsubscribe had not been called — and the next message landed the same way.
+Terminating the instance released the subscription with exactly one Unsubscribe,
+leaving the publisher holding none.

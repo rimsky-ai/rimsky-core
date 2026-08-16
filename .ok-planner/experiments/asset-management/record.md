@@ -20,18 +20,16 @@ that node's output.
 
 ## What was observed
 
-`rimsky asset list` returned exactly one asset, under the dotted node-type and
-claim-alias form, against the producer that advertises data processing.
-`rimsky asset show` carried `version_id: v1`, the id the producer minted at
-Commit, with state `committed` and lifetime `durable`. `rimsky asset versions`
-returned that version with its commit time and the producer metadata, so the
-version history is the producer's own. The materialization-history route
-returned the claim's terminal record, and every row carried record kind
-`claim_terminal`. `rimsky asset lineage` returned the backward walk from the
-asset, and the forward walk from the asset's materializing run — both
-`/v1/lineage/runs/{id}/descendants` and `/v1/lineage/by-source/run/{id}` —
-carried the downstream node's leaf run, so the operator can see what consumed
-the asset before retiring it. `rimsky asset delete` succeeded and the asset no
-longer appeared in the listing.
-
-Ten checks, none failing.
+Ten checks, none failing. `rimsky asset list` returned exactly one asset, under
+the dotted node-type and claim-alias form, against the producer that advertises
+data processing. `rimsky asset show` carried `version_id: v1`, the id the
+producer minted at Commit, with state `committed` and lifetime `durable`.
+`rimsky asset versions` returned that version with its commit time and the
+producer metadata, so the version history is the producer's own. The
+materialization-history route returned the claim's terminal record, and every
+row carried record kind `claim_terminal`. `rimsky asset lineage` returned the
+backward walk from the asset, and the forward walk from the asset's
+materializing run — both `/v1/lineage/runs/{id}/descendants` and
+`/v1/lineage/by-source/run/{id}` — carried the downstream node's leaf run, so
+the operator can see what consumed the asset before retiring it. `rimsky asset
+delete` succeeded and the asset no longer appeared in the listing.

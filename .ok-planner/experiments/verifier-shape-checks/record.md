@@ -11,6 +11,7 @@ A `rimsky-all-in-one` container booted from this tree's image at
 `RIMSKY_IMAGE_TAG`, on its zero-config SQLite defaults. The bundled
 shape-checks verifier runs in-process inside that container and is reachable as
 the executor name `verifier-shape-checks` with no service wiring of any kind.
+The rows and the declared checks both reach the verifier as node attributes.
 `run.py` registers and deploys four templates through the control API, drives an
 instance of each to rest, and reads each verifier node back off the node
 observability route. It boots and removes its own container.
@@ -31,12 +32,3 @@ the rows do not have, were rejected with
 `terminal/error/verifier/check_failed/no_nulls`. A check kind the verifier does
 not implement failed the node with `verifier/attribute_invalid` rather than
 passing silently.
-
-The rows and the checks both reach the verifier as node attributes. An earlier
-leg tried to feed the rows from an upstream node through an attribute
-substitution (`source:` reading `nodes.<type>.attribute.rows`); the template
-validator requires the receiver to subscribe to the upstream's
-`attribute/<field>/changed` signal for that, and the upstream passthrough node
-never emitted that signal, so the verifier was never dispatched. That leg was
-replaced by the stricter-declaration leg above, which settles the same question
-the story asks — whether the checks a template author declares are what govern.

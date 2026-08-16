@@ -1,19 +1,22 @@
 ---
 audit: upstream-pull-on-invalidate
 artifact: story:upstream-pull-on-invalidate
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:30:00Z
+audited: 2026-08-16T04:43:46Z
 ---
 
-# The subscription flag is what brings the sender current
+# A subscription can declare that its sender be brought current before the receiver dispatches
 
-Supported. Two instances were driven through the control API from templates
-identical except for the `force_upstream_refresh` value on one subscription,
-whose sender was wired so nothing else in the template could ever run it. With
-the flag set, the receiver's invalidation pulled the sender into the same frame,
-the sender dispatched exactly once, and the receiver dispatched afterwards on the
-value the sender had just produced. With the flag unset, the sender never
-dispatched at all. The difference is attributable to the declaration alone, so
-the template author expresses the refresh without a second trigger pathway.
+Supported: a run through the control API of an all-in-one deployment registered
+the same template twice, differing only in the force-refresh value on one
+subscription. The pulled node's only other subscription is to a message type
+nothing sends, so the declaration is the sole thing that can run it. With the
+declaration on, the operator message woke the trigger, the pulled node was
+brought into the same frame and ran exactly once, and the receiver dispatched
+afterwards carrying the value the pulled node had just produced. With the
+declaration off, the pulled node never ran and the receiver settled with a
+template-resolution error because its source had no value, so the declaration —
+and no incidental invalidation order — is what pulls the sender current. Four
+checks, none failing.

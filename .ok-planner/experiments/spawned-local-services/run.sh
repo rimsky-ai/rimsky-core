@@ -70,8 +70,8 @@ check "the process that served the run is gone" no \
   "$(kill -0 "$PID1" 2>/dev/null && echo yes || echo no)"
 check "no process is left running the binary" 0 \
   "$(pgrep -f "$WORK/devsvc" | wc -l | tr -d ' ')"
-check "no rimsky process is left behind" 0 \
-  "$(pgrep -f "$CLI" | wc -l | tr -d ' ')"
+check "no rimsky process from this command is left behind" 0 \
+  "$(pgrep -f "$CLI run template.yml" | wc -l | tr -d ' ')"
 
 note
 note "== a second run spawns its own process =="

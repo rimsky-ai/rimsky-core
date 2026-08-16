@@ -1,21 +1,20 @@
 ---
 audit: operator-invalidate-queues-during-flight
 artifact: story:operator-invalidate-queues-during-flight
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:30:00Z
+audited: 2026-08-16T04:43:46Z
 ---
 
-# An invalidate against an in-flight node queues behind it
+# An operator invalidate against an in-flight node queues a re-run instead of dropping or disrupting it
 
-Supported. Against a zero-config all-in-one deployment, a pause-mode
-pre-dispatch breakpoint held the worker's only run in flight, and the operator
-invalidated that same node while it sat there. The invalidate was accepted and
-produced a second worker run in `stale`, so it was not dropped; the run already in
-flight was still the same run in `running`, and the worker had been dispatched
-only once, so it was not disturbed. Releasing the hit let the in-flight run
-complete successfully, and only then did the queued run dispatch — the event log
-puts the second dispatch after the first run's completion — and it too reached
-success. Both halves of the story's benefit were exercised in the one run: the
-action was neither dropped nor destructive.
+Supported: a run through the control API of an all-in-one deployment held a
+worker's run in flight at a pause-mode pre-dispatch breakpoint and invalidated
+that same worker through the debug-override channel. The call was accepted,
+reporting one run mutated, and a second worker run appeared queued; the run
+already in flight was the same run in the same state, dispatched once. Releasing
+the hit let the in-flight run settle successfully, and only then did the queued
+run dispatch — the second breakpoint hit named it, and its dispatch follows the
+first run's completion in the event sequence. Both runs reached success. Eight
+checks, none failing.

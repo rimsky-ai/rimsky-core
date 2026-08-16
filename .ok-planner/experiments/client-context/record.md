@@ -8,8 +8,11 @@ commit: PENDING
 ## What it ran against
 
 Two independent `rimsky-all-in-one` containers from this tree's image set, each
-seeded with a distinct template while still addressed explicitly. After the two
-`ctx add` calls no command names an endpoint.
+published on a port the script picks free at start so concurrent runs cannot
+collide, and each seeded with a distinct template while still addressed
+explicitly. The CLI runs against an empty home directory with every rimsky
+environment variable unset. After the two `ctx add` calls no command names an
+endpoint.
 
 ## What was observed
 
@@ -21,5 +24,7 @@ switched the current context, `ctx current` confirmed it, and the same flagless
 `ls templates` then returned beta's hash and not alpha's — so the switch really
 re-targets the deployment rather than only rewriting a file. `ctx rm alpha`
 removed the non-current entry and left `beta` listed.
+
+Sixteen checks, none failing.
 
 RESULT: PASS

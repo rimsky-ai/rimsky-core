@@ -10,16 +10,16 @@ commit: PENDING
 The bundled filesystem claim producer from this tree's image, running as its
 own container over a bind-mounted host root with one pick policy configured and
 two job folders seeded in it. A dashboard-shaped gRPC client written for this
-experiment drives the producer's observability protocol from the host. A
-`rimsky-all-in-one` stack from the same tree is pointed at the same producer,
-with the producer's observability endpoint declared in rimsky.yml, so the
-control API's claim-producer view can be read too.
+experiment, rebuilt by the run, drives the producer's observability protocol
+from the host. A `rimsky-all-in-one` stack from the same tree is pointed at the
+same producer, with the producer's observability endpoint declared in
+rimsky.yml, so the control API's claim-producer view can be read too.
 
 ## What was observed
 
-The producer's capabilities response declares claim detail, claim streaming and
-claim listing, plus two admin views by name and title, and the parameterised
-view declares its one required parameter.
+Thirty-four checks, none failing. The producer's capabilities response declares
+claim detail, claim streaming and claim listing, plus two admin views by name and
+title, and the parameterised view declares its one required parameter.
 
 With four claims open — one on the pick policy and three on paths — the
 inventory paginated: a request for two returned two and a cursor, the next page

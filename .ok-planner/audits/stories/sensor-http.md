@@ -1,32 +1,31 @@
 ---
 audit: sensor-http
 artifact: story:sensor-http
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:25:00Z
+audited: 2026-08-16T05:35:00Z
 ---
 
-# Polling an HTTP source sends only what changed, and remembers it across a restart
+# Polling an external source, sending only what changed, and still not re-sending after a restart
 
-Supported. Four poll subscriptions against one static JSON document behaved as
-the story promises. The unfiltered watch sent a message carrying the response
-status, the URL, the decoded body and a hash of it, and its node ran; rewriting
-the document sent a second message with the new body and a different hash. With
-the document then left alone, a newly created instance's own first poll message
-is what shows the poller still running, and across it the first instance stayed
-at two messages — and it stayed at two across a restart of the sensor container
-as well, measured the same way. The watch narrowed by a JSON-path match sent
-exactly one message, the body satisfying the match, while the unfiltered watch on
-the same URL had by then sent all three bodies. The watch on a URL that never
-answers with success sent nothing, and so did a watch routed through a sensor
-with no egress allowlist, whose log records the refused dial — reaching a
-private-network target requires the operator to allowlist the range.
+Supported. Eleven checks against a deployment carrying the bundled HTTP sensor,
+its own state store and a document the run rewrites from outside. All four
+declared subscriptions mounted live. The unfiltered watch sent a message
+carrying the status the upstream returned, the location polled, the decoded body
+and a hash of it, and the subscribed node ran on it; rewriting the document
+produced a second message with the new body and a different hash. Leaving the
+document alone showed no re-send: a second instance's own first message is what
+proves the poller kept polling, and across that the first instance stayed at two
+messages — and the same observation repeats after the sensor process was
+restarted, a third instance sending its first message while the first still held
+exactly two. A subscription narrowed by a body match sent only the body
+satisfying it, while the unfiltered watch on the same location had by then sent
+all three. A watch on a location that never answers with success sent nothing
+across the whole run, and so did a watch routed to a sensor with no egress
+allowlist, whose log records the refused dial — a private-range target stays
+unreachable until the operator opens it.
 
 ## Compliance
 
-The capability clause prescribes the mechanism — "persist the last-seen body
-across restart" names storage and the comparison that drives the decision, which
-the story rules place in decision territory; the compliant text states the
-promise instead: "and not re-send a body that has not changed, across a restart
-of the sensor".
+The body prescribes storage — "persist the last-seen body across restart" — which belongs to a decision; the outcome clause that follows it already carries the need, so compliant text says the sensor does not re-send an unchanged body even after a restart.

@@ -10,7 +10,7 @@ commit: PENDING
 One `rimsky-all-in-one` container from the tree's own image tag, driven entirely
 through the `rimsky auth` CLI verbs — `init`, `create-key`, `list`, `show`,
 `revoke`, `rotate`, `status` — with each effect checked independently against the
-control API using the key in question.
+control API using the key in question. Re-run unchanged at this tree.
 
 ## What was observed
 
@@ -34,3 +34,5 @@ default listing and kept it visible under `--include-revoked`.
 The new key worked immediately and the old key still worked inside the window;
 polling until the old key stopped being accepted, it turned 401 while the new key
 kept answering 200. Final `auth status`: authenticated, 3 keys, 1 admin.
+
+EXPERIMENT PASS

@@ -1,21 +1,25 @@
 ---
 audit: cascade-defers-during-flight
 artifact: story:cascade-defers-during-flight
-determination: supported
-compliance: compliant
+text: compliant
+implementation: unsupported
 commit: PENDING
-audited: 2026-08-10T05:30:00Z
+audited: 2026-08-16T09:45:00Z
 ---
 
-# An in-flight node-run keeps the inputs it was dispatched with
+# An in-flight run is sealed against cascade, but a parked run is replaced rather than woken
 
-Supported. The story makes two claims and each was measured on its own run. Held
-at a pause-mode breakpoint, a node-run's dispatch bag carried the upstream value
-of its own moment; an upstream cascade arriving during that run added a second
-node-run row in `pending` and left the running row untouched; the held run then
-settled on the value it was dispatched with, not the freshened one, and the
-queued run dispatched only after that settlement, carrying the freshened value.
-Parked instead of running, an `http-node` run that a 429 response parked with a
-resume time an hour out was woken within a second by an upstream cascade, with
-the wake recorded as `upstream_cascade`, and the woken work then settled. Both
-runs drove a stack through the control API only.
+Unsupported: the story makes two claims and only the first holds. For a run in
+flight, a worker held at a pause-mode pre-dispatch breakpoint while its upstream
+was invalidated and settled again kept its own inputs, the running row was
+untouched, a second run appeared queued, and that queued run dispatched only
+after the first settled and carried the freshened value — one set of inputs in,
+one outcome out. For a parked run the promise fails: an outbound HTTP worker
+parked against an endpoint answering with an hour-long retry, an upstream cascade
+recorded a wake against it within a second, but the work that then ran was a
+different run and the parked run never settled. The parked unit of work is
+therefore discarded and replaced rather than woken early, and the executor's next
+sight of the world is a fresh substitution rather than the continuation the story
+promises. Fourteen checks across the two ways, two failing, both in the parked
+way. This is the same behaviour `story:resume-preserves-snapshot` observes from
+the inputs side.

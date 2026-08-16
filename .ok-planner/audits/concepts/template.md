@@ -1,0 +1,12 @@
+---
+audit: template
+artifact: concept:template
+text: compliant
+implementation: supported
+commit: PENDING
+audited: 2026-08-16T04:47:34Z
+---
+
+# Templates as content-addressed static artifacts, and the six invariants the concept claims
+
+Supported. All six hold. The template id is a fixed digest-prefix followed by the hex digest of a SHA-256 over the canonicalized spec bytes, computed after the sugar-expansion and defaulting steps, so semantically identical specs collapse to one id. The canonicalization-library pin is guarded by a dedicated freeze test that reads every workspace manifest, fails when the required version differs from a frozen constant, fails on a replace directive that would substitute different output bytes, and fails when no manifest requires the library at all — a mechanical check that fires exactly when the pin moves, as the invariant claims, and it cites the identity-migration decision in its own failure text. Instances carry the template hash they bound to at creation, and the tag-move handler updates only the tag row, so no live instance follows a tag. The late-bind list is an ordinary spec field and therefore inside the hashed bytes, and it is consulted at registration only to bypass the existence and schema legs for the names it contains — every other name falls through to the strict checks. The validate-without-persist entry point is a real route running the same validation and returning findings with no template record written. The unconditional-validation invariant survives an adversarial read on each of its four legs: named-lock declarations are checked against the operator's configured locks by a hook that is always wired; executor and claim-producer names resolve against the shared service address book, the same table dispatch reads; and an executor whose expected-attributes schema is not visible at registration is a hard error rather than a pass, so there is no register-before-provision path. Nothing relaxes this — a transient failure to consult the service registry returns a server error naming itself an infrastructure fault rather than letting the template through, the one operator setting in the neighbourhood governs the separate third-party validator pipeline that runs after this validation, and the one request-level knob only turns warnings into errors. Idempotent re-registration behaves as the Purpose describes: the handler resolves the hash, finds the existing record, and returns success without re-inserting, with a persistence-conformance case covering the store-level insert.

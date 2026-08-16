@@ -1,21 +1,22 @@
 ---
 audit: instance-create-is-idle
 artifact: story:instance-create-is-idle
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:20:00Z
+audited: 2026-08-16T04:38:45Z
 ---
 
-# Creating an instance runs nothing until work is invoked on it
+# Creating an instance of a deployed template starts nothing until work is invoked
 
-Supported. Against a zero-config all-in-one deployment, a created instance
-materialized its node graph and did nothing else: all 3 run counters on every
-node read zero, the instance's event log was empty, and no message was enqueued.
-The negative was anchored to a sibling rather than to elapsed time — a second
-instance of the same template was created, woken by an operator message, and
-driven to completion, proving the scheduler was live — and the untouched
-instance, re-read at that point, still had no events and zero run counters.
-Posting a message to it then drove it to completion, so creating an instance and
-invoking work on it are two operator actions the deployment drives
-independently.
+Supported. Both of the story's ways were driven through the public surface
+against a container of the released all-in-one image: creating an instance of
+a deployed template returned an id and materialized the node graph while every
+node run counter read zero, the event log was empty and the message queue was
+empty; and invoking work was a separate act that then ran the node. The
+negative is anchored to a second instance rather than to the clock — a sibling
+instance was created, woken and driven to completion, proving the scheduler was
+live, and the untouched instance was still event-free and still at zero
+counters when re-read afterwards. The body states a role, a capability and a
+mandatory benefit, names no surface and no mechanism, and carries no history or
+forward-looking text.

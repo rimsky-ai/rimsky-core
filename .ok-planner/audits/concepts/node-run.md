@@ -1,0 +1,12 @@
+---
+audit: node-run
+artifact: concept:node-run
+text: compliant
+implementation: supported
+commit: PENDING
+audited: 2026-08-16T04:57:08Z
+---
+
+# The node-run row: one seven-state column, its transition table, and its ten invariants
+
+Supported. The state column is a single constrained column over exactly the seven named values, with no second phase column anywhere, and the transition table is one central function whose per-state cases match the concept's listing reason for reason across all seven states; the concept's release-and-requeue edge is realized by the queue's disposition-carrying release rather than through that function, and the cascade wake to stale — which the concept names in its own carve-out paragraph — is the parked state's second admitted reason there. The frame reference is a non-null foreign key. The dispatcher's claim is genuinely two-legged: one statement stamps the claimant while leaving the row stale, a second promotes it to running, and the claim statement's own predicate refuses the row while any sibling for the same node and run scope carries a claim or sits in held or parked — the second of the two layers the concept describes, the first being the gate evaluator's advanced-sibling probe, which refuses to advance a pending row while a sibling is in stale, running, held, or parked. The queue's guard discipline is exactly as claimed: four claim-guarded verbs each carry an expected-claimant predicate and update no row on mismatch, and the three administrative paths are separate, explicitly-named force variants rather than a sentinel argument. Sequence is assigned once at insert as the per-node-per-run-scope maximum plus one and is never the target of an update in either backend; the creation reason is likewise written only at insert and appears afterwards only in read predicates, and its four values match the concept's vocabulary in the column constraint. The prior-dispatch disposition constraint carries exactly the three-value vocabulary the concept states. Scratch is copied onto a new row at creation through the enqueue insert's initial-scratch columns. The progress timestamp is bumped from exactly the three sites named — scratch writeback, attribute writeback, keepalive — each inside the transaction of the write it accompanies. The orphan sweep's candidate query admits only rows that still carry a claim and a registered async acknowledgement, and a conformance case on both backends proves a parked row drops out of it.

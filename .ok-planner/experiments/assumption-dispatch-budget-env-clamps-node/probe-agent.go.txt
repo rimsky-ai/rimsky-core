@@ -1,0 +1,400 @@
+package main
+
+import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"time"
+)
+
+const signoffDomain = "rimsky/claude-agent/signoff/v1"
+
+var spawnArgv []string
+
+func main() {
+	argv := os.Args[1:]
+	spawnArgv = argv
+	if len(argv) == 2 && argv[0] == "-genkey" {
+		genkey(argv[1])
+		return
+	}
+	sessionID := readArg(argv, "--session-id")
+	resumeToken := readArg(argv, "--resume")
+	mcpConfigPath := readArg(argv, "--mcp-config")
+	promptBytes, _ := io.ReadAll(os.Stdin)
+	prompt := string(promptBytes)
+	d := directives(prompt)
+
+	emit("system", []any{map[string]any{"type": "text", "text": "probe-agent"}})
+
+	if d["mode"] == "exit" {
+		fmt.Fprintln(os.Stderr, d["stderr"])
+		os.Exit(1)
+	}
+
+	url := os.Getenv("RIMSKY_CALLBACK_URL")
+	token := os.Getenv("RIMSKY_CALLBACK_TOKEN")
+	if url == "" || token == "" {
+		fmt.Fprintln(os.Stderr, "probe-agent: RIMSKY_CALLBACK_URL/RIMSKY_CALLBACK_TOKEN unset")
+		os.Exit(2)
+	}
+	c := &mcp{url: url, token: token}
+	c.initialize()
+
+	switch d["mode"] {
+	case "error":
+		c.call("report_error", map[string]any{"error_class": d["error_class"], "payload": map[string]any{"probe": true}})
+	case "session":
+		modeSession(c, d, sessionID, resumeToken)
+	case "observe":
+		modeObserve(c, d, sessionID, resumeToken, mcpConfigPath)
+	case "adapt":
+		modeAdapt(c, d, sessionID, resumeToken, mcpConfigPath)
+	default:
+		modeReport(c, d, sessionID)
+	}
+}
+
+func modeReport(c *mcp, d map[string]string, sessionID string) {
+	delta := decodeDelta(d["delta_b64"])
+	args := map[string]any{"changed": true, "attributes_delta": delta}
+	attachSignoff(args, d, delta, sessionID)
+	c.call("report_complete", args)
+}
+
+func modeSession(c *mcp, d map[string]string, sessionID, resumeToken string) {
+	path := d["state_dir"] + "/session-" + d["chain"] + ".json"
+	turn := 1
+	recall := ""
+	if resumeToken != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			fail("probe-agent: --resume " + resumeToken + " but no prior conversation state at " + path)
+		}
+		var prior struct {
+			Turn   int    `json:"turn"`
+			Recall string `json:"recall"`
+		}
+		if json.Unmarshal(raw, &prior) != nil || prior.Turn == 0 {
+			fail("probe-agent: prior conversation state unreadable at " + path)
+		}
+		turn = prior.Turn + 1
+		recall = prior.Recall
+	} else {
+		recall = d["remember"]
+	}
+	state, _ := json.Marshal(map[string]any{"turn": turn, "recall": recall})
+	if err := os.WriteFile(path, state, 0o644); err != nil {
+		fail("probe-agent: cannot persist conversation state: " + err.Error())
+	}
+	delta := map[string]any{
+		"turn":         turn,
+		"recall":       recall,
+		"resumed_with": resumeToken,
+		"spawned_as":   sessionID,
+	}
+	if d["read_dispatch_context"] == "1" {
+		delta["dispatch_context"] = c.readJSONTool("dispatch_context_read")
+	}
+	c.call("report_complete", map[string]any{"changed": true, "attributes_delta": delta})
+}
+
+func modeAdapt(c *mcp, d map[string]string, sessionID, resumeToken, mcpConfigPath string) {
+	snapshot, _ := c.readJSONTool("dispatch_context_read").(map[string]any)
+	if snapshot["prior_dispatch_disposition"] == nil {
+		if d["first"] == "hang" {
+			time.Sleep(time.Hour)
+			return
+		}
+		c.call("report_error", map[string]any{
+			"error_class": d["error_class"],
+			"payload":     map[string]any{"probe": "first dispatch had no predecessor"},
+		})
+		return
+	}
+	modeObserve(c, d, sessionID, resumeToken, mcpConfigPath)
+}
+
+func modeObserve(c *mcp, d map[string]string, sessionID, resumeToken, mcpConfigPath string) {
+	servers := []any{}
+	if mcpConfigPath != "" {
+		raw, err := os.ReadFile(mcpConfigPath)
+		if err != nil {
+			fail("probe-agent: read mcp config: " + err.Error())
+		}
+		var parsed struct {
+			McpServers map[string]map[string]any `json:"mcpServers"`
+		}
+		if json.Unmarshal(raw, &parsed) != nil {
+			fail("probe-agent: parse mcp config")
+		}
+		names := []string{}
+		for name := range parsed.McpServers {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			transport, _ := parsed.McpServers[name]["type"].(string)
+			servers = append(servers, name+":"+transport)
+		}
+	}
+
+	present := []any{}
+	digests := map[string]any{}
+	for _, name := range splitList(d["env"]) {
+		v, ok := os.LookupEnv(name)
+		if !ok {
+			continue
+		}
+		present = append(present, name)
+		sum := sha256.Sum256([]byte(v))
+		digests[name] = hex.EncodeToString(sum[:])
+	}
+
+	var dispatchContext any
+	if d["read_dispatch_context"] == "1" {
+		dispatchContext = c.readJSONTool("dispatch_context_read")
+	}
+	var attributesAtSpawn any
+	if d["read_attributes"] == "1" {
+		attributesAtSpawn = c.readJSONTool("attributes_read")
+	}
+
+	obs := map[string]any{
+		"argv":         spawnArgv,
+		"mcp_servers":  servers,
+		"env_present":  present,
+		"env_digest":   digests,
+		"spawned_as":   sessionID,
+		"resumed_with": resumeToken,
+	}
+	if dispatchContext != nil {
+		obs["dispatch_context"] = dispatchContext
+	}
+	if attributesAtSpawn != nil {
+		obs["attributes_at_spawn"] = attributesAtSpawn
+	}
+	raw, _ := json.Marshal(obs)
+	sum := sha256.Sum256(raw)
+	delta := map[string]any{"cli_observation": obs, "note": hex.EncodeToString(sum[:])}
+	args := map[string]any{"changed": true, "attributes_delta": delta}
+	attachSignoff(args, d, delta, sessionID)
+	c.call("report_complete", args)
+}
+
+func attachSignoff(args map[string]any, d map[string]string, delta map[string]any, sessionID string) {
+	keyPath := d["sign_key"]
+	if keyPath == "" {
+		return
+	}
+	path := d["sign_path"]
+	if path == "" {
+		path = "note"
+	}
+	binding := d["sign_binding"]
+	if binding == "" {
+		binding = sessionID
+	}
+	value := delta[path]
+	if override, ok := d["sign_value"]; ok {
+		value = override
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		fail("probe-agent: sign value marshal: " + err.Error())
+	}
+	msg := signoffDomain + "\n" + binding + "\n" + string(encoded)
+	args["signoffs"] = []any{base64.StdEncoding.EncodeToString(ed25519.Sign(loadKey(keyPath), []byte(msg)))}
+}
+
+func genkey(dir string) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		fail("probe-agent: genkey: " + err.Error())
+	}
+	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		fail("probe-agent: genkey marshal private: " + err.Error())
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		fail("probe-agent: genkey marshal public: " + err.Error())
+	}
+	writePEM(dir+"/signoff-private.pem", "PRIVATE KEY", privDER)
+	writePEM(dir+"/signoff-public.pem", "PUBLIC KEY", pubDER)
+}
+
+func writePEM(path, blockType string, der []byte) {
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: der}), 0o644); err != nil {
+		fail("probe-agent: write " + path + ": " + err.Error())
+	}
+}
+
+func loadKey(path string) ed25519.PrivateKey {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		fail("probe-agent: read sign key: " + err.Error())
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		fail("probe-agent: sign key is not PEM")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		fail("probe-agent: parse sign key: " + err.Error())
+	}
+	key, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		fail("probe-agent: sign key is not ed25519")
+	}
+	return key
+}
+
+func decodeDelta(b64 string) map[string]any {
+	if b64 == "" {
+		return map[string]any{}
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		fail("probe-agent: delta_b64 decode: " + err.Error())
+	}
+	out := map[string]any{}
+	if json.Unmarshal(raw, &out) != nil {
+		fail("probe-agent: delta_b64 parse")
+	}
+	return out
+}
+
+func directives(prompt string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(prompt, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "probe.") {
+			continue
+		}
+		kv := strings.SplitN(strings.TrimPrefix(line, "probe."), "=", 2)
+		if len(kv) == 2 {
+			out[kv[0]] = kv[1]
+		}
+	}
+	return out
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func readArg(argv []string, name string) string {
+	for i, a := range argv {
+		if a == name && i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	return ""
+}
+
+func fail(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
+	os.Exit(2)
+}
+
+func emit(kind string, content []any) {
+	line, _ := json.Marshal(map[string]any{"type": kind, "message": map[string]any{"content": content}})
+	fmt.Println(string(line))
+}
+
+type mcp struct {
+	url     string
+	token   string
+	session string
+	nextID  int
+}
+
+func (c *mcp) post(method string, params map[string]any) map[string]any {
+	c.nextID++
+	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": c.nextID, "method": method, "params": params})
+	req, err := http.NewRequest(http.MethodPost, c.url, bytes.NewReader(body))
+	if err != nil {
+		fail("probe-agent: build " + method + ": " + err.Error())
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if c.session != "" {
+		req.Header.Set("Mcp-Session-Id", c.session)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fail("probe-agent: " + method + ": " + err.Error())
+	}
+	defer resp.Body.Close()
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" && c.session == "" {
+		c.session = sid
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		fail(fmt.Sprintf("probe-agent: %s -> HTTP %d: %s", method, resp.StatusCode, raw))
+	}
+	var parsed map[string]any
+	if json.Unmarshal(raw, &parsed) != nil {
+		fail("probe-agent: " + method + " response parse: " + string(raw))
+	}
+	if parsed["error"] != nil {
+		encoded, _ := json.Marshal(parsed["error"])
+		fail("probe-agent: " + method + " error: " + string(encoded))
+	}
+	return parsed
+}
+
+func (c *mcp) initialize() {
+	c.post("initialize", map[string]any{
+		"protocolVersion": "2025-06-18",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "rimsky-probe-agent", "version": "1.0.0"},
+	})
+}
+
+func (c *mcp) call(name string, args map[string]any) map[string]any {
+	merged := map[string]any{"token": c.token}
+	for k, v := range args {
+		merged[k] = v
+	}
+	id := fmt.Sprintf("probe-tool-%d", c.nextID+1)
+	emit("assistant", []any{map[string]any{"type": "tool_use", "id": id, "name": name}})
+	res := c.post("tools/call", map[string]any{"name": name, "arguments": merged})
+	emit("user", []any{map[string]any{"type": "tool_result", "tool_use_id": id}})
+	out, _ := res["result"].(map[string]any)
+	return out
+}
+
+func (c *mcp) readJSONTool(name string) any {
+	result := c.call(name, map[string]any{})
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		fail("probe-agent: " + name + " returned no content")
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	var out any
+	if json.Unmarshal([]byte(text), &out) != nil {
+		fail("probe-agent: " + name + " content parse: " + text)
+	}
+	return out
+}

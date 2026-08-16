@@ -1,0 +1,72 @@
+{
+  "name": "pg-staged-dependent",
+  "version": "v1",
+  "nodes": [
+    {
+      "type": "stager",
+      "executor": "http-node",
+      "claim_producers": [
+        {
+          "name": "staged-store",
+          "selector": "analytics_swapfail",
+          "intent": "rw",
+          "alias": "staged"
+        }
+      ],
+      "error_types": {
+        "acquire/unavailable": {
+          "action": "give_up"
+        }
+      },
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19489/stage"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            },
+            "staging_schema": {
+              "type": "string",
+              "source": "{{claim.staged.address}}"
+            },
+            "rows": {
+              "type": "integer",
+              "default": 4
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "watcher",
+      "executor": "http-node",
+      "subscribes": [
+        {
+          "node": "stager",
+          "type": "terminal/error/pg/*",
+          "force_upstream_refresh": false
+        }
+      ],
+      "attributes": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "default": "http://host.docker.internal:19489/rec/depwatcher"
+            },
+            "method": {
+              "type": "string",
+              "default": "POST"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

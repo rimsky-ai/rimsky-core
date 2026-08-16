@@ -1,0 +1,17 @@
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+claim_producers: {}
+named_locks: {}
+executors: {}
+publishers:
+  "poll-with-auth":
+    endpoint: "http-sensor:9082"
+    protocols: ["publisher"]
+  "hook-with-auth":
+    endpoint: "webhook-sensor:9084"
+    protocols: ["publisher"]
+  "hook-without-auth":
+    endpoint: "webhook-sensor:9084"
+    protocols: ["publisher"]

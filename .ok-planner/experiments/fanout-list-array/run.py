@@ -295,6 +295,7 @@ def main():
     check("the parent and its three work units all settled fresh",
           summary and summary[0]["fresh_count"] == len(ITEMS) + 1 and summary[0]["failed_count"] == 0,
           json.dumps(summary))
+    finish()
 
 
 try:

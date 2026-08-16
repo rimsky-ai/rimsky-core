@@ -1,32 +1,29 @@
 ---
 audit: breakpoint-debugger
 artifact: story:breakpoint-debugger
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:30:00Z
+audited: 2026-08-16T04:51:57Z
 ---
 
-# Install, observe, resume with an overlay, and delete a breakpoint
+# An operator installs a breakpoint, reads its hits, resumes with an overlay, and deletes it
 
-Supported. Against a zero-config all-in-one deployment, all 4 acts the story
-names were driven in one session on one live instance. A breakpoint installed on
-the worker's before-dispatch checkpoint and read back off the instance; the
-worker's first dispatch stopped there and appeared both on the hits ledger —
-naming the worker's node, its sealed dispatch bag, and the run it was holding in
-flight — and on the unified event log as one hit record naming the same
-breakpoint. Resuming that hit with an attribute overlay re-fired the dispatch
-carrying the overlaid value and leaving every value the overlay did not name
-alone. Deleting the breakpoint removed it from the instance and emptied its hits,
-while the event log kept its record of the hit.
+Supported. Driven through the public surface against a container of the released
+all-in-one image, on a template whose worker node subscribes to a counter and
+reads its count, with one pause-mode pre-dispatch breakpoint installed on the
+worker. Fourteen checks, none failing. The breakpoint installed and read back
+off the instance; the worker's first dispatch stopped at it, with the hits ledger
+carrying one hit naming the worker's node and the sealed dispatch bag while the
+held run read as running, and the unified event log carrying the same hit as one
+record naming the breakpoint and the node — both places the story names.
+Resuming the hit with an attribute overlay reported it the first resume, and the
+re-fired dispatch settled carrying the overlaid value with nothing the overlay
+did not name changed. Deleting the breakpoint answered no-content, removed it
+from the instance and emptied the hits ledger, while the event-log record of the
+hit survived the deletion.
 
 ## Compliance
 
-The body prescribes mechanism in two places: it names the two stores a hit lands
-in, and it names an internal role as the actor that applies the overlay ("that
-the supervisor applies on re-fire"). A story states what the user observes, not
-where the system keeps it or which part produces it. Compliant text: "As an
-operator, I can install a breakpoint on a running instance, see each hit it takes,
-release a held hit with an attribute overlay that the re-fired work then runs
-with, and delete the breakpoint to clear its hits, so that I debug a live
-instance."
+- The body names an internal component and its mechanism — "an attribute overlay that the supervisor applies on re-fire" prescribes which part of the product applies it; the compliant clause is that the overlay applies when the dispatch re-fires.
+- The body enumerates the delivery surfaces — "both on the unified event log and on the breakpoint-hits ledger" is where the product exposes hits, which decisions own; the compliant capability is seeing the hits the breakpoint takes.

@@ -1,37 +1,31 @@
 ---
 audit: host-agent-late-bind-all-protocols
 artifact: story:host-agent-late-bind-all-protocols
-determination: unsupported
-compliance: compliant
+text: compliant
+implementation: unsupported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
-checked: 2
-unaccounted: 1
+audited: 2026-08-16T05:05:00Z
 ---
 
-# The executor protocol reaches a late-bound binary; the claim-producer protocol does not
+# Both protocols reach a spawned local child, but not identically
 
-Unsupported. Of the two peer protocols a late-bound binding can name, one works
-and one does not. Measured against a containerised deployment whose
-configuration names its proxy as both an executor entry and a claim-producer
-entry and maps both late-bind protocol slots to it, with an agent connected from
-the host and one binding declared for a local binary that serves both protocols.
-
-A node whose executor is the late-bound service settled fresh, carrying the
-local binary's own report on the record, and the binary served one Execute call
-from the child the agent spawned. A node whose claim names the same late-bound
-service settled failed with `acquire/unresolved_claim_producer` naming that
-service: the deployment never resolved the name, the binary was never spawned
-for it, and neither Open nor Commit was served. A control separates an
-unresolvable name from an unreachable proxy — a node whose claim names the
-deployment's configured proxy entry directly reached the proxy and came back
-with the proxy's own `binding_not_found`, so that entry is live and answering.
-A binding naming a path that does not exist failed the dispatch with the agent's
-own `spawn_failed`, which is the behaviour the story expects of a bad binding.
-
-## Unaccounted
-
-- claim_producer — a node whose claim names a late-bound service is refused with
-  `acquire/unresolved_claim_producer` in a deployment where the proxy's
-  claim-producer entry is declared in the configuration file, which is the only
-  way an operator declares one.
+Unsupported, on the story's claim that the two protocols behave identically. A
+deployment in containers mapped both late-bind protocol slots to one agent
+proxy, an agent ran on the machine holding the author's binary, and four
+instances drove the same binding. The executor half works as the story
+describes: a node whose executor is the late-bound service settled fresh, the
+attributes on the record carry the local binary's own report, and the agent
+spawned exactly one child from the declared path. The claim half does reach a
+spawned local child, but only under a different spelling: a node whose claim
+names the deployment's own proxy entry, with the binding declared under that
+same name, settled fresh and the local binary served Open, Execute and Commit.
+Naming the late-bind service — the spelling the executor half accepts, which the
+template surface registers and deploys without complaint — settled failed with
+an unresolved-claim-producer error and never spawned the binary. A control run
+separates the two: naming the configured proxy entry with no binding under that
+name reaches the proxy and comes back with the proxy's own binding-not-found, so
+the proxy is live and answering, and the fourth instance, whose binding names a
+path that does not exist, settled failed carrying the agent's own spawn error.
+So the benefit is obtainable for both protocols, but the author has to discover
+that the two are declared differently, and the symmetric declaration fails at
+dispatch rather than at registration.

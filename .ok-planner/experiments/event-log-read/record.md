@@ -16,11 +16,13 @@ reconstructed from `GET /v1/events`.
 
 ## What was observed
 
-The feed carried all four: `work_started` and `terminal/*` for node lifecycle,
-`breakpoint.hit` twice for the armed breakpoint, two message deliveries on the
-declared message type's own node (the one the graph sent and the one the
-operator posted, with the posted payload's value on the record), and the
-supervisor's `attributes_substituted` and `work_completed` rows carrying the
+Twenty-eight checks, none failing.
+
+The feed carried all four kinds: `work_started` and `terminal/*` for node
+lifecycle, `breakpoint.hit` twice for the armed breakpoint, two message
+deliveries on the declared message type's own node (the one the graph sent and
+the one the operator posted, with the posted payload's value on the record), and
+the supervisor's `attributes_substituted` and `work_completed` rows carrying the
 supervisor id.
 
 The order was the clock's: the feed came back ordered by its sequence, the
@@ -34,5 +36,3 @@ second as `since=` returned exactly the events at or after it — a real narrowi
 of 24 events to 14 — with nothing earlier, and an `until=` set before the run
 returned nothing. Malformed filters were refused rather than ignored: an unknown
 kind, a non-RFC3339 timestamp, and a malformed instance id each came back 400.
-
-Twenty-one checks, none failing.

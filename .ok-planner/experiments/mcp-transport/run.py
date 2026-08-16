@@ -25,6 +25,7 @@ than assumed.
 
 import json
 import os
+import socket
 import pathlib
 import subprocess
 import sys
@@ -38,7 +39,15 @@ CLI = str(ROOT / "bin" / "rimsky")
 TAG = os.environ.get("RIMSKY_IMAGE_TAG")
 if not TAG:
     sys.exit("export RIMSKY_IMAGE_TAG=src-<tree hash> first")
-PORT = int(os.environ.get("PORT", "18933"))
+def _free_port():
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
+
+
+PORT = int(os.environ.get("PORT") or _free_port())
 BASE = f"http://127.0.0.1:{PORT}"
 STACK = "exp-mcp-stack"
 
@@ -177,7 +186,7 @@ try:
             continue
         method, ruled, concrete = line.split("\t")
         routes.append((method, ruled, concrete))
-    check("the ruled public control-API routes were enumerated", 82, len(routes))
+    check("the ruled public control-API routes were enumerated", 85, len(routes))
 
     http_action = {}
     posture = {}

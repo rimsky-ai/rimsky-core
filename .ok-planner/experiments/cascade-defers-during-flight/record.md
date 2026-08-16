@@ -52,4 +52,9 @@ The worker parked with a resume time one hour out. The upstream cascade woke it
 within a second, recording `resume_reason: upstream_cascade`. The woken work then
 reached the endpoint and settled successfully.
 
-Five checks, none failing.
+The way now also asks whose work that was. It was not the parked run: the
+dispatch after the wake carries a different run id, and the parked run never
+completes — the only worker run that completes is the new one. So the parked unit
+of work is replaced rather than woken and continued.
+
+Seven checks, two failing: the run-identity check and the settlement check.

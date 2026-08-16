@@ -14,6 +14,7 @@ instances through the tag. `run.sh` boots and removes the container.
 
 ## What was observed
 
+The whole probe passed at this tree. The two templates hashed differently.
 `tag create` bound the name `pipeline` to the first hash; `tag list` carried
 the name and the hash it points at, and `tag get` resolved it. An instance
 created with the tag as its template ref bound to the tagged hash. `tag mv`

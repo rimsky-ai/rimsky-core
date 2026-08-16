@@ -1,20 +1,21 @@
 ---
 audit: held-commit-cascades-success
 artifact: story:held-commit-cascades-success
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:26:27Z
 ---
 
-# A downstream subscriber sees held work's success only after the commit
+# Held work's success reaching downstream only once it has committed
 
-Supported. Against an all-in-one deployment with a filesystem-backed claim
-producer, one node opened a claim and a co-holder of that claim called an
-endpoint that held its request open, which is the point at which the run was
-inspected rather than any elapsed time. At that provisional held moment the
-acquirer's run was in state held, the acquirer had emitted no success signal,
-and the non-member downstream subscriber had no run at all. Once the endpoint
-released, the claim resolved with one commit, the acquirer emitted exactly one
-success signal at the next sequence number, and the subscriber's run started
-after that commit.
+Supported. A stack from this tree ran a template whose acquirer opens a claim on
+the bundled filesystem producer, whose co-holder calls an endpoint that holds
+every request open until released, and whose watcher sits outside the holding
+subgraph subscribed to the acquirer's success; the endpoint reporting the arrival
+of the co-holder's request is the synchronisation point, so nothing waits on a
+clock. At that provisional moment the acquirer's run was held, it had emitted no
+success signal, and the watcher had no run at all. After the release the claim
+resolved with a single commit, the acquirer emitted exactly one success at the
+next sequence number after that commit, and the watcher's work started after it.
+The subscriber therefore sees the success at commit and never at the held moment.

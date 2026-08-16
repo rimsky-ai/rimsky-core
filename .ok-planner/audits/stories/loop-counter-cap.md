@@ -1,18 +1,23 @@
 ---
 audit: loop-counter-cap
 artifact: story:loop-counter-cap
-determination: supported
-compliance: compliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:30:00Z
+audited: 2026-08-16T04:47:08Z
 ---
 
-# The bundled loop-counter node bounds iteration by its max attribute
+# The bundled counter node bounds iteration and marks its last round
 
-Supported. A template whose single node names the bundled `loop_counter` kind and
-supplies a `max` input attribute was driven through the control API twice. With
-`max: 4` the node dispatched four times, emitting counts 1, 2, 3, 4 tagged
-`loop`, `loop`, `loop`, `done`. With `max: 1` it dispatched once, emitting count 1
-tagged `done`. Both instances then reached rest with no live runs, so the cap
-stopped the iteration in each case. The template declares no executor of its own,
-so the bounded loop was expressed without authoring one.
+Supported: a run through the control API of an all-in-one deployment drove a
+template whose only node is the bundled counter kind, self-subscribed and
+filtered on the iteration tag, with no executor of the author's own anywhere in
+the template. At a maximum of four the node dispatched four times, emitting
+counts one through four, the first three carrying the iteration tag and the
+fourth the terminal one. At a maximum of one it dispatched once, carrying the
+terminal tag on that single round. Both instances came to rest with no live runs,
+so iteration stopped at the cap in each case. Six checks, none failing.
+
+## Compliance
+
+Prescribes mechanism by naming the node kind, its maximum-count input attribute, and the two literal tag strings — all owned by the decision that fixes the counter's shape; the compliant text says the author can bound an iteration at a declared number of rounds and tell which round is the last, without authoring an executor.

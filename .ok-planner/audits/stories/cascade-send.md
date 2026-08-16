@@ -1,19 +1,21 @@
 ---
 audit: cascade-send
 artifact: story:cascade-send
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:30:00Z
+audited: 2026-08-16T05:11:27Z
 ---
 
-# A template author declares a send-node and gets a message the graph can point at
+# A declared node-type whose dispatch is to send a message
 
-Supported. A template registered through the control API declares a node whose
-dispatch field names a message type instead of an executor; the instance's node
-list carries that node like any other, its dispatch put exactly one message in
-the ledger attributed to the instance and carrying the body it composed from an
-upstream attribute, and that message opened a frame of its own that a downstream
-node ran in. Both of the story's clauses were exercised on one run: the send is a
-graph object (it is a node in the node list) and it is the coupling that crosses
-frames (the second frame's triggering message is the one the node sent).
+Supported: the sender is a real graph object and its dispatch really sends. The
+declared send-node appears in the instance's node list as an ordinary node type
+alongside the counter it subscribes to and the message type it targets, which is
+the "graph object I can point at" the story asks for. Its dispatch put exactly
+one message in the ledger — not zero and not a duplicate — attributed with the
+instance as sender kind rather than an operator, carrying the body the node
+composed from the attribute it held. The cross-frame coupling was observed rather
+than inferred: that message opened a frame of its own, the frame names the
+instance as sender, and the downstream node subscribing to the message type ran
+in it on the composed body. Eight checks, none failing.

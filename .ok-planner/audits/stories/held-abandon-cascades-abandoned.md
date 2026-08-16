@@ -1,20 +1,20 @@
 ---
 audit: held-abandon-cascades-abandoned
 artifact: story:held-abandon-cascades-abandoned
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:26:27Z
 ---
 
-# The abandoned-error signal fires at the moment held work rolls back
+# A downstream subscriber learning that held work was rolled back
 
-Supported. Against an all-in-one deployment with a filesystem-backed claim
-producer, one node opened a claim, a co-holder of that claim failed its work,
-and the claim rolled back with a single abandon. The acquirer emitted exactly
-one terminal signal, the abandoned-error one. Both of the subscription forms the
-story names were declared on non-member downstream nodes and both fired: the one
-naming the abandoned-error signal exactly and the one naming the broader
-error-family pattern each ran once, each starting after the abandon in the event
-log. A third downstream node subscribed to success never ran, so the rollback
-was never reported as a success.
+Supported. A stack from this tree ran a template whose acquirer opens a claim on
+the bundled filesystem producer, whose co-holder fails its work, and which
+carries three subscribers outside the holding subgraph. Both ways the story names
+were taken. The failure rolled the claim back with a single abandon, and the
+acquirer emitted exactly one terminal signal, the abandoned error. The subscriber
+naming that signal exactly and the subscriber using the broader error-family
+pattern each ran, each starting at a sequence number after the abandon, so each
+learned of the rollback at the moment it happened. The subscriber on success
+never ran, so a rollback is never reported to downstream as a success.

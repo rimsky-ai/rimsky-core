@@ -1,31 +1,30 @@
 ---
 audit: debug-channel
 artifact: story:debug-channel
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:30:00Z
+audited: 2026-08-16T04:51:57Z
 ---
 
-# Two override actions, open in debug mode and shut outside it
+# Node and attribute overrides open exactly in the two debug states, and are shut otherwise
 
-Supported. Both override actions were driven in both of the 2 states the story
-names, and refused in the state it excludes. On a running instance in neither
-state — mid-frame, with a node parked and no breakpoint installed — both actions
-answered 409 naming the two states that would admit them, and the target node's
-attribute values were unchanged afterward. Pausing that instance opened both: the
-attribute-value override answered with the paused gate and one run mutated, and
-the node read back carrying the operator's value; the node-invalidate answered on
-the same gate and ran its node again once the instance resumed. On a second
-instance held at an unresumed pause-mode breakpoint hit and never paused, both
-actions answered on the breakpoint gate with the same effects, and once the hit
-was released and the instance settled, the same action answered 409 again.
+Supported. Both states the story names were driven through the public surface as
+two ways against released-image stacks, sixteen checks between them, none
+failing. In the paused way, an instance running with a node parked refused both
+override actions with a conflict naming the two states that would open the
+channel, and the node's attribute values were unchanged afterwards; once paused,
+the attribute override answered with the paused gate state and one run mutated
+and the node read back the operator's value, the node override answered on the
+same open channel, no work ran while the instance stayed paused, and resuming ran
+the invalidated node again. In the breakpoint way, an instance never paused but
+sitting at an unresumed pause-mode hit accepted both overrides with the
+breakpoint gate state, the value read back off the node under inspection, and the
+invalidated node ran again once the hit was released; after the hit was released,
+the breakpoint deleted and the instance settled, the same override was refused
+again with the same two states. So the channel is open exactly in the two debug
+states and shut on either side of them.
 
 ## Compliance
 
-The body names the delivery surface ("via the control-api"), which the story
-rules place in `decisions/` rather than in a story. Compliant text: "As an
-operator, I can override-invalidate a specific node or override-set an attribute
-value when the target instance is paused or at a breakpoint pause-mode hit, so
-that ad-hoc inspection and mutation are available exactly when I have explicitly
-entered debug mode, and unavailable otherwise."
+- The body names the delivery surface — "via the control-api" pins the capability to one surface, which decisions own; the compliant capability drops it, leaving the override actions and the states that gate them.

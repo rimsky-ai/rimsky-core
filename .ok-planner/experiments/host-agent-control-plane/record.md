@@ -15,7 +15,7 @@ host-agent-late-bind-all-protocols; the binding hands it a pid file to write and
 a delay to hold its execution for, so the run can inspect the agent while a
 child is live. The agent is started with `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT=1`,
 which a child using the shipped peer-auth helper needs for the loopback
-enrolment endpoint the agent hands it.
+enrolment endpoint the agent hands it. Re-run unchanged at this tree.
 
 ## What was observed
 

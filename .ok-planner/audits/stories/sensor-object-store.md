@@ -1,22 +1,23 @@
 ---
 audit: sensor-object-store
 artifact: story:sensor-object-store
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:25:00Z
+audited: 2026-08-16T05:35:00Z
 ---
 
-# Content dropped into a designated location becomes work in the graph
+# Content dropped into a designated location becomes work in the graph, once per object
 
-Supported. The operator designated the location with one environment variable on
-the bundled object-store sensor and one publisher block naming the bucket and the
-prefix; no integration code was written anywhere in the run. Depositing a file
-under that prefix produced a message naming the backend, the bucket, the object,
-its size, its content hash and its modification time, and the subscribed node ran
-on it. A second deposit produced its own message and its own node run. A file
-deposited outside the prefix produced no message, while a fourth file under the
-prefix did — the later arrival is what shows the sensor kept listing the bucket
-across the one it ignored. Over the whole run the graph saw three messages, one
-per object under the prefix, none twice, and the subscribed node ran three times.
-No operator message was posted at any point.
+Supported. Ten checks against a deployment carrying the bundled object-store
+sensor over a designated location. The operator designates that location with
+one environment setting and nothing else, and the template's subscription
+mounted live on the instance. Depositing a file under the designated prefix
+handed it to the graph as a message describing the object — the backend, the
+bucket, the object name, its size, its content hash and its modification time —
+and the subscribed node ran, with no operator message posted at any point in the
+run. A second deposit was handed over as its own message and drove its own run.
+A file deposited outside the designated prefix was never handed over, while a
+later file under the prefix was, which is what shows the sensor kept listing
+rather than reading once. Across the run the graph saw three messages for three
+objects, none handed over twice, and the subscribed node ran three times.

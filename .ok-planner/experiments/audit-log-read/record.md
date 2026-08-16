@@ -11,7 +11,8 @@ One `rimsky-all-in-one` container from the tree's own image tag. The run provoke
 each action the story names — key creates, a revoke, a rotate, an executed write,
 a dry-run write, a permission denial, a no-token denial and an invalid-token
 denial — using the `rimsky auth` verbs and the control API, then reads them back
-through `GET /v1/audit` and exercises every filter that route accepts.
+through `GET /v1/audit` and exercises every filter that route accepts. Re-run
+unchanged at this tree.
 
 ## What was observed
 
@@ -28,3 +29,5 @@ auth allowlist), `key_name`, `action`, `action_prefix`, `target`, `status`,
 `mode`, `since` (and a 400 for a non-RFC3339 value), and `limit` with a
 `next_cursor` that paged to a different record. Reading the log is itself gated:
 a `read-only` key got 200 and a key without `audit:read` got 403.
+
+EXPERIMENT PASS

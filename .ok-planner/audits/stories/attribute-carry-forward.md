@@ -1,31 +1,37 @@
 ---
 audit: attribute-carry-forward
 artifact: story:attribute-carry-forward
-determination: supported
-compliance: noncompliant
+text: compliant
+implementation: unsupported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T09:40:00Z
+checked: 3
+unaccounted: 1
 ---
 
-# A node's executor-written attribute is present on its next dispatch in the same run-scope, and absent in a new one
+# Attributes carry forward within a run-scope, and reset in two of the three new-scope kinds
 
-Supported. Against an all-in-one deployment driven through the control API, a
-node whose executor writes a `count` attribute and reads the incoming one
-dispatched three times inside a single frame and emitted 1, 2, 3 — each dispatch
-saw what the previous dispatch wrote — and the node read surface then answered
-with the resolved bag `{count: 3, max: 3}`. The story names three kinds of new
-run-scope and two were measured: a second operator message opened a second frame
-in which the same node emitted 1, 2, 3 again rather than 4, 5, 6, and a fan-out
-over three partitions produced count 1 in every partition rather than a chain of
-1, 2, 3 across them. The third kind, a sub-graph invocation, was not measured:
-every probe placing a bundled node kind inside a delegated sub-graph left that
-sub-graph's child run enqueued and never dispatched, so no probe reached a state
-that settled the clause either way.
+Unsupported by coverage: the carry-forward half of the promise holds, two of the
+three new-run-scope kinds the story enumerates were demonstrated, and the third
+cannot be reached at all at this tree. Driven through the control API of an
+all-in-one deployment, a stateful node cascading to itself inside one frame saw
+every dispatch carry the value the previous dispatch's executor had written, and
+the node's read surface answered with that value; a second operator message
+opened a second frame and the same node began again at the schema's default; a
+fan-out over three partitions gave every partition a dispatch starting at the
+default, with no partition continuing a sibling's. The third kind, a sub-graph
+invocation, is unaccounted. A sub-graph whose internal node names an executor
+settles normally, with the caller, the internal node and the exit each
+dispatching in turn. Change only that node to a stateful node declared by
+builtin kind and the internal node is never dispatched: its run sits waiting
+indefinitely, the exit node runs anyway without its upstream having produced
+anything, the caller's run stays running, and the frame never settles. That was
+reproduced on three separate runs and with two different builtin kinds, and the
+same node declared the same way in a flat graph runs normally — so the obstacle
+is the sub-graph, not the node. No run therefore reaches a state that would show
+the incoming bag either way in a sub-graph run-scope, and the hang is product
+behaviour in its own right.
 
-## Compliance
+## Unaccounted
 
-- The body's closing sentence states where cross-frame state travels instead of
-  what a user needs; a story states the need only, so the compliant text ends at
-  the benefit clause and leaves the boundary to the concept catalog.
-- The parenthetical justifying that carry-forward is intra-frame explains the
-  mechanism rather than the need; the compliant text drops it.
+- Sub-graph invocation: no run demonstrates a node starting a sub-graph run-scope from the schema defaults, because a stateful node declared by builtin kind inside a delegated sub-graph is never dispatched at this tree.

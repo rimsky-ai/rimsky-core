@@ -1,36 +1,35 @@
 ---
 audit: rimsky-deployment-bootstrap
 artifact: story:rimsky-deployment-bootstrap
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:30:00Z
+audited: 2026-08-16T04:50:41Z
 ---
 
-# The operator picks the topology, and the schema arrives once
+# Operator-chosen role topology, with migrations running exactly once per deployment
 
-Supported. All 4 launch shapes and all 3 illegal ones were driven against the
-shipped image. With no command the entrypoint took all three roles in one
-process and completed the migrations before serving; each of the 3 single-role
-commands ran that role alone, and only the control-api one migrated. An unknown
-role name, the migrate binary's name, and two role arguments each exited non-zero
-without starting anything, naming what was wrong. Across a three-container split
-sharing one database, exactly 1 of the 3 containers ran the migrations and the
-other 2 logged that they were skipping them; the schema arrived, and a node
-dispatched and settled across the split roles. The override moved ownership both
-ways: set to 0 a no-command deployment skipped the migrations it would otherwise
-have owned, set to 1 a scheduler-only container ran them, and set to any other
-value the deployment refused to start, naming the variable and the value.
+Supported: an operator gets both halves of the promise through the shipped image.
+All seven launch forms the bundled entrypoint accepts were driven — the four
+legal ones (no command, and each of the three role names) and three illegal ones
+(an unknown role, the migrate binary, two roles at once) — and each behaved as
+promised: the no-command launch served all three roles from one process, each
+single-role launch ran that role alone, and every illegal launch exited non-zero
+naming the three valid roles without starting anything. Migration ownership was
+measured on a real three-container split against one shared database: exactly one
+of the three ran the migrations, the other two reported skipping them, the schema
+arrived, and a node dispatched and settled to success across the split roles. The
+environment override moved ownership in both directions — off for a deployment
+that would otherwise own it, on for a role that would otherwise skip — and a
+value that is neither of the two legal ones failed startup naming the variable and
+the value it was given. Eighteen checks across two runs, none failing.
 
 ## Compliance
 
-The body prescribes mechanism throughout: it names the launch grammar ("run the
-bundled multi-role entrypoint with no command"), the storage layer ("database
-migrations"), and the override's form ("an explicit environment-variable
-override"). A story owes the need, not the switches that satisfy it. Compliant
-text: "As an operator deploying rimsky to a stack, I can choose whether one
-deployment unit runs all three roles or each runs one, and trust that the schema
-is brought up to date exactly once per deployment whatever I choose — never
-twice, never not at all — and that I can take that step over myself when I want
-to run it separately, so that the deployment topology is whatever I choose and
-the schema arrives at the right state deterministically."
+- The body names the delivery surface — the bundled entrypoint, its no-command
+  and single-role invocations, and an "environment-variable override" — which the
+  story rules place in decisions; the compliant text names only the need, e.g. "I
+  can choose whether the deployment runs as one unit or as separate roles, and
+  trust the database schema arrives exactly once whichever I choose, with a way to
+  put the schema step under my own control for a dedicated init step, so that the
+  topology is mine and the schema state is deterministic."

@@ -12,7 +12,7 @@ minted by `rimsky auth init` delegates to a per-tenant key created with `rimsky
 auth create-key --role-file`, whose grant scopes seven actions to the template
 tag "alpha" and grants unscoped reads. Every scopeable action is then driven
 twice from the tenant key: once at the in-scope tag, once at a "beta" tag the
-admin owns.
+admin owns. Re-run unchanged at this tree.
 
 ## What was observed
 
@@ -26,3 +26,5 @@ id does not evade the scope), undeploy (200 / 403) and deregister (200 / 403).
 The beta template survived every out-of-scope attempt and still read 200 for the
 admin. The tenant key remained a real key for what it was granted (template list
 200) and was refused what it was not (mint a key, 403).
+
+EXPERIMENT PASS

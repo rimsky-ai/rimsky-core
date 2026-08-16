@@ -16,12 +16,12 @@ container.
 
 ## What was observed
 
-All four actions of the declared vocabulary were honoured. Under `pass` the run
-settled fresh while its settling signal still named the error class. Under
-`give_up` the run settled failed. Under `retry` with a declared cap of two, the
-runtime emitted `transient/retry/1/...` and `transient/retry/2/...`, took no
-third retry, and settled the run failed once the budget was spent. Under
-`release_and_requeue` each failure emitted
+Ten checks, none failing. All four actions of the declared vocabulary were
+honoured. Under `pass` the run settled fresh while its settling signal still
+named the error class. Under `give_up` the run settled failed. Under `retry`
+with a declared cap of two, the runtime emitted `transient/retry/1/...` and
+`transient/retry/2/...`, took no third retry, and settled the run failed once
+the budget was spent. Under `release_and_requeue` each failure emitted
 `transient/release_and_requeue/<class>` and the run was dispatched again, never
 settling fresh or failed — it went back for another attempt, which is what the
 action names.

@@ -1,34 +1,30 @@
 ---
 audit: validation-mixin-uniform
 artifact: story:validation-mixin-uniform
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T04:58:36Z
 ---
 
-# The validation mix-in carried by an executor peer and a publisher peer
+# A peer's validation mix-in is consulted from an executor and from a publisher, for the roles it declares
 
-Supported. Three purpose-built services, each advertising the mix-in through
-its own primary protocol's capabilities handshake, were declared to a
-zero-config all-in-one deployment, and one template naming all three settled
-it. The executor peer's validator was called for the executor role with the
-node's alias; the publisher peer's validator was called for the publisher role
-with the publisher's name; neither peer is a claim producer. The third peer
-advertised the mix-in but declared a role it plays no part in, and was never
-called, so the declared roles are honoured rather than every mix-in being
-called for everything. Both findings came back on registration as well as on
-validation. Of the 4 roles the protocol defines, 2 were driven here;
-claim-producer and lifecycle-subscriber were not.
+Supported. Measured with a purpose-built service speaking only the published
+protocols, run three times over — an executor peer declaring the executor role, a
+second executor peer declaring only the claim-producer role, and a publisher peer
+declaring the publisher role — against a released-image stack that knew them
+only as three declared peers. Seven checks, none failing. Validating one template
+that names both executor peers as node executors and the publisher peer as a
+publisher returned two mix-in findings: one from the executor peer, called for
+the executor role with the node it was called about, and one from the publisher
+peer, called for the publisher role with the publisher name — neither of them a
+claim producer, and both discovered through the peer's own capabilities
+handshake. The peer that advertised the mix-in but declared a role it does not
+play in the template was never called, so declared roles are what is honoured.
+Registration returned the same two findings, so the mix-ins are consulted there
+too and not only on validation.
 
 ## Compliance
 
-Two defects. The benefit clause — "so the mix-in works for every peer kind the
-protocol says it does" — restates the capability and appeals to the protocol's
-own consistency instead of naming what the service author accomplishes. The
-body also frames a change rather than a durable expectation: "not only from a
-claim producer" and "actually honored" describe a gap being closed, and a story
-describes the project as it stands. Compliant text: "As a service author, I
-want my validation rules consulted whatever kind of service I attach them to,
-and only for the roles I declare, so that I validate the same way for every
-service I run."
+- The benefit clause states the product's internal consistency rather than a user outcome — "so the mix-in works for every peer kind the protocol says it does"; the compliant benefit is that the author's service can vet the templates that use it whatever role it plays in them.
+- The body carries change-record framing — "not only from a claim producer" and "actually honored" describe a correction rather than a durable expectation; the compliant text states the capability directly.

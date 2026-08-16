@@ -13,7 +13,7 @@ the host. Every control-API request in the run is sent without an
 `Authorization` header, the agent is started with no `--api-key` and with
 `RIMSKY_API_KEY` removed from its environment, and no key is minted at any
 point. The late-bound binary is the local service built for
-host-agent-late-bind-all-protocols.
+host-agent-late-bind-all-protocols. Re-run unchanged at this tree.
 
 ## What was observed
 

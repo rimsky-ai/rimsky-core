@@ -1,0 +1,12 @@
+---
+audit: signal
+artifact: concept:signal
+text: compliant
+implementation: unsupported
+commit: PENDING
+audited: 2026-08-16T05:42:19Z
+---
+
+# The signal taxonomy, its cascade and audit consumers, the CEL filter language, and the frame-isolation rules
+
+Unsupported, on two clauses. Most of the concept holds. The taxonomy is a literal closed list of eight canonical emit patterns, the emit-path validator rejects anything outside it, and the subscription validator additionally rejects positional wildcards and every park subscription, exact or wildcarded. The subscription pattern set is derived from the emit set by the same cascade predicate the runtime uses, so no transient leaf is subscribable; the cascade walker checks that predicate before any edge lookup, which is where the transient exclusion actually lands. Trailing-asterisk is the only wildcard form the subscription validator accepts. Audit emission is unconditional and independent of subscribers, and the wait-set topic-kind projection is exactly the three canonical kinds with a defensive fallback value for anything else. The attribute diff-gate is same-scope only in the strictest sense — the query joins the settling run's own scope and takes the highest prior sequence within it, with no fallback branch — so the frame-isolation reading of signal emission holds at that gate. Transient payloads carry no attributes-delta field in the proto, and the park payload is a single leaf with the await-async deferral declared as its own separate transient. What is not carried: first, the claim that tags and attributes-delta ride every terminal payload. Two run-terminating error classes — the sibling-cancellation settle and the instance-kill settle — construct a settling payload carrying only an error class, with neither slot; they emit straight to the audit ledger, bypassing the emission helper that validates the type-path, and the fitness test meant to force terminal construction through the two typed builders only inspects inline string literals, so both sites pass it by naming their type-path through a constant. Second, the claim that prefix type-paths bind the payload as dynamically-typed with no field-name check at registration. The schema resolver strips a trailing asterisk before matching, so a prefix path whose family resolves to one payload shape — the terminal-error family, the retry family, the attribute-changed family — is parse-checked against that shape exactly like an exact path. Only a prefix that spans more than one shape falls through to the dynamic binding.

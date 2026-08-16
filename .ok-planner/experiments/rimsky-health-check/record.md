@@ -38,9 +38,9 @@ the postgres container, then starts it again.
 
 While postgres was up, the probe answered 200 with status `ok` and the health CLI
 verb exited 0. After the postgres container was stopped, the probe answered 500
-naming the failed transaction, and the health CLI verb exited 1 reporting that
-status. After the postgres container was started again, the probe answered 200
-with status `ok`.
+naming the failed transaction begin, and the health CLI verb exited 1 reporting
+that status. After the postgres container was started again, the probe answered
+200 with status `ok`.
 
 Five checks, none failing.
 

@@ -26,3 +26,5 @@ dispatch put exactly one message in the ledger, attributed with sender kind
 frame whose sender kind is `instance`, and the downstream node ran on the body.
 
 Eight checks, none failing.
+
+RESULT: PASS

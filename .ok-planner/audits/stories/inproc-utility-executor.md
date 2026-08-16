@@ -1,21 +1,22 @@
 ---
 audit: inproc-utility-executor
 artifact: story:inproc-utility-executor
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:01:18Z
 ---
 
 # Utility node kinds dispatch with no executor service deployed
 
-Supported. A zero-config `rimsky-all-in-one` container — no mounted config, no
-executor block, no service containers — accepted a template referencing all
-three bundled utility kinds and ran every one of them. The loop-counter emitted
-its count, the send node put its message in the ledger, and the
-attribute-passthrough receiver carried that message's body into its own output
-attributes; each kind started once and settled `terminal/success`. The
-deployment's executor list, read through the control API, resolves entirely to
-in-process addresses, so no external executor service exists to have served
-them. The population is the three kinds the runtime registers as bundled
-utilities, and all three ran in one template.
+Supported. Driven through the public surface against a released-image stack on
+its baked zero-config defaults — no mounted configuration, no executor block, no
+service containers — with one template declaring three nodes, one per bundled
+utility kind, and no node naming an executor. Eleven checks, none failing. Every
+executor the deployment knows about answers at an in-process address and none at
+a service address, so nothing external could have served these dispatches. All
+three kinds dispatched exactly once each and settled successfully, and each did
+its own work: the loop counter emitted its count, the message-sending kind put
+one message in the ledger, and the passthrough receiver carried that message's
+body into its own output attributes — one template, three kinds, no deployment
+beyond the stack itself.

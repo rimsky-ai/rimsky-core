@@ -7,14 +7,15 @@ commit: PENDING
 
 ## What it ran against
 
-A `rimsky-all-in-one` stack from the tree's own image tag, the bundled
-`rimsky-claim-producer-filesystem` service, and `peer/` — the
-permissive-peer-build experiment's third-party executor — so a node can be told
-to park while holding a producer claim. The template wedges an instance
-deliberately: a claim-holding node parks and does not come back, a second node
-co-holds its claim, and a receiver declares a force-refreshed dependency on the
-parked node. Everything is then read through the control API and the CLI; the
-store is never opened.
+A `rimsky-all-in-one` stack from the tree's own image tag on a port the script
+picks free at start, the bundled `rimsky-claim-producer-filesystem` service, and
+`peer/` — the permissive-peer-build experiment's third-party executor, built for
+the run — so a node can be told to park while holding a producer claim. The
+released CLI binary from this tree drives the CLI half. The template wedges an
+instance deliberately: a claim-holding node parks and does not come back, a
+second node co-holds its claim, and a receiver declares a force-refreshed
+dependency on the parked node. Everything is then read through the control API
+and the CLI; the store is never opened.
 
 ## What was observed
 
@@ -34,4 +35,6 @@ rather than guessing.
 The claim's holder list named one holder — the parked node's run — in state
 active, which is why the claim has not come back.
 
-Nineteen checks, none failing.
+Twenty-three checks, none failing.
+
+RESULT: PASS

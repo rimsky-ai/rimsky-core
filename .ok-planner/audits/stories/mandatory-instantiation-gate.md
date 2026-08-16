@@ -1,30 +1,32 @@
 ---
 audit: mandatory-instantiation-gate
 artifact: story:mandatory-instantiation-gate
-determination: supported
-compliance: noncompliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:20:00Z
+audited: 2026-08-16T04:42:46Z
 ---
 
-# Instance create validates static attribute config against each service's schema
+# Instance create refuses statically misconfigured attribute values
 
-Supported. Against a zero-config all-in-one deployment, templates carrying their
-attribute config only in the template-level per-executor defaults — the site
-registration's composition check does not read — registered and deployed, and
-instance create then refused each misconfigured one. The refusal named the node,
-the attribute and the violated constraint: an empty array against a minimum-items
-constraint, which is a value constraint rather than a shape mismatch, and a
-number against a string type on a second referenced service. No instance row was
-created in either case, and a template satisfying both services' schemas created
-cleanly with both its nodes. The refusal detail rides the control-api response;
-the CLI relays only its summary line and drops the per-attribute findings, so the
-promise is reachable through one of the two public ways an operator creates an
-instance.
+Supported. Driven through the public surface against a container of the
+released all-in-one image, with each template's attribute config placed where
+registration's own composition check cannot see it, so the create-time gate is
+the only thing that can catch it. A value constraint imposed by the referenced
+service's schema — a minimum item count on a collection defaulted empty — was
+caught: create was refused, no instance existed afterwards, and the refusal
+body named the offending node, the offending attribute and the violated
+constraint rather than a bare shape mismatch. The universal over referenced
+services was taken on a two-service template whose second service's attribute
+carried a type violation; that was refused too, naming the node bound to the
+second service, so the gate is not limited to the first of the services a
+template references. A control template satisfying both services' schemas
+created cleanly with both nodes.
 
-## Compliance
+## Referrals
 
-The capability clause promises "a clear error", an adjective only a human
-judgment can settle, where the story rules require the observable statement of
-what the user gets; the compliant text is "refuses the create with an error
-naming the misconfigured attribute".
+- referral: the refusal reaches the operator as a clear error
+  established: the control-api refusal names node, attribute and violated
+    constraint in one body; the CLI relays only the summary line of that
+    refusal and drops the detail, confirmed by driving both in the same run
+  discipline: ux

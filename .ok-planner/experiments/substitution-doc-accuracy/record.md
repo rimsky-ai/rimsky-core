@@ -19,7 +19,7 @@ The document the story names — substitution documentation a template author
 reads — is not in this repository. The repository carries no documentation
 sources and the surface ruling enumerates no documentation kind; the only
 prose listing of the source kinds is a package comment on internal source, which
-a template author has no public way to read.
+a template author has no public way to read. Re-run unchanged at this tree.
 
 ## What was observed
 

@@ -7,7 +7,10 @@
 # drives one instance per protocol and checks that each reaches a child the
 # agent spawned from the author's declared path:
 #   - executor        a node whose executor is the late-bound service
-#   - claim_producer  a node whose claim names the late-bound service
+#   - claim_producer  a node whose claim names the late-bound service, which is
+#                     the spelling the executor half accepts, and a node whose
+#                     claim names the deployment's own proxy entry with the
+#                     binding declared under that name
 #
 # The deployment's own claim-producer entry for the proxy is exercised on its
 # own as a control, so an unresolved late-bound claim is distinguishable from an
@@ -152,7 +155,7 @@ check "the local binary served the Execute verb" yes \
 check "the agent spawned one child for it" 1 "$(grep -c 'spawned child' "$STATE/agent.log")"
 
 note
-note "== the claim-producer protocol through the late-bound binding =="
+note "== the SAME late-bind name the executor uses, for the claim protocol =="
 CTPL=$(register_deploy '{"tag":"halb-claim","spec":{"name":"halb-claim","version":"1","late_bind_services":["devsvc"],"nodes":[{"type":"claimer","executor":"devsvc","claim_producers":[{"name":"devsvc","selector":"@thing","intent":"rw","alias":"thing"}]}]}}')
 check "the claim template deployed" yes "$([ -n "$CTPL" ] && echo yes || echo no)"
 CIID=$(launch "$CTPL" ck-halb-claim "$BIND")
@@ -160,7 +163,19 @@ check "the instance bound the same service for the claim" yes "$([ -n "$CIID" ] 
 note "waiting for the claim dispatch to settle (blocks until it does)"
 CSETTLE=$(settle "$CIID" claimer)
 note "    node error class: $(error_class "$CIID" claimer)"
-check "the claim node settled on the author's local binary" fresh "$CSETTLE"
+check "the claim settles under the late-bind name, as the executor does" fresh "$CSETTLE"
+check "the late-bind name reached the local binary for Open" yes \
+  "$(grep -q 'open claim=.*selector=@thing' "$STATE/agent.log" && echo yes || echo no)"
+
+note
+note "== the claim-producer protocol, named as the deployment's proxy entry =="
+PTPL=$(register_deploy '{"tag":"halb-proxyname","spec":{"name":"halb-proxyname","version":"1","late_bind_services":["devsvc"],"nodes":[{"type":"claimer","executor":"devsvc","claim_producers":[{"name":"agent-proxy","selector":"@thing","intent":"rw","alias":"thing"}]}]}}')
+check "the proxy-named claim template deployed" yes "$([ -n "$PTPL" ] && echo yes || echo no)"
+PBIND=$(printf '{"devsvc":{"path":"%s","env":{"PEER_LABEL":"local-dev-binary"}},"agent-proxy":{"path":"%s","env":{"PEER_LABEL":"local-dev-binary"}}}' "$WORK/peer-host" "$WORK/peer-host")
+PIID=$(launch "$PTPL" ck-halb-proxyname "$PBIND")
+check "the instance bound the local binary under the proxy entry's name" yes "$([ -n "$PIID" ] && echo yes || echo no)"
+note "waiting for the proxy-named claim dispatch to settle (blocks until it does)"
+check "the claim node settled on the author's local binary" fresh "$(settle "$PIID" claimer)"
 check "the local binary served the claim-producer Open verb" yes \
   "$(grep -q 'open claim=.*selector=@thing' "$STATE/agent.log" && echo yes || echo no)"
 check "the local binary served the claim-producer Commit verb" yes \

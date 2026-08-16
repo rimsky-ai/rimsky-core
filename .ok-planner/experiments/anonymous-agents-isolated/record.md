@@ -15,7 +15,8 @@ directory, its own identity file and its own routing label
 in its environment so the binary it spawns identifies itself. The late-bound
 service is the third-party peer built for permissive-peer-build. The agent hands
 each child a loopback enrolment endpoint of its own, so the agents are started
-with `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT=1` for that hop.
+with `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT=1` for that hop. Re-run unchanged at this
+tree.
 
 ## What was observed
 
@@ -34,3 +35,5 @@ label, and exactly one execution — so neither agent saw the other's dispatch.
 A third instance targeting an agent nobody is running settled failed with no
 writeback, and the execution counts on both agents stayed at one, so an
 unroutable dispatch is not absorbed by somebody else's agent.
+
+EXPERIMENT PASS

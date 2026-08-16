@@ -1,21 +1,25 @@
 ---
 audit: audit-log-read
 artifact: story:audit-log-read
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:45:00Z
+audited: 2026-08-16T04:39:20Z
 ---
 
-# Every auth-relevant action lands in a readable, filterable log
+# An operator reads and filters the auth-relevant action audit
 
-Supported. Each action the story names was provoked on a fresh stack and read
-back through the audit route: all five record kinds the surface serves appeared —
-key creates, revokes, rotates, access attempts and access denials — with the
-minted, revoked and rotated keys named, the dry-run write recorded as dry-run and
-not executed against the executed write's own record, and the three denials
-distinguished by reason. All nine filters the route accepts narrowed correctly —
-kind, key name, action, action prefix, target path, status, mode, time window,
-and page size with a cursor that advanced — and two malformed filter values were
-rejected with 400. Reading the log is itself gated: a read-only key was admitted
-and a key without the audit grant was refused.
+Supported. Every action the story names was provoked against a fresh all-in-one
+deployment and then read back through the audit surface. All five record kinds
+the story enumerates were present — four key creations, one revocation, one
+rotation, nine access attempts and three denials — and each carried what an
+operator needs to attribute it: the minted keys by name, the revoked and rotated
+keys by name, the dry-run write recorded in dry-run mode as not executed against
+the real write's execute mode and executed, and the three denials distinguished
+by reason (invalid token, no token, insufficient permission). All nine filters
+the surface accepts were exercised and each narrowed as claimed — record kind,
+key name, exact action, action prefix, target path, response status, mode,
+timestamp lower bound, and page size with a cursor that paged to a different
+record — and two malformed filter values (a record kind outside the auth set, a
+non-RFC3339 timestamp) were rejected with 400. Reading the log is itself gated: a
+read-only key was admitted and a key without the audit-read action was refused.

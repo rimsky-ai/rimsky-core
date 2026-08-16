@@ -16,7 +16,7 @@ leading `./`; reject URLs, `make …` invocations, and tokens carrying `*` or
 either a `/` or a root-level filename shape. The Search Scoping line, which
 lists paths to exclude from searches rather than paths to read, is dropped
 before scanning. `run.py` also parses the Makefile for declared targets and asks
-git whether the rules file is tracked.
+git whether the rules file is tracked. Re-run unchanged at this tree.
 
 ## What was observed
 

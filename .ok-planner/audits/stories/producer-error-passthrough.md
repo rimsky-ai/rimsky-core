@@ -1,31 +1,27 @@
 ---
 audit: producer-error-passthrough
 artifact: story:producer-error-passthrough
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T04:42:46Z
 ---
 
-# The producer's class and message survive the response boundary
+# An operator reads a failing producer's own class and message in what the operation returns
 
-Supported. Against an all-in-one deployment wired to two claim producers whose
-release verb rejects with a class each names, one durable asset was materialized
-against each and the operator asked to retire both. Each retire returned HTTP
-422 with a body carrying the producer's error class, the producer's own message
-naming the claim it refused to drop, the name of the producer that failed, and
-the verb it was running. The two producers produced two different classes in the
-two responses, so the class follows the producer rather than being a rimsky
-constant, and 422 rather than 500 separates the producer's rejection from a
-rimsky internal error. Nothing was read from the deployment's logs, and both
-assets remained listed because the producer refused the release.
+Supported. Driven through the public surface against a released-image stack
+wired to two claim producers built for the experiment against the published
+producer protocols, each refusing its release verb with a different declared
+error class. Fifteen checks, none failing. Retiring the asset each producer
+holds failed rather than reporting success, and each failure came back with the
+producer's own error class, the producer's own message naming the claim it
+refused to drop, the name of the producer that failed, and the verb it was
+running. The two producers yielded two different classes, so the class follows
+the producer and is not a rimsky constant; the status distinguished a producer
+rejection from a rimsky internal error; the operator CLI exited non-zero and
+repeated the producer's message; and both assets remained in place, matching
+the refusal.
 
 ## Compliance
 
-The capability clause names the delivery surface ("during an API-triggered
-operation", "in the API response"), which the story rules place in `decisions/`,
-and it calls the same peer both "store" and "claim producer" in one sentence;
-the compliant text is "As an operator whose claim producer fails during an
-operation I triggered, I can read the producer's error class and message in the
-response, so that I can fix the underlying problem from the response alone
-instead of reading rimsky's logs."
+- The body names the delivery surface — "during an API-triggered operation" and "in the API response" pin the capability to one surface, which decisions own; the compliant capability is reading the producer's error class and message in what the failing operation returns, whichever surface the operator drove it from.

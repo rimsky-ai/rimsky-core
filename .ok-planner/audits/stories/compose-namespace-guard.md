@@ -1,24 +1,28 @@
 ---
 audit: compose-namespace-guard
 artifact: story:compose-namespace-guard
-determination: unsupported
-compliance: compliant
+text: compliant
+implementation: unsupported
 commit: PENDING
-audited: 2026-08-10T05:25:00Z
+audited: 2026-08-16T04:59:54Z
 ---
 
-# The compose namespace is not reserved to compose on a keyless deployment
+# Whether the compose namespace is reserved against every other client
 
-Unsupported. On an authenticated deployment the promise holds: all 8 attempts by
-a key without the compose-origin capability — tag create, template register with
-a prefixed tag, and instance create with a prefixed key over the HTTP API, the
-same two creations over the MCP surface, the tag create through the CLI, and both
-creations by an admin key that omits the origin header — were refused with 400
-and nothing landed. On a deployment with no keys, which is the shipped default
-posture and the only one where the compose verbs work at all, an ordinary HTTP
-client carrying no credential created a compose-prefixed tag, a compose-prefixed
-instance key, and a template bearing a compose-prefixed tag, all accepted and all
-readable back out of the store, simply by setting the compose-origin header on
-its own requests. The header is a self-declaration any client can make, so in
-that posture nothing at the server distinguishes the compose machinery from
-anything else.
+Unsupported: on a deployment in the shipped default posture, an ordinary HTTP
+client that is not the compose machinery created a compose-prefixed tag, a
+compose-prefixed instance key, and a template carrying a compose-prefixed tag,
+and all three landed and read back out of the deployment afterwards. The only
+thing separating that client from the compose machinery is a request header the
+client sets on itself, `X-Rimsky-Compose-Origin`: without it every attempt was
+refused, and with it every attempt was accepted. The reservation does hold where
+a key is required — with authentication enabled, all three creations were refused
+across three client surfaces (the HTTP API, the MCP JSON-RPC surface, and the
+CLI), with and without the same spoofed header, and even for an admin key, and
+nothing landed. That posture is not an available remedy, though: the compose
+verbs send no credential of any kind, so on an authenticated deployment planning
+and applying a manifest both fail unauthorized under every key-passing mechanism
+the CLI offers, while an ordinary verb with the same key succeeds. There is
+therefore no posture in which compose is usable and the namespace is reserved
+against other clients, which is the disjointness the story promises. Fourteen
+checks passed and five failed across the two postures.

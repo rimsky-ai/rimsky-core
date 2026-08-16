@@ -23,15 +23,13 @@ variable unset.
 
 ## What was observed
 
-With the allowlist set, the node declaring `validator` saw exactly `validator`
-plus the executor's own callback server, and the node declaring `local-tool` saw
-exactly `local-tool` plus the callback server; neither saw the other's server.
-The node declaring `forbidden-tool` failed its dispatch with
-`agent/attribute_invalid`, and the error payload named the server, the instance,
-the node and the allowlist variable.
+Seven checks, none failing. With the allowlist set, the node declaring
+`validator` saw exactly `validator` plus the executor's own callback server, and
+the node declaring `local-tool` saw exactly `local-tool` plus the callback
+server; neither saw the other's server. The node declaring `forbidden-tool`
+failed its dispatch with `agent/attribute_invalid`, and the error payload named
+the server, the instance, the node and the allowlist variable.
 
 With the allowlist unset, the same template's `forbidden-tool` node ran and its
 agent saw `forbidden-tool`, while the other two nodes still saw only their own
 declarations.
-
-Seven checks, none failing.

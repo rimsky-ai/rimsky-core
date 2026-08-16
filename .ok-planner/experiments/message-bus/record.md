@@ -32,3 +32,5 @@ behaviour as a check so the defect is re-checkable; the history capability
 itself is obtained on the control-API route the same run exercises.
 
 Thirteen checks, none failing.
+
+RESULT: PASS

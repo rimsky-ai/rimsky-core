@@ -15,7 +15,7 @@ configured `staged_async` with its verifier executor enabled, and rimsky
 declares that same endpoint as an executor named `pg-verifier`. Nodes that must
 write SQL run on the bundled http-node executor against a service on the host,
 which executes the statement inside the database container, so the writing side
-is ordinary node work rather than harness privilege.
+is ordinary node work rather than harness privilege. Re-run at this tree.
 
 ## What was observed
 
@@ -42,4 +42,22 @@ A second staged claim wrote only two rows and a checking node ran the same
 per-check class, and a node subscribed to `terminal/error/pg/*` ran on that
 signal.
 
-The run does not exercise the swap-failed class.
+At this tree the experiment was extended. It previously said only that the
+swap-failed class was not exercised; it now reads the producer's advertised
+error classes off the public producer view and counts them, and drives the
+external-dependent refusal.
+
+The producer advertises exactly three error classes: `pg/claim_unavailable`,
+`pg/swap_failed` and `pg/not_atomically_replaceable`. Two of the three were
+driven to fire. A canonical schema carrying an external dependent — an
+operator's own reporting view in another schema — settled the claiming node on
+`terminal/error/pg/not_atomically_replaceable`, a node subscribed to the
+producer's class namespace ran on that signal, and the canonical schema and its
+dependent were left untouched.
+
+`pg/swap_failed` remains unexercised. Two routes were tried: an external
+dependent present before Open is refused earlier, on the
+not-atomically-replaceable class, and an external dependent created by a
+co-holding node while the claim was open did not make the swap fail — both
+holders settled success. The per-check verifier class the story names fires and
+is subscribable, but is not among the three the producer advertises.

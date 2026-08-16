@@ -1,0 +1,12 @@
+---
+audit: claim-producer
+artifact: concept:claim-producer
+text: compliant
+implementation: supported
+commit: PENDING
+audited: 2026-08-16T05:21:03Z
+---
+
+# The claim-producer protocol surface, its two shapes, and its terminal-delivery contract
+
+Supported; all six invariants check out. The protocol is the only contract the dispatch path knows: everything the runtime calls goes through one producer interface, and none of the four library layers — foundation, graph, runtime, control — carries a single import of a concrete bundled producer, the one wiring point being the bundled registration entrypoint in the binary's composition root that the concept itself names as the in-process shape. The two optional methods are each gated on their own capability flag by one shared pair of gating helpers that both the in-process client and the gRPC peer client call, and the same open-outcome envelope check runs on both, so the capability envelope is enforced identically on the two dispatch paths; the bundled producers reach both shapes through one server implementation wrapped as an in-process handler, which is what makes the advertised capabilities the same set by construction rather than by convention. The two mix-ins are advertised through the capabilities list rather than a flag, as described. Byte-equal-scope uniformity and the two producer-side prohibitions are producer obligations, and the shipped conformance battery checks each of them — a uniformity check across consecutive opens and a staged-async serialization check — against any endpoint. The terminal-delivery contract is the strongest-carried claim: verbs are enqueued on a durable outbox in the settlement transaction, delivered afterwards with exponential backoff, and ordered per producer-and-scope both on the way out (a blocked scope stops every later row for that scope) and on the way in (an acquisition drains every undelivered terminal whose scope conflicts with the candidate before the open, or refuses the open), which is exactly the recovering-producer ordering the invariant states. The settlement event and the outbox row are written in one transaction with delivery strictly after, and a scenario test named for that ordering pins it. The one gap worth naming is enforcement rather than fact: the layer-purity lint rules do not deny a core package from importing the bundled-services module, so the no-concrete-producer-dependency invariant currently rests on the protocol-typed dispatch surface and the absence of any such import, not on a dependency check.

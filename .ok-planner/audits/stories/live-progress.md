@@ -1,18 +1,22 @@
 ---
 audit: live-progress
 artifact: story:live-progress
-determination: supported
-compliance: compliant
+text: compliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T05:25:00Z
+audited: 2026-08-16T04:45:38Z
 ---
 
-# Per-node lifecycle is visible while the run is still in flight
+# An operator watching a one-shot run sees each node settle while the run continues
 
-Supported. In a one-shot run over two instances — one settling at once, one
-blocked eight seconds on an upstream fetch — the progress stream, timestamped as
-each line reached the terminal, delivered the quick instance's per-node outcome
-at +1s and its instance summary at +2s, nine seconds before the command returned
-at +11s with the lagging instance's own node line. Both instances, 2 of 2,
-produced per-node lines at the moment their work settled rather than batched at
-exit, which is what lets a watcher tell outstanding work from a hang.
+Supported. Driven through the public surface with the CLI built from this tree,
+on a two-instance one-shot run where one instance settles at once and the other
+waits on an upstream that sleeps eight seconds; every progress line was stamped
+with the second it reached the terminal. Four checks, none failing. Both
+instances emitted per-node lifecycle lines, and the fast instance's node outcome
+was on screen one second in — seven seconds before the slow upstream could even
+answer — with its instance summary at two seconds, nine seconds before the
+command returned. The slow instance's node and summary arrived at eleven
+seconds. A watcher therefore sees at any moment which work has settled and which
+is still outstanding, which is the separation between healthy work and a hang
+the story rests on.

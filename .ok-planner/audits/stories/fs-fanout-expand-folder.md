@@ -1,30 +1,32 @@
 ---
 audit: fs-fanout-expand-folder
 artifact: story:fs-fanout-expand-folder
-determination: supported
-compliance: noncompliant
+text: noncompliant
+implementation: supported
 commit: PENDING
-audited: 2026-08-10T07:40:00Z
+audited: 2026-08-16T05:26:27Z
 ---
 
-# Fanning out over the contents of a picked folder without enumerating them
+# Fanning out over the contents of a folder the filesystem store picked
 
-Supported. Against an all-in-one deployment with the bundled filesystem claim
-producer configured with a pick policy over two candidate folders, each holding
-three matching files and one non-matching file, one fan-out node declared that
-pick policy as its claim and a folder-expanding partition request. The producer
-opened exactly one parent claim naming one of the two folders; the split
-returned three sub-scopes; the sub-claims were keyed by that folder's three
-matching file names; the non-matching file in the same folder and every file of
-the folder that was not picked appeared nowhere in the run. The parent and its
-three clones all settled fresh, one work unit ran per file addressed to its own
-file, and the endpoint the work units called reported three requests in flight
-at once. The template named no file.
+Supported. A stack from this tree ran with the bundled filesystem claim producer
+over a bind-mounted workspace holding two candidate folders, each seeded with
+three matching files and one non-matching file, and a template declaring a single
+fan-out node whose claim is the pick-policy selector and whose partition request
+expands the folder's contents. The producer opened exactly one parent claim on
+one of the two folders; the run derives its expectations from which folder was
+picked, so it does not depend on the choice. The split returned three sub-scopes,
+the sub-claims are keyed by that folder's three matching file names, the
+non-matching file in the same folder produced no sub-claim, and no file of the
+folder that was not picked appeared anywhere. The parent and its three work units
+all settled fresh, each work unit reached an endpoint at a path carrying its own
+partition key, and that endpoint — which holds every request open — reported a
+peak of three in flight, so the units ran in parallel. The template names no
+file.
 
 ## Compliance
 
-The capability clause names a template key (`partition_request`) and a specific
-shipped component ("the bundled filesystem store"), both delivery-surface
-choices the story rules place in `decisions/`; the compliant text is "I can
-declare a fan-out node whose claim is one folder picked from a filesystem-backed
-claim producer and whose partition declaration expands the folder's contents".
+- The body names the delivery surface, which the story rules place in decisions:
+  it quotes the template's partition-request key. The compliant text states the
+  need without it — a fan-out over one folder the store picks, fanning out across
+  the folder's own contents.

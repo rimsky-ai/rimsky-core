@@ -28,17 +28,17 @@ vocabulary; and a node subscribing to `terminal/error/agent/*`.
 
 ## What was observed
 
-The executor advertises thirteen declared error classes over the control API.
-Each agent node's work was handed off asynchronously (`transient/await_async`)
-and settled later by callback. The worker's agent saw exactly its own declared
-MCP server plus the callback server, and exactly its own declared environment
-variable at the operator-set value. Its sign-off passed the gate, and the value
-the signature covered is the value the node committed. The node signing another
-dispatch's binding and the node signing a value it never wrote both failed
-`agent/signoff_unobtained`. The class routed to `pass` settled the run fresh
-while the settling signal still named `agent/context_exceeded`; the class with no
-policy failed the run as `terminal/error/agent/refused`; the wildcard subscriber
-ran on that failure. The class outside the declared vocabulary was refused at the
-callback surface and the dispatch failed under a declared class instead.
-
-Twelve checks, none failing.
+Twelve checks, none failing. The executor advertises thirteen declared error
+classes over the control API. Each agent node's work was handed off
+asynchronously (`transient/await_async`) and settled later by callback. The
+worker's agent saw exactly its own declared MCP server plus the callback server,
+and exactly its own declared environment variable at the operator-set value. Its
+sign-off passed the gate, and the value the signature covered is the value the
+node committed. The node signing another dispatch's binding and the node signing
+a value it never wrote both failed `agent/signoff_unobtained`. The class routed
+to `pass` settled the run fresh while the settling signal still named
+`agent/context_exceeded`; the class with no policy failed the run as
+`terminal/error/agent/refused`; the wildcard subscriber ran on that failure. The
+class outside the declared vocabulary was refused at the callback surface and the
+dispatch failed under a declared class instead
+(`agent/subprocess_exit/before_complete`).

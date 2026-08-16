@@ -1,6 +1,11 @@
 {
   "name": "durable-asset",
   "version": "v1",
+  "messages": [
+    {
+      "type": "wake/later"
+    }
+  ],
   "nodes": [
     {
       "type": "acquirer",
@@ -50,6 +55,11 @@
       "subscribes": [
         {
           "node": "acquirer",
+          "type": "terminal/success",
+          "force_upstream_refresh": false
+        },
+        {
+          "node": "wake/later",
           "type": "terminal/success",
           "force_upstream_refresh": false
         }

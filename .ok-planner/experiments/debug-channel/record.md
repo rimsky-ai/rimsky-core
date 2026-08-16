@@ -23,16 +23,15 @@ instance.
 
 ### What was observed
 
-With the instance running and a node parked, both override actions answered HTTP
-409 `instance not in debuggable state`, naming `paused` and `breakpoint` as the
-states that would open the channel, and the node's attribute values were
-unchanged afterward. After the instance was paused, `set_attribute` on the parked
-worker answered 200 with `gate_state: paused` and one run mutated, and the node
-read back with the operator's value on it. `invalidate_node` on the knob node
-answered 200 on the same open channel, and no work ran while the instance stayed
-paused. Resuming the instance ran the knob node a second time.
-
-Nine checks, none failing.
+Nine checks, none failing. With the instance running and a node parked, both
+override actions answered HTTP 409 `instance not in debuggable state`, naming
+`paused` and `breakpoint` as the states that would open the channel, and the
+node's attribute values were unchanged afterward. After the instance was paused,
+`set_attribute` on the parked worker answered 200 with `gate_state: paused` and
+one run mutated, and the node read back with the operator's value on it.
+`invalidate_node` on the knob node answered 200 on the same open channel, and no
+work ran while the instance stayed paused. Resuming the instance ran the knob
+node a second time.
 
 ## way-breakpoint-gate.py
 
@@ -45,13 +44,11 @@ never paused.
 
 ### What was observed
 
-At the unresumed hit, `set_attribute` on the worker answered 200 with
-`gate_state: breakpoint`, and the value read back off the node. `invalidate_node`
-on the knob node answered 200 on the same gate, and the knob node ran again once
-the hit was released. After the hit was released, the breakpoint deleted, and the
-instance settled, the same override answered 409 again, naming the same two
-states.
-
-Seven checks, none failing.
+Seven checks, none failing. At the unresumed hit, `set_attribute` on the worker
+answered 200 with `gate_state: breakpoint`, and the value read back off the node.
+`invalidate_node` on the knob node answered 200 on the same gate, and the knob
+node ran again once the hit was released. After the hit was released, the
+breakpoint deleted, and the instance settled, the same override answered 409
+again, naming the same two states.
 
 RESULT: PASS
