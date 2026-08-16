@@ -3,7 +3,7 @@ audit: kind-sugar-resolver
 artifact: decision:kind-sugar-resolver
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:21:13Z
 ---
 

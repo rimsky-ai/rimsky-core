@@ -3,7 +3,7 @@ audit: coverage-wildcard-asymmetry
 artifact: decision:coverage-wildcard-asymmetry
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T09:35:00Z
 ---
 

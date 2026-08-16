@@ -3,7 +3,7 @@ audit: fan-out-and-delegation-are-distinct-mechanisms
 artifact: decision:fan-out-and-delegation-are-distinct-mechanisms
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:10:48Z
 ---
 

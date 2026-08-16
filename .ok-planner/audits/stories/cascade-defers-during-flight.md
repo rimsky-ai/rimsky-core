@@ -3,7 +3,7 @@ audit: cascade-defers-during-flight
 artifact: story:cascade-defers-during-flight
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T09:45:00Z
 ---
 

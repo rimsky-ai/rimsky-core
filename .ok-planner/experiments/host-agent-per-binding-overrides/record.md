@@ -1,6 +1,6 @@
 ---
 experiment: host-agent-per-binding-overrides
-commit: PENDING
+commit: d977250c
 ---
 
 # Environment, arguments, working directory and spawn timeout, declared per binding

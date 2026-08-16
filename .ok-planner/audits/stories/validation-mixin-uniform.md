@@ -3,7 +3,7 @@ audit: validation-mixin-uniform
 artifact: story:validation-mixin-uniform
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:58:36Z
 ---
 

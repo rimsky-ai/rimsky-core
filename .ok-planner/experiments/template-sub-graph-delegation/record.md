@@ -1,6 +1,6 @@
 ---
 experiment: template-sub-graph-delegation
-commit: PENDING
+commit: d977250c
 ---
 
 # A node that delegates to a named sub-graph

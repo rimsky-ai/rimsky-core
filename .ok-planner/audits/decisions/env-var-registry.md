@@ -3,7 +3,7 @@ audit: env-var-registry
 artifact: decision:env-var-registry
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:41:50Z
 checked: 86
 unaccounted: 0

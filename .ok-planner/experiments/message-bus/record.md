@@ -1,6 +1,6 @@
 ---
 experiment: message-bus
-commit: PENDING
+commit: d977250c
 ---
 
 # Sending into an instance's bus and reading the history back

@@ -1,6 +1,6 @@
 ---
 experiment: spawned-local-services
-commit: PENDING
+commit: d977250c
 ---
 
 # A binary and one command: spawned for the run, gone when it returns

@@ -1,6 +1,6 @@
 ---
 experiment: claim-producer-postgres
-commit: PENDING
+commit: d977250c
 ---
 
 # Postgres-backed claims: pick policies, atomic staging, verifier checks

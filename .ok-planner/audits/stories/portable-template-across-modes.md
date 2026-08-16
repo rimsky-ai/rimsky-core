@@ -3,7 +3,7 @@ audit: portable-template-across-modes
 artifact: story:portable-template-across-modes
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:07:00Z
 ---
 

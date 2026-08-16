@@ -1,6 +1,6 @@
 ---
 experiment: producer-error-passthrough
-commit: PENDING
+commit: d977250c
 ---
 
 # Reading a producer's error class and message in the API response

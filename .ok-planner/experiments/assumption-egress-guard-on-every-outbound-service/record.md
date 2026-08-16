@@ -1,6 +1,6 @@
 ---
 experiment: assumption-egress-guard-on-every-outbound-service
-commit: PENDING
+commit: d977250c
 ---
 
 # Which outbound dialers the SSRF guard is wired into

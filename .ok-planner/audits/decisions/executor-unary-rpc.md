@@ -3,7 +3,7 @@ audit: executor-unary-rpc
 artifact: decision:executor-unary-rpc
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:44:49Z
 ---
 

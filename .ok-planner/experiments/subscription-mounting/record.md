@@ -1,6 +1,6 @@
 ---
 experiment: subscription-mounting
-commit: PENDING
+commit: d977250c
 ---
 
 # Watching a publisher subscription mount

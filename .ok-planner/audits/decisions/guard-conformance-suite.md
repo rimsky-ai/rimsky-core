@@ -3,7 +3,7 @@ audit: guard-conformance-suite
 artifact: decision:guard-conformance-suite
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:52:00Z
 ---
 

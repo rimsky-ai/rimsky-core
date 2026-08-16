@@ -1,6 +1,6 @@
 ---
 experiment: held-abandon-cascades-abandoned
-commit: PENDING
+commit: d977250c
 ---
 
 # A downstream subscriber hears the abandoned signal when held work rolls back

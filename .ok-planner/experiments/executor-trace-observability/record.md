@@ -1,6 +1,6 @@
 ---
 experiment: executor-trace-observability
-commit: PENDING
+commit: d977250c
 ---
 
 # A dashboard watches a dispatch live and reads it back afterwards

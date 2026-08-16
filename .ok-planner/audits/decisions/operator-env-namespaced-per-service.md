@@ -3,7 +3,7 @@ audit: operator-env-namespaced-per-service
 artifact: decision:operator-env-namespaced-per-service
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:41Z
 checked: 41
 unaccounted: 2

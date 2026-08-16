@@ -3,7 +3,7 @@ audit: intx-suffix-convention
 artifact: decision:intx-suffix-convention
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 7
 unaccounted: 2

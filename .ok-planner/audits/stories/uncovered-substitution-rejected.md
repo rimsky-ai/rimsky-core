@@ -3,7 +3,7 @@ audit: uncovered-substitution-rejected
 artifact: story:uncovered-substitution-rejected
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:06:40Z
 ---
 

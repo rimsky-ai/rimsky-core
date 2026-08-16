@@ -1,6 +1,6 @@
 ---
 experiment: opaque-executor-scratch
-commit: PENDING
+commit: d977250c
 ---
 
 # Executor-attached bytes surviving park, in-place retry and stale recovery

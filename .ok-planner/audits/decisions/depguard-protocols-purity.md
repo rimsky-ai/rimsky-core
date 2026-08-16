@@ -3,7 +3,7 @@ audit: depguard-protocols-purity
 artifact: decision:depguard-protocols-purity
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 18
 unaccounted: 0

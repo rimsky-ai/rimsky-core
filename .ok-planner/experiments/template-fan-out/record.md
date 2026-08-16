@@ -1,6 +1,6 @@
 ---
 experiment: template-fan-out
-commit: PENDING
+commit: d977250c
 ---
 
 # Fan-out partitioning, concurrency, and parent settlement

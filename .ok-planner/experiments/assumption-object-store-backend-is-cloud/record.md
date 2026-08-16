@@ -1,6 +1,6 @@
 ---
 experiment: assumption-object-store-backend-is-cloud
-commit: PENDING
+commit: d977250c
 ---
 
 # What `object-store: backend` can name

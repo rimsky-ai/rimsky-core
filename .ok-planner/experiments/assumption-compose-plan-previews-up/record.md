@@ -1,6 +1,6 @@
 ---
 experiment: assumption-compose-plan-previews-up
-commit: PENDING
+commit: d977250c
 ---
 
 # `compose plan` against what `compose up` applies

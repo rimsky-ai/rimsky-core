@@ -1,6 +1,6 @@
 ---
 experiment: script-friendly-outcome
-commit: PENDING
+commit: d977250c
 ---
 
 # A script branching on a one-shot run's outcome class

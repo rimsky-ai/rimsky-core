@@ -3,7 +3,7 @@ audit: claim-producer-scopes-conflict
 artifact: story:claim-producer-scopes-conflict
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:55:00Z
 ---
 

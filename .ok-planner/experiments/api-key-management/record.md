@@ -1,6 +1,6 @@
 ---
 experiment: api-key-management
-commit: PENDING
+commit: d977250c
 ---
 
 # Operator administers the api-key lifecycle

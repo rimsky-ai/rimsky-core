@@ -1,6 +1,6 @@
 ---
 experiment: assumption-error-classes-namespaced-uniformly
-commit: PENDING
+commit: d977250c
 ---
 
 # Asking whether error classes carry an emitter prefix, and whether prefixes route

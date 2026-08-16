@@ -1,6 +1,6 @@
 ---
 assumption: image-names-follow-one-scheme
-commit: PENDING
+commit: d977250c
 disposition: held
 synthesized: 2026-08-16T05:48:16Z
 ---

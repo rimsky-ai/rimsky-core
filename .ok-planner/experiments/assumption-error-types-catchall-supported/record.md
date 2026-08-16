@@ -1,6 +1,6 @@
 ---
 experiment: assumption-error-types-catchall-supported
-commit: PENDING
+commit: d977250c
 ---
 
 # Declaring one fallback policy with a bare *

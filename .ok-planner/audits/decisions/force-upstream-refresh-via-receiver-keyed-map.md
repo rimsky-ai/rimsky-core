@@ -3,7 +3,7 @@ audit: force-upstream-refresh-via-receiver-keyed-map
 artifact: decision:force-upstream-refresh-via-receiver-keyed-map
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:15:58Z
 ---
 

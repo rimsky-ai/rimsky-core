@@ -3,7 +3,7 @@ audit: sub-graph
 artifact: concept:sub-graph
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:34Z
 ---
 

@@ -3,7 +3,7 @@ audit: dry-run-request-flag
 artifact: story:dry-run-request-flag
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:52:00Z
 checked: 23
 unaccounted: 0

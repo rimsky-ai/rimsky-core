@@ -1,6 +1,6 @@
 ---
 experiment: assumption-health-endpoint-on-every-service
-commit: PENDING
+commit: d977250c
 ---
 
 # Which shipped listeners answer GET /health

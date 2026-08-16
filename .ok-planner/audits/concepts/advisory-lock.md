@@ -3,7 +3,7 @@ audit: advisory-lock
 artifact: concept:advisory-lock
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:46:57Z
 checked: 5
 unaccounted: 0

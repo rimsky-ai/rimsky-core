@@ -1,6 +1,6 @@
 ---
 experiment: assumption-roles-are-server-side
-commit: PENDING
+commit: d977250c
 ---
 
 # Does the server know the six bundled roles?

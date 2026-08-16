@@ -3,7 +3,7 @@ audit: compose-lifecycle
 artifact: story:compose-lifecycle
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:59:54Z
 checked: 5
 unaccounted: 0

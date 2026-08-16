@@ -1,6 +1,6 @@
 ---
 experiment: audit-artifact
-commit: PENDING
+commit: d977250c
 ---
 
 # Operator inspects a completed one-shot run's durable record

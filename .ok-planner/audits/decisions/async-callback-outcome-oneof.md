@@ -3,7 +3,7 @@ audit: async-callback-outcome-oneof
 artifact: decision:async-callback-outcome-oneof
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:03:38Z
 ---
 

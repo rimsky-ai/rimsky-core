@@ -1,6 +1,6 @@
 ---
 experiment: executor-protocol
-commit: PENDING
+commit: d977250c
 ---
 
 # A third-party executor plugs into a stack on the protocol alone

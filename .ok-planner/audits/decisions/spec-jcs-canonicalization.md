@@ -3,7 +3,7 @@ audit: spec-jcs-canonicalization
 artifact: decision:spec-jcs-canonicalization
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 ---
 

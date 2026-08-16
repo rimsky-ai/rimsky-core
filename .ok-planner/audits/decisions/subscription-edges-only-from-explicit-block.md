@@ -3,7 +3,7 @@ audit: subscription-edges-only-from-explicit-block
 artifact: decision:subscription-edges-only-from-explicit-block
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:05Z
 ---
 

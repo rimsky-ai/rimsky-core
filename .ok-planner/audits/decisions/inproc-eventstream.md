@@ -3,7 +3,7 @@ audit: inproc-eventstream
 artifact: decision:inproc-eventstream
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:20:19Z
 ---
 

@@ -3,7 +3,7 @@ audit: sequence-scope-monotonic
 artifact: decision:sequence-scope-monotonic
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:26:42Z
 ---
 

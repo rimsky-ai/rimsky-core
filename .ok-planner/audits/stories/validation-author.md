@@ -3,7 +3,7 @@ audit: validation-author
 artifact: story:validation-author
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:04:03Z
 ---
 

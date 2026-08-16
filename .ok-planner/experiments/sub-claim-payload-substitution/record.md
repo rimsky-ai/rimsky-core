@@ -1,6 +1,6 @@
 ---
 experiment: sub-claim-payload-substitution
-commit: PENDING
+commit: d977250c
 ---
 
 # The standard claim payload directive in a fan-out child's context

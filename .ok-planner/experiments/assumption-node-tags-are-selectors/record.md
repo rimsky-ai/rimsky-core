@@ -1,6 +1,6 @@
 ---
 experiment: assumption-node-tags-are-selectors
-commit: PENDING
+commit: d977250c
 ---
 
 # Whether node tags select anything

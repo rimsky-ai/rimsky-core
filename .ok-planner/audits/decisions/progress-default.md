@@ -3,7 +3,7 @@ audit: progress-default
 artifact: decision:progress-default
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:44:00Z
 ---
 

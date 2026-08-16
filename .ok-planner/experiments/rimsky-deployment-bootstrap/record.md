@@ -1,6 +1,6 @@
 ---
 experiment: rimsky-deployment-bootstrap
-commit: PENDING
+commit: d977250c
 ---
 
 # Role selection and migration ownership in the bundled entrypoint

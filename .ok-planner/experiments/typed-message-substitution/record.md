@@ -1,6 +1,6 @@
 ---
 experiment: typed-message-substitution
-commit: PENDING
+commit: d977250c
 ---
 
 # Addressing each message type by name, and carrying a body to the next frame

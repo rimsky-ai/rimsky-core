@@ -3,7 +3,7 @@ audit: acquire-unavailable-carveout
 artifact: decision:acquire-unavailable-carveout
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:34Z
 ---
 

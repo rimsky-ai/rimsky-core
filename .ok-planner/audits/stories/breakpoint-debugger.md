@@ -3,7 +3,7 @@ audit: breakpoint-debugger
 artifact: story:breakpoint-debugger
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:51:57Z
 ---
 

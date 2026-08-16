@@ -3,7 +3,7 @@ audit: release-formal-skill
 artifact: decision:release-formal-skill
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:21:13Z
 ---
 

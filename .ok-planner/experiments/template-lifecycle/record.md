@@ -1,6 +1,6 @@
 ---
 experiment: template-lifecycle
-commit: PENDING
+commit: d977250c
 ---
 
 # Template catalog lifecycle through the CLI

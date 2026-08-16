@@ -3,7 +3,7 @@ audit: peer-auth-mtls
 artifact: decision:peer-auth-mtls
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:34:05Z
 ---
 

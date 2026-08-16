@@ -3,7 +3,7 @@ audit: lineage-exploration
 artifact: story:lineage-exploration
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:48:35Z
 ---
 

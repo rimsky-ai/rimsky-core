@@ -3,7 +3,7 @@ audit: one-shot-to-terminal
 artifact: story:one-shot-to-terminal
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:59:54Z
 ---
 

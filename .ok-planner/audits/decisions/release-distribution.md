@@ -3,7 +3,7 @@ audit: release-distribution
 artifact: decision:release-distribution
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 4
 unaccounted: 0

@@ -3,7 +3,7 @@ audit: test-harness-create-instance-wakes-roots-after-create
 artifact: decision:test-harness-create-instance-wakes-roots-after-create
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:41Z
 ---
 

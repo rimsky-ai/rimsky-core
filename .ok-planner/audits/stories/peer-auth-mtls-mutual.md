@@ -3,7 +3,7 @@ audit: peer-auth-mtls-mutual
 artifact: story:peer-auth-mtls-mutual
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:15:00Z
 ---
 

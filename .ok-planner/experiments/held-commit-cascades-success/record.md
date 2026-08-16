@@ -1,6 +1,6 @@
 ---
 experiment: held-commit-cascades-success
-commit: PENDING
+commit: d977250c
 ---
 
 # The success of held work reaches a downstream subscriber only at commit

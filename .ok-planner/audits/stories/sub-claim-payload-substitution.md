@@ -3,7 +3,7 @@ audit: sub-claim-payload-substitution
 artifact: story:sub-claim-payload-substitution
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:39:46Z
 ---
 

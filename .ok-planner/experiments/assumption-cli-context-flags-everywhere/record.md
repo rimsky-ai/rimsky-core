@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-context-flags-everywhere
-commit: PENDING
+commit: d977250c
 ---
 
 # Whether the endpoint and api-key flags reach every verb

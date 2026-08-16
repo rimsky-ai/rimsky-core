@@ -1,6 +1,6 @@
 ---
 experiment: assumption-grpc-protocols-have-http-bridge
-commit: PENDING
+commit: d977250c
 ---
 
 # Asking which protocols speak HTTP+JSON

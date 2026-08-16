@@ -1,6 +1,6 @@
 ---
 experiment: assumption-compose-state-key-is-declarative
-commit: PENDING
+commit: d977250c
 ---
 
 # How declarative `templates[].state` and manifest removal are

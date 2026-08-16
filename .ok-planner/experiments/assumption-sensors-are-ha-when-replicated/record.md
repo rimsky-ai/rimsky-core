@@ -1,6 +1,6 @@
 ---
 experiment: assumption-sensors-are-ha-when-replicated
-commit: PENDING
+commit: d977250c
 ---
 
 # Two replicas of a sensor, one subscription, one stop

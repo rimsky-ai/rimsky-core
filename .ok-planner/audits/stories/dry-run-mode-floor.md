@@ -3,7 +3,7 @@ audit: dry-run-mode-floor
 artifact: story:dry-run-mode-floor
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:39:20Z
 ---
 

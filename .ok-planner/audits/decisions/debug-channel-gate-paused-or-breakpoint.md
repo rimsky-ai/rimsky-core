@@ -3,7 +3,7 @@ audit: debug-channel-gate-paused-or-breakpoint
 artifact: decision:debug-channel-gate-paused-or-breakpoint
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:29:43Z
 ---
 

@@ -1,6 +1,6 @@
 ---
 experiment: cascade-send
-commit: PENDING
+commit: d977250c
 ---
 
 # Declaring a message-sender node-type

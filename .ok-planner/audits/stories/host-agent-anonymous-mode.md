@@ -3,7 +3,7 @@ audit: host-agent-anonymous-mode
 artifact: story:host-agent-anonymous-mode
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:05:00Z
 ---
 

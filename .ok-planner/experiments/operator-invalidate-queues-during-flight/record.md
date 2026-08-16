@@ -1,6 +1,6 @@
 ---
 experiment: operator-invalidate-queues-during-flight
-commit: PENDING
+commit: d977250c
 ---
 
 # An operator invalidate against a node whose run is in flight

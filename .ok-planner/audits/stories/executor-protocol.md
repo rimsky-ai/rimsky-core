@@ -3,7 +3,7 @@ audit: executor-protocol
 artifact: story:executor-protocol
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:10:09Z
 ---
 

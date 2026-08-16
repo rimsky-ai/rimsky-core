@@ -3,7 +3,7 @@ audit: role-template
 artifact: concept:role-template
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:42:19Z
 checked: 6
 unaccounted: 0

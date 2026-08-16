@@ -1,6 +1,6 @@
 ---
 experiment: assumption-event-kinds-paired
-commit: PENDING
+commit: d977250c
 ---
 
 # Looking for a release counterpart to every acquisition kind

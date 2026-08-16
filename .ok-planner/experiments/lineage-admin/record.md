@@ -1,6 +1,6 @@
 ---
 experiment: lineage-admin
-commit: PENDING
+commit: d977250c
 ---
 
 # Pruning lineage records by a cutoff timestamp

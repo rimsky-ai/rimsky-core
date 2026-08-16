@@ -3,7 +3,7 @@ audit: sweep-lock-skip-on-error
 artifact: decision:sweep-lock-skip-on-error
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:38:09Z
 ---
 

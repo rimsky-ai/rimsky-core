@@ -3,7 +3,7 @@ audit: inproc-utility-executor
 artifact: story:inproc-utility-executor
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:01:18Z
 ---
 

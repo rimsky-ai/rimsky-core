@@ -3,7 +3,7 @@ audit: parallel-inproc-claim-producer-registry
 artifact: decision:parallel-inproc-claim-producer-registry
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:28:39Z
 ---
 

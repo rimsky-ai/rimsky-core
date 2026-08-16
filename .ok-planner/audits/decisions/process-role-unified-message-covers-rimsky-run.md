@@ -3,7 +3,7 @@ audit: process-role-unified-message-covers-rimsky-run
 artifact: decision:process-role-unified-message-covers-rimsky-run
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:26:42Z
 ---
 

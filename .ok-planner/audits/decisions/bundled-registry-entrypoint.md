@@ -3,7 +3,7 @@ audit: bundled-registry-entrypoint
 artifact: decision:bundled-registry-entrypoint
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:41Z
 ---
 

@@ -1,6 +1,6 @@
 ---
 experiment: permissive-peer-build
-commit: PENDING
+commit: d977250c
 ---
 
 # A peer built without copyleft obligations

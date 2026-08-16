@@ -1,6 +1,6 @@
 ---
 experiment: audit-log-read
-commit: PENDING
+commit: d977250c
 ---
 
 # Operator reads the auth-relevant action audit

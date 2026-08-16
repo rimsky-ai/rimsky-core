@@ -3,7 +3,7 @@ audit: structural-root-edge-injection-at-registration
 artifact: decision:structural-root-edge-injection-at-registration
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:36Z
 ---
 

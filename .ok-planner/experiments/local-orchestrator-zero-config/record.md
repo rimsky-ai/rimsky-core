@@ -1,6 +1,6 @@
 ---
 experiment: local-orchestrator-zero-config
-commit: PENDING
+commit: d977250c
 ---
 
 # Ad-hoc template run with one binary, one command, and no configuration

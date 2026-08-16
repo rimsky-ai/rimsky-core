@@ -3,7 +3,7 @@ audit: instance
 artifact: concept:instance
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:57:08Z
 ---
 

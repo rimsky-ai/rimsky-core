@@ -1,6 +1,6 @@
 ---
 experiment: sensor-webhook
-commit: PENDING
+commit: d977250c
 ---
 
 # An external caller triggers a node by POSTing to an authenticated route

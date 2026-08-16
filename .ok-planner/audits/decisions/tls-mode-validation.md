@@ -3,7 +3,7 @@ audit: tls-mode-validation
 artifact: decision:tls-mode-validation
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:38:10Z
 ---
 

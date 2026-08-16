@@ -1,6 +1,6 @@
 ---
 experiment: assumption-sensor-auth-block-uniform
-commit: PENDING
+commit: d977250c
 ---
 
 # The same auth block on two publisher kinds

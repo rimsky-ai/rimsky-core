@@ -1,6 +1,6 @@
 ---
 experiment: anonymous-agents-isolated
-commit: PENDING
+commit: d977250c
 ---
 
 # Two anonymous agents, no displacement and no cross-talk

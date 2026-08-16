@@ -3,7 +3,7 @@ audit: parity-expansion
 artifact: decision:parity-expansion
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:26:42Z
 checked: 77
 unaccounted: 9

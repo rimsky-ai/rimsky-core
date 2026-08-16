@@ -3,7 +3,7 @@ audit: release-semver-from-diff
 artifact: decision:release-semver-from-diff
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T10:05:00Z
 ---
 

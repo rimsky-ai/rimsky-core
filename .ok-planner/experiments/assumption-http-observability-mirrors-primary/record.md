@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-observability-mirrors-primary
-commit: PENDING
+commit: d977250c
 ---
 
 # Does `/v1/observability/<thing>` mirror the primary route?

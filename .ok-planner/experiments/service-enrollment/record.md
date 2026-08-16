@@ -1,6 +1,6 @@
 ---
 experiment: service-enrollment
-commit: PENDING
+commit: d977250c
 ---
 
 # One credential per standing service

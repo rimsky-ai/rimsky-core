@@ -1,6 +1,6 @@
 ---
 experiment: assumption-env-unknown-vars-rejected
-commit: PENDING
+commit: d977250c
 ---
 
 # A misspelled variable against a misspelled key

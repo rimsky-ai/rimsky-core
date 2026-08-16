@@ -3,7 +3,7 @@ audit: loop-counter-cap
 artifact: story:loop-counter-cap
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:08Z
 ---
 

@@ -3,7 +3,7 @@ audit: upstream-gating-at-eligibility
 artifact: decision:upstream-gating-at-eligibility
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:39:39Z
 ---
 

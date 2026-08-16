@@ -1,6 +1,6 @@
 ---
 experiment: assumption-error-classes-stable-across-releases
-commit: PENDING
+commit: d977250c
 ---
 
 # Asking what kind of thing the error-class catalog is

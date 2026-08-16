@@ -1,6 +1,6 @@
 ---
 experiment: bundled-park-resume-recipe
-commit: PENDING
+commit: d977250c
 ---
 
 # What an evaluator can copy and run to see park-then-resume

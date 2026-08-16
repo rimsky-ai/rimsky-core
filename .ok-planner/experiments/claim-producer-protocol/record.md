@@ -1,6 +1,6 @@
 ---
 experiment: claim-producer-protocol
-commit: PENDING
+commit: d977250c
 ---
 
 # A custom claim producer plugging into a rimsky stack

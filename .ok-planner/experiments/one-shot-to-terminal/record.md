@@ -1,6 +1,6 @@
 ---
 experiment: one-shot-to-terminal
-commit: PENDING
+commit: d977250c
 ---
 
 # A compose manifest driven to terminal by the invocation that started it

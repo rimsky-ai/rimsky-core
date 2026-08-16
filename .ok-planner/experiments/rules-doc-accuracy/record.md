@@ -1,6 +1,6 @@
 ---
 experiment: rules-doc-accuracy
-commit: PENDING
+commit: d977250c
 ---
 
 # Every path the contributor rules cite, resolved against the checkout

@@ -3,7 +3,7 @@ audit: substitution-failure-routes-with-substitution
 artifact: decision:substitution-failure-routes-with-substitution
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:29Z
 ---
 

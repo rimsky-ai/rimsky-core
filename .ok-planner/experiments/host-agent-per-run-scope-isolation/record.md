@@ -1,6 +1,6 @@
 ---
 experiment: host-agent-per-run-scope-isolation
-commit: PENDING
+commit: d977250c
 ---
 
 # Three sibling run-scopes, three children, no shared process

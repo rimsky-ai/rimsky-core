@@ -1,6 +1,6 @@
 ---
 experiment: peer-tls-enforced
-commit: PENDING
+commit: d977250c
 ---
 
 # The transport setting on a peer entry is enforced, both ways

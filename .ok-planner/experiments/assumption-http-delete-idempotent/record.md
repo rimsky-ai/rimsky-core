@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-delete-idempotent
-commit: PENDING
+commit: d977250c
 ---
 
 # Is DELETE idempotent on every DELETE route?

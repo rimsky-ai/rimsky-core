@@ -3,7 +3,7 @@ audit: testcontainers-go
 artifact: decision:testcontainers-go
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 ---
 

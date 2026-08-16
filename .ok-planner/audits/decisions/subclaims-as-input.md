@@ -3,7 +3,7 @@ audit: subclaims-as-input
 artifact: decision:subclaims-as-input
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:36Z
 ---
 

@@ -1,6 +1,6 @@
 ---
 experiment: debug-channel
-commit: PENDING
+commit: d977250c
 ---
 
 # The debug-override channel and the two states that open it

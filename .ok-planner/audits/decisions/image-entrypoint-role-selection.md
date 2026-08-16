@@ -3,7 +3,7 @@ audit: image-entrypoint-role-selection
 artifact: decision:image-entrypoint-role-selection
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:44:00Z
 ---
 

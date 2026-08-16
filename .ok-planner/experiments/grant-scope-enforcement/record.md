@@ -1,6 +1,6 @@
 ---
 experiment: grant-scope-enforcement
-commit: PENDING
+commit: d977250c
 ---
 
 # Least-privilege delegation across the template lifecycle

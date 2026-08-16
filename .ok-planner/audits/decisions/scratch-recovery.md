@@ -3,7 +3,7 @@ audit: scratch-recovery
 artifact: decision:scratch-recovery
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:36Z
 ---
 

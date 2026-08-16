@@ -3,7 +3,7 @@ audit: terminal-tags
 artifact: decision:terminal-tags
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:38:09Z
 ---
 

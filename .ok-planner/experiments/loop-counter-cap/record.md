@@ -1,6 +1,6 @@
 ---
 experiment: loop-counter-cap
-commit: PENDING
+commit: d977250c
 ---
 
 # Bounded iteration with the bundled loop-counter node kind

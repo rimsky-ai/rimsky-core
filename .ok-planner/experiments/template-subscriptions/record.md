@@ -1,6 +1,6 @@
 ---
 experiment: template-subscriptions
-commit: PENDING
+commit: d977250c
 ---
 
 # CEL-predicated subscriptions on a canonical signal type-path

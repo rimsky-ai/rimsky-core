@@ -1,6 +1,6 @@
 ---
 experiment: claude-agent
-commit: PENDING
+commit: d977250c
 ---
 
 # An agentic node with per-node declarations, a sign-off gate and error classes

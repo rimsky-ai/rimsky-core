@@ -1,6 +1,6 @@
 ---
 experiment: assumption-conformance-exit-code-machine-readable
-commit: PENDING
+commit: d977250c
 ---
 
 # Reading a conformance run from CI

@@ -3,7 +3,7 @@ audit: verifier-shape-checks
 artifact: story:verifier-shape-checks
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:04:03Z
 ---
 

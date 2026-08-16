@@ -3,7 +3,7 @@ audit: attribute-carry-forward
 artifact: decision:attribute-carry-forward
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:03:38Z
 ---
 

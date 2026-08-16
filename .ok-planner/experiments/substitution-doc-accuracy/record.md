@@ -1,6 +1,6 @@
 ---
 experiment: substitution-doc-accuracy
-commit: PENDING
+commit: d977250c
 ---
 
 # The source kinds the product lists, against the ones it resolves

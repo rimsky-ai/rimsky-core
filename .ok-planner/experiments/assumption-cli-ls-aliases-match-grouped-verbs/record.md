@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-ls-aliases-match-grouped-verbs
-commit: PENDING
+commit: d977250c
 ---
 
 # The dev-loop shortcut verbs against their grouped forms

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-error-envelope-uniform
-commit: PENDING
+commit: d977250c
 ---
 
 # One error envelope across the control API?

@@ -1,6 +1,6 @@
 ---
 experiment: mcp-transport
-commit: PENDING
+commit: d977250c
 ---
 
 # Every permissioned action, reached over MCP, under the same auth answers

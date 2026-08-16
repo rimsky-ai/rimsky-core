@@ -1,6 +1,6 @@
 ---
 experiment: idempotent-mode-dedupes
-commit: PENDING
+commit: d977250c
 ---
 
 # Re-runs with identical inputs never reach the executor under an idempotent mode

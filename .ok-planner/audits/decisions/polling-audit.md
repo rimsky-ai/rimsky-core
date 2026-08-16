@@ -3,7 +3,7 @@ audit: polling-audit
 artifact: decision:polling-audit
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T09:12:00Z
 ---
 

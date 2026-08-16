@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-duration-flags-share-syntax
-commit: PENDING
+commit: d977250c
 ---
 
 # One duration vocabulary across the flags and config keys

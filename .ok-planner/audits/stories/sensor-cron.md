@@ -3,7 +3,7 @@ audit: sensor-cron
 artifact: story:sensor-cron
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:35:00Z
 ---
 

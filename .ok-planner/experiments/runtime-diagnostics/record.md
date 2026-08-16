@@ -1,6 +1,6 @@
 ---
 experiment: runtime-diagnostics
-commit: PENDING
+commit: d977250c
 ---
 
 # A wedged instance explains itself through the product

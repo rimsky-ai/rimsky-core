@@ -3,7 +3,7 @@ audit: implementation-language-go-plus-ts
 artifact: decision:implementation-language-go-plus-ts
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 ---
 

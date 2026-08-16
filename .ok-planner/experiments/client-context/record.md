@@ -1,6 +1,6 @@
 ---
 experiment: client-context
-commit: PENDING
+commit: d977250c
 ---
 
 # Two deployments registered, switched between, inspected, and removed

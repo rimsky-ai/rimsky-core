@@ -3,7 +3,7 @@ audit: run-scope
 artifact: concept:run-scope
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T09:06:00Z
 ---
 

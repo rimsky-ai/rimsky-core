@@ -1,6 +1,6 @@
 ---
 experiment: sensor-http
-commit: PENDING
+commit: d977250c
 ---
 
 # Polling an HTTP source, sending only what changed, and remembering it across a restart

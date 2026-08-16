@@ -1,6 +1,6 @@
 ---
 experiment: assumption-mcp-catalog-hides-denied-tools
-commit: PENDING
+commit: d977250c
 ---
 
 # Does `tools/list` only show what the key may invoke?

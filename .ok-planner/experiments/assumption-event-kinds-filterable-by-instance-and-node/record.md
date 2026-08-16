@@ -1,6 +1,6 @@
 ---
 experiment: assumption-event-kinds-filterable-by-instance-and-node
-commit: PENDING
+commit: d977250c
 ---
 
 # Counting which event rows carry an instance and a node identifier

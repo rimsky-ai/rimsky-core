@@ -3,7 +3,7 @@ audit: inproc-handler-interface
 artifact: decision:inproc-handler-interface
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:20:30Z
 ---
 

@@ -3,7 +3,7 @@ audit: cascade-mode
 artifact: concept:cascade-mode
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:34Z
 ---
 

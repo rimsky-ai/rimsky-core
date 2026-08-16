@@ -3,7 +3,7 @@ audit: persistence-database
 artifact: concept:persistence-database
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:08:13Z
 ---
 

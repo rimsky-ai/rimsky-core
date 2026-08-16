@@ -3,7 +3,7 @@ audit: sqlite-multiproc-safety
 artifact: decision:sqlite-multiproc-safety
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:36:14Z
 ---
 

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-compose-restart-supervises
-commit: PENDING
+commit: d977250c
 ---
 
 # What `instances[].restart` supervises

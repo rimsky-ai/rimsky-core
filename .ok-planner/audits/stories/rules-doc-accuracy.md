@@ -3,7 +3,7 @@ audit: rules-doc-accuracy
 artifact: story:rules-doc-accuracy
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:25:00Z
 ---
 

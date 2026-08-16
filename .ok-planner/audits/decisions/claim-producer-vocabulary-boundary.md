@@ -3,7 +3,7 @@ audit: claim-producer-vocabulary-boundary
 artifact: decision:claim-producer-vocabulary-boundary
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 ---
 

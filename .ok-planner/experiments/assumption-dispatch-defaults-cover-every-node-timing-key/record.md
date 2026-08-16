@@ -1,6 +1,6 @@
 ---
 experiment: assumption-dispatch-defaults-cover-every-node-timing-key
-commit: PENDING
+commit: d977250c
 ---
 
 # Deployment-wide defaults for the per-node timing keys

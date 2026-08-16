@@ -1,6 +1,6 @@
 ---
 experiment: fs-fanout-expand-folder
-commit: PENDING
+commit: d977250c
 ---
 
 # Fanning out over a picked folder's contents against the filesystem store

@@ -3,7 +3,7 @@ audit: script-friendly-outcome
 artifact: story:script-friendly-outcome
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:59:54Z
 checked: 3
 unaccounted: 0

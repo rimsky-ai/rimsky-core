@@ -3,7 +3,7 @@ audit: subscription-mounting-state
 artifact: decision:subscription-mounting-state
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:05Z
 ---
 

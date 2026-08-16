@@ -1,6 +1,6 @@
 ---
 experiment: compose-namespace-guard
-commit: PENDING
+commit: d977250c
 ---
 
 # Who may create a compose-prefixed tag or instance key

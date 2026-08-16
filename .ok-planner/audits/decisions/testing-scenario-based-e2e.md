@@ -3,7 +3,7 @@ audit: testing-scenario-based-e2e
 artifact: decision:testing-scenario-based-e2e
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:49:58Z
 checked: 10
 unaccounted: 0

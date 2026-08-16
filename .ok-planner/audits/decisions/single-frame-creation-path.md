@@ -3,7 +3,7 @@ audit: single-frame-creation-path
 artifact: decision:single-frame-creation-path
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:36Z
 ---
 

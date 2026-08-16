@@ -3,7 +3,7 @@ audit: template-error-policy
 artifact: story:template-error-policy
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:06:40Z
 checked: 4
 unaccounted: 0

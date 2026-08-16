@@ -3,7 +3,7 @@ audit: uncovered-substitution-error-shape
 artifact: decision:uncovered-substitution-error-shape
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:38:09Z
 ---
 

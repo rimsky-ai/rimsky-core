@@ -3,7 +3,7 @@ audit: substitution-doc-accuracy
 artifact: story:substitution-doc-accuracy
 text: noncompliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:25:00Z
 ---
 

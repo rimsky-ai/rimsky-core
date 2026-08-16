@@ -1,6 +1,6 @@
 ---
 experiment: claim-scope-substitution
-commit: PENDING
+commit: d977250c
 ---
 
 # One spelling for claim-scope substitution, end to end

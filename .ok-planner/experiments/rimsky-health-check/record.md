@@ -1,6 +1,6 @@
 ---
 experiment: rimsky-health-check
-commit: PENDING
+commit: d977250c
 ---
 
 # The deployment-health probe, unauthenticated and persistence-dependent

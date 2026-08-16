@@ -3,7 +3,7 @@ audit: resume-preserves-snapshot
 artifact: story:resume-preserves-snapshot
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T09:45:00Z
 ---
 

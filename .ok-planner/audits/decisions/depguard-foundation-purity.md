@@ -3,7 +3,7 @@ audit: depguard-foundation-purity
 artifact: decision:depguard-foundation-purity
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 23
 unaccounted: 0

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-runtime-diagnostics-are-actionable
-commit: PENDING
+commit: d977250c
 ---
 
 # Can what the diagnostics reads report as stuck be unstuck through the API?

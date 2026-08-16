@@ -3,7 +3,7 @@ audit: run-scope-is-per-frame
 artifact: decision:run-scope-is-per-frame
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:29:03Z
 ---
 

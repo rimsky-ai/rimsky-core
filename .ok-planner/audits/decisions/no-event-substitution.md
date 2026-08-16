@@ -3,7 +3,7 @@ audit: no-event-substitution
 artifact: decision:no-event-substitution
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:26:44Z
 ---
 

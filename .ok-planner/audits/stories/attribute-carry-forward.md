@@ -3,7 +3,7 @@ audit: attribute-carry-forward
 artifact: story:attribute-carry-forward
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T09:40:00Z
 checked: 3
 unaccounted: 1

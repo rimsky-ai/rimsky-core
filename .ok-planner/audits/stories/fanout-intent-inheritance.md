@@ -3,7 +3,7 @@ audit: fanout-intent-inheritance
 artifact: story:fanout-intent-inheritance
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:24:46Z
 ---
 

@@ -3,7 +3,7 @@ audit: message-queue-mode-per-instance
 artifact: decision:message-queue-mode-per-instance
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:48:37Z
 ---
 

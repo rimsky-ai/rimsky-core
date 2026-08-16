@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-tag-create-idempotent
-commit: PENDING
+commit: d977250c
 ---
 
 # Is creating a tag idempotent, the way its siblings are?

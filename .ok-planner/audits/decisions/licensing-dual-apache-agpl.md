@@ -3,7 +3,7 @@ audit: licensing-dual-apache-agpl
 artifact: decision:licensing-dual-apache-agpl
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T09:12:00Z
 checked: 1794
 unaccounted: 79

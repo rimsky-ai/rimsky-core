@@ -3,7 +3,7 @@ audit: fanout-any-substitution-source
 artifact: story:fanout-any-substitution-source
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:24:46Z
 checked: 5
 unaccounted: 0

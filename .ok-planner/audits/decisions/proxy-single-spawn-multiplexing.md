@@ -3,7 +3,7 @@ audit: proxy-single-spawn-multiplexing
 artifact: decision:proxy-single-spawn-multiplexing
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:44:00Z
 ---
 

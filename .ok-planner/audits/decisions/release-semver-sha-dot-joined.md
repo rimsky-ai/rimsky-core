@@ -3,7 +3,7 @@ audit: release-semver-sha-dot-joined
 artifact: decision:release-semver-sha-dot-joined
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 ---
 

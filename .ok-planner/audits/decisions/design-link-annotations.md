@@ -3,7 +3,7 @@ audit: design-link-annotations
 artifact: decision:design-link-annotations
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 ---
 

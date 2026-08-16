@@ -3,7 +3,7 @@ audit: build-cgo-disabled
 artifact: decision:build-cgo-disabled
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 23
 unaccounted: 4

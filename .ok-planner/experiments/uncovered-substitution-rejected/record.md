@@ -1,6 +1,6 @@
 ---
 experiment: uncovered-substitution-rejected
-commit: PENDING
+commit: d977250c
 ---
 
 # Registration refuses a substitution ref no subscription covers

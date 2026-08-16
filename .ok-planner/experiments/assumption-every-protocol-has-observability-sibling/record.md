@@ -1,6 +1,6 @@
 ---
 experiment: assumption-every-protocol-has-observability-sibling
-commit: PENDING
+commit: d977250c
 ---
 
 # Looking for an observability sibling behind each peer class

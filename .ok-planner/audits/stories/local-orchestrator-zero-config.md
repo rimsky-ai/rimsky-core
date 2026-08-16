@@ -3,7 +3,7 @@ audit: local-orchestrator-zero-config
 artifact: story:local-orchestrator-zero-config
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:50:41Z
 ---
 

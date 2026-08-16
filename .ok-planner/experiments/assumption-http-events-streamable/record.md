@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-events-streamable
-commit: PENDING
+commit: d977250c
 ---
 
 # Does `GET /v1/events` stream?

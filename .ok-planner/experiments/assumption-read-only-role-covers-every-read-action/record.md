@@ -1,6 +1,6 @@
 ---
 experiment: assumption-read-only-role-covers-every-read-action
-commit: PENDING
+commit: d977250c
 ---
 
 # Does the read-only role grant every action ending in :read?

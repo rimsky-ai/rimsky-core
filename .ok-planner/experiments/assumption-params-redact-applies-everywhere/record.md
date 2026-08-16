@@ -1,6 +1,6 @@
 ---
 experiment: assumption-params-redact-applies-everywhere
-commit: PENDING
+commit: d977250c
 ---
 
 # Where a redacted param still surfaces

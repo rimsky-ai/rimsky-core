@@ -1,6 +1,6 @@
 ---
 experiment: anonymous-mode-bootstrap
-commit: PENDING
+commit: d977250c
 ---
 
 # Fresh deployment opens, then locks down

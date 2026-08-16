@@ -3,7 +3,7 @@ audit: cli-spawn-mechanism
 artifact: decision:cli-spawn-mechanism
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:41Z
 ---
 

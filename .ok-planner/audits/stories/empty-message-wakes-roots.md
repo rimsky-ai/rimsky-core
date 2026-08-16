@@ -3,7 +3,7 @@ audit: empty-message-wakes-roots
 artifact: story:empty-message-wakes-roots
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:07:07Z
 checked: 3
 unaccounted: 0

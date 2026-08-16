@@ -3,7 +3,7 @@ audit: uniform-attributes-delta
 artifact: decision:uniform-attributes-delta
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:39:39Z
 ---
 

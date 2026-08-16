@@ -3,7 +3,7 @@ audit: cascade-flags-required-no-defaults
 artifact: decision:cascade-flags-required-no-defaults
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:03:38Z
 ---
 

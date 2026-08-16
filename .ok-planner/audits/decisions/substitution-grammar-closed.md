@@ -3,7 +3,7 @@ audit: substitution-grammar-closed
 artifact: decision:substitution-grammar-closed
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:29Z
 ---
 

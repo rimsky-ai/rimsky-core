@@ -3,7 +3,7 @@ audit: discovery-cache
 artifact: concept:discovery-cache
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:06:31Z
 ---
 

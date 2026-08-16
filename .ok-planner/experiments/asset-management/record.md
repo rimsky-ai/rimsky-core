@@ -1,6 +1,6 @@
 ---
 experiment: asset-management
-commit: PENDING
+commit: d977250c
 ---
 
 # Observing and governing the data assets an instance produced

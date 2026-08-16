@@ -1,6 +1,6 @@
 ---
 experiment: validation-author
-commit: PENDING
+commit: d977250c
 ---
 
 # A service's validation mix-in consulted at template registration

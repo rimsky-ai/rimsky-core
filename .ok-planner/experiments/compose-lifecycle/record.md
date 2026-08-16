@@ -1,6 +1,6 @@
 ---
 experiment: compose-lifecycle
-commit: PENDING
+commit: d977250c
 ---
 
 # A manifest applied, reconciled, inspected, and torn down

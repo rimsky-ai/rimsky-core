@@ -1,6 +1,6 @@
 ---
 experiment: template-error-policy
-commit: PENDING
+commit: d977250c
 ---
 
 # Per-error-class routing actions honoured at the error site

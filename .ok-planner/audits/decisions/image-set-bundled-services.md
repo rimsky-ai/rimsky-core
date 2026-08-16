@@ -3,7 +3,7 @@ audit: image-set-bundled-services
 artifact: decision:image-set-bundled-services
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 11
 unaccounted: 0

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-dry-run-flag-exists
-commit: PENDING
+commit: d977250c
 ---
 
 # A dry-run flag on the CLI's write verbs

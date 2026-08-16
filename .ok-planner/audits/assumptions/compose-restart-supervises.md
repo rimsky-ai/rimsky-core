@@ -1,6 +1,6 @@
 ---
 assumption: compose-restart-supervises
-commit: PENDING
+commit: d977250c
 disposition: trap
 synthesized: 2026-08-16T05:48:16Z
 ---

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-short-flags-single-dash
-commit: PENDING
+commit: d977250c
 ---
 
 # Single-dash short forms

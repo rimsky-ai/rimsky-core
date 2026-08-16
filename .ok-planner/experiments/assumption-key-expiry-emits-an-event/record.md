@@ -1,6 +1,6 @@
 ---
 experiment: assumption-key-expiry-emits-an-event
-commit: PENDING
+commit: d977250c
 ---
 
 # Does a key lapsing at its expiry write an audit event?

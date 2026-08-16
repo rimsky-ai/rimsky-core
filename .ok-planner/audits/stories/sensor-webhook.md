@@ -3,7 +3,7 @@ audit: sensor-webhook
 artifact: story:sensor-webhook
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:35:00Z
 ---
 

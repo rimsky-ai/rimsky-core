@@ -1,6 +1,6 @@
 ---
 experiment: dry-run-mode-floor
-commit: PENDING
+commit: d977250c
 ---
 
 # An api-key whose grant pins a write to dry-run

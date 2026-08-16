@@ -3,7 +3,7 @@ audit: host-agent-control-plane
 artifact: story:host-agent-control-plane
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:05:00Z
 ---
 

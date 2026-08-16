@@ -3,7 +3,7 @@ audit: per-service-load-opts-from-env
 artifact: decision:per-service-load-opts-from-env
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:41Z
 ---
 

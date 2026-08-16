@@ -1,6 +1,6 @@
 ---
 experiment: cascade-signal-blind
-commit: PENDING
+commit: d977250c
 ---
 
 # Subscribing to every cascade-firing signal kind

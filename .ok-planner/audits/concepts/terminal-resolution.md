@@ -3,7 +3,7 @@ audit: terminal-resolution
 artifact: concept:terminal-resolution
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:24:31Z
 ---
 

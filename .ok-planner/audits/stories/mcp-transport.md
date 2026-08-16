@@ -3,7 +3,7 @@ audit: mcp-transport
 artifact: story:mcp-transport
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T09:11:35Z
 checked: 47
 unaccounted: 3

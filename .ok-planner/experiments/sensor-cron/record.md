@@ -1,6 +1,6 @@
 ---
 experiment: sensor-cron
-commit: PENDING
+commit: d977250c
 ---
 
 # A cron expression declared in a template fires work, and keeps its place across a restart

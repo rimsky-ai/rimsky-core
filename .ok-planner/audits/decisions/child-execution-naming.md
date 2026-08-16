@@ -3,7 +3,7 @@ audit: child-execution-naming
 artifact: decision:child-execution-naming
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:09:54Z
 ---
 

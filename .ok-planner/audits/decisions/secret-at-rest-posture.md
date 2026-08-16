@@ -3,7 +3,7 @@ audit: secret-at-rest-posture
 artifact: decision:secret-at-rest-posture
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:49:58Z
 ---
 

@@ -1,6 +1,6 @@
 ---
 experiment: claim-producer-scopes-conflict
-commit: PENDING
+commit: d977250c
 ---
 
 # A producer's own overlap rule decides who may hold a claim

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-api-key-retrievable-after-mint
-commit: PENDING
+commit: d977250c
 ---
 
 # Can an operator read a key's plaintext back after the mint?

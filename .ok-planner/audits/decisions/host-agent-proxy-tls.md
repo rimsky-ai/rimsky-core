@@ -3,7 +3,7 @@ audit: host-agent-proxy-tls
 artifact: decision:host-agent-proxy-tls
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:16:32Z
 ---
 

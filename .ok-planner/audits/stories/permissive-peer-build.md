@@ -3,7 +3,7 @@ audit: permissive-peer-build
 artifact: story:permissive-peer-build
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:25:00Z
 ---
 

@@ -3,7 +3,7 @@ audit: anonymous-agents-isolated
 artifact: story:anonymous-agents-isolated
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:52:00Z
 ---
 

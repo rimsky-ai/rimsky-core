@@ -3,7 +3,7 @@ audit: held-as-state-not-phase
 artifact: decision:held-as-state-not-phase
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:48:37Z
 ---
 

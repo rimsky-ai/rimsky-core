@@ -3,7 +3,7 @@ audit: producer-class-routing
 artifact: story:producer-class-routing
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:06:40Z
 ---
 

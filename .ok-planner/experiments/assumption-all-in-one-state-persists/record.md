@@ -1,6 +1,6 @@
 ---
 experiment: assumption-all-in-one-state-persists
-commit: PENDING
+commit: d977250c
 ---
 
 # What survives when the container does not

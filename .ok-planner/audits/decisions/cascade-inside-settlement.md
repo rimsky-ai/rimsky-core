@@ -3,7 +3,7 @@ audit: cascade-inside-settlement
 artifact: decision:cascade-inside-settlement
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:03:38Z
 ---
 

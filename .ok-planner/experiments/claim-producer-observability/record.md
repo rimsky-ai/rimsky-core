@@ -1,6 +1,6 @@
 ---
 experiment: claim-producer-observability
-commit: PENDING
+commit: d977250c
 ---
 
 # Producer-side claim state read straight off the producer

@@ -1,6 +1,6 @@
 ---
 experiment: lineage-exploration
-commit: PENDING
+commit: d977250c
 ---
 
 # Walking run lineage both ways, by claim handle, by source and by producer

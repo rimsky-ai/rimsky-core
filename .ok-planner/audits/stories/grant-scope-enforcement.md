@@ -3,7 +3,7 @@ audit: grant-scope-enforcement
 artifact: story:grant-scope-enforcement
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:52:00Z
 ---
 

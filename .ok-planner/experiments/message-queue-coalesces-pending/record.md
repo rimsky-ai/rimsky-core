@@ -1,6 +1,6 @@
 ---
 experiment: message-queue-coalesces-pending
-commit: PENDING
+commit: d977250c
 ---
 
 # Choosing per instance whether pending wakes survive

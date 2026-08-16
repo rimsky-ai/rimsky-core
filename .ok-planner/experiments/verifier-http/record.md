@@ -1,6 +1,6 @@
 ---
 experiment: verifier-http
-commit: PENDING
+commit: d977250c
 ---
 
 # The bundled HTTP-callout verifier against an external check service

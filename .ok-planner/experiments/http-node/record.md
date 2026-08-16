@@ -1,6 +1,6 @@
 ---
 experiment: http-node
-commit: PENDING
+commit: d977250c
 ---
 
 # The bundled HTTP-node executor against a controlled upstream

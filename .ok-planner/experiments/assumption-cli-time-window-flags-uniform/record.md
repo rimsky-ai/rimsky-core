@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-time-window-flags-uniform
-commit: PENDING
+commit: d977250c
 ---
 
 # The four time-window flags across the time-ordered reads

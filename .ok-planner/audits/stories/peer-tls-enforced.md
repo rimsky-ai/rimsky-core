@@ -3,7 +3,7 @@ audit: peer-tls-enforced
 artifact: story:peer-tls-enforced
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:15:00Z
 ---
 

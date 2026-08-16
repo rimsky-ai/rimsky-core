@@ -1,6 +1,6 @@
 ---
 experiment: commit-response-honored
-commit: PENDING
+commit: d977250c
 ---
 
 # The base Commit response's version id and producer metadata

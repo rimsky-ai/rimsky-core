@@ -3,7 +3,7 @@ audit: persistence-dual-backend
 artifact: decision:persistence-dual-backend
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:26:42Z
 ---
 

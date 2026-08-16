@@ -3,7 +3,7 @@ audit: claim-producer-postgres
 artifact: story:claim-producer-postgres
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:55:00Z
 ---
 

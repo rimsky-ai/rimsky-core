@@ -3,7 +3,7 @@ audit: producer-error-passthrough
 artifact: decision:producer-error-passthrough
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:37:40Z
 ---
 

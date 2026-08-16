@@ -3,7 +3,7 @@ audit: lifecycle-subscriber-author
 artifact: story:lifecycle-subscriber-author
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:55:31Z
 checked: 7
 unaccounted: 0

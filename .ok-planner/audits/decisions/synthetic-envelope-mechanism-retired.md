@@ -3,7 +3,7 @@ audit: synthetic-envelope-mechanism-retired
 artifact: decision:synthetic-envelope-mechanism-retired
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:37:59Z
 ---
 

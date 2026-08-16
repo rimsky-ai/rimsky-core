@@ -1,6 +1,6 @@
 ---
 experiment: upstream-pull-on-invalidate
-commit: PENDING
+commit: d977250c
 ---
 
 # Force-refresh declaration pulls the sender current

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-images-multi-arch
-commit: PENDING
+commit: d977250c
 ---
 
 # Which architectures the published images carry

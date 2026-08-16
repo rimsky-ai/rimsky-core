@@ -1,6 +1,6 @@
 ---
 experiment: assumption-migrate-is-standalone-and-reversible
-commit: PENDING
+commit: d977250c
 ---
 
 # Running the migrate step, twice, and looking for the way back

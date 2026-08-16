@@ -3,7 +3,7 @@ audit: depguard-graph-purity
 artifact: decision:depguard-graph-purity
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 6
 unaccounted: 0

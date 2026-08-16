@@ -3,7 +3,7 @@ audit: host-agent-per-binding-overrides
 artifact: story:host-agent-per-binding-overrides
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:05:00Z
 ---
 

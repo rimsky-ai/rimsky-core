@@ -3,7 +3,7 @@ audit: run-token-swept
 artifact: decision:run-token-swept
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:29:03Z
 ---
 

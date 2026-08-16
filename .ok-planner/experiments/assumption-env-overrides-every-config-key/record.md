@@ -1,6 +1,6 @@
 ---
 experiment: assumption-env-overrides-every-config-key
-commit: PENDING
+commit: d977250c
 ---
 
 # What a `RIMSKY_*` variable can and cannot configure

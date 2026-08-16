@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-destructive-verbs-confirm
-commit: PENDING
+commit: d977250c
 ---
 
 # Whether the CLI's destructive verbs ask before they mutate

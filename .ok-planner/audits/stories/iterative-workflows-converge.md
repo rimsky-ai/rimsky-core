@@ -3,7 +3,7 @@ audit: iterative-workflows-converge
 artifact: story:iterative-workflows-converge
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:08Z
 ---
 

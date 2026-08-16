@@ -1,6 +1,6 @@
 ---
 experiment: assumption-bundled-ports-do-not-collide
-commit: PENDING
+commit: d977250c
 ---
 
 # The whole bundle on one host, nothing configured

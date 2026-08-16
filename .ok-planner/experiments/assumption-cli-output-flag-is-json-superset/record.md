@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-output-flag-is-json-superset
-commit: PENDING
+commit: d977250c
 ---
 
 # `--output` as a superset of `--json`

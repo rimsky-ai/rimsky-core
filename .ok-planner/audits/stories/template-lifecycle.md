@@ -3,7 +3,7 @@ audit: template-lifecycle
 artifact: story:template-lifecycle
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:38:45Z
 ---
 

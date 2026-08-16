@@ -3,7 +3,7 @@ audit: memory-gate-premise-corrected
 artifact: decision:memory-gate-premise-corrected
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:52:00Z
 ---
 

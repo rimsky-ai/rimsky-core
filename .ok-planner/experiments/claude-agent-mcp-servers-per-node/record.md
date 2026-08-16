@@ -1,6 +1,6 @@
 ---
 experiment: claude-agent-mcp-servers-per-node
-commit: PENDING
+commit: d977250c
 ---
 
 # Per-node MCP declarations bounded by an operator allowlist

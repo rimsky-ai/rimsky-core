@@ -1,6 +1,6 @@
 ---
 experiment: assumption-stub-mode-on-every-bundled-executor
-commit: PENDING
+commit: d977250c
 ---
 
 # Setting stub_response on a node per bundled executor

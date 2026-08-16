@@ -1,6 +1,6 @@
 ---
 experiment: messages-as-nodes-substitution
-commit: PENDING
+commit: d977250c
 ---
 
 # The messages directive and the nodes directive over one lookup

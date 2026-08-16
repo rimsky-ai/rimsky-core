@@ -3,7 +3,7 @@ audit: doc-residue-reshape-pass
 artifact: decision:doc-residue-reshape-pass
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 2
 unaccounted: 0

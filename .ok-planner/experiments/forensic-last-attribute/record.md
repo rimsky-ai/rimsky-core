@@ -1,6 +1,6 @@
 ---
 experiment: forensic-last-attribute
-commit: PENDING
+commit: d977250c
 ---
 
 # The node's most recent resolved attribute bag, read directly

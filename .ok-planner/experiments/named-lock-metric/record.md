@@ -1,6 +1,6 @@
 ---
 experiment: named-lock-metric
-commit: PENDING
+commit: d977250c
 ---
 
 # Named-lock acquisitions graph beside producer-claim acquisitions

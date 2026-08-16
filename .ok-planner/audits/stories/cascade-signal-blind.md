@@ -3,7 +3,7 @@ audit: cascade-signal-blind
 artifact: story:cascade-signal-blind
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:39:31Z
 checked: 3
 unaccounted: 0

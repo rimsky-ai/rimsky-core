@@ -1,6 +1,6 @@
 ---
 experiment: verifier-shape-checks
-commit: PENDING
+commit: d977250c
 ---
 
 # Declared shape checks over tabular data, run by the bundled verifier

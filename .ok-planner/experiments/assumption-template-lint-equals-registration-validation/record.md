@@ -1,6 +1,6 @@
 ---
 experiment: assumption-template-lint-equals-registration-validation
-commit: PENDING
+commit: d977250c
 ---
 
 # Lint against registration validation

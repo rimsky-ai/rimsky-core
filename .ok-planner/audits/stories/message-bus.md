@@ -3,7 +3,7 @@ audit: message-bus
 artifact: story:message-bus
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:03:56Z
 checked: 4
 unaccounted: 0

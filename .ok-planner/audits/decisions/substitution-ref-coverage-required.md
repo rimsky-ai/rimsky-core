@@ -3,7 +3,7 @@ audit: substitution-ref-coverage-required
 artifact: decision:substitution-ref-coverage-required
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:38:09Z
 ---
 

@@ -1,6 +1,6 @@
 ---
 experiment: validation-warnings-surfaced
-commit: PENDING
+commit: d977250c
 ---
 
 # The static validator's advisories in the validate and register responses

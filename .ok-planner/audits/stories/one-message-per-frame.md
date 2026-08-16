@@ -3,7 +3,7 @@ audit: one-message-per-frame
 artifact: story:one-message-per-frame
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:07:07Z
 ---
 

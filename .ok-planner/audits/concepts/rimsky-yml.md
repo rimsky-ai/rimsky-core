@@ -3,7 +3,7 @@ audit: rimsky-yml
 artifact: concept:rimsky-yml
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:15:12Z
 ---
 

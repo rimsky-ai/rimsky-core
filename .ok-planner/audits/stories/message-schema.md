@@ -3,7 +3,7 @@ audit: message-schema
 artifact: story:message-schema
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:03:56Z
 ---
 

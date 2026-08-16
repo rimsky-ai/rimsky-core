@@ -1,6 +1,6 @@
 ---
 experiment: node-admin
-commit: PENDING
+commit: d977250c
 ---
 
 # Reading a node's whole state, and clearing a settled failure off it

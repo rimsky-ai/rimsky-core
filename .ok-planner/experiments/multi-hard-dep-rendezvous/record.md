@@ -1,6 +1,6 @@
 ---
 experiment: multi-hard-dep-rendezvous
-commit: PENDING
+commit: d977250c
 ---
 
 # Two force-refreshed upstreams rendezvous on one receiver

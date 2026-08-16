@@ -3,7 +3,7 @@ audit: fold-ownership-bail
 artifact: decision:fold-ownership-bail
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:15:46Z
 ---
 

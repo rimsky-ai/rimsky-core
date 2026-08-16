@@ -1,6 +1,6 @@
 ---
 experiment: assumption-anonymous-mode-has-an-off-switch
-commit: PENDING
+commit: d977250c
 ---
 
 # Can configuration turn anonymous mode off?

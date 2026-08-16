@@ -1,6 +1,6 @@
 ---
 experiment: sequenced-preserves-cascade-rounds
-commit: PENDING
+commit: d977250c
 ---
 
 # Sequenced cascade mode across several rounds

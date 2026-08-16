@@ -1,6 +1,6 @@
 ---
 experiment: assumption-enroll-route-always-mounted
-commit: PENDING
+commit: d977250c
 ---
 
 # Are the enrollment routes available regardless of peer_auth?

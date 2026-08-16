@@ -3,7 +3,7 @@ audit: event-log-payload-shapes
 artifact: decision:event-log-payload-shapes
 text: noncompliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:44:49Z
 ---
 

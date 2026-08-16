@@ -3,7 +3,7 @@ audit: release-scan-docker-scout
 artifact: decision:release-scan-docker-scout
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 15
 unaccounted: 0

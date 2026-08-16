@@ -3,7 +3,7 @@ audit: enroll-token-is-api-key
 artifact: decision:enroll-token-is-api-key
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:48:37Z
 ---
 

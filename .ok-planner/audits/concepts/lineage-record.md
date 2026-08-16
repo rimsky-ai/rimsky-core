@@ -3,7 +3,7 @@ audit: lineage-record
 artifact: concept:lineage-record
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:36Z
 ---
 

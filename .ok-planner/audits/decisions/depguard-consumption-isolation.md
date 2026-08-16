@@ -3,7 +3,7 @@ audit: depguard-consumption-isolation
 artifact: decision:depguard-consumption-isolation
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 36
 unaccounted: 0

@@ -3,7 +3,7 @@ audit: claim-producer-conformance
 artifact: story:claim-producer-conformance
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:22:00Z
 ---
 

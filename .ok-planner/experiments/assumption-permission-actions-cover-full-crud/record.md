@@ -1,6 +1,6 @@
 ---
 experiment: assumption-permission-actions-cover-full-crud
-commit: PENDING
+commit: d977250c
 ---
 
 # Does every noun in the action registry carry a full verb set?

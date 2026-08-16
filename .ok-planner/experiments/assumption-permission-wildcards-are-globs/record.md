@@ -1,6 +1,6 @@
 ---
 experiment: assumption-permission-wildcards-are-globs
-commit: PENDING
+commit: d977250c
 ---
 
 # Does the permission wildcard behave like a glob?

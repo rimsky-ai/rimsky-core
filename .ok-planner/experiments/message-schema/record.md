@@ -1,6 +1,6 @@
 ---
 experiment: message-schema
-commit: PENDING
+commit: d977250c
 ---
 
 # Declared message types and what happens to undeclared ones

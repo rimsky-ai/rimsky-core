@@ -3,7 +3,7 @@ audit: service
 artifact: concept:service
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:15:12Z
 checked: 11
 unaccounted: 1

@@ -3,7 +3,7 @@ audit: supervisor
 artifact: concept:supervisor
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:08:13Z
 ---
 

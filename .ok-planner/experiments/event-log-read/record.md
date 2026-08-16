@@ -1,6 +1,6 @@
 ---
 experiment: event-log-read
-commit: PENDING
+commit: d977250c
 ---
 
 # One feed, four kinds of activity, in clock order

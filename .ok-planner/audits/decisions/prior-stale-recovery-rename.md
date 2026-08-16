@@ -3,7 +3,7 @@ audit: prior-stale-recovery-rename
 artifact: decision:prior-stale-recovery-rename
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:48:37Z
 ---
 

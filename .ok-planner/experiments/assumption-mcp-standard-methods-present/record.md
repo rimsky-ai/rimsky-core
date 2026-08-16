@@ -1,6 +1,6 @@
 ---
 experiment: assumption-mcp-standard-methods-present
-commit: PENDING
+commit: d977250c
 ---
 
 # Which MCP methods does the server implement?

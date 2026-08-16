@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-version-prefix-negotiable
-commit: PENDING
+commit: d977250c
 ---
 
 # Does `/v1` name a negotiable wire version?

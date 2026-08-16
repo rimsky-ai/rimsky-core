@@ -1,6 +1,6 @@
 ---
 experiment: mandatory-instantiation-gate
-commit: PENDING
+commit: d977250c
 ---
 
 # Create-time validation of static attribute config

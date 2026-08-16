@@ -3,7 +3,7 @@ audit: idempotency-status-code-distinction
 artifact: decision:idempotency-status-code-distinction
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:29:43Z
 ---
 

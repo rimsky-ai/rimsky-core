@@ -1,6 +1,6 @@
 ---
 experiment: fanout-intent-inheritance
-commit: PENDING
+commit: d977250c
 ---
 
 # Sub-claims opened by a fan-out carry the intent the template declared

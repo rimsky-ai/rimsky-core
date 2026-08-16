@@ -1,6 +1,6 @@
 ---
 experiment: claim-producer-conformance
-commit: PENDING
+commit: d977250c
 ---
 
 # Proving a custom claim producer before shipping it

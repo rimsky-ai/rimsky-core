@@ -1,6 +1,6 @@
 ---
 experiment: uniform-attributes-delta-subscription
-commit: PENDING
+commit: d977250c
 ---
 
 # One predicate on the verdict's attributes, across success and error

@@ -3,7 +3,7 @@ audit: send-as-node-kind
 artifact: decision:send-as-node-kind
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:33:36Z
 ---
 

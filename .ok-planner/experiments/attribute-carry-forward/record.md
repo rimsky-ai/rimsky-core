@@ -1,6 +1,6 @@
 ---
 experiment: attribute-carry-forward
-commit: PENDING
+commit: d977250c
 ---
 
 # An executor's own output attribute on the next dispatch, and a fresh bag in a new run-scope

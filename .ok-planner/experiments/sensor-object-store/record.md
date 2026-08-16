@@ -1,6 +1,6 @@
 ---
 experiment: sensor-object-store
-commit: PENDING
+commit: d977250c
 ---
 
 # Content dropped into a designated location becomes work in the graph

@@ -3,7 +3,7 @@ audit: held-abandon-cascades-abandoned
 artifact: story:held-abandon-cascades-abandoned
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:26:27Z
 ---
 

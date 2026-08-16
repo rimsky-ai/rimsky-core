@@ -3,7 +3,7 @@ audit: service-address-book
 artifact: concept:service-address-book
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:08:13Z
 ---
 

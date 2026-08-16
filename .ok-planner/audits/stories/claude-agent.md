@@ -3,7 +3,7 @@ audit: claude-agent
 artifact: story:claude-agent
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:01:18Z
 ---
 

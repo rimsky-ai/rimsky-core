@@ -3,7 +3,7 @@ audit: config-format-yaml
 artifact: decision:config-format-yaml
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:41:50Z
 ---
 

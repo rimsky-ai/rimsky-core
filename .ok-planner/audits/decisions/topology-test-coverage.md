@@ -3,7 +3,7 @@ audit: topology-test-coverage
 artifact: decision:topology-test-coverage
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:09:41Z
 ---
 

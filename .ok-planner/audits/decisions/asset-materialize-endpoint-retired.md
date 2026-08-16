@@ -3,7 +3,7 @@ audit: asset-materialize-endpoint-retired
 artifact: decision:asset-materialize-endpoint-retired
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:42:19Z
 ---
 

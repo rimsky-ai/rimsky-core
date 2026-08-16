@@ -1,6 +1,6 @@
 ---
 experiment: assumption-mcp-resource-uris-are-a-family
-commit: PENDING
+commit: d977250c
 ---
 
 # How much of rimsky does the `rimsky://` scheme address?

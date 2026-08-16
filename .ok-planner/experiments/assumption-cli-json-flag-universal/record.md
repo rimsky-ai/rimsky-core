@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-json-flag-universal
-commit: PENDING
+commit: d977250c
 ---
 
 # `--json` across the CLI's read verbs

@@ -3,7 +3,7 @@ audit: fs-fanout-expand-folder
 artifact: story:fs-fanout-expand-folder
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:26:27Z
 ---
 

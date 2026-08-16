@@ -1,6 +1,6 @@
 ---
 experiment: producer-class-routing
-commit: PENDING
+commit: d977250c
 ---
 
 # Routing the acquisition error class the producer named

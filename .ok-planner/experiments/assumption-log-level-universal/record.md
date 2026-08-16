@@ -1,6 +1,6 @@
 ---
 experiment: assumption-log-level-universal
-commit: PENDING
+commit: d977250c
 ---
 
 # Who listens to RIMSKY_LOG_LEVEL

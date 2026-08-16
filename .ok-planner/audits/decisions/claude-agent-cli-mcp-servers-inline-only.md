@@ -3,7 +3,7 @@ audit: claude-agent-cli-mcp-servers-inline-only
 artifact: decision:claude-agent-cli-mcp-servers-inline-only
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:41Z
 ---
 

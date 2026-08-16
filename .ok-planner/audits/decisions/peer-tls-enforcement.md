@@ -3,7 +3,7 @@ audit: peer-tls-enforcement
 artifact: decision:peer-tls-enforcement
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:28:39Z
 ---
 

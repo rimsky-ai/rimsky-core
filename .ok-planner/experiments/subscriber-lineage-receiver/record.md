@@ -1,6 +1,6 @@
 ---
 experiment: subscriber-lineage-receiver
-commit: PENDING
+commit: d977250c
 ---
 
 # Run lineage reaches an external receiver as OpenLineage events

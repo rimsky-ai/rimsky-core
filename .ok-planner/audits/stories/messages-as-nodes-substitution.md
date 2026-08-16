@@ -3,7 +3,7 @@ audit: messages-as-nodes-substitution
 artifact: story:messages-as-nodes-substitution
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:07:07Z
 ---
 

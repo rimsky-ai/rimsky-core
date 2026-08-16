@@ -1,6 +1,6 @@
 ---
 experiment: assumption-metrics-on-bundled-services
-commit: PENDING
+commit: d977250c
 ---
 
 # Where a prometheus scrape finds something

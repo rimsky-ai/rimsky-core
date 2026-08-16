@@ -3,7 +3,7 @@ audit: validator-learns-producer-classes
 artifact: decision:validator-learns-producer-classes
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:40:04Z
 ---
 

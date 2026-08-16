@@ -3,7 +3,7 @@ audit: bundled-executor-inproc-capability-advertisement
 artifact: decision:bundled-executor-inproc-capability-advertisement
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:29:43Z
 ---
 

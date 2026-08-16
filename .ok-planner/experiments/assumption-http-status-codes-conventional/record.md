@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-status-codes-conventional
-commit: PENDING
+commit: d977250c
 ---
 
 # Conventional 401 / 403 / 404 / 409 on every route?

@@ -3,7 +3,7 @@ audit: claim-handoff
 artifact: story:claim-handoff
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:22:00Z
 ---
 

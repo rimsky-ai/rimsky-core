@@ -3,7 +3,7 @@ audit: claude-agent-session-attribute
 artifact: decision:claude-agent-session-attribute
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:41Z
 ---
 

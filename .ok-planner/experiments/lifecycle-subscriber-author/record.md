@@ -1,6 +1,6 @@
 ---
 experiment: lifecycle-subscriber-author
-commit: PENDING
+commit: d977250c
 ---
 
 # Seven callbacks, each already delivered when the call returns

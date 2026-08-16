@@ -1,6 +1,6 @@
 ---
 experiment: work-completed-emitted
-commit: PENDING
+commit: d977250c
 ---
 
 # Every dispatch that finished says so in the ledger

@@ -3,7 +3,7 @@ audit: protocol-version-v1-namespaced
 artifact: decision:protocol-version-v1-namespaced
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:37:59Z
 ---
 

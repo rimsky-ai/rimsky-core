@@ -1,6 +1,6 @@
 ---
 experiment: inproc-utility-executor
-commit: PENDING
+commit: d977250c
 ---
 
 # Utility node kinds run with no executor service deployed

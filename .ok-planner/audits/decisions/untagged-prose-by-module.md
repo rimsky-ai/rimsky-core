@@ -3,7 +3,7 @@ audit: untagged-prose-by-module
 artifact: decision:untagged-prose-by-module
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:21:13Z
 ---
 

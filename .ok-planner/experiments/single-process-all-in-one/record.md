@@ -1,6 +1,6 @@
 ---
 experiment: single-process-all-in-one
-commit: PENDING
+commit: d977250c
 ---
 
 # One process for three roles, and the blob backend that needs it

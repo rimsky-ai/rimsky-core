@@ -1,6 +1,6 @@
 ---
 experiment: assumption-permission-scope-on-every-action
-commit: PENDING
+commit: d977250c
 ---
 
 # Does the scope selector work on any action?

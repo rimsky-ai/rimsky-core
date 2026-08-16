@@ -1,6 +1,6 @@
 ---
 experiment: executor-reads-dispatch-context
-commit: PENDING
+commit: d977250c
 ---
 
 # An agent script reading its dispatch identity and disposition

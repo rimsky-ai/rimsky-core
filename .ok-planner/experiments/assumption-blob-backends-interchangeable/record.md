@@ -1,6 +1,6 @@
 ---
 experiment: assumption-blob-backends-interchangeable
-commit: PENDING
+commit: d977250c
 ---
 
 # Reading a spilled value after the backend changes

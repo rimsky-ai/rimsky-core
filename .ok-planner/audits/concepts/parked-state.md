@@ -3,7 +3,7 @@ audit: parked-state
 artifact: concept:parked-state
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:57:08Z
 ---
 

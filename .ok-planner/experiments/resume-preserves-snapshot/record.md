@@ -1,6 +1,6 @@
 ---
 experiment: resume-preserves-snapshot
-commit: PENDING
+commit: d977250c
 ---
 
 # What a resumed park is dispatched with

@@ -1,6 +1,6 @@
 ---
 experiment: all-upstream-gating
-commit: PENDING
+commit: d977250c
 ---
 
 # Fan-in receiver waits for every in-flight upstream

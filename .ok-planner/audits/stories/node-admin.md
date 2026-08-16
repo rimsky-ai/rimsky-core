@@ -3,7 +3,7 @@ audit: node-admin
 artifact: story:node-admin
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:42:46Z
 ---
 

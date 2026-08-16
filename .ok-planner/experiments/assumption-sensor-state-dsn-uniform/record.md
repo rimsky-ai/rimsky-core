@@ -1,6 +1,6 @@
 ---
 experiment: assumption-sensor-state-dsn-uniform
-commit: PENDING
+commit: d977250c
 ---
 
 # One postgres behind all four sensors

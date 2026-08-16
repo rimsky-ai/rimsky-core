@@ -3,7 +3,7 @@ audit: entry-absorption-flag
 artifact: decision:entry-absorption-flag
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:10:25Z
 ---
 

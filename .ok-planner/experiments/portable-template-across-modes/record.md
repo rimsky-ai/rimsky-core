@@ -1,6 +1,6 @@
 ---
 experiment: portable-template-across-modes
-commit: PENDING
+commit: d977250c
 ---
 
 # One template file, run unedited in both deployment modes

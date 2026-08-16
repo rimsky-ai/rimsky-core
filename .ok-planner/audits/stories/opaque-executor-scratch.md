@@ -3,7 +3,7 @@ audit: opaque-executor-scratch
 artifact: story:opaque-executor-scratch
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:01:18Z
 ---
 

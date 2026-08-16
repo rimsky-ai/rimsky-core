@@ -1,6 +1,6 @@
 ---
 experiment: claude-agent-expose-env-per-node
-commit: PENDING
+commit: d977250c
 ---
 
 # Per-node expose-env declarations bounded by an operator allowlist

@@ -1,6 +1,6 @@
 ---
 experiment: claim-producer-filesystem
-commit: PENDING
+commit: d977250c
 ---
 
 # Claims on plain files, and fan-out over the store's own contents

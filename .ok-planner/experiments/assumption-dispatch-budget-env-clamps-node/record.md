@@ -1,6 +1,6 @@
 ---
 experiment: assumption-dispatch-budget-env-clamps-node
-commit: PENDING
+commit: d977250c
 ---
 
 # Whether the operator's spend figure bounds the template author's

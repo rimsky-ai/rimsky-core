@@ -3,7 +3,7 @@ audit: producer-error-passthrough
 artifact: story:producer-error-passthrough
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:42:46Z
 ---
 

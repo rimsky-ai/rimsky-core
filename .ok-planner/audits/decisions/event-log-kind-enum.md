@@ -3,7 +3,7 @@ audit: event-log-kind-enum
 artifact: decision:event-log-kind-enum
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:30:00Z
 ---
 

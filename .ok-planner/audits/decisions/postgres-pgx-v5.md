@@ -3,7 +3,7 @@ audit: postgres-pgx-v5
 artifact: decision:postgres-pgx-v5
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:25Z
 checked: 19
 unaccounted: 4

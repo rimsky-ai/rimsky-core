@@ -1,6 +1,6 @@
 ---
 experiment: publisher-protocol
-commit: PENDING
+commit: d977250c
 ---
 
 # A third-party publisher feeds a workflow and keeps its subscription

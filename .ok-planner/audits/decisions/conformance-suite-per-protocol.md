@@ -3,7 +3,7 @@ audit: conformance-suite-per-protocol
 artifact: decision:conformance-suite-per-protocol
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:44:00Z
 checked: 7
 unaccounted: 0

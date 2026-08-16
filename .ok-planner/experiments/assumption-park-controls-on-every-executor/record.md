@@ -1,6 +1,6 @@
 ---
 experiment: assumption-park-controls-on-every-executor
-commit: PENDING
+commit: d977250c
 ---
 
 # Declaring probe_park and park_resume_at on a node per bundled executor

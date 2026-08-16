@@ -3,7 +3,7 @@ audit: env-as-substitution-source-kind
 artifact: decision:env-as-substitution-source-kind
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:10:36Z
 ---
 

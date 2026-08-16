@@ -1,6 +1,6 @@
 ---
 experiment: instance-lifecycle
-commit: PENDING
+commit: d977250c
 ---
 
 # Instance runtime lifecycle through the CLI and control API

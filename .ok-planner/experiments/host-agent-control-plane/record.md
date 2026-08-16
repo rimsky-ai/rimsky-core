@@ -1,6 +1,6 @@
 ---
 experiment: host-agent-control-plane
-commit: PENDING
+commit: d977250c
 ---
 
 # Starting, inspecting and stopping the host-agent from the rimsky CLI

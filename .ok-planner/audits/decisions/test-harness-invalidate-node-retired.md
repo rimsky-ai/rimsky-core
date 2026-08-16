@@ -3,7 +3,7 @@ audit: test-harness-invalidate-node-retired
 artifact: decision:test-harness-invalidate-node-retired
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:49:58Z
 ---
 

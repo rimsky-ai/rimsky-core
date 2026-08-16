@@ -3,7 +3,7 @@ audit: mode-default-most-recent
 artifact: decision:mode-default-most-recent
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:52:00Z
 ---
 

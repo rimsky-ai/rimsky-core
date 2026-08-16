@@ -1,6 +1,6 @@
 ---
 experiment: assumption-npm-package-ships-generated-clients
-commit: PENDING
+commit: d977250c
 ---
 
 # What `@rimsky-ai/protocols` puts in a consumer's node_modules

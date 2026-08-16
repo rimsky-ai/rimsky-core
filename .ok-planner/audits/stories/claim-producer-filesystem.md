@@ -3,7 +3,7 @@ audit: claim-producer-filesystem
 artifact: story:claim-producer-filesystem
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:22:00Z
 ---
 

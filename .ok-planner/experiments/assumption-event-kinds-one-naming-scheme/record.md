@@ -1,6 +1,6 @@
 ---
 experiment: assumption-event-kinds-one-naming-scheme
-commit: PENDING
+commit: d977250c
 ---
 
 # Filtering the event feed by prefix, and reading the vocabulary back

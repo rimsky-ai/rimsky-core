@@ -1,6 +1,6 @@
 ---
 experiment: assumption-mcp-tools-cover-every-route
-commit: PENDING
+commit: d977250c
 ---
 
 # Does the MCP catalog cover the REST surface?

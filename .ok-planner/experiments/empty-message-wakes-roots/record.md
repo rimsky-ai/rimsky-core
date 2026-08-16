@@ -1,6 +1,6 @@
 ---
 experiment: empty-message-wakes-roots
-commit: PENDING
+commit: d977250c
 ---
 
 # One empty message wakes every structural root

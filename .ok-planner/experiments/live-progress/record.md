@@ -1,6 +1,6 @@
 ---
 experiment: live-progress
-commit: PENDING
+commit: d977250c
 ---
 
 # Per-node lifecycle arriving while the run is still in flight

@@ -1,6 +1,6 @@
 ---
 experiment: instance-create-is-idle
-commit: PENDING
+commit: d977250c
 ---
 
 # Creating an instance has no side effect

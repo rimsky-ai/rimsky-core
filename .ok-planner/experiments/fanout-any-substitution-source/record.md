@@ -1,6 +1,6 @@
 ---
 experiment: fanout-any-substitution-source
-commit: PENDING
+commit: d977250c
 ---
 
 # A fan-out partition_request substituted from each standard source

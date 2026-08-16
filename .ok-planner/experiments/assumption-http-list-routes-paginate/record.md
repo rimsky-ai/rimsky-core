@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-list-routes-paginate
-commit: PENDING
+commit: d977250c
 ---
 
 # One pagination contract across every collection route?

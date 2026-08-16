@@ -1,6 +1,6 @@
 ---
 experiment: lenient-marker
-commit: PENDING
+commit: d977250c
 ---
 
 # A lenient directive resolves to empty where the unmarked one fails the dispatch

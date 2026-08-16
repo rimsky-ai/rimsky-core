@@ -1,6 +1,6 @@
 ---
 experiment: assumption-image-names-follow-one-scheme
-commit: PENDING
+commit: d977250c
 ---
 
 # Whether the image name can be guessed from the kind

@@ -3,7 +3,7 @@ audit: transition-reason
 artifact: concept:transition-reason
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:36:14Z
 checked: 7
 unaccounted: 5

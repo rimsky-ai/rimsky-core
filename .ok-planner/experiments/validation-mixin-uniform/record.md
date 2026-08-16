@@ -1,6 +1,6 @@
 ---
 experiment: validation-mixin-uniform
-commit: PENDING
+commit: d977250c
 ---
 
 # The validation mix-in advertised from an executor peer and a publisher peer

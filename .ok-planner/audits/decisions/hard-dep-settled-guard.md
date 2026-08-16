@@ -3,7 +3,7 @@ audit: hard-dep-settled-guard
 artifact: decision:hard-dep-settled-guard
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:16:18Z
 ---
 

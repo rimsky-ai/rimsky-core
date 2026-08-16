@@ -1,6 +1,6 @@
 ---
 experiment: clean-lint
-commit: PENDING
+commit: d977250c
 ---
 
 # The Plumbline lint over the whole tree, with both checks demonstrably live

@@ -1,6 +1,6 @@
 ---
 experiment: claim-handoff-durable
-commit: PENDING
+commit: d977250c
 ---
 
 # A durable claim across dispatches, and what releases it

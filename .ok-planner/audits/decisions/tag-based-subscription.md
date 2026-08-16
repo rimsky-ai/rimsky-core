@@ -3,7 +3,7 @@ audit: tag-based-subscription
 artifact: decision:tag-based-subscription
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:38:09Z
 ---
 

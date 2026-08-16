@@ -1,6 +1,6 @@
 ---
 experiment: iterative-workflows-converge
-commit: PENDING
+commit: d977250c
 ---
 
 # A self-cycle and a two-node cycle terminating on a declared predicate

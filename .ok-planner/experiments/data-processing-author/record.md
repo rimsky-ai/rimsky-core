@@ -1,6 +1,6 @@
 ---
 experiment: data-processing-author
-commit: PENDING
+commit: d977250c
 ---
 
 # The typed-data mix-in, as written and as driven

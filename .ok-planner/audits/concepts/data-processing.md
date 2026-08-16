@@ -3,7 +3,7 @@ audit: data-processing
 artifact: concept:data-processing
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:21:03Z
 ---
 

@@ -3,7 +3,7 @@ audit: multi-hard-dep-rendezvous
 artifact: story:multi-hard-dep-rendezvous
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:46Z
 ---
 

@@ -3,7 +3,7 @@ audit: auth-anonymous-via-empty-key-ledger
 artifact: decision:auth-anonymous-via-empty-key-ledger
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:24:31Z
 ---
 

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-conformance-covers-every-protocol
-commit: PENDING
+commit: d977250c
 ---
 
 # Matching the conformance subcommands against the shipped protocols

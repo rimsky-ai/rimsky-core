@@ -1,6 +1,6 @@
 ---
 experiment: claude-agent-session-resume
-commit: PENDING
+commit: d977250c
 ---
 
 # An agent conversation continuing within one run-scope and restarting in a child

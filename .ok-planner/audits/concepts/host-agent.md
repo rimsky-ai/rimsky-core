@@ -3,7 +3,7 @@ audit: host-agent
 artifact: concept:host-agent
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:44:00Z
 ---
 

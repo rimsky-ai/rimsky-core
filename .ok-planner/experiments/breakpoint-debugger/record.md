@@ -1,6 +1,6 @@
 ---
 experiment: breakpoint-debugger
-commit: PENDING
+commit: d977250c
 ---
 
 # Debugging a live instance through breakpoints

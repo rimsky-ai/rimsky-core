@@ -1,6 +1,6 @@
 ---
 experiment: assumption-http-idorkey-accepted-uniformly
-commit: PENDING
+commit: d977250c
 ---
 
 # Does every instance-scoped route take the instance key?

@@ -1,6 +1,6 @@
 ---
 experiment: assumption-admin-reset-is-scoped
-commit: PENDING
+commit: d977250c
 ---
 
 # What `rimsky admin reset` targets, and whether it asks

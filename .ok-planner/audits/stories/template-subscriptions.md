@@ -3,7 +3,7 @@ audit: template-subscriptions
 artifact: story:template-subscriptions
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:47:08Z
 ---
 

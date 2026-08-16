@@ -1,6 +1,6 @@
 ---
 experiment: verifier-severity-partition
-commit: PENDING
+commit: d977250c
 ---
 
 # Warning-severity and error-severity checks in the bundled verifier

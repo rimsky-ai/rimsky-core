@@ -3,7 +3,7 @@ audit: signal
 artifact: concept:signal
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:42:19Z
 ---
 

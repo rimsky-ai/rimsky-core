@@ -3,7 +3,7 @@ audit: idempotent-mode-dedupes
 artifact: story:idempotent-mode-dedupes
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:39:31Z
 ---
 

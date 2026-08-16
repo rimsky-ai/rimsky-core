@@ -1,6 +1,6 @@
 ---
 experiment: cascade-defers-during-flight
-commit: PENDING
+commit: d977250c
 ---
 
 # In-flight node-runs sealed against cascade

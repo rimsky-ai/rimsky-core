@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-thin-client-route-parity
-commit: PENDING
+commit: d977250c
 ---
 
 # Route parity between the CLI and the control API

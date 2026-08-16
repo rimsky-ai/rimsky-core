@@ -1,6 +1,6 @@
 ---
 experiment: assumption-cli-help-on-every-subcommand
-commit: PENDING
+commit: d977250c
 ---
 
 # `--help` on every node of the verb tree

@@ -3,7 +3,7 @@ audit: single-process-all-in-one
 artifact: story:single-process-all-in-one
 text: noncompliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:50:41Z
 ---
 

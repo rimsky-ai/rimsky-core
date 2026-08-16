@@ -1,6 +1,6 @@
 ---
 experiment: assumption-every-protocol-has-capabilities
-commit: PENDING
+commit: d977250c
 ---
 
 # Asking every shipped protocol for its capabilities handshake

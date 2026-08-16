@@ -1,6 +1,6 @@
 ---
 experiment: claim-handoff
-commit: PENDING
+commit: d977250c
 ---
 
 # One claim opened once and held across a subgraph

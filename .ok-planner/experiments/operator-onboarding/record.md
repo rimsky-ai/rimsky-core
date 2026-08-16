@@ -1,6 +1,6 @@
 ---
 experiment: operator-onboarding
-commit: PENDING
+commit: d977250c
 ---
 
 # A newcomer copies the shipped example and runs the dev loop

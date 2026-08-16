@@ -3,7 +3,7 @@ audit: terminal-error-abandoned-as-error-class
 artifact: decision:terminal-error-abandoned-as-error-class
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:49:58Z
 ---
 

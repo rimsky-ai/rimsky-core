@@ -3,7 +3,7 @@ audit: typed-message-substitution
 artifact: story:typed-message-substitution
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:07:07Z
 ---
 

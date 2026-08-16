@@ -1,6 +1,6 @@
 ---
 experiment: host-agent-anonymous-mode
-commit: PENDING
+commit: d977250c
 ---
 
 # Registering and dispatching to a late-bound service with no credentials minted

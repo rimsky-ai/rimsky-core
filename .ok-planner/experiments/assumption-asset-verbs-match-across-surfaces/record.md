@@ -1,6 +1,6 @@
 ---
 experiment: assumption-asset-verbs-match-across-surfaces
-commit: PENDING
+commit: d977250c
 ---
 
 # Do the asset operations match across CLI, REST and MCP?

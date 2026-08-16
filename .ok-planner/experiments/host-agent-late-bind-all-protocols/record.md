@@ -1,6 +1,6 @@
 ---
 experiment: host-agent-late-bind-all-protocols
-commit: PENDING
+commit: d977250c
 ---
 
 # One late-bound binding, two protocols: both reach the local binary, by different names

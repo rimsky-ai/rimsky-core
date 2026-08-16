@@ -3,7 +3,7 @@ audit: handler-package-in-service-directory
 artifact: decision:handler-package-in-service-directory
 text: compliant
 implementation: unsupported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:43:41Z
 checked: 11
 unaccounted: 5

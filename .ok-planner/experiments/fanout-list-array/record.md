@@ -1,6 +1,6 @@
 ---
 experiment: fanout-list-array
-commit: PENDING
+commit: d977250c
 ---
 
 # A fan-out over a list an upstream node produced

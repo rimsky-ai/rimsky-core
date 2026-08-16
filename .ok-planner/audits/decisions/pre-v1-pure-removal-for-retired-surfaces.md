@@ -3,7 +3,7 @@ audit: pre-v1-pure-removal-for-retired-surfaces
 artifact: decision:pre-v1-pure-removal-for-retired-surfaces
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:28:39Z
 ---
 

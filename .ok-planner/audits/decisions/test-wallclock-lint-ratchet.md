@@ -3,7 +3,7 @@ audit: test-wallclock-lint-ratchet
 artifact: decision:test-wallclock-lint-ratchet
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T05:49:58Z
 ---
 

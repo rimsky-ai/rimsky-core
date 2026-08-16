@@ -1,6 +1,6 @@
 ---
 experiment: assumption-attribute-defaults-have-per-node-form
-commit: PENDING
+commit: d977250c
 ---
 
 # Per-node attribute defaults, at the template and at the instance

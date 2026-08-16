@@ -3,7 +3,7 @@ audit: claude-agent-mcp-servers-per-node
 artifact: story:claude-agent-mcp-servers-per-node
 text: compliant
 implementation: supported
-commit: PENDING
+commit: d977250c
 audited: 2026-08-16T04:58:36Z
 ---
 
