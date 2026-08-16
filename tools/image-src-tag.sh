@@ -1,5 +1,5 @@
 #!/bin/sh
-# Materialized by ok-workspaces v18.4.1 — suite-owned; overwritten on converge; do not hand-edit.
+# Materialized by ok-workspaces v18.6.1 — suite-owned; overwritten on converge; do not hand-edit.
 
 set -eu
 root=$(git rev-parse --show-toplevel)
