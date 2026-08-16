@@ -1,4 +1,4 @@
-# ok-plumbline — planning ceremony surface
+# ok-plumbline — planning ceremony contribution
 
 What the suite's planning ceremony does about this family's estate.
 Materialized into consumer projects at
@@ -17,7 +17,7 @@ materializes them.
 Read `.ok-plumbline/practice-definitions.md` before authoring anything
 in this family's corpus. It is the single source of truth for what a
 **subject** and a **practice** are, what each body must carry, and how
-gaps, collisions, and violations differ. This surface never restates
+gaps, collisions, and violations differ. This contribution never restates
 it.
 
 ## Draft
@@ -78,4 +78,4 @@ any other.
 - Never authors a subject or practice on the owner's behalf: which
   policies this codebase follows is exactly what the ceremony is for.
 
-<!-- Materialized by ok-plumbline v15.2.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-plumbline v18.4.1 — suite-owned; overwritten on converge; do not hand-edit. -->

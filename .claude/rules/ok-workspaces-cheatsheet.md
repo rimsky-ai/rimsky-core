@@ -1,6 +1,6 @@
 # ok-workspaces Cheatsheet
 
-Materialized by ok-workspaces v15.2.0 — suite-owned; refreshed by
+Materialized by ok-workspaces v18.4.1 — suite-owned; refreshed by
 the front door's administration (`/ok`); do not hand-edit. Profile:
 `.ok-workspaces/config.json` (stacks: go, docker;
 runtime: docker-compose).

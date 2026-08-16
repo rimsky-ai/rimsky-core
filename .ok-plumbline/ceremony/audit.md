@@ -1,4 +1,4 @@
-# ok-plumbline — audit ceremony surface
+# ok-plumbline — audit ceremony contribution
 
 What the suite's periodic audit does about this family's estate.
 Materialized into consumer projects at `.ok-plumbline/ceremony/audit.md`;
@@ -8,7 +8,7 @@ the ceremony reads it there when `.ok-plumbline/` exists.
 
 `.ok-plumbline/` at the project root, and `.ok-plumbline/subjects/`
 carrying at least one subject. A project that has authored none has no
-coverage to report: say so in one line, run the lint sweep below, and
+coverage to report: say so in one line, run the lint below, and
 contribute no determinations.
 
 ## Enumerate
@@ -24,9 +24,11 @@ is measured against is the one thing that makes the answer refutable.
 Auditing practices separately would ask the same question against a set
 nobody enumerated.
 
-Batch by subject, three to five per dispatch, grouping subjects whose
-populations live in the same part of the codebase so that code is read
-once. Say how many subjects and how many batches before dispatching.
+Order the feed by subject, grouping subjects whose populations live in
+the same part of the codebase so that code is read once — through the
+ceremony's worker pool where the harness supports it, in batches of
+three to five otherwise. Say how many subjects ride the instrument
+before dispatching.
 
 ## Determine
 
@@ -88,20 +90,19 @@ Agent (general-purpose, model: opus):
   5. `unaccounted:` is the count of gaps, collisions, and traced
      members — every state but accounted-for and violating. Name each
      one under `## Unaccounted`, saying which of the three it is.
-     `unaccounted: 0` and `determination: supported` mean the same
+     `unaccounted: 0` and `implementation: supported` mean the same
      thing and must agree.
-  6. Settle the compliance axis by reading the subject's own body
-     against the authoring rules: is the population defined without
-     policy, and is the enumeration something a reader can actually
-     follow? A subject whose members cannot be enumerated is
-     noncompliant, and say so in `## Compliance`.
+  6. Settle the `text:` axis by reading the subject's own body against
+     the authoring rules: is the population defined without policy,
+     and is the enumeration something a reader can actually follow? A
+     subject whose members cannot be enumerated is noncompliant, and
+     say so in `## Compliance`.
   7. A subject you could not enumerate at all has no coverage to
-     report: record `determination: unclear` with `checked: 0` and
-     `unaccounted: 0`, and say in the paragraph what defeated the
-     enumeration. Zero of zero is the honest reading — the counts
-     settle supported against unsupported and say nothing about a
-     population nobody could list — and the judge decides whether the
-     subject is undecidable from its own text.
+     report: record `implementation: unsupported` with `checked: 0`
+     and `unaccounted: 0`, and say in the paragraph what defeated the
+     enumeration — the subject's text does not settle what a
+     supporting run would even count. The judge decides whether the
+     subject's text is what needs settling.
 
   {{AUDIT-FILE-FORMAT}}
 
@@ -130,24 +131,11 @@ Agent (general-purpose, model: opus):
   `supported` goes to the judge.
 ```
 
-## Judge
+### Lint
 
-The escalations join every other estate's in the ceremony's single
-judge pass. What the judge confirms is a **gap**, a **collision**, or a
-**traced member**, and each confirmed one becomes an intake issue: for
-the first two the corpus asserts a population it does not account for
-and only the owner can say which practice should; for the third the
-site's intent is not legible from the code, and illegibility is the
-owner's to settle. A judge that overturns writes the audit back as
-`supported` with its own counts.
-
-Remediation lists never reach the judge. They are work.
-
-## Sweep
-
-The lint over the whole project, which is the other thing this estate
-knows how to say — the run for the findings, and the binary's own
-clustering for the grouping:
+The lint over the whole project — run with the Determine stage — is
+the other thing this estate knows how to say: the run for the
+findings, and the binary's own clustering for the grouping:
 
 ```bash
 node .ok-plumbline/bin/plumbline .
@@ -158,8 +146,8 @@ Exit 0 clean, 2 violations, 1 internal error. The clustering is the
 binary's, not this run's: grouping violations by shape is a derivation
 with one home, and re-deriving it here would give the project two
 answers to the same question. If the project has not converged, fall
-back to the payload's `bin/plumbline` and **announce the fallback
-verbatim in the report**, on its own line, before the findings:
+back to the payload's `bin/plumbline` and **record the fallback
+verbatim in the run report**, on its own line, before the findings:
 `note: no vendored binary — using the payload's copy; /ok pins one to
 this project`. An unpinned verdict is never delivered silently.
 
@@ -175,9 +163,26 @@ Split the clustered violations the way the caller has to act on them:
   file-level opt-in marker; an unresolved citation whose artifact may
   need creating or whose link may no longer be load-bearing.
 
-Report; fix nothing.
+Fix nothing. The mechanical class is recorded in the run report; each
+judgment-class finding joins the orchestrator's escalations to the
+ceremony's judge, which files what it confirms.
 
-## Present
+## Judge
+
+The escalations join every other estate's in the ceremony's single
+judge pass. What the judge confirms is a **gap**, a **collision**, or a
+**traced member**, and each confirmed one becomes an intake issue: for
+the first two the corpus asserts a population it does not account for
+and only the owner can say which practice should; for the third the
+site's intent is not legible from the code, and illegibility is the
+owner's to settle. A judge that overturns writes the audit back as
+`supported` with its own counts.
+
+Remediation lists never reach the judge. They are work.
+
+## Report
+
+What this estate contributes to the run report:
 
 ```
 ## ok-plumbline
@@ -198,12 +203,13 @@ been ruled poses none. Omit when there are none.>
 
 ### Compliance
 <One line per noncompliant subject: the rule its body breaks and the
-compliant text. Mechanical and yours to fix. "All compliant" when
-there are none.>
+compliant text. Mechanical, for a future pass to fix. "All compliant"
+when there are none.>
 
 ### Lint
-<The totals and category breakdown, then the mechanical/judgment split.
-Omit the split when the sweep is clean.>
+<The totals and category breakdown, then the mechanical/judgment split
+with each judgment finding's outcome at the judge. Omit the split when
+the lint is clean.>
 ```
 
 ## Boundaries
@@ -217,4 +223,4 @@ Omit the split when the sweep is clean.>
   follows is the planning ceremony's business and the owner's.
 - Never edits `.ok-plumbline/config.json`.
 
-<!-- Materialized by ok-plumbline v15.2.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-plumbline v18.4.1 — suite-owned; overwritten on converge; do not hand-edit. -->

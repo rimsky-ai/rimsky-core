@@ -1,4 +1,4 @@
-# ok-planner — certification ceremony surface
+# ok-planner — certification ceremony contribution
 
 What the suite's certification gate does about this family's estate.
 The ceremony owns the spine — scope, the review-fix loop, the
@@ -96,10 +96,11 @@ its delta sidecar folder where it has one, and
 every issue file under `.ok-planner/issues/` whose frontmatter `sprint:`
 names it (promoted receipts, moving to `.ok-planner/history/issues/`) —
 and **commit the work**. Both are owner acts, performed only on the
-owner's word; the sprint stays at its `sprints/` path until then, so a
-`/goal` keyed to that path can verify completion, and an uncertified
-sprint gets no offer at all. On the yes, after the archive commit
-lands, stamp the archived sprint with the closing commit —
+owner's word. The sprint stays at its `sprints/` path until then,
+because the owner moves it and the run does not. Where the file sits
+is no term of the completion contract's goal rule. An uncertified
+sprint gets no offer at all. On the yes, after the archive
+commit lands, stamp the archived sprint with the closing commit —
 `closed: <sha of the archive commit>` in YAML frontmatter, one small
 follow-on commit — the baseline the planning ceremony's out-of-band
 reconciliation reads.
@@ -113,4 +114,4 @@ reconciliation reads.
   footprint that isn't caused or depended on by the change is not this
   gate's finding; if it matters, a human files it to the intake.
 
-<!-- Materialized by ok-planner v15.2.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-planner v18.4.1 — suite-owned; overwritten on converge; do not hand-edit. -->

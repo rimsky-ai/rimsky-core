@@ -1,4 +1,4 @@
-# ok-plumbline — certification ceremony surface
+# ok-plumbline — certification ceremony contribution
 
 What the suite's certification gate does about this family's estate.
 Materialized into consumer projects at
@@ -96,4 +96,4 @@ work the loop's fixer takes, or a work item for a later sprint.
 - Never sweeps the repository. Whether the corpus's practices reached
   the whole of their subjects is the periodic `/audit` run's question.
 
-<!-- Materialized by ok-plumbline v15.2.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-plumbline v18.4.1 — suite-owned; overwritten on converge; do not hand-edit. -->

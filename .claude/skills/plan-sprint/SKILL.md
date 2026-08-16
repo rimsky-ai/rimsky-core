@@ -44,10 +44,10 @@ inference:
 | `.ok-workspaces/` | ok-workspaces |
 
 For each estate present, read `<estate>/ceremony/plan-sprint.md` — the
-family's **ceremony surface**, the conventional place its planning
+family's **ceremony contribution**, the conventional place its planning
 knowledge lives. That file, not this one, says what the family
 contributes; this body never carries family-specific instructions and
-never improvises them. A surface that is missing where its estate
+never improvises them. A contribution that is missing where its estate
 exists is a conformance defect: report it and carry on with the rest.
 
 No estate at all → say so and stop; there is nothing to plan against.
@@ -62,10 +62,9 @@ session starts.
 ## The spine
 
 Run these phases in order. At each one, follow the instructions every
-present family's surface gives under that phase's heading — all of
-them, in the estate order above. A surface silent on a phase
-contributes nothing to it, which is an ordinary state and not a
-finding.
+present family's contribution gives under that phase's heading — all of
+them, in the estate order above. A contribution silent on a phase adds
+nothing to it, which is an ordinary state and not a finding.
 
 1. **Layout** — each family ensures its own directories exist. Estate
    convergence is the front door's administration (`/ok`), never a
@@ -93,10 +92,23 @@ inline in a working session, handed to the native `goal` mechanism, or
 dispatched to an orchestrator — is described in the sprint's own
 execution boilerplate.
 
+At sign-off, hand the owner the line that starts execution under the
+native `goal` mechanism, with this sprint's filename stamped in:
+
+    /goal .ok-planner/sprints/<sprint-name>.md — see the goal
+    resolution criteria in that file's completion contract; read the
+    file from disk and apply them
+
+Do not shorten it to the bare path. The checker reads the condition
+string at every evaluation. It reads the sprint's text only while the
+transcript still carries it. The line is for the owner; the sprint
+document does not carry it, so an executor reading the sprint never
+invokes `/goal` itself.
+
 ## What this skill does NOT do
 
 - Does not carry family knowledge. Everything family-specific comes
-  from the ceremony surfaces in the estates present, and nothing else.
+  from the ceremony contributions in the estates present, and nothing else.
 - Does not implement work items or mutate code.
 - Does not mutate any corpus directly — corpus changes ride the
   sprint's deltas and are applied by the implementer.
@@ -105,4 +117,4 @@ execution boilerplate.
 - Does not converge an estate, materialize a file, or repair a family's
   presence. That is `/ok`, always a user action.
 
-<!-- Materialized by ok v15.2.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok v18.4.1 — suite-owned; overwritten on converge; do not hand-edit. -->

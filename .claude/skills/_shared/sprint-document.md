@@ -65,20 +65,21 @@ proceeds the same way.
    self-sufficient by construction; a genuine gap is raised with the
    owner, never filled by inference.
 
-2. Stage the work into a task list. The items above are a flat,
-   unordered list; group them by theme, file surface, or dependency,
-   order the groups so nothing is built on something not yet there,
-   and build the list in your own working state — the harness's task
-   tracking where available, one entry per stage; an orchestrator
-   uses its own graph. Seed the closing entries up front — finish
-   the completion report, run `/certify-work` with this sprint's
-   path as its argument, clear this task list just before the
-   presentation (complete or remove every remaining entry, so a
-   stale list does not linger past the run), walk the presentation,
-   offer archive-and-commit — so the ceremony is a
-   standing unchecked item from the first minute, not a memory to
-   retain past a long run. Staging is never rewritten into a plan
-   document: this sprint is the whole brief.
+2. Stage the work. The items above are a flat, unordered list;
+   group them by theme, file surface, or dependency, and order the
+   groups so nothing is built on something not yet there. Write the
+   staged list as the opening section of the completion report
+   (step 8) before you build anything: `## Stages`, one line per
+   stage, each marked pending. Seed the closing stages up front —
+   finish the completion report, run `/certify-work` with this
+   sprint's path as its argument, walk the presentation, offer
+   archive-and-commit — so the ceremony is a standing pending line
+   from the first minute, not a memory to retain past a long run.
+   Mark each stage done as it lands. The list lives in the report
+   and nowhere else — not in a harness task tool, and never
+   rewritten into a plan document: this sprint is the whole brief.
+   An orchestrator uses its own graph and still records the stages
+   in the report, so the record is whole.
 
 3. Apply each corpus delta as part of the work that realizes it —
    copy the final-form body into `.ok-planner/design/` verbatim
@@ -118,9 +119,10 @@ proceeds the same way.
 
 8. Keep the completion report current. Beside this sprint file lives
    its report — same filename with `-completion` before the
-   extension — and you write it as you go: as each stage lands,
-   record what was done, every divergence, and every call you made
-   where the sprint was silent. It is the durable record the closing
+   extension — and you write it as you go: open it in step 2 with
+   the staged list; as each stage lands, mark it done and record
+   what was done, every divergence, and every call you made where
+   the sprint was silent. It is the durable record the closing
    ceremony finishes and walks with the owner, the artifact a goal
    checker requires, and it is archived together with this sprint.
    It is a record of this execution, never a plan document.
@@ -139,20 +141,23 @@ proceeds the same way.
    and promoting only genuine intent forks to the issue intake),
    and the outcomes and divergences are presented to the owner.
    (Whether the corpus's claims still hold is the periodic `/audit`
-   run, on the owner's cadence, never this close.) The goal is to
-   finish the work: this file stays in `sprints/` through the
-   presentation (so a stop
-   condition keyed to its path can verify completion against it),
-   and `/certify-work` ends the run as the ceremony: it writes its
-   composed presentation into the completion report (finishing the
-   record kept in step 8), walks it with the owner, and offers the
-   close-out — archiving this sprint together with its completion
-   report and the issue files it resolved to `history/`, and
-   committing the work — performed only on the owner's word. The
-   close-out then stamps the archived sprint's frontmatter with
-   the closing commit (`closed: <sha>`, one small follow-on
-   commit): the baseline the next planning ceremony uses to
-   detect work done out of band.
+   run, on the owner's cadence, never this close.) `/certify-work`
+   ends the run. It writes its composed presentation into the
+   completion report, finishing the record kept in step 8. It walks
+   that presentation with the owner. It offers the close-out. The run
+   stops there.
+
+**After the run stops.** The owner archives this sprint. The owner
+commits the work. The run does neither on its own initiative. It
+offers both at the end of the presentation and stops. Until the owner
+answers, this file stays at its `sprints/` path. When the owner
+answers yes, the run moves this file, its completion report, its
+delta sidecar, and the issue files it resolved to `history/`. Then it
+commits the work. Then it stamps the archived sprint with the closing
+commit — `closed: <sha>` in the frontmatter, one small follow-on
+commit. The next planning ceremony reads that stamp to detect work
+done out of band. The words "finish the sprint" are not a yes. Nor is
+"follow the boilerplate". Both ask the run for the presentation.
 
 ## Completion contract
 
@@ -171,20 +176,23 @@ verifiable from the repository as it stands:
    fixed or promoted-and-verified.
 
 **The goal rule, for any checker verifying this contract.** The goal
-is met when items 1–3 all verify against the repository, this sprint
-file still at its `sprints/` path. That state IS the goal met — do
-not require more: archiving, committing, and the `closed:` stamp are
-owner-initiated acts that FOLLOW completion, and a pending
-archive-and-commit offer is evidence the goal is met, never that
-work remains. A checker that instead finds this file at
-`.ok-planner/history/sprints/` bearing a `closed:` stamp is looking
-at a goal already met and closed by the owner — terminal, whatever
-else seems unfinished; stop checking. A missing completion report
-means NOT done, however green the rest looks. Distinct from both
-states above: a run parked at the review-fix loop's cycle cap
-awaiting the owner's direction has not met the goal — a legal
-in-flight state, not done, not failed, and never grounds for the run
-to take either cap step itself. Nothing else counts either way.
+is met when items 1–3 all verify against the repository. Read the
+repository as it stands to decide. Never decide from the session
+transcript. An earlier session may have done this work, and a term
+the transcript does not show may still hold on disk. That state
+IS the goal met — do not require more: walking the presentation,
+archiving, committing, and the `closed:` stamp all FOLLOW
+completion, and a pending archive-and-commit offer is evidence the
+goal is met, never that work remains. Where this sprint file sits is
+no term of the rule: `sprints/` and `.ok-planner/history/sprints/`
+satisfy it alike, and a sprint already archived bearing a `closed:`
+stamp is terminal — stop checking, whatever else seems unfinished. A
+missing completion report means NOT done, however green the rest
+looks. Distinct from every state above: a run parked at the
+review-fix loop's cycle cap awaiting the owner's direction has not
+met the goal — a legal in-flight state, not done, not failed, and
+never grounds for the run to take either cap step itself. Nothing
+else counts either way.
 ```
 
-<!-- Materialized by ok-planner v15.2.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-planner v18.4.1 — suite-owned; overwritten on converge; do not hand-edit. -->

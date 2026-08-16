@@ -1,4 +1,4 @@
-# ok-planner — planning ceremony surface
+# ok-planner — planning ceremony contribution
 
 What the suite's planning ceremony does about this family's estate.
 The ceremony owns the spine and the order; this file owns everything
@@ -23,7 +23,7 @@ Read `.claude/skills/_shared/artifact-definitions.md` before authoring
 anything. Every delta drafted here must already comply with the
 canonical artifact rules — the sign-off review checks exactly that.
 `{{CORPUS-DELTA-FORM}}` there is the authority on a delta's parts;
-this surface never restates it.
+this contribution never restates it.
 
 Two things in this workflow must not be confused: the **issue intake**
 (`.ok-planner/issues/`, one markdown file per issue) is where questions
@@ -235,21 +235,24 @@ accordingly.
 
 ### The predictive classification test
 
-Where the project keeps a surface partition
-(`.ok-planner/surface/guidance.md` exists), drafting includes one
+Where the project keeps a surface intent
+(`.ok-planner/surface/surface.md` exists), drafting includes one
 predictive check per `decision:owner-guided-surface-partition`: for
 work that would introduce new user-facing surface — a new command, a
-new route, a new exported module — read the guidance and ask whether
-it already claims the new surface. **Claimed passes silently.**
-Unclaimed is raised with the owner as one prose question — public or
-private, and under what rule — and the answer rides the sprint as a
-work item editing the guidance document, so the audit's next opening
-finds it settled and ratified. Stories carry the public-by-construction
-prior — a story's promised capability is something a user reaches, so
-its surface is public unless the owner says otherwise — which means
-only genuine ambiguity reaches the owner. This is planning moving the
-audit's one interactive question earlier, to when the owner is already
-deciding the work; it never writes the guidance itself mid-session.
+new route, a new exported module, a new env var — read the intent and
+ask whether it already classifies the new surface, by a general rule
+or a specific exception. **Claimed passes silently.** Unclaimed is
+raised with the owner as one prose question — public or internal, and
+under what rule — and on the answer the drafter adds a work item to
+edit the intent document (`surface/surface.md`) as part of the
+sprint's corpus deltas. The sprint's execution edits the intent; this
+session never edits it mid-run. The audit's next run reads the
+amended intent. Stories carry the public-by-construction prior — a
+story's promised capability is something a user reaches, so its
+surface is public unless the owner says otherwise — which means only
+genuine ambiguity reaches the owner. This is planning taking the
+classification early, to when the owner is already deciding the work,
+so the audit's extractor finds the intent already settled.
 
 ## Resolve
 
@@ -435,9 +438,11 @@ repository against: the alignment judge compares the corpus to the
 delta, so a delta that matches itself reads clean no matter what it
 asserts. A rationale invented at drafting is invisible from then on. Do
 not wave through a grounding finding because the artifact is otherwise
-well-formed — an unfounded claim in a Rationale or an Alternatives
-bullet is the finding, and the fix is to verify it, restate it as what
-the repository supports, or delete it.
+well-formed — a claim about this repository that the repository
+contradicts is the finding, and the fix is to correct it. Rationale
+and Alternatives reasoning is the owner's a priori record of why they
+decided: verified where it asserts repository facts, accepted as
+given otherwise, and never flagged for being unverifiable.
 
 Then present the sprint to the owner for sign-off. It is not final
 until they approve.
@@ -481,4 +486,4 @@ until they approve.
   explicitly postpones is filed to `.ok-planner/issues/` per
   `{{ISSUE-FILE-FORMAT}}` with `kind: "sprint"`.
 
-<!-- Materialized by ok-planner v15.2.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-planner v18.4.1 — suite-owned; overwritten on converge; do not hand-edit. -->

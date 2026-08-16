@@ -1,4 +1,4 @@
-# ok-workspaces — planning ceremony surface
+# ok-workspaces — planning ceremony contribution
 
 What the suite's planning ceremony does about this family's estate.
 Materialized into consumer projects at
@@ -41,4 +41,4 @@ declares passes silently.
   decision transcribed by the front door's administration, and a sprint
   work item is how it gets scheduled.
 
-<!-- Materialized by ok-workspaces v15.2.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-workspaces v18.4.1 — suite-owned; overwritten on converge; do not hand-edit. -->

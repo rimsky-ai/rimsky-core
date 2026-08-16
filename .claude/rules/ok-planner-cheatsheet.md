@@ -1,6 +1,6 @@
 # ok-planner Cheatsheet
 
-Materialized by ok-planner v15.2.0. Suite-owned: overwritten
+Materialized by ok-planner v18.4.1. Suite-owned: overwritten
 wholesale by the front door's administration (`/ok`); project-specific rules
 belong in your own files under `.claude/rules/`.
 
@@ -37,7 +37,13 @@ the full per-directory rules). The short version every session needs:
   is in context while you are executing it, not otherwise; `sketches/` is
   speculative future thinking (written by `/sketch`); `documentation/`
   is the release-stamped documentation corpus `/document` produces — a
-  snapshot, never a source of truth, allowed to go stale; `history/` is the
+  snapshot, never a source of truth, allowed to go stale — and so are
+  the **documents it places in the tree** (under `docs/`, the root
+  `README.md`), each opening with a provenance stamp naming the
+  release it describes: out of context by default, read only when the
+  owner directs you there, never reconciled with the code; a placed
+  document behind the tree files nothing and marks nothing — the next
+  `/document` regenerates the set whole; `history/` is the
   archive — same-named folder per artifact kind, preserved indefinitely.
   Touch records only when the user or an ok-planner skill directs it.
 
@@ -57,38 +63,43 @@ cycle cap land back in `issues/`, made ruling-ready by
 `/verify-issues`). Whether the corpus's claims still hold is a separate
 question, asked by `/audit` on the owner's cadence and never at
 a close. At a release, `/document` ensures a current audit (running it
-when the tree has moved past its stamp), consumes its determinations
-and surface ruling, measures the synthesized user assumptions on the
-same experiment harness, and leaves a commit-stamped documentation
-corpus in `documentation/`, split along the vantage line. The full
-execution shape is in `.ok-planner/CLAUDE.md`.
+when the tree has moved past its stamp), settles the owner's
+**document types** (`.ok-planner/surface/documents/`) in the
+documentation walk — inside the composed audit right after its
+extractor returns, or against a reused audit's extraction —
+constructs the commit-stamped documentation corpus in
+`documentation/` from the audit's records — measuring nothing itself
+— split along the vantage line, then generates one self-contained
+document per declared type and places it at the type's target in the
+tree. The full execution shape is in `.ok-planner/CLAUDE.md`.
 On completion, artifacts move to their same-named folder under `history/`
 (a sprint together with its `-completion` report — the durable record
 the executor keeps and the certify ceremony finishes and walks).
 
 ## The public surface
 
-Every user-facing element is ruled **public or private, totally**: the
-**surface declaration** (`.ok-planner/surface/surface.json`) names the
-surface kinds and a mechanical enumerator each; the **surface
-guidance** (`.ok-planner/surface/guidance.md`) is the owner's prose
-rules for classifying what the enumerators produce; the **surface
-ruling** (`.ok-planner/audits/surface/ruling.json`, beside its cached
-extraction) is the derived, stamped partition the audit run writes.
-No default exists — an unclassified element is a loud failure, never
-"private by omission". A kind no mechanical source can enumerate is
-marked **agentically derived** (`"derivation": "agentic"`, `reads`
-naming what the derivation reads); its enumerator reads the committed
-member list at `.ok-planner/surface/members/<kind>` — re-derived and
-diffed at each audit run's opening, drift walked with the owner — and
-the marked set is a standing inventory the owner retires by adopting
-practices that make those populations mechanical. The guidance
-legally changes outside sprints,
-but every change is ratified: carried by an approved sprint, or
-confirmed with the owner at the next audit run, detected by comparing
-anchors (`.ok-planner/bin/surface-reconcile` reports the state).
+The public surface is one prose document — the **surface intent** at
+`.ok-planner/surface/surface.md` — naming which classes of element
+are public by default and which specific elements depart from those
+rules (general rules with named exceptions). It is produced and
+maintained in the audit's **interactive intent stage** at the top of
+each run: an à la carte run's one owner walk, a short class-level
+conversation ("every CLI verb is public", "the foobar module is
+user-facing", specific exceptions where they exist) that lands the
+document. The
+owner may also edit the file directly between audits. Once landed,
+the run's autonomous portion dispatches a **surface extractor
+subagent** that reads the intent, walks the code and deployment
+configuration purpose-bound to classification, and writes the run's
+**surface extraction** at `.ok-planner/audits/surface/extraction.json`
+— one entry per element found, kind discovered by the walk. Elements
+the intent still does not clearly settle are **defaulted internal
+for the run** and filed as intake issues asking the owner to amend
+the intent — the safety net for residual drift the interactive
+conversation could not enumerate, never the primary path. No
+reconciler tool, no committed member lists, no stamped ruling.
 Planning participates predictively: work introducing surface the
-guidance cannot classify is settled during `/plan-sprint`.
+intent cannot classify is settled during `/plan-sprint`.
 
 ## Audits
 
@@ -96,23 +107,39 @@ Concepts, stories, and decisions are verified by the
 **implementation-audit corpus** under
 `.ok-planner/audits/{concepts,stories,decisions}/` — one file per
 artifact, written only by the periodic `/audit` run, never by
-the implementing session and never hand-edited. The run opens with the
-**surface determination** — its one interactive moment; a settled
-partition passes silently — then makes its other two determinations:
-**story support from the user's side** (experiments driven through the
-ruled public surface on the maintained harness at
-`.ok-planner/experiments/` — never settled by reading or by citing a
-test, and conclusions never carry: an archived experiment warrants
-nothing until re-run at the stamp) and **decision and concept support
-from the technical side** (adversarial reading). An audit answers **two
-independent questions** — *does the artifact comply with its own
-authoring rules?* and *is it supported by the codebase at this
-commit?* — in one sentence to one paragraph, with a support
-determination of `supported`, `unsupported`, or `unclear` beside a
-`compliance:` of `compliant` or `noncompliant`. They come apart: a
+the implementing session and never hand-edited. The run opens with
+its **interactive intent stage** — an à la carte run's one owner
+walk, a short class-level conversation that produces or updates the
+surface intent at `.ok-planner/surface/surface.md` (a run `/document`
+invoked adds the documentation walk right after the extractor
+returns, settling the document types, and no other). It then autonomously
+dispatches a **surface extractor subagent** that reads the
+just-landed intent and writes this run's surface extraction
+(elements the intent still does not settle are defaulted internal
+and filed as intake issues; the autonomous portion does not stall
+on the owner) — a run invoked à la carte hands the owner the
+`/goal` line, once the intent is landed, that drives the rest
+hands-free — then makes its other determinations: **story support
+from the user's side** (the maintained experiments at
+`.ok-planner/experiments/`, re-run at this tree and driven through
+the public surface the extraction records — never settled by reading
+or by citing a test, and conclusions never carry: an archived
+experiment warrants nothing until re-run at the stamp);
+**assumptions**, synthesized cold by a boxed agent from user-visible
+material once the story verdicts land and measured on the same
+instrument (story-shaped records under `.ok-planner/audits/assumptions/`,
+each closing with a disposition — `held`, `trap`, or `unverified` — a
+contradicted assumption is documentation, never a fix issue); and
+**decision and concept support from the technical side** (adversarial
+reading). An audit answers **two
+independent questions** — *does the artifact's text comply with its
+own authoring rules?* and *does the codebase support what it claims,
+at this commit?* — in one sentence to one paragraph, with an
+`implementation:` verdict of `supported` or `unsupported` beside a
+`text:` reading of `compliant` or `noncompliant`. They come apart: a
 malformed artifact may be accurately implemented. Where an artifact
-claims a whole enumerable population, the determination adds the
-coverage shape — `checked:`, `unaccounted:`, and the unaccounted
+claims a whole enumerable population, the implementation verdict adds
+the coverage shape — `checked:`, `unaccounted:`, and the unaccounted
 members named.
 
 **An audit is a statement about a named commit, not a standing
@@ -130,44 +157,65 @@ so an audit says "checked all 23 skills under the families plus the
 front door and `/release`" — refutable by a reader in seconds — rather
 than offering a vague assurance.
 
-**The run is two determination stages and no loop.** Auditors work
-every live artifact in parallel batches — stories by measurement,
-decisions and concepts by reading; everything they could not call
-`supported` goes to one second-opinion judge, which confirms it (filing
-an issue), overturns it to `supported`, or calls it undecidable (filing
-an issue for the owner to settle). Only the support axis escalates — a
-compliance defect is mechanical, so it is recorded and reported rather
-than judged. The judge is terminal, so nothing comes back for another
-pass, and nothing is ever fixed by the run itself — a real gap becomes
-an intake issue and a future sprint's work. Experiments the run had to
-build, passing at the stamp, are filed as promotion candidates.
-`.ok-planner/bin/audit-check` validates every estate's corpus in one
-pass: audit coverage, shape on both axes, brevity, the coverage counts
-agreeing with the determination, the rule that no `unsupported` or
-`unclear` determination stands without an `issue:` slug, each
-catalog TOC listing exactly its collection's live slugs, and — where a
-surface ruling exists — its anchors, its totality against the cached
-extraction, and its guidance hash.
+**The run is two stages and no loop.** Workers are fed every live
+artifact — stories and assumptions by measurement, decisions and
+concepts by reading; every escalation — the `unsupported` verdicts,
+assumption contradictions, corpus contradictions from the extraction,
+the orchestrator's own driving observations — goes to one terminal
+judge. A confirmed story gap files an intake issue by the ordinary
+intake conventions; a confirmed assumption contradiction files
+nothing and stands as a trap disposition. The audit corpus and the
+issue intake are independent by construction: an audit carries no
+`issue:` field in either direction, and any back-reference lives in
+issue prose. Nothing is ever fixed by the run itself — a real gap
+becomes an intake issue and a future sprint's work. Experiments the
+run had to build, passing at the stamp, are **nominated** for the
+project's suites by filing an intake issue; adopting one is a
+sprint's work on the owner's ruling. The run ends by writing its
+report to `.ok-planner/history/audits/<date>-<sha>-report.md` — a
+record, never a channel — committing everything and stamping the
+commit; it presents from the report only when invoked à la carte, and
+silently otherwise. **The orchestrator runs no validator over the
+corpus:** dispatch, collect, write the report, stamp — nothing
+sits in the orchestrator's hand with a pass/fail exit, so nothing
+about the run can "fail" against a tool. Where an audit is malformed,
+the next run rewrites it whole; drift self-corrects.
 
 ## Documentation
 
-Release documentation is a **measured assessment**, produced by
-`/document` into `.ok-planner/documentation/`, split along the vantage
-line. The **publishable layer** — a catalog over the ruling's public
-side, assessments warranted by passing surface experiments, traps
-(reasonable assumptions the product contradicts), and a concept
-router — speaks only the shipped vocabulary (concepts, stories, public
-surface elements) and cites catalog rows at the stamp, never source
-paths or tests. The **verification layer** — trap evidence sets, the
-surface ruling, the experiment harness — stays internal and cites the
-tree freely. Every record is stamped with the release commit it
-describes; nothing tracks staleness and no conclusion carries
-forward — each release re-derives the whole corpus, with the prior
-published corpus as a synthesis input, never a cache; the harness's
-runnables do carry, as instruments. The corpus is a record: out of
-context by default, never consulted to understand the current tree.
-`.ok-planner/bin/document-check` validates a produced corpus
-mechanically.
+Release documentation is produced by `/document` into
+`.ok-planner/documentation/`, in two tiers, and `/document` measures
+nothing: it ensures a current audit and constructs from the audit's
+records. The **records** are a measured assessment split along the
+vantage line. Their **publishable layer** — a catalog over the
+extraction's public side, assessments whose held claims cite the
+audit's passing surface experiments, traps (reasonable assumptions
+the product contradicts, read from the audit's trap dispositions),
+and a concept router — speaks only the shipped vocabulary (concepts,
+stories, public surface elements) and cites catalog rows at the
+stamp, never source paths or tests. The **verification layer** — trap
+evidence sets, the surface extraction, the audit's records, the
+experiments — stays internal and cites the tree freely. The
+**documents** — one per **document type** the owner declares at
+`.ok-planner/surface/documents/<slug>.md` (what the document is for,
+the classes of public surface it covers, its target path), settled in
+the **documentation walk** — are written by one writer per type
+(`Generate`), oriented by the records, verified against the tree at
+the stamp, self-contained (no record citations, no warrant state),
+kept under `documentation/documents/` and placed at the type's target
+in the tree with a provenance stamp, beside `docs/CLAUDE.md` when any
+type targets `docs/`. Only declared targets are written. Every record
+and document is stamped with the release commit it describes; nothing
+tracks staleness and no conclusion carries forward — each release
+re-derives the whole corpus, with the prior published corpus feeding
+the audit's synthesis, never a cache; the experiments do carry, as
+instruments. The corpus is a record, placed documents included: out
+of context by default, never consulted to understand the current
+tree. **The
+documentation run runs no validator over its own corpus:** nothing
+sits in the orchestrator's hand with a pass/fail exit, and a
+malformed corpus is rewritten whole by the next release's run — drift
+self-corrects, as with the audit.
 
 **A concrete story does not speak to the qualitative.** Correct, clear,
 helpful, intuitive — these describe how well the product owes
