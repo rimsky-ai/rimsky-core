@@ -1,0 +1,50 @@
+---
+kind: event-kinds
+release: d977250c
+population: 44
+---
+
+- `attribute_override_matched` — public under: general rule; not driven by any measured story way
+- `attributes_committed` — public under: general rule; not driven by any measured story way
+- `attributes_schema_failed` — public under: general rule; not driven by any measured story way
+- `attributes_substituted` — public under: general rule; measured by assessments of story:event-log-read
+- `auth.access_attempted` — public under: general rule; measured by assessments of story:audit-log-read
+- `auth.access_denied` — public under: general rule; measured by assessments of story:audit-log-read
+- `auth.key_created` — public under: general rule; measured by assessments of story:audit-log-read
+- `auth.key_revoked` — public under: general rule; measured by assessments of story:audit-log-read
+- `auth.key_rotated` — public under: general rule; measured by assessments of story:audit-log-read
+- `breakpoint.hit` — public under: general rule; measured by assessments of story:breakpoint-debugger, story:event-log-read
+- `claim_acquired` — public under: general rule; not driven by any measured story way
+- `claim_held` — public under: general rule; not driven by any measured story way
+- `claim_resolution.abandon` — public under: general rule; measured by assessments of story:held-abandon-cascades-abandoned, story:template-fan-out
+- `claim_resolution.commit` — public under: general rule; measured by assessments of story:held-commit-cascades-success, story:template-fan-out
+- `claim_resolved` — public under: general rule; not driven by any measured story way
+- `debug.override.applied` — public under: general rule; not driven by any measured story way
+- `error` — public under: general rule; measured by assessments of story:all-upstream-gating, story:asset-management, story:audit-artifact, story:breakpoint-debugger, story:cascade-send, story:cascade-signal-blind, story:claim-handoff, story:claim-handoff-durable, story:claim-producer-conformance, story:claim-producer-postgres, story:claim-producer-protocol, story:claim-producer-scopes-conflict, story:claim-scope-substitution, story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:commit-response-honored, story:compose-lifecycle, story:data-processing-author, story:debug-channel, story:dry-run-mode-floor, story:dry-run-request-flag, story:empty-message-wakes-roots, story:executor-protocol, story:executor-reads-dispatch-context, story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:frame-origin-audit, story:fs-fanout-expand-folder, story:held-abandon-cascades-abandoned, story:held-commit-cascades-success, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:http-node, story:idempotent-mode-dedupes, story:inproc-utility-executor, story:iterative-workflows-converge, story:lenient-marker, story:lifecycle-subscriber-author, story:lineage-admin, story:lineage-exploration, story:live-progress, story:local-orchestrator-zero-config, story:loop-counter-cap, story:mandatory-instantiation-gate, story:message-bus, story:message-queue-coalesces-pending, story:message-schema, story:messages-as-nodes-substitution, story:multi-hard-dep-rendezvous, story:named-lock-metric, story:node-admin, story:one-message-per-frame, story:one-shot-to-terminal, story:opaque-executor-scratch, story:operator-invalidate-queues-during-flight, story:peer-tls-enforced, story:permissive-peer-build, story:portable-template-across-modes, story:producer-class-routing, story:producer-error-passthrough, story:publisher-protocol, story:rimsky-deployment-bootstrap, story:rimsky-health-check, story:runtime-diagnostics, story:script-friendly-outcome, story:sensor-cron, story:sensor-http, story:sensor-object-store, story:sensor-webhook, story:single-process-all-in-one, story:spawned-local-services, story:sub-claim-payload-substitution, story:subscriber-lineage-receiver, story:subscription-mounting, story:template-error-policy, story:template-fan-out, story:template-sub-graph-delegation, story:typed-message-substitution, story:uncovered-substitution-rejected, story:uniform-attributes-delta-subscription, story:upstream-pull-on-invalidate, story:validation-author, story:validation-mixin-uniform, story:validation-warnings-surfaced, story:verifier-http, story:verifier-severity-partition, story:verifier-shape-checks, story:work-completed-emitted
+- `executor_schema_unavailable` — public under: general rule; not driven by any measured story way
+- `fan_out_dispatched` — public under: general rule; measured by assessments of story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:idempotent-mode-dedupes, story:lenient-marker, story:uncovered-substitution-rejected
+- `fanout.children_created` — public under: general rule; not driven by any measured story way
+- `instance_terminated` — public under: general rule; not driven by any measured story way
+- `lock_acquired` — public under: general rule; measured by assessments of story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:idempotent-mode-dedupes, story:lenient-marker, story:uncovered-substitution-rejected
+- `lock_orphan_reaped` — public under: general rule; not driven by any measured story way
+- `lock_released` — public under: general rule; not driven by any measured story way
+- `message.dead_lettered` — public under: general rule; not driven by any measured story way
+- `message_received` — public under: general rule; measured by assessments of story:event-log-read
+- `message_sent` — public under: general rule; measured by assessments of story:event-log-read
+- `no_op_commit` — public under: general rule; not driven by any measured story way
+- `operator_override` — public under: general rule; not driven by any measured story way
+- `orphaned_claim_lost_race` — public under: general rule; not driven by any measured story way
+- `orphaned_claim_released` — public under: general rule; not driven by any measured story way
+- `parked_resume_started` — public under: general rule; not driven by any measured story way
+- `state_transition` — public under: general rule; measured by assessments of story:audit-log-read
+- `subclaim.acquired` — public under: general rule; measured by assessments of story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:idempotent-mode-dedupes, story:lenient-marker, story:uncovered-substitution-rejected
+- `subclaim.begin_candidate` — public under: general rule; not driven by any measured story way
+- `subgraph.dispatched` — public under: general rule; measured by assessments of story:template-sub-graph-delegation
+- `subgraph.exit_carry` — public under: general rule; measured by assessments of story:template-sub-graph-delegation
+- `subgraph_internal_cascade_fired` — public under: general rule; not driven by any measured story way
+- `template_resolution_failed` — public under: general rule; measured by assessments of story:one-message-per-frame, story:upstream-pull-on-invalidate
+- `template_validation_failed` — public under: general rule; not driven by any measured story way
+- `unresolved_executor` — public under: general rule; not driven by any measured story way
+- `work_completed` — public under: general rule; measured by assessments of story:all-upstream-gating, story:event-log-read, story:instance-create-is-idle, story:instance-lifecycle, story:operator-invalidate-queues-during-flight, story:work-completed-emitted
+- `work_rejected` — public under: general rule; not driven by any measured story way
+- `work_started` — public under: general rule; measured by assessments of story:all-upstream-gating, story:asset-management, story:breakpoint-debugger, story:cascade-send, story:cascade-signal-blind, story:claim-scope-substitution, story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:debug-channel, story:empty-message-wakes-roots, story:event-log-read, story:executor-reads-dispatch-context, story:executor-trace-observability, story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:fs-fanout-expand-folder, story:held-abandon-cascades-abandoned, story:held-commit-cascades-success, story:http-node, story:idempotent-mode-dedupes, story:inproc-utility-executor, story:iterative-workflows-converge, story:lenient-marker, story:loop-counter-cap, story:message-bus, story:message-queue-coalesces-pending, story:message-schema, story:messages-as-nodes-substitution, story:multi-hard-dep-rendezvous, story:one-message-per-frame, story:opaque-executor-scratch, story:operator-invalidate-queues-during-flight, story:portable-template-across-modes, story:producer-class-routing, story:producer-error-passthrough, story:rimsky-deployment-bootstrap, story:rimsky-health-check, story:single-process-all-in-one, story:sub-claim-payload-substitution, story:subscription-mounting, story:template-error-policy, story:typed-message-substitution, story:uncovered-substitution-rejected, story:uniform-attributes-delta-subscription, story:upstream-pull-on-invalidate, story:validation-mixin-uniform, story:work-completed-emitted

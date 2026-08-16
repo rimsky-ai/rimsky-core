@@ -1,0 +1,64 @@
+---
+kind: template-keys
+release: d977250c
+population: 58
+---
+
+- `defaults.attributes.by_executor.<executor>.<key>` — public under: template keys; not driven by any measured story way
+- `description` — public under: template keys; measured by assessments of story:dry-run-mode-floor, story:grant-scope-enforcement, story:portable-template-across-modes, story:service-enrollment
+- `graphs[].entry` — public under: template keys; not driven by any measured story way
+- `graphs[].exit` — public under: template keys; not driven by any measured story way
+- `graphs[].name` — public under: template keys; not driven by any measured story way
+- `graphs[].nodes` — public under: template keys; not driven by any measured story way
+- `late_bind_services` — public under: template keys; measured by assessments of story:anonymous-agents-isolated, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation
+- `message_queue_mode` — public under: template keys; measured by assessments of story:audit-artifact, story:compose-lifecycle, story:dry-run-request-flag, story:live-progress, story:local-orchestrator-zero-config, story:message-queue-coalesces-pending, story:one-message-per-frame, story:one-shot-to-terminal, story:script-friendly-outcome
+- `messages[].body_schema` — public under: template keys; not driven by any measured story way
+- `messages[].type` — public under: template keys; not driven by any measured story way
+- `name` — public under: template keys; measured by assessments of story:all-upstream-gating, story:anonymous-agents-isolated, story:anonymous-mode-bootstrap, story:api-key-management, story:asset-management, story:audit-artifact, story:audit-log-read, story:breakpoint-debugger, story:cascade-send, story:cascade-signal-blind, story:claim-handoff, story:claim-handoff-durable, story:claim-producer-conformance, story:claim-producer-filesystem, story:claim-producer-observability, story:claim-producer-postgres, story:claim-producer-protocol, story:claim-producer-scopes-conflict, story:claim-scope-substitution, story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:clean-lint, story:client-context, story:commit-response-honored, story:compose-lifecycle, story:data-processing-author, story:debug-channel, story:dry-run-mode-floor, story:dry-run-request-flag, story:empty-message-wakes-roots, story:event-log-read, story:executor-protocol, story:executor-reads-dispatch-context, story:executor-trace-observability, story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:frame-origin-audit, story:fs-fanout-expand-folder, story:grant-scope-enforcement, story:held-abandon-cascades-abandoned, story:held-commit-cascades-success, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation, story:http-node, story:idempotent-mode-dedupes, story:inproc-utility-executor, story:instance-create-is-idle, story:instance-lifecycle, story:iterative-workflows-converge, story:lenient-marker, story:lifecycle-subscriber-author, story:lineage-admin, story:lineage-exploration, story:live-progress, story:local-orchestrator-zero-config, story:loop-counter-cap, story:mandatory-instantiation-gate, story:message-bus, story:message-queue-coalesces-pending, story:message-schema, story:messages-as-nodes-substitution, story:multi-hard-dep-rendezvous, story:named-lock-metric, story:node-admin, story:one-message-per-frame, story:one-shot-to-terminal, story:opaque-executor-scratch, story:operator-invalidate-queues-during-flight, story:operator-onboarding, story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:permissive-peer-build, story:portable-template-across-modes, story:producer-class-routing, story:producer-error-passthrough, story:publisher-protocol, story:rimsky-deployment-bootstrap, story:rimsky-health-check, story:rules-doc-accuracy, story:runtime-diagnostics, story:script-friendly-outcome, story:sensor-cron, story:sensor-http, story:sensor-object-store, story:sensor-webhook, story:service-enrollment, story:single-process-all-in-one, story:spawned-local-services, story:sub-claim-payload-substitution, story:subscriber-lineage-receiver, story:subscription-mounting, story:tag-management, story:template-error-policy, story:template-fan-out, story:template-lifecycle, story:template-sub-graph-delegation, story:template-subscriptions, story:typed-message-substitution, story:uncovered-substitution-rejected, story:uniform-attributes-delta-subscription, story:upstream-pull-on-invalidate, story:validation-author, story:validation-mixin-uniform, story:validation-warnings-surfaced, story:verifier-http, story:verifier-severity-partition, story:verifier-shape-checks, story:work-completed-emitted
+- `nodes[].attributes.schema` — public under: template keys; not driven by any measured story way
+- `nodes[].cascade_mode` — public under: template keys; not driven by any measured story way
+- `nodes[].claim_producers[].alias` — public under: template keys; not driven by any measured story way
+- `nodes[].claim_producers[].data` — public under: template keys; not driven by any measured story way
+- `nodes[].claim_producers[].intent` — public under: template keys; not driven by any measured story way
+- `nodes[].claim_producers[].lifetime` — public under: template keys; not driven by any measured story way
+- `nodes[].claim_producers[].name` — public under: template keys; not driven by any measured story way
+- `nodes[].claim_producers[].selector` — public under: template keys; not driven by any measured story way
+- `nodes[].delegate` — public under: template keys; not driven by any measured story way
+- `nodes[].description` — public under: template keys; not driven by any measured story way
+- `nodes[].error_types.<class>.action` — public under: template keys; not driven by any measured story way
+- `nodes[].error_types.<class>.reason` — public under: template keys; not driven by any measured story way
+- `nodes[].executor` — public under: template keys; not driven by any measured story way
+- `nodes[].fan_out.claim` — public under: template keys; not driven by any measured story way
+- `nodes[].fan_out.error_policy.kind` — public under: template keys; not driven by any measured story way
+- `nodes[].fan_out.error_policy.max_failures` — public under: template keys; not driven by any measured story way
+- `nodes[].fan_out.parallelism` — public under: template keys; not driven by any measured story way
+- `nodes[].fan_out.partition_request` — public under: template keys; not driven by any measured story way
+- `nodes[].holds.<alias>.as` — public under: template keys; not driven by any measured story way
+- `nodes[].holds.<alias>.from` — public under: template keys; not driven by any measured story way
+- `nodes[].is_subgraph_entry_absorbed` — public under: template keys; not driven by any measured story way
+- `nodes[].is_subgraph_exit` — public under: template keys; not driven by any measured story way
+- `nodes[].kind` — public under: template keys; not driven by any measured story way
+- `nodes[].locks[].name` — public under: template keys; not driven by any measured story way
+- `nodes[].max_quiet_period` — public under: template keys; not driven by any measured story way
+- `nodes[].max_retries` — public under: template keys; not driven by any measured story way
+- `nodes[].max_runtime` — public under: template keys; not driven by any measured story way
+- `nodes[].retry_backoff.base_delay_ms` — public under: template keys; not driven by any measured story way
+- `nodes[].retry_backoff.jitter` — public under: template keys; not driven by any measured story way
+- `nodes[].retry_backoff.kind` — public under: template keys; not driven by any measured story way
+- `nodes[].retry_backoff.max_delay_ms` — public under: template keys; not driven by any measured story way
+- `nodes[].sends_message` — public under: template keys; not driven by any measured story way
+- `nodes[].subscribes[].force_upstream_refresh` — public under: template keys; not driven by any measured story way
+- `nodes[].subscribes[].node` — public under: template keys; not driven by any measured story way
+- `nodes[].subscribes[].resolves_via_calling_node` — public under: template keys; not driven by any measured story way
+- `nodes[].subscribes[].type` — public under: template keys; not driven by any measured story way
+- `nodes[].subscribes[].when` — public under: template keys; not driven by any measured story way
+- `nodes[].sync_rpc_deadline` — public under: template keys; not driven by any measured story way
+- `nodes[].tags` — public under: template keys; not driven by any measured story way
+- `nodes[].type` — public under: template keys; not driven by any measured story way
+- `params_redact` — public under: template keys; not driven by any measured story way
+- `params_schema` — public under: template keys; measured by assessments of story:fanout-any-substitution-source, story:fanout-list-array
+- `publishers[].config` — public under: template keys; not driven by any measured story way
+- `publishers[].kind` — public under: template keys; not driven by any measured story way
+- `publishers[].message_type` — public under: template keys; not driven by any measured story way
+- `publishers[].name` — public under: template keys; not driven by any measured story way
+- `version` — public under: template keys; measured by assessments of story:all-upstream-gating, story:anonymous-agents-isolated, story:anonymous-mode-bootstrap, story:api-key-management, story:asset-management, story:audit-artifact, story:audit-log-read, story:breakpoint-debugger, story:cascade-send, story:cascade-signal-blind, story:claim-handoff, story:claim-handoff-durable, story:claim-producer-filesystem, story:claim-producer-postgres, story:claim-producer-protocol, story:claim-producer-scopes-conflict, story:claim-scope-substitution, story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:client-context, story:commit-response-honored, story:compose-lifecycle, story:data-processing-author, story:debug-channel, story:dry-run-mode-floor, story:dry-run-request-flag, story:empty-message-wakes-roots, story:event-log-read, story:executor-protocol, story:executor-reads-dispatch-context, story:executor-trace-observability, story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:frame-origin-audit, story:fs-fanout-expand-folder, story:grant-scope-enforcement, story:held-abandon-cascades-abandoned, story:held-commit-cascades-success, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation, story:http-node, story:idempotent-mode-dedupes, story:inproc-utility-executor, story:instance-create-is-idle, story:instance-lifecycle, story:iterative-workflows-converge, story:lenient-marker, story:lifecycle-subscriber-author, story:lineage-admin, story:lineage-exploration, story:live-progress, story:local-orchestrator-zero-config, story:loop-counter-cap, story:mandatory-instantiation-gate, story:message-bus, story:message-queue-coalesces-pending, story:message-schema, story:messages-as-nodes-substitution, story:multi-hard-dep-rendezvous, story:named-lock-metric, story:node-admin, story:one-message-per-frame, story:one-shot-to-terminal, story:opaque-executor-scratch, story:operator-invalidate-queues-during-flight, story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:permissive-peer-build, story:portable-template-across-modes, story:producer-class-routing, story:producer-error-passthrough, story:publisher-protocol, story:rimsky-deployment-bootstrap, story:runtime-diagnostics, story:script-friendly-outcome, story:sensor-cron, story:sensor-http, story:sensor-object-store, story:sensor-webhook, story:service-enrollment, story:single-process-all-in-one, story:spawned-local-services, story:sub-claim-payload-substitution, story:subscriber-lineage-receiver, story:subscription-mounting, story:tag-management, story:template-error-policy, story:template-fan-out, story:template-lifecycle, story:template-sub-graph-delegation, story:template-subscriptions, story:typed-message-substitution, story:uncovered-substitution-rejected, story:uniform-attributes-delta-subscription, story:upstream-pull-on-invalidate, story:validation-author, story:validation-mixin-uniform, story:validation-warnings-surfaced, story:verifier-http, story:verifier-severity-partition, story:verifier-shape-checks, story:work-completed-emitted

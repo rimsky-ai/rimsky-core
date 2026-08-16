@@ -1,0 +1,83 @@
+---
+kind: cli-flags
+release: d977250c
+population: 77
+---
+
+- `--add` — public under: general rule; not driven by any measured story way
+- `--agent` — public under: general rule; not driven by any measured story way
+- `--allow-live` — public under: general rule; not driven by any measured story way
+- `--allow-paths` — public under: general rule; not driven by any measured story way
+- `--api-key` — public under: general rule; measured by assessments of story:host-agent-anonymous-mode
+- `--backend` — public under: general rule; not driven by any measured story way
+- `--before` — public under: general rule; measured by assessments of story:lineage-admin
+- `--callback-bind` — public under: general rule; not driven by any measured story way
+- `--callback-host` — public under: general rule; not driven by any measured story way
+- `--check-observability` — public under: general rule; not driven by any measured story way
+- `--control-api` — public under: general rule; not driven by any measured story way
+- `--depth` — public under: general rule; not driven by any measured story way
+- `--endpoint` — public under: general rule; measured by assessments of story:anonymous-mode-bootstrap, story:api-key-management, story:asset-management, story:audit-artifact, story:audit-log-read, story:claim-handoff, story:claim-handoff-durable, story:claim-producer-conformance, story:claim-producer-filesystem, story:claim-producer-observability, story:claim-producer-postgres, story:claim-producer-protocol, story:claim-producer-scopes-conflict, story:client-context, story:commit-response-honored, story:compose-lifecycle, story:data-processing-author, story:dry-run-mode-floor, story:dry-run-request-flag, story:grant-scope-enforcement, story:instance-create-is-idle, story:instance-lifecycle, story:lineage-admin, story:mandatory-instantiation-gate, story:message-bus, story:node-admin, story:operator-onboarding, story:portable-template-across-modes, story:producer-error-passthrough, story:rimsky-health-check, story:runtime-diagnostics, story:service-enrollment, story:tag-management, story:template-error-policy, story:template-fan-out, story:template-lifecycle, story:template-sub-graph-delegation, story:template-subscriptions, story:validation-author, story:validation-warnings-surfaced
+- `--expires` — public under: general rule; measured by assessments of story:api-key-management
+- `--f` — public under: general rule; not driven by any measured story way
+- `--follow` — public under: general rule; measured by assessments of story:message-bus
+- `--force` — public under: general rule; measured by assessments of story:claim-handoff-durable, story:instance-lifecycle, story:template-error-policy, story:template-lifecycle
+- `--force-leave-anonymous` — public under: general rule; not driven by any measured story way
+- `--foreground` — public under: general rule; not driven by any measured story way
+- `--grace` — public under: general rule; measured by assessments of story:api-key-management, story:audit-log-read
+- `--identity-file` — public under: general rule; measured by assessments of story:anonymous-agents-isolated, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation
+- `--include-revoked` — public under: general rule; measured by assessments of story:api-key-management
+- `--instance` — public under: general rule; measured by assessments of story:asset-management, story:data-processing-author, story:message-bus, story:producer-error-passthrough, story:runtime-diagnostics
+- `--instance-id` — public under: general rule; not driven by any measured story way
+- `--instance-key` — public under: general rule; measured by assessments of story:operator-onboarding, story:portable-template-across-modes
+- `--json` — public under: general rule; measured by assessments of story:api-key-management
+- `--keep` — public under: general rule; not driven by any measured story way
+- `--key` — public under: general rule; measured by assessments of story:api-key-management, story:audit-log-read, story:dry-run-mode-floor, story:grant-scope-enforcement, story:service-enrollment
+- `--key-prefix` — public under: general rule; not driven by any measured story way
+- `--kind` — public under: general rule; not driven by any measured story way
+- `--label` — public under: general rule; measured by assessments of story:anonymous-agents-isolated, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation
+- `--listen` — public under: general rule; measured by assessments of story:anonymous-agents-isolated, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation
+- `--message-type` — public under: general rule; not driven by any measured story way
+- `--name` — public under: general rule; measured by assessments of story:all-upstream-gating, story:anonymous-agents-isolated, story:anonymous-mode-bootstrap, story:api-key-management, story:asset-management, story:audit-artifact, story:audit-log-read, story:breakpoint-debugger, story:cascade-send, story:cascade-signal-blind, story:claim-handoff, story:claim-handoff-durable, story:claim-producer-filesystem, story:claim-producer-observability, story:claim-producer-postgres, story:claim-producer-protocol, story:claim-producer-scopes-conflict, story:claim-scope-substitution, story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:client-context, story:commit-response-honored, story:compose-lifecycle, story:data-processing-author, story:debug-channel, story:dry-run-mode-floor, story:dry-run-request-flag, story:empty-message-wakes-roots, story:event-log-read, story:executor-protocol, story:executor-reads-dispatch-context, story:executor-trace-observability, story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:frame-origin-audit, story:fs-fanout-expand-folder, story:grant-scope-enforcement, story:held-abandon-cascades-abandoned, story:held-commit-cascades-success, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation, story:http-node, story:idempotent-mode-dedupes, story:inproc-utility-executor, story:instance-create-is-idle, story:instance-lifecycle, story:iterative-workflows-converge, story:lenient-marker, story:lifecycle-subscriber-author, story:lineage-admin, story:lineage-exploration, story:loop-counter-cap, story:mandatory-instantiation-gate, story:message-bus, story:message-queue-coalesces-pending, story:message-schema, story:messages-as-nodes-substitution, story:multi-hard-dep-rendezvous, story:named-lock-metric, story:node-admin, story:one-message-per-frame, story:opaque-executor-scratch, story:operator-invalidate-queues-during-flight, story:operator-onboarding, story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:permissive-peer-build, story:portable-template-across-modes, story:producer-class-routing, story:producer-error-passthrough, story:publisher-protocol, story:rimsky-deployment-bootstrap, story:rimsky-health-check, story:runtime-diagnostics, story:sensor-cron, story:sensor-http, story:sensor-object-store, story:sensor-webhook, story:service-enrollment, story:single-process-all-in-one, story:sub-claim-payload-substitution, story:subscriber-lineage-receiver, story:subscription-mounting, story:tag-management, story:template-error-policy, story:template-fan-out, story:template-lifecycle, story:template-sub-graph-delegation, story:template-subscriptions, story:typed-message-substitution, story:uncovered-substitution-rejected, story:uniform-attributes-delta-subscription, story:upstream-pull-on-invalidate, story:validation-author, story:validation-mixin-uniform, story:validation-warnings-surfaced, story:verifier-http, story:verifier-severity-partition, story:verifier-shape-checks, story:work-completed-emitted
+- `--name-filter` — public under: general rule; not driven by any measured story way
+- `--no-color` — public under: general rule; not driven by any measured story way
+- `--no-keep` — public under: general rule; not driven by any measured story way
+- `--o` — public under: general rule; not driven by any measured story way
+- `--older-than` — public under: general rule; measured by assessments of story:lineage-admin
+- `--output` — public under: general rule; not driven by any measured story way
+- `--param` — public under: general rule; not driven by any measured story way
+- `--params` — public under: general rule; measured by assessments of story:claim-handoff, story:claim-handoff-durable, story:claim-producer-protocol, story:claim-producer-scopes-conflict
+- `--pg-conn-string` — public under: general rule; not driven by any measured story way
+- `--poll-interval` — public under: general rule; measured by assessments of story:operator-onboarding, story:portable-template-across-modes
+- `--prefix` — public under: general rule; not driven by any measured story way
+- `--proxy` — public under: general rule; measured by assessments of story:anonymous-agents-isolated, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation
+- `--quiet` — public under: general rule; not driven by any measured story way
+- `--reason` — public under: general rule; not driven by any measured story way
+- `--remove` — public under: general rule; not driven by any measured story way
+- `--resolved-config` — public under: general rule; not driven by any measured story way
+- `--retention-test-seconds` — public under: general rule; not driven by any measured story way
+- `--role` — public under: general rule; measured by assessments of story:api-key-management, story:audit-log-read, story:validation-author
+- `--role-file` — public under: general rule; measured by assessments of story:dry-run-mode-floor, story:grant-scope-enforcement, story:service-enrollment
+- `--root` — public under: general rule; not driven by any measured story way
+- `--scenarios` — public under: general rule; not driven by any measured story way
+- `--self-host` — public under: general rule; not driven by any measured story way
+- `--sender-kind` — public under: general rule; not driven by any measured story way
+- `--service` — public under: general rule; measured by assessments of story:audit-artifact, story:spawned-local-services
+- `--since` — public under: general rule; not driven by any measured story way
+- `--skip` — public under: general rule; not driven by any measured story way
+- `--source` — public under: general rule; not driven by any measured story way
+- `--state` — public under: general rule; not driven by any measured story way
+- `--state-dir` — public under: general rule; measured by assessments of story:anonymous-agents-isolated, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation
+- `--tag` — public under: general rule; not driven by any measured story way
+- `--tag-prefix` — public under: general rule; not driven by any measured story way
+- `--template` — public under: general rule; measured by assessments of story:tag-management
+- `--timeout` — public under: general rule; measured by assessments of story:claim-producer-conformance, story:script-friendly-outcome
+- `--tls` — public under: general rule; not driven by any measured story way
+- `--tls-ca` — public under: general rule; not driven by any measured story way
+- `--transport` — public under: general rule; not driven by any measured story way
+- `--type` — public under: general rule; not driven by any measured story way
+- `--until` — public under: general rule; not driven by any measured story way
+- `--verbose` — public under: general rule; not driven by any measured story way
+- `--version` — public under: general rule; not driven by any measured story way
+- `--warnings-as-errors` — public under: general rule; measured by assessments of story:validation-warnings-surfaced
+- `--workdir` — public under: general rule; not driven by any measured story way
+- `--yes` — public under: general rule; measured by assessments of story:compose-lifecycle, story:instance-lifecycle, story:node-admin, story:tag-management, story:template-lifecycle

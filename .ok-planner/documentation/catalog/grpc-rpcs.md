@@ -1,0 +1,42 @@
+---
+kind: grpc-rpcs
+release: d977250c
+population: 36
+---
+
+- `ClaimProducer.Abandon` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `ClaimProducer.Capabilities` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `ClaimProducer.Commit` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `ClaimProducer.Open` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `ClaimProducer.Release` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `ClaimProducer.ScopesConflict` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `ClaimProducer.SplitScope` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `ClaimProducerObservability.Capabilities` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `ClaimProducerObservability.GetAdminView` — public under: gRPC RPCs; not driven by any measured story way
+- `ClaimProducerObservability.GetClaim` — public under: gRPC RPCs; not driven by any measured story way
+- `ClaimProducerObservability.ListClaims` — public under: gRPC RPCs; not driven by any measured story way
+- `ClaimProducerObservability.StreamClaim` — public under: gRPC RPCs; not driven by any measured story way
+- `DataProcessing.AbandonCandidate` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `DataProcessing.BeginCandidate` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `DataProcessing.Capabilities` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `DataProcessing.CommitCandidate` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `DataProcessing.GetVersionSchema` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `DataProcessing.ListPartitions` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `DataProcessing.ListVersions` — public under: gRPC RPCs; measured by assessments of story:data-processing-author
+- `Executor.Execute` — public under: gRPC RPCs; measured by assessments of story:opaque-executor-scratch
+- `ExecutorObservability.Capabilities` — public under: gRPC RPCs; measured by assessments of story:opaque-executor-scratch
+- `ExecutorObservability.GetTrace` — public under: gRPC RPCs; not driven by any measured story way
+- `ExecutorObservability.StreamTrace` — public under: gRPC RPCs; not driven by any measured story way
+- `HostAgent.Connect` — public under: gRPC RPCs; not driven by any measured story way
+- `LifecycleSubscriber.OnInstanceCreated` — public under: gRPC RPCs; not driven by any measured story way
+- `LifecycleSubscriber.OnInstanceTerminated` — public under: gRPC RPCs; not driven by any measured story way
+- `LifecycleSubscriber.OnRunScopeTerminal` — public under: gRPC RPCs; not driven by any measured story way
+- `LifecycleSubscriber.OnTemplateDeployed` — public under: gRPC RPCs; not driven by any measured story way
+- `LifecycleSubscriber.OnTemplateDeregistered` — public under: gRPC RPCs; not driven by any measured story way
+- `LifecycleSubscriber.OnTemplateRegistered` — public under: gRPC RPCs; not driven by any measured story way
+- `LifecycleSubscriber.OnTemplateUndeployed` — public under: gRPC RPCs; not driven by any measured story way
+- `Publisher.Capabilities` — public under: gRPC RPCs; not driven by any measured story way
+- `Publisher.ListSubscriptions` — public under: gRPC RPCs; not driven by any measured story way
+- `Publisher.Subscribe` — public under: gRPC RPCs; not driven by any measured story way
+- `Publisher.Unsubscribe` — public under: gRPC RPCs; not driven by any measured story way
+- `Validation.Validate` — public under: gRPC RPCs; not driven by any measured story way

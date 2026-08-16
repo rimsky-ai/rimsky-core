@@ -1,0 +1,63 @@
+---
+kind: config-keys
+release: d977250c
+population: 57
+---
+
+- `claim_producers.<name>.endpoint` — public under: config keys; not driven by any measured story way
+- `claim_producers.<name>.observability_endpoint` — public under: config keys; not driven by any measured story way
+- `claim_producers.<name>.protocols` — public under: config keys; not driven by any measured story way
+- `claim_producers.<name>.tls` — public under: config keys; not driven by any measured story way
+- `claim_producers.<name>.write_semantics_allowed` — public under: config keys; not driven by any measured story way
+- `data_processors.<name>.endpoint` — public under: config keys; not driven by any measured story way
+- `data_processors.<name>.observability_endpoint` — public under: config keys; not driven by any measured story way
+- `data_processors.<name>.protocols` — public under: config keys; not driven by any measured story way
+- `data_processors.<name>.tls` — public under: config keys; not driven by any measured story way
+- `dispatch_defaults.max_quiet_period` — public under: config keys; not driven by any measured story way
+- `dispatch_defaults.max_runtime` — public under: config keys; not driven by any measured story way
+- `dispatch_defaults.sync_rpc_deadline` — public under: config keys; not driven by any measured story way
+- `executors.<name>.endpoint` — public under: config keys; not driven by any measured story way
+- `executors.<name>.observability_endpoint` — public under: config keys; not driven by any measured story way
+- `executors.<name>.protocols` — public under: config keys; not driven by any measured story way
+- `executors.<name>.tls` — public under: config keys; not driven by any measured story way
+- `executors.<name>.transport` — public under: config keys; not driven by any measured story way
+- `late_bind_service_proxies.<name>` — public under: config keys; not driven by any measured story way
+- `named_locks.<name>.limit` — public under: config keys; not driven by any measured story way
+- `peer_auth` — public under: config keys; measured by assessments of story:anonymous-mode-bootstrap, story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:service-enrollment
+- `persistence.blob.backend` — public under: config keys; not driven by any measured story way
+- `persistence.blob.filesystem.root` — public under: config keys; not driven by any measured story way
+- `persistence.blob.retention.orphan_sweep_interval` — public under: config keys; not driven by any measured story way
+- `persistence.blob.retention.retention_after_unreferenced` — public under: config keys; not driven by any measured story way
+- `persistence.blob.spill_threshold_bytes` — public under: config keys; not driven by any measured story way
+- `persistence.driver` — public under: config keys; not driven by any measured story way
+- `persistence.postgres.conn_max_lifetime` — public under: config keys; not driven by any measured story way
+- `persistence.postgres.dsn` — public under: config keys; not driven by any measured story way
+- `persistence.postgres.max_open_conns` — public under: config keys; not driven by any measured story way
+- `persistence.postgres.min_conns` — public under: config keys; not driven by any measured story way
+- `persistence.sqlite.path` — public under: config keys; not driven by any measured story way
+- `publishers.<name>.endpoint` — public under: config keys; not driven by any measured story way
+- `publishers.<name>.observability_endpoint` — public under: config keys; not driven by any measured story way
+- `publishers.<name>.protocols` — public under: config keys; not driven by any measured story way
+- `publishers.<name>.tls` — public under: config keys; not driven by any measured story way
+- `retention.claim_handles_trailing` — public under: config keys; not driven by any measured story way
+- `retention.lineage_trailing` — public under: config keys; not driven by any measured story way
+- `retention.message_idempotencies_trailing` — public under: config keys; not driven by any measured story way
+- `retention.recent_frames_kept` — public under: config keys; not driven by any measured story way
+- `retention.trace_trailing` — public under: config keys; not driven by any measured story way
+- `supervisor.yml: callback.advertise_host` — public under: config keys; not driven by any measured story way
+- `supervisor.yml: callback.advertise_port` — public under: config keys; not driven by any measured story way
+- `supervisor.yml: callback.host` — public under: config keys; not driven by any measured story way
+- `supervisor.yml: callback.port` — public under: config keys; not driven by any measured story way
+- `supervisor.yml: claim_poll_interval_ms` — public under: config keys; not driven by any measured story way
+- `supervisor.yml: concurrency` — public under: config keys; not driven by any measured story way
+- `supervisor.yml: liveness_interval_ms` — public under: config keys; not driven by any measured story way
+- `supervisor.yml: supervisor_id` — public under: config keys; not driven by any measured story way
+- `unreachable_validator_policy` — public under: config keys; not driven by any measured story way
+- `validators.<name>.endpoint` — public under: config keys; not driven by any measured story way
+- `validators.<name>.observability_endpoint` — public under: config keys; not driven by any measured story way
+- `validators.<name>.protocols` — public under: config keys; not driven by any measured story way
+- `validators.<name>.tls` — public under: config keys; not driven by any measured story way
+- `~/.rimsky/config.yml: aliases.<name>` — public under: config keys; not driven by any measured story way
+- `~/.rimsky/config.yml: contexts.<name>.api_key` — public under: config keys; not driven by any measured story way
+- `~/.rimsky/config.yml: contexts.<name>.endpoint` — public under: config keys; not driven by any measured story way
+- `~/.rimsky/config.yml: current_context` — public under: config keys; not driven by any measured story way

@@ -1,0 +1,55 @@
+---
+kind: permission-actions
+release: d977250c
+population: 49
+---
+
+- `asset:delete` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `asset:read` — public under: general rule; not driven by any measured story way
+- `audit:read` — public under: general rule; measured by assessments of story:audit-log-read
+- `auth:create` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `auth:read` — public under: general rule; not driven by any measured story way
+- `auth:revoke` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `auth:rotate` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `auth:whoami` — public under: general rule; not driven by any measured story way
+- `breakpoint:create` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `breakpoint:delete` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `breakpoint:read` — public under: general rule; not driven by any measured story way
+- `breakpoint:resume` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `claim-holders:read` — public under: general rule; not driven by any measured story way
+- `compose:origin` — public under: general rule; not driven by any measured story way
+- `diagnostics:read` — public under: general rule; not driven by any measured story way
+- `event:read` — public under: general rule; not driven by any measured story way
+- `health:probe` — public under: general rule; not driven by any measured story way
+- `instance:create` — public under: general rule; measured by assessments of story:dry-run-request-flag, story:grant-scope-enforcement
+- `instance:debug-override` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `instance:kill` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `instance:list-frames` — public under: general rule; not driven by any measured story way
+- `instance:pause` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `instance:read` — public under: general rule; not driven by any measured story way
+- `instance:read-frame` — public under: general rule; not driven by any measured story way
+- `instance:resume` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `instance:terminate` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `lineage:prune` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `lineage:read` — public under: general rule; not driven by any measured story way
+- `mcp:read` — public under: general rule; not driven by any measured story way
+- `message:read` — public under: general rule; not driven by any measured story way
+- `message:send` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `node:read` — public under: general rule; not driven by any measured story way
+- `node:reset` — public under: general rule; measured by assessments of story:dry-run-request-flag
+- `observability:read` — public under: general rule; not driven by any measured story way
+- `parked-node:read` — public under: general rule; not driven by any measured story way
+- `peer-auth:ca-root` — public under: general rule; not driven by any measured story way
+- `run:read` — public under: general rule; not driven by any measured story way
+- `service:enroll` — public under: general rule; measured by assessments of story:service-enrollment
+- `tag:create` — public under: general rule; measured by assessments of story:dry-run-mode-floor, story:dry-run-request-flag
+- `tag:delete` — public under: general rule; measured by assessments of story:dry-run-request-flag, story:grant-scope-enforcement
+- `tag:read` — public under: general rule; measured by assessments of story:dry-run-mode-floor, story:dry-run-request-flag
+- `tag:set` — public under: general rule; measured by assessments of story:dry-run-request-flag, story:grant-scope-enforcement
+- `template:deploy` — public under: general rule; measured by assessments of story:dry-run-request-flag, story:grant-scope-enforcement
+- `template:deregister` — public under: general rule; measured by assessments of story:dry-run-request-flag, story:grant-scope-enforcement
+- `template:read` — public under: general rule; measured by assessments of story:dry-run-mode-floor
+- `template:register` — public under: general rule; measured by assessments of story:audit-log-read, story:dry-run-request-flag, story:grant-scope-enforcement
+- `template:undeploy` — public under: general rule; measured by assessments of story:dry-run-request-flag, story:grant-scope-enforcement
+- `template:validate` — public under: general rule; not driven by any measured story way
+- `waitset:read` — public under: general rule; not driven by any measured story way

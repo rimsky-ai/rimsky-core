@@ -1,0 +1,41 @@
+---
+kind: service-config-keys
+release: d977250c
+population: 35
+---
+
+- `claim-producer-filesystem: admin_port` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: enable_lifecycle` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: grpc_port` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: host` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: http_bridge_url` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: http_port` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: ledger_max_records` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: pick_policies.<name>.folder_pattern` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: pick_policies.<name>.on_commit` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: pick_policies.<name>.on_give_up` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: pick_policies.<name>.root` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: pick_policies.<name>.sync_strategy` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: pick_policies.<name>.visibility_timeout_seconds` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: root` — public under: config keys; not driven by any measured story way
+- `claim-producer-filesystem: sweep_interval_seconds` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: admin_port` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: connection` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: enable_executor` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: enable_lifecycle` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: grpc_port` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: host` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: http_bridge_url` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: http_port` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: ledger_max_records` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: partition_policies.<name>.items_table` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: partition_policies.<name>.limit` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: partition_policies.<name>.params_schema.properties` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: partition_policies.<name>.select` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: partition_policies.<name>.where` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: pick_policies.<name>.items_table` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: pick_policies.<name>.on_commit` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: pick_policies.<name>.on_give_up` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: pick_policies.<name>.visibility_timeout_seconds` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: sweep_interval_seconds` — public under: config keys; not driven by any measured story way
+- `claim-producer-postgres: write_semantics` — public under: config keys; not driven by any measured story way

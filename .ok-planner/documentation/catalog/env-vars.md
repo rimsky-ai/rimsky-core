@@ -1,0 +1,92 @@
+---
+kind: env-vars
+release: d977250c
+population: 86
+---
+
+- `RIMSKY_AGENT_ALLOW_PATHS` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_HEARTBEAT_SEC` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_IDENTITY_FILE` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_LABEL` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_LISTEN` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_PORT` — public under: environment variables; measured by assessments of story:executor-protocol, story:named-lock-metric, story:permissive-peer-build, story:runtime-diagnostics, story:work-completed-emitted
+- `RIMSKY_AGENT_REAP_GRACE_SEC` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_REGISTER_ACK_TIMEOUT_SEC` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_ROUTING_LABEL` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_STATUS_FILE` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_TLS` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_AGENT_TLS_CA` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT` — public under: environment variables; measured by assessments of story:anonymous-agents-isolated, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation
+- `RIMSKY_API_KEY` — public under: environment variables; measured by assessments of story:anonymous-mode-bootstrap, story:api-key-management, story:audit-artifact, story:audit-log-read, story:client-context, story:compose-lifecycle, story:dry-run-mode-floor, story:dry-run-request-flag, story:grant-scope-enforcement, story:host-agent-anonymous-mode, story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:service-enrollment
+- `RIMSKY_CALLBACK_TOKEN` — public under: environment variables; measured by assessments of story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:executor-reads-dispatch-context
+- `RIMSKY_CALLBACK_URL` — public under: environment variables; measured by assessments of story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:executor-reads-dispatch-context
+- `RIMSKY_CA_ENCRYPTION_KEY` — public under: environment variables; measured by assessments of story:anonymous-mode-bootstrap, story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:service-enrollment
+- `RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG` — public under: environment variables; measured by assessments of story:claim-producer-filesystem, story:claim-producer-observability, story:claim-scope-substitution, story:executor-reads-dispatch-context, story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:fs-fanout-expand-folder, story:held-abandon-cascades-abandoned, story:held-commit-cascades-success, story:host-agent-per-run-scope-isolation, story:lineage-admin, story:lineage-exploration, story:named-lock-metric, story:producer-class-routing, story:runtime-diagnostics, story:sub-claim-payload-substitution, story:subscriber-lineage-receiver, story:template-fan-out
+- `RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG` — public under: environment variables; measured by assessments of story:claim-producer-postgres
+- `RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST` — public under: environment variables; measured by assessments of story:claude-agent, story:claude-agent-expose-env-per-node
+- `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` — public under: environment variables; measured by assessments of story:claude-agent, story:claude-agent-mcp-servers-per-node
+- `RIMSKY_CONFIG` — public under: environment variables; measured by assessments of story:local-orchestrator-zero-config
+- `RIMSKY_CONTEXT` — public under: environment variables; measured by assessments of story:client-context, story:compose-lifecycle, story:dry-run-mode-floor, story:dry-run-request-flag
+- `RIMSKY_CONTROL_API_CA` — public under: environment variables; measured by assessments of story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:service-enrollment
+- `RIMSKY_CONTROL_API_HOST` — public under: environment variables; measured by assessments of story:portable-template-across-modes, story:rimsky-deployment-bootstrap, story:single-process-all-in-one
+- `RIMSKY_CONTROL_API_PORT` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_CONTROL_API_TOKEN` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_CONTROL_API_URL` — public under: environment variables; measured by assessments of story:all-upstream-gating, story:anonymous-agents-isolated, story:anonymous-mode-bootstrap, story:api-key-management, story:audit-artifact, story:audit-log-read, story:cascade-send, story:cascade-signal-blind, story:client-context, story:compose-lifecycle, story:dry-run-mode-floor, story:dry-run-request-flag, story:empty-message-wakes-roots, story:fanout-any-substitution-source, story:fanout-intent-inheritance, story:fanout-list-array, story:forensic-last-attribute, story:frame-origin-audit, story:grant-scope-enforcement, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation, story:idempotent-mode-dedupes, story:lenient-marker, story:loop-counter-cap, story:message-bus, story:message-queue-coalesces-pending, story:message-schema, story:messages-as-nodes-substitution, story:multi-hard-dep-rendezvous, story:one-message-per-frame, story:operator-onboarding, story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:sensor-cron, story:sensor-http, story:sensor-object-store, story:sensor-webhook, story:service-enrollment, story:subscription-mounting, story:typed-message-substitution, story:uncovered-substitution-rejected, story:uniform-attributes-delta-subscription, story:upstream-pull-on-invalidate
+- `RIMSKY_DISPATCH_MAX_USD` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_ENTRYPOINT_MIGRATE` — public under: environment variables; measured by assessments of story:rimsky-deployment-bootstrap
+- `RIMSKY_EXECUTOR_CLAUDE_BINARY` — public under: environment variables; measured by assessments of story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:executor-reads-dispatch-context
+- `RIMSKY_EXECUTOR_HOST` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST` — public under: environment variables; measured by assessments of story:claim-handoff, story:claim-handoff-durable, story:claim-producer-filesystem, story:claim-producer-postgres, story:claim-producer-protocol, story:claim-producer-scopes-conflict, story:commit-response-honored, story:debug-channel, story:executor-trace-observability, story:http-node, story:live-progress, story:script-friendly-outcome
+- `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` — public under: environment variables; measured by assessments of story:http-node
+- `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_EXECUTOR_PORT_GRPC` — public under: environment variables; measured by assessments of story:node-admin, story:peer-auth-mtls-mutual
+- `RIMSKY_EXECUTOR_PORT_HTTP` — public under: environment variables; measured by assessments of story:peer-auth-mtls-mutual
+- `RIMSKY_EXECUTOR_SILENCE_MS` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_EXECUTOR_STUB_MODE` — public under: environment variables; measured by assessments of story:peer-auth-mtls-mutual
+- `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_HOST_AGENT_PROXY_URL` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_LOG_BINARY` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_LOG_LEVEL` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_METRICS_HOST` — public under: environment variables; measured by assessments of story:named-lock-metric
+- `RIMSKY_METRICS_PORT` — public under: environment variables; measured by assessments of story:named-lock-metric
+- `RIMSKY_METRICS_PORT_CONTROL_API` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_METRICS_PORT_SCHEDULER` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_METRICS_PORT_SUPERVISOR` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_OBSERVABILITY_REFRESH_INTERVAL` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_OPENLINEAGE_BACKEND_URL` — public under: environment variables; measured by assessments of story:subscriber-lineage-receiver
+- `RIMSKY_OPENLINEAGE_BATCH_SIZE` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_OPENLINEAGE_BEARER_TOKEN` — public under: environment variables; measured by assessments of story:subscriber-lineage-receiver
+- `RIMSKY_OPENLINEAGE_LAG_WINDOW` — public under: environment variables; measured by assessments of story:subscriber-lineage-receiver
+- `RIMSKY_OPENLINEAGE_NAMESPACE` — public under: environment variables; measured by assessments of story:subscriber-lineage-receiver
+- `RIMSKY_OPENLINEAGE_POLL_INTERVAL` — public under: environment variables; measured by assessments of story:subscriber-lineage-receiver
+- `RIMSKY_OPENLINEAGE_RIMSKY_DSN` — public under: environment variables; measured by assessments of story:subscriber-lineage-receiver
+- `RIMSKY_OPENLINEAGE_STATE_DSN` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_PEER_AUTH` — public under: environment variables; measured by assessments of story:peer-auth-mtls-mutual, story:peer-tls-enforced, story:service-enrollment
+- `RIMSKY_PROCESS_ROLE` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_PROXY_GRPC_PORT` — public under: environment variables; measured by assessments of story:anonymous-agents-isolated, story:host-agent-anonymous-mode, story:host-agent-control-plane, story:host-agent-per-binding-overrides, story:host-agent-per-run-scope-isolation
+- `RIMSKY_PROXY_PEER_GRPC_PORT` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_PROXY_TLS_CERT` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_PROXY_TLS_KEY` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SCHEDULER_ID` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SCHEDULER_TICK_MS` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SENSOR_CRON_HOST` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SENSOR_CRON_PORT` — public under: environment variables; measured by assessments of story:sensor-cron, story:subscription-mounting
+- `RIMSKY_SENSOR_CRON_STATE_DSN` — public under: environment variables; measured by assessments of story:sensor-cron
+- `RIMSKY_SENSOR_HTTP_EGRESS_ALLOWLIST` — public under: environment variables; measured by assessments of story:sensor-http
+- `RIMSKY_SENSOR_HTTP_HOST` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SENSOR_HTTP_PORT` — public under: environment variables; measured by assessments of story:sensor-http
+- `RIMSKY_SENSOR_HTTP_STATE_DSN` — public under: environment variables; measured by assessments of story:sensor-http
+- `RIMSKY_SENSOR_OBJECT_STORE_ENABLE_MEMORY_BACKEND` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT` — public under: environment variables; measured by assessments of story:sensor-object-store
+- `RIMSKY_SENSOR_OBJECT_STORE_HOST` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SENSOR_OBJECT_STORE_PORT` — public under: environment variables; measured by assessments of story:sensor-object-store
+- `RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SENSOR_WEBHOOK_HOST` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SENSOR_WEBHOOK_HTTP_PORT` — public under: environment variables; measured by assessments of story:frame-origin-audit, story:sensor-webhook
+- `RIMSKY_SENSOR_WEBHOOK_PORT` — public under: environment variables; measured by assessments of story:frame-origin-audit, story:sensor-webhook
+- `RIMSKY_SENSOR_WEBHOOK_STATE_DSN` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST` — public under: environment variables; measured by assessments of story:claude-agent, story:claude-agent-expose-env-per-node, story:claude-agent-mcp-servers-per-node, story:claude-agent-session-resume, story:executor-reads-dispatch-context, story:http-node, story:inproc-utility-executor, story:opaque-executor-scratch, story:portable-template-across-modes, story:rimsky-deployment-bootstrap, story:validation-mixin-uniform
+- `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT` — public under: environment variables; not driven by any measured story way
+- `RIMSKY_SUPERVISOR_CONFIG` — public under: environment variables; not driven by any measured story way

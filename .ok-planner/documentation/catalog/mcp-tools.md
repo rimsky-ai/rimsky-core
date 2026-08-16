@@ -1,0 +1,63 @@
+---
+kind: mcp-tools
+release: d977250c
+population: 57
+---
+
+- `asset_delete` — public under: general rule; not driven by any measured story way
+- `asset_get` — public under: general rule; not driven by any measured story way
+- `asset_list` — public under: general rule; not driven by any measured story way
+- `asset_materialization_history` — public under: general rule; not driven by any measured story way
+- `asset_versions` — public under: general rule; not driven by any measured story way
+- `audit_list` — public under: general rule; not driven by any measured story way
+- `auth_create_key` — public under: general rule; not driven by any measured story way
+- `auth_get` — public under: general rule; not driven by any measured story way
+- `auth_list` — public under: general rule; not driven by any measured story way
+- `auth_revoke_key` — public under: general rule; not driven by any measured story way
+- `auth_rotate_key` — public under: general rule; not driven by any measured story way
+- `auth_status` — public under: general rule; not driven by any measured story way
+- `breakpoint_create` — public under: general rule; not driven by any measured story way
+- `breakpoint_delete` — public under: general rule; not driven by any measured story way
+- `breakpoint_list` — public under: general rule; not driven by any measured story way
+- `breakpoint_resume_hit` — public under: general rule; not driven by any measured story way
+- `claim_holders_list` — public under: general rule; not driven by any measured story way
+- `event_list` — public under: general rule; not driven by any measured story way
+- `held_frames_list` — public under: general rule; not driven by any measured story way
+- `instance_create` — public under: general rule; not driven by any measured story way
+- `instance_debug_override` — public under: general rule; not driven by any measured story way
+- `instance_frame_get` — public under: general rule; not driven by any measured story way
+- `instance_frame_list` — public under: general rule; not driven by any measured story way
+- `instance_get` — public under: general rule; not driven by any measured story way
+- `instance_kill` — public under: general rule; not driven by any measured story way
+- `instance_list` — public under: general rule; not driven by any measured story way
+- `instance_pause` — public under: general rule; not driven by any measured story way
+- `instance_resume` — public under: general rule; not driven by any measured story way
+- `instance_terminate` — public under: general rule; not driven by any measured story way
+- `lineage_claim_ancestors` — public under: general rule; not driven by any measured story way
+- `lineage_claim_descendants` — public under: general rule; not driven by any measured story way
+- `lineage_get` — public under: general rule; not driven by any measured story way
+- `lineage_prune` — public under: general rule; not driven by any measured story way
+- `lineage_run_ancestors` — public under: general rule; not driven by any measured story way
+- `lineage_run_descendants` — public under: general rule; not driven by any measured story way
+- `message_get` — public under: general rule; not driven by any measured story way
+- `message_list` — public under: general rule; not driven by any measured story way
+- `message_send` — public under: general rule; not driven by any measured story way
+- `node_get` — public under: general rule; not driven by any measured story way
+- `node_list` — public under: general rule; not driven by any measured story way
+- `node_reset` — public under: general rule; not driven by any measured story way
+- `observability_get` — public under: general rule; not driven by any measured story way
+- `parked_node_list` — public under: general rule; not driven by any measured story way
+- `run_get` — public under: general rule; not driven by any measured story way
+- `service_enroll` — public under: general rule; not driven by any measured story way
+- `tag_create` — public under: general rule; not driven by any measured story way
+- `tag_delete` — public under: general rule; not driven by any measured story way
+- `tag_list` — public under: general rule; not driven by any measured story way
+- `tag_set` — public under: general rule; not driven by any measured story way
+- `template_deploy` — public under: general rule; not driven by any measured story way
+- `template_deregister` — public under: general rule; not driven by any measured story way
+- `template_get` — public under: general rule; not driven by any measured story way
+- `template_list` — public under: general rule; not driven by any measured story way
+- `template_register` — public under: general rule; not driven by any measured story way
+- `template_undeploy` — public under: general rule; not driven by any measured story way
+- `template_validate` — public under: general rule; not driven by any measured story way
+- `waitset_list` — public under: general rule; not driven by any measured story way
