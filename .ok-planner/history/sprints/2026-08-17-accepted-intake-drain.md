@@ -1,3 +1,7 @@
+---
+closed: 90f84aecae5d36371f1e2a5494d9d413c865fac7
+---
+
 # Sprint: Accepted intake drain
 
 ## Intent
