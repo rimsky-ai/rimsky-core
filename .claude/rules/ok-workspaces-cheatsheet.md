@@ -1,6 +1,6 @@
 # ok-workspaces Cheatsheet
 
-Materialized by ok-workspaces v18.6.1 — suite-owned; refreshed by
+Materialized by ok-workspaces v18.6.2 — suite-owned; refreshed by
 the front door's administration (`/ok`); do not hand-edit. Profile:
 `.ok-workspaces/config.json` (stacks: go, docker;
 runtime: docker-compose).
@@ -24,8 +24,11 @@ value), never fixed numbers shared across workspaces.
 
 3. **Content-addressed artifacts.** Build outputs used for verification
    are tagged by source-tree hash: `tools/image-src-tag.sh` prints
-   `src-<12 hex>` — a git tree-object hash of the working tree,
-   including uncommitted changes. Same tree → same tag, on every
-   machine. Tests and harnesses resolve artifacts by that tag and fail
-   loudly when it is missing. Never `:latest` or any mutable tag in a
-   verification path — staleness must be unrepresentable, not avoided.
+   `src-<12 hex>` — a git tree-object hash of the project root's
+   subtree, including uncommitted changes. The project root is the
+   nearest ancestor carrying a suite estate marker, so an estate nested
+   in a larger repository tags only its own subtree. Same tree → same
+   tag, on every machine. Tests and harnesses resolve artifacts by that
+   tag and fail loudly when it is missing. Never `:latest` or any
+   mutable tag in a verification path — staleness must be
+   unrepresentable, not avoided.

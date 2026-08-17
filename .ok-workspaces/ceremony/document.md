@@ -21,4 +21,4 @@ defect.
 - Its profile and materialized scripts are developer material and
   never enter the synthesis box.
 
-<!-- Materialized by ok-workspaces v18.6.1 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-workspaces v18.6.2 — suite-owned; overwritten on converge; do not hand-edit. -->

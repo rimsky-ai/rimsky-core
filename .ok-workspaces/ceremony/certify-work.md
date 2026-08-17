@@ -40,4 +40,4 @@ fix and obvious to see.
 - Never tears down a worktree, and never touches a checkout the change
   did not create.
 
-<!-- Materialized by ok-workspaces v18.6.1 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-workspaces v18.6.2 — suite-owned; overwritten on converge; do not hand-edit. -->
