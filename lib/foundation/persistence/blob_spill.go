@@ -64,7 +64,7 @@ func CarryForwardBag(
 			Backend:     priorBackend,
 		}, nil
 	}
-	bytes, err := ReadBlobInTx(ctx, bb, Handle(priorHandle), tx)
+	bytes, err := ReadBlob(ctx, bb, Handle(priorHandle), tx)
 	if err != nil {
 		if errors.Is(err, ErrBlobNotFound) {
 			empty := []byte("{}")
@@ -72,7 +72,7 @@ func CarryForwardBag(
 		}
 		return CarriedBag{}, err
 	}
-	fresh, err := WriteBlobInTx(ctx, bb, key, bytes, tx)
+	fresh, err := WriteBlob(ctx, bb, key, bytes, tx)
 	if err != nil {
 		return CarriedBag{}, err
 	}

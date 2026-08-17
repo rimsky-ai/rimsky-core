@@ -108,7 +108,7 @@ func LoadOptsFromEnv() (Opts, error) {
 		},
 		McpAllowlist:               allowlistFromEnv("RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST"),
 		ExposeEnvAllowlist:         allowlistFromEnv("RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST"),
-		ObservabilityHTTPBridgeURL: os.Getenv("RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL"),
+		ObservabilityHTTPBridgeURL: os.Getenv("RIMSKY_CLAUDE_AGENT_OBSERVABILITY_HTTP_BRIDGE_URL"),
 		StubMode:                   StubModeEnabled(),
 	}
 	return opts, nil

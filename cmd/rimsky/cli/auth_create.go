@@ -93,8 +93,7 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 		Plaintext string `json:"plaintext"`
 	}
 	if _, err := c.RawCall(ctx, http.MethodPost, "/v1/auth/keys", body, &resp); err != nil {
-		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodPost, "/v1/auth/keys", err))
-		return 1
+		return reportAuthError(http.MethodPost, "/v1/auth/keys", err)
 	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Save this API key now — it will not be shown again:")

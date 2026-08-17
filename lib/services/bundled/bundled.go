@@ -123,7 +123,7 @@ func executorEntries() []executorEntry {
 				if err != nil {
 					return nil, err
 				}
-				return verifierhttp.NewServer(o.StubMode), nil
+				return verifierhttp.NewServer(o), nil
 			},
 			schema:       verifierhttp.SchemaBytes(),
 			tags:         verifierhttp.DeclaredTags(),

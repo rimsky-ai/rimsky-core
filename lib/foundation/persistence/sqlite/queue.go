@@ -131,6 +131,20 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 	return nil
 }
 
+// @concept: wait-set
+func candidateAfterCursor(c persistence.Candidate, req persistence.SelectCandidatesRequest) bool {
+	if c.EnqueuedAt.Before(req.CursorEnqueuedAfter) {
+		return false
+	}
+	if c.EnqueuedAt.After(req.CursorEnqueuedAfter) {
+		return true
+	}
+	if c.Sequence != req.CursorAfterSequence {
+		return c.Sequence > req.CursorAfterSequence
+	}
+	return bytes.Compare(c.NodeRunID[:], req.CursorAfterNodeRunID[:]) > 0
+}
+
 func (q *queueImpl) SelectCandidates(
 	ctx context.Context, req persistence.SelectCandidatesRequest, tx persistence.Tx,
 ) ([]persistence.Candidate, error) {
@@ -147,7 +161,7 @@ func (q *queueImpl) SelectCandidates(
 
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_claim_producers, d.enqueued_at, d.frame_id,
-		        d.prior_dispatch_id, d.prior_dispatch_disposition
+		        d.prior_dispatch_id, d.prior_dispatch_disposition, d.sequence
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
@@ -168,7 +182,7 @@ func (q *queueImpl) SelectCandidates(
 		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
 		        AND w.drained_at IS NULL
 		    )
-		  ORDER BY d.enqueued_at, d.id`,
+		  ORDER BY d.enqueued_at, d.sequence, d.id`,
 		nowUTC(),
 	)
 	if err != nil {
@@ -192,7 +206,7 @@ func (q *queueImpl) SelectCandidates(
 		)
 		if err := rows.Scan(&dispatchIDStr, &nodeIDStr, &nodeType, &executorName,
 			&requiredClaimProducersStr, &enqueuedAtStr, &frameIDStr,
-			&priorDispatchIDStr, &priorDispositionStr); err != nil {
+			&priorDispatchIDStr, &priorDispositionStr, &c.Sequence); err != nil {
 			return nil, fmt.Errorf("sqlite.SelectCandidates: scan: %w", err)
 		}
 		c.NodeType = nodeType
@@ -229,14 +243,8 @@ func (q *queueImpl) SelectCandidates(
 		if c.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
 			return nil, err
 		}
-		if !req.CursorEnqueuedAfter.IsZero() {
-			if c.EnqueuedAt.Before(req.CursorEnqueuedAfter) {
-				continue
-			}
-			if c.EnqueuedAt.Equal(req.CursorEnqueuedAfter) &&
-				bytes.Compare(c.NodeRunID[:], req.CursorAfterNodeRunID[:]) <= 0 {
-				continue
-			}
+		if !candidateAfterCursor(c, req) {
+			continue
 		}
 		out = append(out, c)
 		if len(out) >= limit {
@@ -587,7 +595,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	if pag.Cursor != "" {
 		oc, id, err := decodeDispatchCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.DispatchRow]{}, fmt.Errorf("sqlite.ListLive: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.DispatchRow]{}, persistence.ErrInvalidCursor
 		}
 		cursorClause = " AND (d.enqueued_at, d.id) < (?, ?)"
 		args = append(args, formatTime(oc), id.String())

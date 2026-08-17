@@ -14,7 +14,9 @@ import (
 	"time"
 )
 
-func TestWaitAndCleanup_CanceledContextDuringGetInstanceReturnsZero(t *testing.T) {
+// @decision: exit-codes
+// @story: script-friendly-outcome
+func TestWaitAndCleanup_CanceledContextDuringGetInstanceReturnsInterrupt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -25,8 +27,10 @@ func TestWaitAndCleanup_CanceledContextDuringGetInstanceReturnsZero(t *testing.T
 
 	c := NewClient(srv.URL)
 	got := waitAndCleanup(ctx, c, "inst-1", "hash-1", time.Millisecond, 0)
-	if got != 0 {
-		t.Fatalf("waitAndCleanup with a canceled context during GetInstance = %d, want 0 (clean interrupt exit)", got)
+	if got != ExitInterrupt {
+		t.Fatalf("waitAndCleanup with a canceled context during GetInstance = %d, want %d: "+
+			"an interrupt during the wait is the conventional signal exit, not success",
+			got, ExitInterrupt)
 	}
 }
 

@@ -46,6 +46,9 @@ func Suite(
 	})
 	t.Run("SelectCandidatesSkipsTerminatedInstances", func(t *testing.T) { testSelectCandidatesSkipsTerminatedInstances(t, factory(t)) })
 	t.Run("SelectCandidatesKeysetCursor", func(t *testing.T) { testSelectCandidatesKeysetCursor(t, factory(t)) })
+	t.Run("SelectCandidatesOrdersEqualTimestampRowsBySequence", func(t *testing.T) {
+		testSelectCandidatesOrdersEqualTimestampRowsBySequence(t, factory(t))
+	})
 	t.Run("SelectCandidatesIgnoresServiceNames", func(t *testing.T) { testSelectCandidatesIgnoresServiceNames(t, factory(t)) })
 	t.Run("ServiceAddressBookPublishGetList", func(t *testing.T) { testServiceAddressBookPublishGetList(t, factory(t)) })
 	t.Run("ClaimHandlesUpdateClaimScope", func(t *testing.T) { testClaimHandlesUpdateClaimScope(t, factory(t)) })
@@ -142,6 +145,28 @@ func Suite(
 	t.Run("WaitSetFrameIsolation", func(t *testing.T) { testWaitSetFrameIsolation(t, factory(t)) })
 	// @decision: claimant-guard-helper
 	// @decision: guard-conformance-suite
+	t.Run("ParityGaps", func(t *testing.T) {
+		t.Run("FrameEndFrameIfSettled", func(t *testing.T) { testFrameEndFrameIfSettled(t, factory(t)) })
+		t.Run("FrameListForObservability", func(t *testing.T) { testFrameListForObservability(t, factory(t)) })
+		t.Run("FrameListForObservabilityWithMessage", func(t *testing.T) {
+			testFrameListForObservabilityWithMessage(t, factory(t))
+		})
+		t.Run("FrameGetForObservabilityWithMessage", func(t *testing.T) {
+			testFrameGetForObservabilityWithMessage(t, factory(t))
+		})
+		t.Run("QueueCountLive", func(t *testing.T) { testQueueCountLive(t, factory(t)) })
+		t.Run("QueueGetAnyByID", func(t *testing.T) { testQueueGetAnyByID(t, factory(t)) })
+		t.Run("ClaimHandleGetByFrameAndNode", func(t *testing.T) { testClaimHandleGetByFrameAndNode(t, factory(t)) })
+		t.Run("ClaimHandleListForObservability", func(t *testing.T) { testClaimHandleListForObservability(t, factory(t)) })
+		t.Run("ClaimHandleDeleteResolvedIfNoActiveHolders", func(t *testing.T) {
+			testClaimHandleDeleteResolvedIfNoActiveHolders(t, factory(t))
+		})
+	})
+
+	t.Run("TemplateDeleteRefusedWhileATerminatedInstanceReferencesIt", func(t *testing.T) {
+		testTemplateDeleteRefusedWhileATerminatedInstanceReferencesIt(t, factory(t))
+	})
+
 	t.Run("ClaimantGuard", func(t *testing.T) {
 		t.Run("HandleUpdates", func(t *testing.T) { testClaimantGuardHandleUpdates(t, factory(t)) })
 		t.Run("HandleCounterBumps", func(t *testing.T) { testClaimantGuardHandleCounterBumps(t, factory(t)) })
@@ -159,6 +184,7 @@ func Suite(
 		t.Run("RunRemoveForNode", func(t *testing.T) { testClaimantGuardRunRemoveForNode(t, factory(t)) })
 		t.Run("RunPark", func(t *testing.T) { testClaimantGuardRunPark(t, factory(t)) })
 		t.Run("RunForceOverride", func(t *testing.T) { testClaimantGuardRunForceOverride(t, factory(t)) })
+		t.Run("HandleRenewExpiry", func(t *testing.T) { testClaimantGuardHandleRenewExpiry(t, factory(t)) })
 		t.Run("UnguardedMutationCarveOuts", func(t *testing.T) { testClaimantGuardUnguardedMutationCarveOuts(t, factory(t)) })
 	})
 	t.Run("MessageIdempotency", func(t *testing.T) {

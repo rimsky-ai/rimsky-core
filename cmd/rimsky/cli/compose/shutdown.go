@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
@@ -66,13 +67,13 @@ func (c *ShutdownCoordinator) doDrain(ctx context.Context, reason ShutdownReason
 
 	switch reason {
 	case ReasonAllSuccess:
-		return 0
+		return cli.ExitAllSuccess
 	case ReasonAnyFailure:
-		return 1
+		return cli.ExitAnyFailure
 	case ReasonTimeout:
-		return 2
+		return cli.ExitTimeout
 	case ReasonSignal:
-		return 130
+		return cli.ExitInterrupt
 	default:
 		logger.Warn("compose run: drain with unknown reason; defaulting to failure exit", "reason_int", int(reason))
 		return 1

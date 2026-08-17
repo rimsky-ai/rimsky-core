@@ -280,7 +280,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	if pag.Cursor != "" {
 		q, fid, err := decodeFrameCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.FrameRow]{}, fmt.Errorf("frames.list: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.FrameRow]{}, persistence.ErrInvalidCursor
 		}
 		cursorStarted = &q
 		cursorFrameID = &fid
@@ -585,7 +585,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	if pag.Cursor != "" {
 		q, fid, err := decodeFrameCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, fmt.Errorf("frames.list: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, persistence.ErrInvalidCursor
 		}
 		cursorStarted = &q
 		cursorFrameID = &fid

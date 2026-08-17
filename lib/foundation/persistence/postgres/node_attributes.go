@@ -75,7 +75,7 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row pgx.R
 			return nil, fmt.Errorf("node_attributes.%s: row has value_handle %q on backend %q, but active blob backend is %q",
 				op, *handle, rowBackend, blobBackendName(bb))
 		}
-		bytes, err := persistence.ReadBlobInTx(ctx, bb, persistence.Handle(*handle), tx)
+		bytes, err := persistence.ReadBlob(ctx, bb, persistence.Handle(*handle), tx)
 		if err != nil {
 			if errors.Is(err, persistence.ErrBlobNotFound) {
 				slog.Error("node_attributes.spilled_value_missing",
@@ -127,7 +127,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		dataToSave = raw
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
-		h, werr := persistence.WriteBlobInTx(ctx, si.blob, persistence.BlobKey{
+		h, werr := persistence.WriteBlob(ctx, si.blob, persistence.BlobKey{
 			NodeID:        nodeID.String(),
 			AttributeName: "data",
 		}, raw, tx)

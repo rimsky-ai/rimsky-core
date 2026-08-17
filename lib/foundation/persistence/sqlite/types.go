@@ -20,6 +20,7 @@ const (
 	sqliteConstraintUnique     = 2067
 	sqliteConstraintPrimaryKey = 1555
 	sqliteConstraintForeignKey = 787
+	sqliteConstraintTrigger    = 1811
 )
 
 const timeLayoutFixedNanos = "2006-01-02T15:04:05.000000000Z07:00"
@@ -147,5 +148,5 @@ func isFKViolation(err error) bool {
 	if !ok {
 		return false
 	}
-	return code == sqliteConstraintForeignKey
+	return code == sqliteConstraintForeignKey || code == sqliteConstraintTrigger
 }

@@ -156,7 +156,7 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 	if pag.Cursor != "" {
 		cursorReceived, cursorID, err := decodeMessageCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.MessageRow]{}, fmt.Errorf("sqlite.Messages.List: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.MessageRow]{}, persistence.ErrInvalidCursor
 		}
 		args = append(args, formatTime(cursorReceived), cursorID.String())
 		conds = append(conds, "(received_at, id) < (?, ?)")

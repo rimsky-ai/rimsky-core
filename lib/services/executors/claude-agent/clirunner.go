@@ -139,7 +139,7 @@ func sessionConfigArgs(cfg cliSessionConfig) ([]string, error) {
 	}
 	maxBudgetUSD := cfg.MaxBudgetUSD
 	if maxBudgetUSD == "" {
-		maxBudgetUSD = os.Getenv("RIMSKY_DISPATCH_MAX_USD")
+		maxBudgetUSD = os.Getenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD")
 	}
 	if err := rejectFlagLike("model", cfg.Model); err != nil {
 		return nil, err

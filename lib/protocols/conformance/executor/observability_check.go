@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/grpcdial"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -31,8 +32,8 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 		logf("observability: skipping (transport != grpc)\n")
 		return nil
 	}
-	conn, err := grpc.NewClient(stripScheme(opts.Endpoint.URL),
-		grpc.WithTransportCredentials(transportCredsFor(opts.Endpoint.TLS)),
+	conn, err := grpc.NewClient(grpcdial.Target(opts.Endpoint.URL),
+		grpc.WithTransportCredentials(grpcdial.TransportCredentials(opts.Endpoint.TLS)),
 	)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)

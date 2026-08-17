@@ -365,20 +365,6 @@ func (s *claimHandlesImpl) Promote(
 	return nil
 }
 
-func (s *claimHandlesImpl) ListByState(
-	ctx context.Context, state spec.ClaimHandleState, tx persistence.Tx,
-) ([]persistence.ClaimHandleRow, error) {
-	rows, err := s.q(tx).Query(ctx,
-		`SELECT `+claimHandleCols+` FROM rimsky_claim_handles
-		 WHERE state = $1
-		 ORDER BY claimed_at ASC`, string(state))
-	if err != nil {
-		return nil, fmt.Errorf("claimhandles.ListByState: %w", err)
-	}
-	defer rows.Close()
-	return collectClaimHandles(rows)
-}
-
 func (s *claimHandlesImpl) ListByInstanceAndState(
 	ctx context.Context, instanceID shared.UUID,
 	state spec.ClaimHandleState, lifetime spec.ClaimLifetime, tx persistence.Tx,
@@ -447,12 +433,12 @@ func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) (
 }
 
 // @concept: orphan-reaper
-func (s *claimHandlesImpl) RenewExpiryForHolderRun(ctx context.Context, nodeRunID shared.UUID, newExpiry time.Time, tx persistence.Tx) error {
+func (s *claimHandlesImpl) RenewExpiryForHolderRun(ctx context.Context, nodeRunID shared.UUID, expectedSupervisorID string, newExpiry time.Time, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		 SET expires_at = $2
-		 WHERE node_run_id = $1 AND state = 'active'`,
-		nodeRunID, newExpiry,
+		 WHERE node_run_id = $1 AND state = 'active' AND `+claimantGuard(3),
+		nodeRunID, newExpiry, expectedSupervisorID,
 	)
 	if err != nil {
 		return fmt.Errorf("claimhandles.RenewExpiryForHolderRun: %w", err)
@@ -553,7 +539,7 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 	if pag.Cursor != "" {
 		c, id, err := persistence.DecodeClaimHandleCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("claimhandles.list: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, persistence.ErrInvalidCursor
 		}
 		cursorClaimed = &c
 		cursorID = &id

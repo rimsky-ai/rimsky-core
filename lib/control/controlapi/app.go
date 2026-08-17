@@ -205,6 +205,9 @@ func writeError(w http.ResponseWriter, err error) {
 		errors.Is(err, foundationshared.ErrResumeOverlayInvalid),
 		errors.Is(err, matcher.ErrInvalid):
 		status = http.StatusBadRequest
+	case errors.Is(err, persistence.ErrInvalidCursor):
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": persistence.ErrInvalidCursor.Error()})
+		return
 	}
 	writeJSON(w, status, map[string]any{"error": err.Error()})
 }

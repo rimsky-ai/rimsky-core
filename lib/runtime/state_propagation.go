@@ -11,16 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
-
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath, changed bool) signalpkg.Signal {
@@ -286,7 +281,7 @@ func executeCancelActions(
 ) (postCommitFn, error) {
 	var post postCommitFn
 	for _, action := range actions {
-		if action.Kind != AggregateActionCancelNonWinners {
+		if action.Kind != AggregateActionCancelNonWinners && action.Kind != AggregateActionCancelSiblings {
 			continue
 		}
 		for _, child := range action.Children {
@@ -346,25 +341,23 @@ func cancelInFlightRunTreeChild(
 		}
 		return nil, fmt.Errorf("cancelInFlightRunTreeChild: UpdateState %s: %w", current.NodeRunID, err)
 	}
-	var instanceID shared.UUID
+	var (
+		instanceID shared.UUID
+		nodeType   string
+	)
 	nodeRow, err := args.Persist.Nodes().Get(ctx, current.NodeID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("cancelInFlightRunTreeChild: load node %s: %w", current.NodeID, err)
 	}
 	if nodeRow != nil {
 		instanceID = nodeRow.InstanceID
+		nodeType = nodeRow.NodeType
 	}
-	auditSig := signalpkg.Signal{
-		Type:    signalpkg.TypePath(cascade.SettlingSignalSiblingFailed),
-		Payload: eventpayload.New(&genv1.SettlingSignalPayload{ErrorClass: "sibling_failed"}),
-	}
-	var now time.Time
-	if args.Clock != nil {
-		now = args.Clock.Now()
-	}
-	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
-		instanceID, current.NodeID, auditSig, now, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("cancelInFlightRunTreeChild: terminal signal audit failed; cancellation stands",
+	// @concept: signal
+	cancelSig := signalpkg.BuildTerminalErrorSignal(cascade.ErrorClassSiblingFailed, nil, 0, 0, nil, nil)
+	if err := emitSignalInTxOnce(ctx, args, current.NodeID, nodeType, current.NodeRunID,
+		instanceID, current.FrameID, cancelSig, tx); err != nil && args.Logger != nil {
+		args.Logger.Warn("cancelInFlightRunTreeChild: terminal signal emission failed; cancellation stands",
 			"node_run_id", current.NodeRunID.String(), "error", err.Error())
 	}
 	if err := drainWaitSetOnSettled(ctx, args, current.FrameID, current.NodeRunID, tx); err != nil && args.Logger != nil {

@@ -62,12 +62,16 @@ const (
 
 var activeNoColorFlag bool
 
+var activeFormatFlag Format
+
 func SetActiveCommonFlags(c *CommonFlags) {
 	if c == nil {
 		activeNoColorFlag = false
+		activeFormatFlag = FormatHuman
 		return
 	}
 	activeNoColorFlag = c.NoColor
+	activeFormatFlag = c.Format
 }
 
 func activeNoColor() bool { return activeNoColorFlag }

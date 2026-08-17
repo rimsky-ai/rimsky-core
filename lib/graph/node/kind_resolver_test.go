@@ -247,6 +247,36 @@ func TestCanonicalizeSendMessageSugar_UnregisteredAliasErrorsAtDeploy(t *testing
 	}
 }
 
+func TestCanonicalizeSendMessageSugar_UnregisteredAliasNamesTheOffendingGraphNode(t *testing.T) {
+	aliases := NewKindAliasMap()
+	tmpl := &TemplateSpec{
+		Name:    "t",
+		Version: "1",
+		Nodes: []TemplateNodeDef{
+			{Type: "plain-a", Executor: "rimsky.something"},
+			{Type: "plain-b", Executor: "rimsky.something"},
+		},
+		Graphs: []GraphSpec{{
+			Name: "worker",
+			Nodes: []TemplateNodeDef{{
+				Type:         "sender",
+				SendsMessage: "some_message",
+			}},
+		}},
+	}
+	err := CanonicalizeSendMessageSugar(tmpl, aliases)
+	if err == nil {
+		t.Fatalf("expected an error when the send_message alias is unregistered")
+	}
+	want := `graphs["worker"].nodes[0]`
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected the error to locate the node at %s, got %q", want, err.Error())
+	}
+	if strings.Contains(err.Error(), "nodes[2]") {
+		t.Fatalf("expected no flattened index in the error, got %q", err.Error())
+	}
+}
+
 func TestCanonicalizeSendMessageSugar_UnregisteredButNoSenderIsClean(t *testing.T) {
 	aliases := NewKindAliasMap()
 	tmpl := &TemplateSpec{

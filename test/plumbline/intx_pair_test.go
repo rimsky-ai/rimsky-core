@@ -13,6 +13,8 @@ import (
 	"testing"
 )
 
+const packageLevelReceiver = "<package>"
+
 type intxInterface struct {
 	name     string
 	methods  map[string]bool
@@ -74,10 +76,13 @@ func TestNoPersistenceMethodCoexistsWithInTxSibling(t *testing.T) {
 				continue
 			}
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
+			if !ok {
 				continue
 			}
-			receiver := receiverTypeName(fn.Recv.List[0].Type)
+			receiver := packageLevelReceiver
+			if fn.Recv != nil && len(fn.Recv.List) > 0 {
+				receiver = receiverTypeName(fn.Recv.List[0].Type)
+			}
 			name := fn.Name.Name
 			rk := recvKey{pkg: file.Name.Name, receiver: receiver}
 			if receiverMethodSets[rk] == nil {
@@ -131,11 +136,15 @@ func TestNoPersistenceMethodCoexistsWithInTxSibling(t *testing.T) {
 		if implementsSplitContractWith(k.pkg, k.receiver, inTx) {
 			continue
 		}
+		site := k.receiver
+		if site == packageLevelReceiver {
+			site = "package-level declarations"
+		}
 		t.Errorf("persistence package %q has the retired paired idiom on %s: %s coexists with %s — "+
 			"collapse to one method taking an optional transaction parameter (the InTx suffix alone means "+
 			"\"requires an open transaction\"; a live pair is a copy source for the retired idiom); the only "+
 			"exemption is a receiver that implements a capability-split interface declaring the InTx method",
-			k.pkg, k.receiver, plain, inTx)
+			k.pkg, site, plain, inTx)
 	}
 }
 

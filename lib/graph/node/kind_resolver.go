@@ -37,14 +37,39 @@ func (m *KindAliasMap) Resolve(kind string) (string, bool) {
 	return alias, ok
 }
 
+// @concept: sub-graph
+type declaredNode struct {
+	def      *TemplateNodeDef
+	specPath string
+}
+
+func declaredNodes(tspec *TemplateSpec) []declaredNode {
+	out := make([]declaredNode, 0, len(tspec.Nodes))
+	for i := range tspec.Nodes {
+		out = append(out, declaredNode{
+			def:      &tspec.Nodes[i],
+			specPath: fmt.Sprintf("nodes[%d]", i),
+		})
+	}
+	for g := range tspec.Graphs {
+		for i := range tspec.Graphs[g].Nodes {
+			out = append(out, declaredNode{
+				def:      &tspec.Graphs[g].Nodes[i],
+				specPath: fmt.Sprintf("graphs[%q].nodes[%d]", tspec.Graphs[g].Name, i),
+			})
+		}
+	}
+	return out
+}
+
 // @concept: node
 // @decision: kind-sugar-resolver
 func CanonicalizeKindSugar(tspec *TemplateSpec, aliases *KindAliasMap) {
 	if tspec == nil || aliases == nil {
 		return
 	}
-	for i := range tspec.Nodes {
-		n := &tspec.Nodes[i]
+	for _, dn := range declaredNodes(tspec) {
+		n := dn.def
 		if n.Kind == "" {
 			continue
 		}
@@ -63,8 +88,8 @@ func CanonicalizeSendMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) er
 		return nil
 	}
 	alias, registered := aliases.Resolve(spec.SendMessageKindName)
-	for i := range tspec.Nodes {
-		n := &tspec.Nodes[i]
+	for _, dn := range declaredNodes(tspec) {
+		n := dn.def
 		if n.SendsMessage == "" {
 			continue
 		}
@@ -73,8 +98,8 @@ func CanonicalizeSendMessageSugar(tspec *TemplateSpec, aliases *KindAliasMap) er
 		}
 		if !registered {
 			return fmt.Errorf(
-				"CanonicalizeSendMessageSugar: nodes[%d] (type %q) declares sends_message but builtin kind %q has no registered executor alias",
-				i, n.Type, spec.SendMessageKindName)
+				"CanonicalizeSendMessageSugar: %s (type %q) declares sends_message but builtin kind %q has no registered executor alias",
+				dn.specPath, n.Type, spec.SendMessageKindName)
 		}
 		n.Executor = alias
 	}
@@ -86,8 +111,8 @@ func CanonicalizeAggregationPolicyDefault(tspec *TemplateSpec) {
 	if tspec == nil {
 		return
 	}
-	for i := range tspec.Nodes {
-		n := &tspec.Nodes[i]
+	for _, dn := range declaredNodes(tspec) {
+		n := dn.def
 		if n.FanOut == nil {
 			continue
 		}

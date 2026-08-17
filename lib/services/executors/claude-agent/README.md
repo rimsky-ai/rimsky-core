@@ -11,7 +11,7 @@ Speaks rimsky's Executor protocol (`lib/protocols/proto/v1/executor.proto`)
 via the generated Go stubs. Always uses the async-handoff pattern:
 
 1. `Execute(ExecuteRequest)` is received over gRPC (or the HTTP-JSON bridge's
-   `POST /execute`).
+   `POST /v1/Execute`).
 2. The executor replies immediately with `AwaitAsyncCallback{async_ack_id}`.
 3. The agent runs in the background; the final outcome is POSTed to
    `callback_url` (HTTP+JSON, supervisor-supplied) — the gRPC path posts to
@@ -54,7 +54,7 @@ The agent runtime:
 - `RIMSKY_EXECUTOR_HOST`, `RIMSKY_EXECUTOR_PORT_GRPC`,
   `RIMSKY_EXECUTOR_PORT_HTTP`,
   `RIMSKY_EXECUTOR_SILENCE_MS`, `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS`,
-  `RIMSKY_EXECUTOR_CLAUDE_BINARY`, `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL`,
+  `RIMSKY_EXECUTOR_CLAUDE_BINARY`, `RIMSKY_CLAUDE_AGENT_OBSERVABILITY_HTTP_BRIDGE_URL`,
   `RIMSKY_EXECUTOR_STUB_MODE` — transport/runtime knobs, unchanged from the
   generic executor surface.
 

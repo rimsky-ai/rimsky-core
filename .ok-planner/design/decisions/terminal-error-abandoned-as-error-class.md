@@ -20,7 +20,7 @@ The taxonomy choice is between:
 - **Class form**: `terminal/error/abandoned` (this decision).
 - **Root form**: a distinct `terminal/abandoned` root signal.
 
-The class form wins on uniformity. Every other failure mode in the system is expressed as an error class under `terminal/error/`: `terminal/error/park-timeout`, `terminal/error/instance-killed`, `terminal/error/handler-give-up`, etc. Subscribers already understand the pattern: subscribe to a specific class for targeted compensation, or to `terminal/error/*` for blanket error handling. Adding abandoned as a new root would force subscribers to learn a second pattern and would split the "I want to react to any failure" use case into two subscriptions.
+The class form wins on uniformity. Every failure mode the runtime produces is expressed as a class under the `terminal/error/` root — the taxonomy carries no second shape for a failure, so a subscriber learns the pattern once. Subscribers already use it both ways: a specific class for targeted compensation, or `terminal/error/*` for blanket error handling. Adding abandoned as a new root would force subscribers to learn a second pattern and would split the "I want to react to any failure" use case into two subscriptions.
 
 Abandoned is also semantically an error in the rollback sense: the held work was rolled back, the executor's output is not authoritative, downstream effects predicated on the run succeeding need compensation. It is not a benign termination like `terminal/success` or a deliberate dispatch-internal hold like `transient/park/*`. The error namespace is the right home.
 

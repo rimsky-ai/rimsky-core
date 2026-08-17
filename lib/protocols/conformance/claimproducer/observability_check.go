@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/grpcdial"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -29,7 +29,7 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	conn, err := grpc.NewClient(stripScheme(opts.Endpoint),
+	conn, err := grpc.NewClient(grpcdial.Target(opts.Endpoint),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
@@ -204,13 +204,4 @@ func sleepRealtime(ctx context.Context, d time.Duration) error {
 	case <-time.After(d):
 		return nil
 	}
-}
-
-func stripScheme(s string) string {
-	for _, prefix := range []string{"grpc://", "http://", "https://"} {
-		if strings.HasPrefix(s, prefix) {
-			return s[len(prefix):]
-		}
-	}
-	return s
 }

@@ -42,7 +42,7 @@ func (f *fakeClaimHandlesByNodeRun) ListByNodeRun(_ context.Context, nodeRunID s
 func (f *fakeClaimHandlesByNodeRun) ListExpired(context.Context, persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	return nil, nil
 }
-func (f *fakeClaimHandlesByNodeRun) RenewExpiryForHolderRun(context.Context, shared.UUID, time.Time, persistence.Tx) error {
+func (f *fakeClaimHandlesByNodeRun) RenewExpiryForHolderRun(context.Context, shared.UUID, string, time.Time, persistence.Tx) error {
 	return nil
 }
 func (f *fakeClaimHandlesByNodeRun) Delete(context.Context, shared.UUID, string, persistence.Tx) error {
@@ -95,9 +95,6 @@ func (f *fakeClaimHandlesByNodeRun) DeleteResolvedIfNoActiveHolders(context.Cont
 }
 func (f *fakeClaimHandlesByNodeRun) Promote(context.Context, shared.UUID, string, spec.ClaimHandleState, persistence.Tx) error {
 	return nil
-}
-func (f *fakeClaimHandlesByNodeRun) ListByState(context.Context, spec.ClaimHandleState, persistence.Tx) ([]persistence.ClaimHandleRow, error) {
-	return nil, nil
 }
 func (f *fakeClaimHandlesByNodeRun) ListByInstanceAndState(context.Context, shared.UUID, spec.ClaimHandleState, spec.ClaimLifetime, persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	return nil, nil

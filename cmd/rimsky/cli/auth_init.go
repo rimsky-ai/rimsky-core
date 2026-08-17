@@ -48,8 +48,7 @@ func RunAuthInit(ctx context.Context, args []string) int {
 		Plaintext string `json:"plaintext"`
 	}
 	if _, err := c.RawCall(ctx, http.MethodPost, "/v1/auth/keys", body, &resp); err != nil {
-		fmt.Fprintln(os.Stderr, "rimsky auth init: POST /auth/keys failed:", formatAuthAPIError(http.MethodPost, "/v1/auth/keys", err).Error())
-		return 1
+		return reportAuthError(http.MethodPost, "/v1/auth/keys", err)
 	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Save this admin key now — it will not be shown again:")

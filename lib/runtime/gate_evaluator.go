@@ -346,12 +346,15 @@ func applyCascadeModeRule(
 ) (drop bool, err error) {
 	switch mode {
 	case spec.CascadeModeMostRecent, "":
-		hasLater, herr := args.Persist.Nodes().HasLaterCascadePending(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx)
-		if herr != nil {
-			return false, fmt.Errorf("most-recent: has later: %w", herr)
-		}
-		if hasLater {
-			return true, nil
+		// @concept: parked-state
+		if !row.ResumedFromPark {
+			hasLater, herr := args.Persist.Nodes().HasLaterCascadePending(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx)
+			if herr != nil {
+				return false, fmt.Errorf("most-recent: has later: %w", herr)
+			}
+			if hasLater {
+				return true, nil
+			}
 		}
 		if _, derr := args.Persist.Nodes().DeletePriorCascadeStales(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx); derr != nil {
 			return false, fmt.Errorf("most-recent: delete prior: %w", derr)

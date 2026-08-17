@@ -109,7 +109,7 @@ func testRenewExpiryForHolderRun(t *testing.T, d persistence.Database) {
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.ClaimHandles().RenewExpiryForHolderRun(ctx, runID, time.Now().Add(1*time.Hour), tx)
+		return store.ClaimHandles().RenewExpiryForHolderRun(ctx, runID, reaperLivenessSup, time.Now().Add(1*time.Hour), tx)
 	}); err != nil {
 		t.Fatalf("RenewExpiryForHolderRun: %v", err)
 	}

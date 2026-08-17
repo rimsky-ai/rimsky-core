@@ -109,20 +109,21 @@ func (r *Registry) ResolveWithContext(ctx context.Context, name string, instance
 	} else if ok {
 		return p, true, nil
 	}
-	p, ok := r.getLateBound(ctx, name, instanceID, tx)
-	return p, ok, nil
+	return r.getLateBound(ctx, name, instanceID, tx)
 }
 
-func (r *Registry) getLateBound(ctx context.Context, name string, instanceID string, tx persistence.Tx) (ClaimProducer, bool) {
+// @concept: service-address-book
+// @story: host-agent-late-bind-all-protocols
+func (r *Registry) getLateBound(ctx context.Context, name string, instanceID string, tx persistence.Tx) (ClaimProducer, bool, error) {
 	if instanceID == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	if r.lookupInstanceBindings == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	proxyName, ok := r.lateBindServiceProxies["claim_producer"]
 	if !ok || proxyName == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -133,15 +134,18 @@ func (r *Registry) getLateBound(ctx context.Context, name string, instanceID str
 			"instance_id", instanceID,
 			"producer_name", name,
 			"error", err.Error())
-		return nil, false
+		return nil, false, nil
 	}
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	if _, exists := bindings[name]; !exists {
-		return nil, false
+		return nil, false, nil
 	}
-	return r.Get(proxyName)
+	if p, ok := r.Get(proxyName); ok {
+		return p, true, nil
+	}
+	return r.resolveViaAddressBook(ctx, proxyName, tx)
 }
 
 // @concept: service-address-book

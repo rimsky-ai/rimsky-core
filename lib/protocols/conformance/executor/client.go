@@ -5,16 +5,14 @@ package conformance
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/grpcdial"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
@@ -42,8 +40,8 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("conformance.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
-	target := stripScheme(endpoint.URL)
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(transportCredsFor(endpoint.TLS)))
+	target := grpcdial.Target(endpoint.URL)
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(grpcdial.TransportCredentials(endpoint.TLS)))
 	if err != nil {
 		return nil, fmt.Errorf("conformance.NewGRPCClient: dial %s: %w", endpoint.URL, err)
 	}
@@ -64,13 +62,6 @@ func (c *grpcClient) DeclaredTags(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return caps.GetDeclaredTags(), nil
-}
-
-func transportCredsFor(tlsMode string) credentials.TransportCredentials {
-	if tlsMode == "required" {
-		return credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
-	}
-	return insecure.NewCredentials()
 }
 
 func (c *grpcClient) Close() error { return c.conn.Close() }

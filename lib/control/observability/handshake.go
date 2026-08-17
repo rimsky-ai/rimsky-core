@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/grpcdial"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
@@ -132,7 +133,7 @@ func customUIFromProto(r *genv1.CustomUI) *CustomUI {
 }
 
 func dial(peerName, endpoint, tlsMode string) (*grpc.ClientConn, error) {
-	target := stripScheme(endpoint)
+	target := grpcdial.Target(endpoint)
 	label := peerName
 	if label == "" {
 		label = endpoint
@@ -144,15 +145,6 @@ func dial(peerName, endpoint, tlsMode string) (*grpc.ClientConn, error) {
 		grpc.WithUnaryInterceptor(peer.TLSModeUnaryInterceptor(label, tlsMode)),
 		grpc.WithStreamInterceptor(peer.TLSModeStreamInterceptor(label, tlsMode)),
 	)
-}
-
-func stripScheme(s string) string {
-	for _, prefix := range []string{"grpc://", "http://", "https://"} {
-		if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
-			return s[len(prefix):]
-		}
-	}
-	return s
 }
 
 type PeerSpec struct {

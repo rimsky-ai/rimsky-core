@@ -166,10 +166,11 @@ func (q *queueImpl) ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx 
 		    SET claimed_by = NULL,
 		        claimed_at = NULL,
 		        parked_at = NULL,
-		        resume_at = NULL
+		        resume_at = NULL,
+		        park_resumed_at = ?
 		  WHERE id = ?
 		    AND state = 'parked'`,
-		nodeRunID.String(),
+		nowUTC(), nodeRunID.String(),
 	)
 	if err != nil {
 		return false, fmt.Errorf("sqlite.ResumeParked: %w", err)

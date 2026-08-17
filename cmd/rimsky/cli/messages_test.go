@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -191,5 +192,74 @@ func TestClient_CreateInstanceMessage(t *testing.T) {
 	}
 	if resp.MessageID != "m1" {
 		t.Errorf("MessageID: %s", resp.MessageID)
+	}
+}
+
+// @concept: message
+func TestRunMessagesTail_PrintsEveryRowOfADescendingPage(t *testing.T) {
+	base := time.Now().UTC().Truncate(time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		rows := []map[string]any{}
+		for i := 3; i >= 1; i-- {
+			rows = append(rows, map[string]any{
+				"id": "m" + strconv.Itoa(i), "instance_id": "abc", "type": "ping",
+				"sender": "operator", "sender_kind": "operator",
+				"received_at": base.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"messages": rows})
+	}))
+	defer srv.Close()
+
+	const uuid = "5cb9362f-1111-2222-3333-444455556666"
+	var code int
+	out := captureStdout(t, func() {
+		code = RunMessagesTail(context.Background(), []string{"--endpoint", srv.URL, "--instance", uuid})
+	})
+	if code != 0 {
+		t.Fatalf("exit %d, output: %s", code, out)
+	}
+	for _, id := range []string{"m1", "m2", "m3"} {
+		if !strings.Contains(out, id) {
+			t.Errorf("row %s missing: the tail filters each page against the watermark taken before the poll "+
+				"and advances it only after the page is printed, so a newest-first page prints whole; got: %q", id, out)
+		}
+	}
+}
+
+// @concept: message
+func TestAdvanceTailWatermark_KeepsPriorIDsWhenTheWatermarkDoesNotMove(t *testing.T) {
+	at := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	prior := map[string]struct{}{"m1": {}}
+	got, seen := advanceTailWatermark(at, prior, []MessageItem{{ID: "m2", ReceivedAt: at}})
+	if !got.Equal(at) {
+		t.Fatalf("watermark = %v, want %v", got, at)
+	}
+	if _, ok := seen["m1"]; !ok {
+		t.Errorf("a page that adds a row at the same instant must keep the ids already seen there: %v", seen)
+	}
+	if _, ok := seen["m2"]; !ok {
+		t.Errorf("the newly printed row at the watermark instant must join the seen set: %v", seen)
+	}
+}
+
+// @concept: message
+func TestAdvanceTailWatermark_ResetsIDsWhenTheWatermarkMoves(t *testing.T) {
+	at := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	later := at.Add(time.Second)
+	prior := map[string]struct{}{"m1": {}}
+	got, seen := advanceTailWatermark(at, prior, []MessageItem{
+		{ID: "m2", ReceivedAt: later},
+		{ID: "m3", ReceivedAt: at},
+	})
+	if !got.Equal(later) {
+		t.Fatalf("watermark = %v, want %v", got, later)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("seen = %v, want only the row at the new watermark", seen)
+	}
+	if _, ok := seen["m2"]; !ok {
+		t.Errorf("the row at the new watermark must be the seen set: %v", seen)
 	}
 }

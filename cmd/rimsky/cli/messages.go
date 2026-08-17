@@ -64,19 +64,18 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 			}
 			return reportError(err)
 		}
+		watermark, seenAtWatermark := lastSeen, seenAtLastSeen
+		var printed []MessageItem
 		for _, m := range page.Messages {
-			if m.ReceivedAt.Before(lastSeen) {
+			if m.ReceivedAt.Before(watermark) {
 				continue
 			}
-			if m.ReceivedAt.Equal(lastSeen) {
-				if _, dup := seenAtLastSeen[m.ID]; dup {
+			if m.ReceivedAt.Equal(watermark) {
+				if _, dup := seenAtWatermark[m.ID]; dup {
 					continue
 				}
-			} else {
-				seenAtLastSeen = map[string]struct{}{}
 			}
-			lastSeen = m.ReceivedAt
-			seenAtLastSeen[m.ID] = struct{}{}
+			printed = append(printed, m)
 			if common.Format == FormatJSON {
 				_ = EmitJSON(os.Stdout, m)
 				continue
@@ -88,6 +87,7 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 			fmt.Fprintf(os.Stdout, "%s\t%s\t%s\t%s\t%s\t%s\n",
 				m.ID, m.Type, m.SenderKind, m.Sender, m.ReceivedAt.UTC().Format(time.RFC3339), delivered)
 		}
+		lastSeen, seenAtLastSeen = advanceTailWatermark(watermark, seenAtWatermark, printed)
 		if !follow {
 			return 0
 		}
@@ -138,4 +138,28 @@ func RunMessagesShow(ctx context.Context, args []string) int {
 	}
 	EmitKV(os.Stdout, pairs)
 	return 0
+}
+
+// @concept: message
+func advanceTailWatermark(
+	watermark time.Time, seenAtWatermark map[string]struct{}, printed []MessageItem,
+) (time.Time, map[string]struct{}) {
+	next := watermark
+	for _, m := range printed {
+		if m.ReceivedAt.After(next) {
+			next = m.ReceivedAt
+		}
+	}
+	seen := map[string]struct{}{}
+	if next.Equal(watermark) {
+		for id := range seenAtWatermark {
+			seen[id] = struct{}{}
+		}
+	}
+	for _, m := range printed {
+		if m.ReceivedAt.Equal(next) {
+			seen[m.ID] = struct{}{}
+		}
+	}
+	return next, seen
 }

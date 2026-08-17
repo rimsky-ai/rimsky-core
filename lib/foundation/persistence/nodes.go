@@ -190,6 +190,10 @@ type NodeRunForGate struct {
 	State          cascade.NodeState
 	CreationReason cascade.CreationReason
 	ClaimedBy      string
+
+	// @concept: parked-state
+	// @concept: cascade-mode
+	ResumedFromPark bool
 }
 
 // @concept: cascade

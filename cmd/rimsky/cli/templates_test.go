@@ -262,3 +262,47 @@ func TestReadSpec_NonObject(t *testing.T) {
 		t.Errorf("exit %d", got)
 	}
 }
+
+// @story: validation-warnings-surfaced
+func TestRunTemplateRegister_PrintsAdvisoriesOnSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"template_id": "sha256-z",
+			"validation_warnings": []map[string]string{
+				{"path": "nodes[0].executor", "msg": "executor \"warn-executor\" is unreachable in the discovery cache"},
+			},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("RIMSKY_CONTROL_API_URL", srv.URL)
+	t.Setenv("RIMSKY_CONTEXT", "")
+	t.Setenv("HOME", t.TempDir())
+	specPath := writeSpec(t)
+
+	var got int
+	errOut := captureStderr(t, func() {
+		captureStdout(t, func() {
+			got = cli.RunTemplateRegister(context.Background(), []string{specPath})
+		})
+	})
+	if got != 0 {
+		t.Fatalf("exit %d", got)
+	}
+	if !strings.Contains(errOut, "warn-executor") {
+		t.Errorf("a successful registration must print the validator's advisories, as the failure path already "+
+			"does — the author who succeeds still needs the advice; got %q", errOut)
+	}
+
+	var jsonGot int
+	jsonOut := captureStdout(t, func() {
+		jsonGot = cli.RunTemplateRegister(context.Background(), []string{"--output", "json", specPath})
+	})
+	if jsonGot != 0 {
+		t.Fatalf("json exit %d", jsonGot)
+	}
+	if !strings.Contains(jsonOut, "validation_warnings") {
+		t.Errorf("structured output must carry validation_warnings, got %q", jsonOut)
+	}
+}

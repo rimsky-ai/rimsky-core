@@ -10,7 +10,7 @@ The list partition grammar for fan-out — a partition request carrying a list o
 
 ## Rationale
 
-The list grammar has no store-dependent semantics — the items come from upstream, not from the store — so per-store variants would duplicate one capability behind two doors and force the story catalog to tell one outcome twice. The one genuinely store-specific partition idiom that exists, folder expansion, is its own grammar with its own story (`story:fs-fanout-expand-folder`), which keeps the line honest: grammars split by semantics, never by backend.
+The list grammar has no store-dependent semantics — the items come from upstream, not from the store — so per-store variants would duplicate one capability behind two doors and force the story catalog to tell one outcome twice. The genuinely store-specific partition idioms are separate grammars of their own: folder expansion and batch pick on the filesystem producer, partition policy on the Postgres producer. Keeping those apart from the list grammar keeps the line honest: grammars split by semantics, never by backend.
 
 ## Alternatives
 

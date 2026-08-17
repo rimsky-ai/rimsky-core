@@ -44,6 +44,7 @@ type SelectCandidatesRequest struct {
 	Limit int
 
 	CursorEnqueuedAfter  time.Time
+	CursorAfterSequence  int64
 	CursorAfterNodeRunID shared.UUID
 }
 
@@ -55,6 +56,9 @@ type Candidate struct {
 	RequiredClaimProducers []string
 	EnqueuedAt             time.Time
 	FrameID                shared.UUID
+
+	// @concept: wait-set
+	Sequence int64
 
 	// @concept: run-scope
 	PriorNodeRunID *shared.UUID

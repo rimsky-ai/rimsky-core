@@ -142,7 +142,8 @@ func (q *queueImpl) ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx 
 		    SET claimed_by = NULL,
 		        claimed_at = NULL,
 		        parked_at = NULL,
-		        resume_at = NULL
+		        resume_at = NULL,
+		        park_resumed_at = now()
 		  WHERE id = $1
 		    AND state = 'parked'`,
 		nodeRunID,

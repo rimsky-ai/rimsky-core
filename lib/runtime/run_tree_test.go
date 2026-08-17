@@ -93,6 +93,9 @@ func TestAggregate_StrictAllSuccess(t *testing.T) {
 	if res.ParentChanged {
 		t.Fatalf("expected changed=false; got %+v", res)
 	}
+	if res.Action != AggregateActionNone {
+		t.Fatalf("a strict fan-out whose children all succeeded must cancel nothing; got %v", res.Action)
+	}
 }
 
 func TestAggregate_StrictAnyChange(t *testing.T) {

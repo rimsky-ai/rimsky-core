@@ -41,8 +41,7 @@ func RunAuthRevoke(ctx context.Context, args []string) int {
 	c := newAuthClient(endpoint, key)
 	var resp map[string]any
 	if _, err := c.RawCall(ctx, http.MethodDelete, path, nil, &resp); err != nil {
-		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodDelete, path, err))
-		return 1
+		return reportAuthError(http.MethodDelete, path, err)
 	}
 	if name, _ := resp["name"].(string); name != "" {
 		fmt.Fprintf(os.Stdout, "revoked key %q\n", name)

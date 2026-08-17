@@ -95,7 +95,7 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 	if pag.Cursor != "" {
 		cursorObserved, cursorID, err := decodeLineageCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.LineageRow]{}, fmt.Errorf("postgres.Lineage.Query: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.LineageRow]{}, persistence.ErrInvalidCursor
 		}
 		args = append(args, cursorObserved, cursorID)
 		where += fmt.Sprintf(" AND (observed_at, id) < ($%d, $%d)", len(args)-1, len(args))

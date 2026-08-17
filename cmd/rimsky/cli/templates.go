@@ -45,6 +45,10 @@ func runWithCommon(name string, args []string, registerExtra func(fs *flag.FlagS
 }
 
 func reportError(err error) int {
+	// @decision: auth-dry-run-request-flag
+	if code, ok := ReportDryRunPreview(err); ok {
+		return code
+	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		fmt.Fprintln(os.Stderr, apiErr.Error())
@@ -191,9 +195,13 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 		}
 		return reportError(err)
 	}
+	// @story: validation-warnings-surfaced
 	if common.Format == FormatJSON {
 		_ = EmitJSON(os.Stdout, tpl)
 	} else {
+		for _, w := range tpl.ValidationWarnings {
+			fmt.Fprintf(os.Stderr, "warning: %s: %s\n", w.Path, w.Msg)
+		}
 		EmitKV(os.Stdout, [][2]string{
 			{"template_hash", tpl.Hash()},
 			{"tags", strings.Join(tpl.Tags, ",")},

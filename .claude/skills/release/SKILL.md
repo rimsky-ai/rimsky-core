@@ -101,14 +101,19 @@ a minor bump; absence triggers a patch bump.
 - **Persistence schema** — any new migration file under
   `lib/foundation/persistence/postgres/migrations/` or
   `lib/foundation/persistence/sqlite/migrations/`.
-- **Operator config — flags and defaults** — modifications to
-  `cmd/*/main.go` flag declarations (grep `flag.String`, `flag.Bool`,
-  etc.); modifications to the YAML config shape (best-effort grep for
-  changes in files referencing rimsky-yml struct types).
+- **Operator config — flags and defaults** — modifications to the CLI
+  library's flag-set declarations under `cmd/rimsky/cli/` (grep
+  `fs.StringVar`, `fs.BoolVar`, `fs.DurationVar`, `fs.IntVar`, and the
+  common-flag registration they share); modifications to the YAML config
+  shape (best-effort grep for changes in files referencing rimsky-yml
+  struct types). The binary entrypoints under `cmd/*/main.go` declare no
+  flags of their own — they dispatch to the CLI library.
 - **Public API** — added/removed/renamed/signature-changed exported Go
-  symbols in `lib/protocols/` and `lib/foundation/`. Detect via
-  `git diff` for `+func ` or `-func ` lines whose function name starts
-  with a capital letter, and equivalently for types/vars.
+  symbols in the root module (`lib/graph/`, `lib/runtime/`,
+  `lib/control/`, `cmd/rimsky/cli/`) and in `lib/protocols/` and
+  `lib/foundation/`. Detect via `git diff` for `+func ` or `-func ` lines
+  whose function name starts with a capital letter, and equivalently for
+  types/vars.
 - **Environment** — added or removed `RIMSKY_*` env var references in
   code.
 
@@ -164,9 +169,12 @@ Write `releases/vX.Y.Z.md` against the template structure documented in
 ## Go module
 
 ```
-go get github.com/rimsky-ai/rimsky-core@vX.Y.Z
 go get github.com/rimsky-ai/rimsky-core/lib/protocols@vX.Y.Z
 ```
+
+The root module is absent: it depends on the unpublished `lib/*`
+sub-modules through `replace` directives, which a version fetch ignores.
+`RELEASING.md` carries the limitation and the install paths that work.
 
 ## npm
 

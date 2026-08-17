@@ -140,10 +140,8 @@ func (c *CallbackServer) enforceCallbackPrincipal(r *http.Request, asyncCtx Asyn
 	return nil
 }
 
-func (c *CallbackServer) Start(host string, port int) (string, error) {
-	if c.Logger == nil {
-		c.Logger = shared.SilentLogger{}
-	}
+// @decision: protocol-version-v1-namespaced
+func (c *CallbackServer) Routes() chi.Router {
 	r := chi.NewRouter()
 	// @decision: async-callback-post-json
 	r.Post("/v1/callback/{async_ack_id}", c.handleCallback)
@@ -151,9 +149,17 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 		r.Post("/v1/runs/{run_id}/keepalive", c.handleKeepalive)
 		r.Post("/v1/runs/{run_id}/attributes", c.handleAttributeWriteback)
 	}
-	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
+	return r
+}
+
+func (c *CallbackServer) Start(host string, port int) (string, error) {
+	if c.Logger == nil {
+		c.Logger = shared.SilentLogger{}
+	}
+	r := c.Routes()
 
 	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {

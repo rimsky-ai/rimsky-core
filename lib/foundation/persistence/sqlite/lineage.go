@@ -96,7 +96,7 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 	if pag.Cursor != "" {
 		cursorObserved, cursorID, err := decodeLineageCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.LineageRow]{}, fmt.Errorf("sqlite.Lineage.Query: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.LineageRow]{}, persistence.ErrInvalidCursor
 		}
 		args = append(args, formatTime(cursorObserved), cursorID.String())
 		conds = append(conds, "(observed_at, id) < (?, ?)")

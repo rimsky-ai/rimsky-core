@@ -97,7 +97,7 @@ func (s *templatesImpl) List(
 	if pag.Cursor != "" {
 		registeredAt, id, err := decodeTemplateCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.TemplateRow]{}, fmt.Errorf("templates.list: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.TemplateRow]{}, persistence.ErrInvalidCursor
 		}
 		cursorRegisteredAt = registeredAt
 		cursorID = id

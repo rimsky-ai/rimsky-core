@@ -869,6 +869,28 @@ func (h *Harness) WaitForLeafRunLineageCount(nodeID shared.UUID, want int) {
 	}
 }
 
+// @concept: frame
+// @decision: testing-scenario-based-e2e
+func (h *Harness) WaitForSettledFrameCount(instanceID shared.UUID, want int) {
+	h.T.Helper()
+	for poll := 1; ; poll++ {
+		var count int
+		err := h.Pool.QueryRow(h.Ctx,
+			`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NOT NULL`,
+			instanceID,
+		).Scan(&count)
+		if err == nil && count >= want {
+			return
+		}
+		if poll%40 == 0 {
+			h.T.Logf("WaitForSettledFrameCount: still polling instance %s for %d settled frames (observed: %d, last err=%v) — "+
+				"blocks until the count appears; the test guard's no-progress watchdog is the only backstop",
+				instanceID.String(), want, count, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // @concept: node-run
 // @decision: testing-scenario-based-e2e
 func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID) {

@@ -58,7 +58,7 @@ func TestHTTPBridgeExecuteAcksAndPostsCallback(t *testing.T) {
 		"callback_url": "http://caller.invalid/cb",
 		"cancel_token": "ct-1"
 	}`
-	resp, err := http.Post(base+"/execute", "application/json", bytes.NewReader([]byte(body)))
+	resp, err := http.Post(base+"/v1/Execute", "application/json", bytes.NewReader([]byte(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestHTTPBridgeExecuteResponseMatchesTheGrpcOutcomeShape(t *testing.T) {
 	base, recorder := startTestBridge(t)
 
 	body := `{"node_id":"n","node_type":"claude-agent","dispatch_id":"disp-shape","attributes":{"user_prompt":"go"},"callback_url":"http://caller.invalid/cb"}`
-	resp, err := http.Post(base+"/execute", "application/json", bytes.NewReader([]byte(body)))
+	resp, err := http.Post(base+"/v1/Execute", "application/json", bytes.NewReader([]byte(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestHTTPBridgeExecuteIgnoresUnknownFieldsLikeTheGrpcTransport(t *testing.T)
 	base, recorder := startTestBridge(t)
 
 	body := `{"node_id":"n","node_type":"claude-agent","dispatch_id":"disp-unknown","attributes":{"user_prompt":"go"},"callback_url":"http://caller.invalid/cb","not_a_proto_field":"ignored"}`
-	resp, err := http.Post(base+"/execute", "application/json", bytes.NewReader([]byte(body)))
+	resp, err := http.Post(base+"/v1/Execute", "application/json", bytes.NewReader([]byte(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestHTTPBridgeExecuteRejectsOversizedBody(t *testing.T) {
 	for i := range oversized {
 		oversized[i] = 'a'
 	}
-	resp, err := http.Post(base+"/execute", "application/json", bytes.NewReader(oversized))
+	resp, err := http.Post(base+"/v1/Execute", "application/json", bytes.NewReader(oversized))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestHTTPBridgeTraceGet(t *testing.T) {
 	base, recorder := startTestBridge(t)
 
 	body := `{"node_id":"n","node_type":"claude-agent","dispatch_id":"disp-trace-http","attributes":{"user_prompt":"go"},"callback_url":"http://caller.invalid/cb"}`
-	resp, err := http.Post(base+"/execute", "application/json", bytes.NewReader([]byte(body)))
+	resp, err := http.Post(base+"/v1/Execute", "application/json", bytes.NewReader([]byte(body)))
 	if err != nil {
 		t.Fatal(err)
 	}

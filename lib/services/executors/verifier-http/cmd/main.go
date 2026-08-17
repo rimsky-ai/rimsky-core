@@ -35,7 +35,7 @@ func main() {
 		slog.Error("verifier-http peer-auth", "error", err.Error())
 		os.Exit(1)
 	}
-	genv1.RegisterExecutorServer(srv, verifierhttp.NewServer(opts.StubMode))
+	genv1.RegisterExecutorServer(srv, verifierhttp.NewServer(opts))
 	verifierhttp.RegisterObservability(srv)
 
 	ctx, cancel := context.WithCancel(context.Background())

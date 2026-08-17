@@ -46,7 +46,7 @@ func mustArgs(t *testing.T, req CliSpawnRequest) []string {
 }
 
 func TestBuildClaudeCliArgsEmitsFixedCoreWithDefaults(t *testing.T) {
-	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
+	t.Setenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD", "")
 	args := mustArgs(t, baseReq(nil))
 	want := []string{
 		"--print",
@@ -185,7 +185,7 @@ func TestBuildClaudeCliArgsForwardsAddDirs(t *testing.T) {
 }
 
 func TestBuildClaudeCliArgsMaxBudgetPrecedence(t *testing.T) {
-	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "10.00")
+	t.Setenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD", "10.00")
 	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) { r.MaxBudgetUSD = "0.50" }))
 	i := slices.Index(args, "--max-budget-usd")
 	if i < 0 || args[i+1] != "0.50" {
@@ -198,7 +198,7 @@ func TestBuildClaudeCliArgsMaxBudgetPrecedence(t *testing.T) {
 		t.Fatalf("expected env fallback: %v", args)
 	}
 
-	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
+	t.Setenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD", "")
 	args = mustArgs(t, baseReq(nil))
 	if slices.Contains(args, "--max-budget-usd") {
 		t.Fatal("expected no budget flag when neither source set")
@@ -219,7 +219,7 @@ func TestBuildClaudeCliArgsSessionID(t *testing.T) {
 }
 
 func TestBuildClaudeCliResumeArgs(t *testing.T) {
-	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
+	t.Setenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD", "")
 	args, err := BuildClaudeCliResumeArgs(CliResumeRequest{
 		SessionID: "550e8400-e29b-41d4-a716-446655440000",
 		Prompt:    "finish what you started",
@@ -249,7 +249,7 @@ func TestBuildClaudeCliResumeArgs(t *testing.T) {
 }
 
 func TestBuildClaudeCliResumeArgsMaxBudgetEnvFallback(t *testing.T) {
-	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "10.00")
+	t.Setenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD", "10.00")
 	args, err := BuildClaudeCliResumeArgs(CliResumeRequest{
 		SessionID: "550e8400-e29b-41d4-a716-446655440000",
 		Prompt:    "resume",
@@ -259,10 +259,10 @@ func TestBuildClaudeCliResumeArgsMaxBudgetEnvFallback(t *testing.T) {
 	}
 	i := slices.Index(args, "--max-budget-usd")
 	if i < 0 || args[i+1] != "10.00" {
-		t.Fatalf("resume without an explicit request budget must fall back to RIMSKY_DISPATCH_MAX_USD, same as spawn: %v", args)
+		t.Fatalf("resume without an explicit request budget must fall back to RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD, same as spawn: %v", args)
 	}
 
-	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
+	t.Setenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD", "")
 	args, err = BuildClaudeCliResumeArgs(CliResumeRequest{
 		SessionID: "550e8400-e29b-41d4-a716-446655440000",
 		Prompt:    "resume",
@@ -276,7 +276,7 @@ func TestBuildClaudeCliResumeArgsMaxBudgetEnvFallback(t *testing.T) {
 }
 
 func TestBuildClaudeCliResumeArgsCarriesRestrictionsAndBudget(t *testing.T) {
-	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "")
+	t.Setenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD", "")
 	args, err := BuildClaudeCliResumeArgs(CliResumeRequest{
 		SessionID:       "550e8400-e29b-41d4-a716-446655440000",
 		Prompt:          "resume",
@@ -351,7 +351,7 @@ func TestBuildClaudeCliResumeArgsRejectsFlagLikeAddDir(t *testing.T) {
 }
 
 func TestBuildClaudeCliArgsPromptStaysOffArgv(t *testing.T) {
-	t.Setenv("RIMSKY_DISPATCH_MAX_USD", "5.00")
+	t.Setenv("RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD", "5.00")
 	args := mustArgs(t, baseReq(func(r *CliSpawnRequest) {
 		r.Bare = true
 		r.PermissionMode = "acceptEdits"

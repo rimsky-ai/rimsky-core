@@ -45,8 +45,7 @@ func RunAuthRotate(ctx context.Context, args []string) int {
 		RevokeAt  string `json:"revoke_at"`
 	}
 	if _, err := c.RawCall(ctx, http.MethodPost, path, body, &resp); err != nil {
-		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodPost, path, err))
-		return 1
+		return reportAuthError(http.MethodPost, path, err)
 	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Save the new key plaintext now — it will not be shown again:")

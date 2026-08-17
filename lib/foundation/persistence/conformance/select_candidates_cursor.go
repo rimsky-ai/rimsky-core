@@ -50,13 +50,14 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 	}
 
 	probeErr := errors.New("rollback probe")
-	selectPage := func(limit int, curAt time.Time, curID shared.UUID) []persistence.Candidate {
+	selectPage := func(limit int, curAt time.Time, curSeq int64, curID shared.UUID) []persistence.Candidate {
 		t.Helper()
 		var out []persistence.Candidate
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 				Limit:                limit,
 				CursorEnqueuedAfter:  curAt,
+				CursorAfterSequence:  curSeq,
 				CursorAfterNodeRunID: curID,
 			}, tx)
 			if err != nil {
@@ -66,12 +67,12 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 			return probeErr
 		})
 		if err != nil && !errors.Is(err, probeErr) {
-			t.Fatalf("SelectCandidates(cursor=%v/%s): %v", curAt, curID, err)
+			t.Fatalf("SelectCandidates(cursor=%v/%d/%s): %v", curAt, curSeq, curID, err)
 		}
 		return out
 	}
 
-	full := selectPage(100, time.Time{}, shared.UUID{})
+	full := selectPage(100, time.Time{}, 0, shared.UUID{})
 	if len(full) != len(enqueueTimes) {
 		t.Fatalf("zero-cursor select: got %d candidates, want %d", len(full), len(enqueueTimes))
 	}
@@ -81,9 +82,13 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 			t.Fatalf("selection ordering violated at index %d: %v before %v",
 				i, cur.EnqueuedAt, prev.EnqueuedAt)
 		}
-		if cur.EnqueuedAt.Equal(prev.EnqueuedAt) &&
+		if cur.EnqueuedAt.Equal(prev.EnqueuedAt) && cur.Sequence < prev.Sequence {
+			t.Fatalf("equal-timestamp sequence tiebreak violated at index %d: sequence %d after %d",
+				i, cur.Sequence, prev.Sequence)
+		}
+		if cur.EnqueuedAt.Equal(prev.EnqueuedAt) && cur.Sequence == prev.Sequence &&
 			bytes.Compare(cur.NodeRunID[:], prev.NodeRunID[:]) <= 0 {
-			t.Fatalf("equal-timestamp id tiebreak violated at index %d: %s after %s",
+			t.Fatalf("equal-timestamp equal-sequence id tiebreak violated at index %d: %s after %s",
 				i, cur.NodeRunID, prev.NodeRunID)
 		}
 	}
@@ -116,14 +121,14 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 	}
 
 	for i := range full {
-		got := selectPage(100, full[i].EnqueuedAt, full[i].NodeRunID)
+		got := selectPage(100, full[i].EnqueuedAt, full[i].Sequence, full[i].NodeRunID)
 		assertSuffix(got, full[i+1:], "suffix after row "+full[i].NodeRunID.String())
 	}
 
 	var paged []persistence.Candidate
-	curAt, curID := time.Time{}, shared.UUID{}
+	curAt, curSeq, curID := time.Time{}, int64(0), shared.UUID{}
 	for {
-		page := selectPage(2, curAt, curID)
+		page := selectPage(2, curAt, curSeq, curID)
 		if len(page) == 0 {
 			break
 		}
@@ -132,10 +137,79 @@ func testSelectCandidatesKeysetCursor(t *testing.T, d persistence.Database) {
 		}
 		paged = append(paged, page...)
 		last := page[len(page)-1]
-		curAt, curID = last.EnqueuedAt, last.NodeRunID
+		curAt, curSeq, curID = last.EnqueuedAt, last.Sequence, last.NodeRunID
 		if len(paged) > len(full) {
 			t.Fatalf("paging: returned more rows than exist (duplicate rows)")
 		}
 	}
 	assertSuffix(paged, full, "limit-2 paging")
+}
+
+// @concept: wait-set
+// @concept: cascade-mode
+// @decision: non-cascade-direct-to-stale
+func testSelectCandidatesOrdersEqualTimestampRowsBySequence(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	store := d.Tables()
+	q := d.Queue()
+	fix := seedFixtureSet(ctx, t, d)
+
+	at := time.Now().UTC().Add(-1 * time.Minute).Truncate(time.Second)
+	nodeID := shared.UUID(uuid.New())
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID:         nodeID,
+			InstanceID: fix.InstanceID,
+			NodeType:   "fixture-node-type",
+			Executor:   "test-executor",
+		}, tx); err != nil {
+			return err
+		}
+		for i := 0; i < 3; i++ {
+			if err := q.Enqueue(ctx, persistence.DispatchRequest{
+				NodeID:                 nodeID,
+				ExecutorName:           "test-executor",
+				RequiredClaimProducers: []string{},
+				EnqueuedAt:             at,
+				FrameID:                fix.FrameID,
+				RunScopeID:             fix.MainRunScopeID,
+			}, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed three same-transaction rows: %v", err)
+	}
+
+	probeErr := errors.New("rollback probe")
+	var got []persistence.Candidate
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		cands, err := q.SelectCandidates(ctx, persistence.SelectCandidatesRequest{Limit: 100}, tx)
+		if err != nil {
+			return err
+		}
+		got = cands
+		return probeErr
+	})
+	if err != nil && !errors.Is(err, probeErr) {
+		t.Fatalf("SelectCandidates: %v", err)
+	}
+
+	var forNode []persistence.Candidate
+	for _, c := range got {
+		if c.NodeID == nodeID {
+			forNode = append(forNode, c)
+		}
+	}
+	if len(forNode) != 3 {
+		t.Fatalf("got %d candidates for the node, want the 3 rows written in one transaction", len(forNode))
+	}
+	for i, c := range forNode {
+		want := int64(i + 1)
+		if c.Sequence != want {
+			t.Fatalf("candidate %d carries sequence %d, want %d: rows written in one transaction share an enqueued_at, so creation order is the sequence order",
+				i, c.Sequence, want)
+		}
+	}
 }

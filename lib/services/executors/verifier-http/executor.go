@@ -30,10 +30,11 @@ type Server struct {
 	client   *http.Client
 }
 
-func NewServer(stubMode bool) *Server {
+// @concept: peer-auth
+func NewServer(opts Opts) *Server {
 	return &Server{
-		stubMode: stubMode,
-		client:   &http.Client{},
+		stubMode: opts.StubMode,
+		client:   opts.Egress.HTTPClient(0),
 	}
 }
 

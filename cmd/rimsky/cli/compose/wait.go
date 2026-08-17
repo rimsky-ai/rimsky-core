@@ -24,8 +24,8 @@ const waitPollBackoffAfter = 5
 
 // @decision: exit-codes
 const (
-	OutcomeSuccess = "success"
-	OutcomeFailure = "failure"
+	OutcomeSuccess = cli.OutcomeSuccess
+	OutcomeFailure = cli.OutcomeFailure
 )
 
 type instanceClient interface {
@@ -166,12 +166,7 @@ func instanceIsIdle(ctx context.Context, client instanceClient, id string) (bool
 
 // @concept: node-run
 func classifyInstanceOutcome(nodes []cli.Node) (string, int) {
-	for _, n := range nodes {
-		if n.RunSummary != nil && n.RunSummary.FailedCount > 0 {
-			return OutcomeFailure, len(nodes)
-		}
-	}
-	return OutcomeSuccess, len(nodes)
+	return cli.ClassifyInstanceOutcome(nodes)
 }
 
 // @concept: node-run

@@ -42,6 +42,33 @@ func captureStdout(t *testing.T, fn func()) string {
 	return <-out
 }
 
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stderr
+	os.Stderr = w
+	out := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 0, 64*1024)
+		tmp := make([]byte, 4096)
+		for {
+			n, rerr := r.Read(tmp)
+			buf = append(buf, tmp[:n]...)
+			if rerr != nil {
+				break
+			}
+		}
+		out <- string(buf)
+	}()
+	fn()
+	os.Stderr = saved
+	_ = w.Close()
+	return <-out
+}
+
 func deployedTemplate(t *testing.T, srv *clitest.Server, tag string) string {
 	t.Helper()
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, tag, "")

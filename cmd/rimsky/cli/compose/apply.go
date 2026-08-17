@@ -541,6 +541,10 @@ func RunComposeStatus(ctx context.Context, args []string) int {
 }
 
 func reportPlanError(err error) int {
+	// @decision: auth-dry-run-request-flag
+	if code, ok := cli.ReportDryRunPreview(err); ok {
+		return code
+	}
 	var perr *ErrComposePlan
 	if errors.As(err, &perr) {
 		fmt.Fprintln(os.Stderr, perr.Error())
@@ -556,6 +560,10 @@ func reportPlanError(err error) int {
 }
 
 func reportApplyError(err error) int {
+	// @decision: auth-dry-run-request-flag
+	if code, ok := cli.ReportDryRunPreview(err); ok {
+		return code
+	}
 	var apiErr *cli.APIError
 	if errors.As(err, &apiErr) {
 		fmt.Fprintln(os.Stderr, apiErr.Error())

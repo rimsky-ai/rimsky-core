@@ -29,14 +29,14 @@ type TxBlobBackend interface {
 	ReadInTx(ctx context.Context, handle Handle, tx Tx) ([]byte, error)
 }
 
-func WriteBlobInTx(ctx context.Context, bb BlobBackend, key BlobKey, bytes []byte, tx Tx) (Handle, error) {
+func WriteBlob(ctx context.Context, bb BlobBackend, key BlobKey, bytes []byte, tx Tx) (Handle, error) {
 	if txbb, ok := bb.(TxBlobBackend); ok && tx != nil {
 		return txbb.WriteInTx(ctx, key, bytes, tx)
 	}
 	return bb.Write(ctx, key, bytes)
 }
 
-func ReadBlobInTx(ctx context.Context, bb BlobBackend, handle Handle, tx Tx) ([]byte, error) {
+func ReadBlob(ctx context.Context, bb BlobBackend, handle Handle, tx Tx) ([]byte, error) {
 	if txbb, ok := bb.(TxBlobBackend); ok && tx != nil {
 		return txbb.ReadInTx(ctx, handle, tx)
 	}

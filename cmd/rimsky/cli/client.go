@@ -98,6 +98,10 @@ func (c *Client) doStatus(req *http.Request, out any) (int, error) {
 		}
 		return resp.StatusCode, apiErr
 	}
+	// @decision: auth-dry-run-request-flag
+	if preview := dryRunPreviewFromBody(body); preview != nil {
+		return resp.StatusCode, preview
+	}
 	if out == nil || resp.StatusCode == http.StatusNoContent || len(body) == 0 {
 		return resp.StatusCode, nil
 	}

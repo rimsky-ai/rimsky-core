@@ -30,7 +30,7 @@ func lockAlreadyReused(acquired []AcquiredLock, id shared.UUID) bool {
 func renewReusedRunExpiry(
 	ctx context.Context, args RunArgs, nodeRunID shared.UUID, livenessInterval time.Duration, tx persistence.Tx,
 ) error {
-	return args.ClaimHandles.RenewExpiryForHolderRun(ctx, nodeRunID, args.Clock.Now().Add(5*livenessInterval), tx)
+	return args.ClaimHandles.RenewExpiryForHolderRun(ctx, nodeRunID, args.SupervisorID, args.Clock.Now().Add(5*livenessInterval), tx)
 }
 
 func reuseHeldNamedLock(

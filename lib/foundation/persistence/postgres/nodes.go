@@ -108,7 +108,7 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	if pag.Cursor != "" {
 		createdAt, id, err := decodeNodeCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.NodeRow]{}, fmt.Errorf("nodes.listByInstancePaged: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.NodeRow]{}, persistence.ErrInvalidCursor
 		}
 		cursorCreatedAt = createdAt
 		cursorID = id
@@ -768,7 +768,8 @@ func (s *nodesImpl) FindLatestCascadePending(
 ) (*persistence.NodeRunForGate, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2 AND frame_id = $3
 		    AND state = 'pending'
@@ -826,7 +827,8 @@ func (s *nodesImpl) CreateCascadePending(
 // @concept: cascade
 func (s *nodesImpl) GetRunForGate(ctx context.Context, runID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs WHERE id = $1`, runID,
 	)
 	return scanGateRow(row)
@@ -957,7 +959,8 @@ func (s *nodesImpl) GetPriorRunBySequence(
 	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2 AND sequence < $3
 		  ORDER BY sequence DESC
@@ -978,6 +981,7 @@ func (s *nodesImpl) DeletePriorCascadeStales(
 		`DELETE FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2 AND sequence < $3
 		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL
+		    AND park_resumed_at IS NULL
 		  RETURNING scratch_handle, scratch_handle_backend`,
 		nodeID, runScopeID, beforeSeq,
 	)
@@ -1037,7 +1041,8 @@ func (s *nodesImpl) GetPriorCascadeQueuedNotClaimed(
 	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2 AND sequence < $3
 		    AND state IN ('pending','stale') AND creation_reason = 'cascade' AND claimed_by IS NULL
@@ -1053,7 +1058,8 @@ func (s *nodesImpl) GetMostRecentSettledRun(
 	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs
 		  WHERE node_id = $1 AND run_scope_id = $2 AND sequence < $3
 		    AND state = 'fresh'
@@ -1212,7 +1218,7 @@ func scanGateRow(row pgx.Row) (*persistence.NodeRunForGate, error) {
 		stateScan  string
 		reasonScan string
 	)
-	err := row.Scan(&out.NodeRunID, &out.NodeID, &out.RunScopeID, &out.FrameID, &out.Sequence, &stateScan, &reasonScan, &out.ClaimedBy)
+	err := row.Scan(&out.NodeRunID, &out.NodeID, &out.RunScopeID, &out.FrameID, &out.Sequence, &stateScan, &reasonScan, &out.ClaimedBy, &out.ResumedFromPark)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

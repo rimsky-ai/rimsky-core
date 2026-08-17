@@ -1109,3 +1109,46 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 		t.Fatalf("CompleteByClaimHandleAndRun carve-out did not retire the holder: %+v", holder)
 	}
 }
+
+// @concept: claim-handle
+// @decision: keepalive-endpoint
+func testClaimantGuardHandleRenewExpiry(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	runID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
+	originalExpiry := time.Now().Add(1 * time.Hour).UTC().Truncate(time.Second)
+	in := guardScopeHandleInput(fix, guardSupA, originalExpiry)
+	in.NodeRunID = &runID
+	seedGuardClaimHandle(ctx, t, d, in)
+
+	stolenExpiry := originalExpiry.Add(24 * time.Hour)
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.ClaimHandles().RenewExpiryForHolderRun(ctx, runID, guardSupB, stolenExpiry, tx)
+	}); err != nil {
+		t.Fatalf("wrong-claimant RenewExpiryForHolderRun: %v", err)
+	}
+	afterWrong := getGuardClaimHandle(ctx, t, d, in.ID)
+	if afterWrong == nil {
+		t.Fatalf("handle missing after wrong-claimant renewal")
+	}
+	if !afterWrong.ExpiresAt.UTC().Truncate(time.Second).Equal(originalExpiry) {
+		t.Fatalf("wrong-claimant renewal moved the expiry: got %s want %s (expiry is a claimant-guarded field)",
+			afterWrong.ExpiresAt.UTC(), originalExpiry)
+	}
+
+	ownerExpiry := originalExpiry.Add(2 * time.Hour)
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.ClaimHandles().RenewExpiryForHolderRun(ctx, runID, guardSupA, ownerExpiry, tx)
+	}); err != nil {
+		t.Fatalf("owner RenewExpiryForHolderRun: %v", err)
+	}
+	afterOwner := getGuardClaimHandle(ctx, t, d, in.ID)
+	if afterOwner == nil {
+		t.Fatalf("handle missing after owner renewal")
+	}
+	if !afterOwner.ExpiresAt.UTC().Truncate(time.Second).Equal(ownerExpiry) {
+		t.Fatalf("owner renewal did not land: got %s want %s", afterOwner.ExpiresAt.UTC(), ownerExpiry)
+	}
+}

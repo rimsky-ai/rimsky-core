@@ -17,7 +17,17 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-http/errorclasses"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
+
+func loopbackOpts(t *testing.T, stubMode bool) Opts {
+	t.Helper()
+	guard, err := egress.NewGuard([]string{"127.0.0.0/8", "::1/128"})
+	if err != nil {
+		t.Fatalf("egress.NewGuard: %v", err)
+	}
+	return Opts{StubMode: stubMode, Egress: guard}
+}
 
 func buildReq(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
@@ -40,7 +50,7 @@ func TestExecute_HappyPath(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	executor := NewServer(false)
+	executor := NewServer(loopbackOpts(t, false))
 	req := buildReq(t, map[string]any{
 		"url":             srv.URL,
 		"body":            map[string]any{"k": "v"},
@@ -69,7 +79,7 @@ func TestExecute_StatusMismatch(t *testing.T) {
 		_, _ = w.Write([]byte("bad"))
 	}))
 	defer srv.Close()
-	executor := NewServer(false)
+	executor := NewServer(loopbackOpts(t, false))
 	req := buildReq(t, map[string]any{
 		"url":             srv.URL,
 		"expected_status": []any{float64(200)},
@@ -94,7 +104,7 @@ func TestExecute_StatusMismatchWithUpstreamClass(t *testing.T) {
 		_, _ = w.Write([]byte(`{"class":"quota_exhausted","message":"too many"}`))
 	}))
 	defer srv.Close()
-	executor := NewServer(false)
+	executor := NewServer(loopbackOpts(t, false))
 	req := buildReq(t, map[string]any{
 		"url": srv.URL,
 	})
@@ -118,7 +128,7 @@ func TestExecute_TimeoutClassifiesAsTimeout(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	executor := NewServer(false)
+	executor := NewServer(loopbackOpts(t, false))
 	req := buildReq(t, map[string]any{
 		"url":        srv.URL,
 		"timeout_ms": float64(20),
@@ -137,7 +147,7 @@ func TestExecute_TimeoutClassifiesAsTimeout(t *testing.T) {
 }
 
 func TestExecute_NetworkError(t *testing.T) {
-	executor := NewServer(false)
+	executor := NewServer(loopbackOpts(t, false))
 	req := buildReq(t, map[string]any{"url": "http://127.0.0.1:1/nope"})
 	outcome, _ := executor.Execute(context.Background(), req)
 	errOut := outcome.GetError()
@@ -150,7 +160,7 @@ func TestExecute_NetworkError(t *testing.T) {
 }
 
 func TestExecute_MissingURL(t *testing.T) {
-	executor := NewServer(false)
+	executor := NewServer(loopbackOpts(t, false))
 	req := buildReq(t, map[string]any{})
 	outcome, _ := executor.Execute(context.Background(), req)
 	errOut := outcome.GetError()
@@ -168,7 +178,7 @@ func TestExecute_NonNumericExpectedStatusEntry_RejectedAsAttributeInvalid(t *tes
 	}))
 	defer ts.Close()
 
-	executor := NewServer(false)
+	executor := NewServer(loopbackOpts(t, false))
 	req := buildReq(t, map[string]any{
 		"url":             ts.URL,
 		"expected_status": []any{"200"},
@@ -187,7 +197,7 @@ func TestExecute_NonNumericExpectedStatusEntry_RejectedAsAttributeInvalid(t *tes
 }
 
 func TestExecute_StubMode(t *testing.T) {
-	executor := NewServer(true)
+	executor := NewServer(loopbackOpts(t, true))
 	req := buildReq(t, map[string]any{"url": "http://unreachable.invalid/"})
 	outcome, err := executor.Execute(context.Background(), req)
 	if err != nil {
@@ -209,7 +219,7 @@ func TestExecute_CustomClassField(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":"rate_limited"}`))
 	}))
 	defer srv.Close()
-	executor := NewServer(false)
+	executor := NewServer(loopbackOpts(t, false))
 	req := buildReq(t, map[string]any{
 		"url":         srv.URL,
 		"class_field": "code",
@@ -230,7 +240,7 @@ func TestExecute_DefaultExpectedStatusAcceptsNon200TwoXX(t *testing.T) {
 			w.WriteHeader(code)
 		}))
 		req := buildReq(t, map[string]any{"url": srv.URL})
-		outcome, err := NewServer(false).Execute(context.Background(), req)
+		outcome, err := NewServer(loopbackOpts(t, false)).Execute(context.Background(), req)
 		srv.Close()
 		if err != nil {
 			t.Fatal(err)
@@ -248,7 +258,7 @@ func TestExecute_DefaultExpectedStatusRejectsNon2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 	req := buildReq(t, map[string]any{"url": srv.URL})
-	outcome, err := NewServer(false).Execute(context.Background(), req)
+	outcome, err := NewServer(loopbackOpts(t, false)).Execute(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +279,7 @@ func TestExecute_ErrorPayloadSurvivesBinaryBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	req := buildReq(t, map[string]any{"url": srv.URL})
-	outcome, err := NewServer(false).Execute(context.Background(), req)
+	outcome, err := NewServer(loopbackOpts(t, false)).Execute(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +307,7 @@ func TestExecute_ErrorPayloadSurvivesMidRuneTruncation(t *testing.T) {
 	}))
 	defer srv.Close()
 	req := buildReq(t, map[string]any{"url": srv.URL})
-	outcome, err := NewServer(false).Execute(context.Background(), req)
+	outcome, err := NewServer(loopbackOpts(t, false)).Execute(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +329,7 @@ func TestExecute_ErrorPayloadSurvivesMidRuneTruncation(t *testing.T) {
 }
 
 func TestNewServer_ClientCarriesNoFixedTimeout(t *testing.T) {
-	s := NewServer(false)
+	s := NewServer(loopbackOpts(t, false))
 	if s.client.Timeout != 0 {
 		t.Fatalf("client.Timeout = %v, want 0 (unbounded) so attributes.timeout_ms alone governs the per-dispatch deadline via context, not a hardcoded client cap", s.client.Timeout)
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
 
 type slogAdapter struct{ l *slog.Logger }
@@ -30,7 +31,12 @@ func (a slogAdapter) Error(msg string, args ...any) { a.l.Error(msg, args...) }
 
 func main() {
 	host := envOr("RIMSKY_SENSOR_WEBHOOK_HOST", "0.0.0.0")
-	grpcPort := atoiOr("RIMSKY_SENSOR_WEBHOOK_PORT", 9084)
+	// @concept: service
+	grpcPort, err := agentport.Resolve("RIMSKY_SENSOR_WEBHOOK_PORT", 9084)
+	if err != nil {
+		slog.Error("sensor-webhook config", "error", err.Error())
+		os.Exit(1)
+	}
 	webhookPort := atoiOr("RIMSKY_SENSOR_WEBHOOK_HTTP_PORT", 9184)
 	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 

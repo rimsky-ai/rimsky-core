@@ -24,8 +24,10 @@
 | `RIMSKY_CA_ENCRYPTION_KEY` | `lib/foundation/pki/encryption.go` |
 | `RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG` | `lib/services/claim_producers/filesystem/server/opts.go` |
 | `RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG` | `lib/services/claim_producers/postgres/server/opts.go` |
+| `RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD` | `lib/services/executors/claude-agent/clirunner.go` |
 | `RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` | `lib/services/executors/claude-agent/opts.go` |
+| `RIMSKY_CLAUDE_AGENT_OBSERVABILITY_HTTP_BRIDGE_URL` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_CONFIG` | `cmd/rimsky/cli/compose/run.go` |
 | `RIMSKY_CONTEXT` | `cmd/rimsky/cli/auth_login.go` |
 | `RIMSKY_CONTROL_API_CA` | `lib/protocols/enroll/trust.go` |
@@ -33,7 +35,6 @@
 | `RIMSKY_CONTROL_API_PORT` | `cmd/rimsky/cli/compose/run.go` |
 | `RIMSKY_CONTROL_API_TOKEN` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_CONTROL_API_URL` | `cmd/rimsky-host-agent-proxy/config.go` |
-| `RIMSKY_DISPATCH_MAX_USD` | `lib/services/executors/claude-agent/clirunner.go` |
 | `RIMSKY_ENTRYPOINT_MIGRATE` | `cmd/rimsky-entrypoint/main.go` |
 | `RIMSKY_EXECUTOR_CLAUDE_BINARY` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_HOST` | `lib/services/executors/claude-agent/opts.go` |
@@ -41,12 +42,12 @@
 | `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` | `lib/services/executors/http-node/config.go` |
 | `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL` | `lib/services/executors/http-node/config.go` |
 | `RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES` | `lib/services/executors/http-node/config.go` |
-| `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_PORT_GRPC` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_PORT_HTTP` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_SILENCE_MS` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_STUB_MODE` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` | `lib/services/executors/claude-agent/opts.go` |
+| `RIMSKY_EXECUTOR_VERIFIER_HTTP_EGRESS_ALLOWLIST` | `lib/services/executors/verifier-http/opts.go` |
 | `RIMSKY_HOST_AGENT_PROXY_URL` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_LOG_BINARY` | `cmd/internal/roleboot/roleboot.go` |
 | `RIMSKY_LOG_LEVEL` | `cmd/internal/roleboot/roleboot.go` |

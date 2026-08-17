@@ -66,9 +66,9 @@ tidy:
 # suite emits continuously at any load, so the interval never binds.
 #
 # Concurrency caps below bound a real shared resource — the docker daemon the
-# testcontainers-backed suites boot Postgres and rimsky stacks against — per
-# decision:parallel-cap-removal, which admits a cap only for that reason and
-# requires it to name the contention it guards.
+# testcontainers-backed suites boot Postgres and rimsky stacks against. A cap
+# is admitted only for that reason and must name the contention it guards;
+# test/plumbline/makefile_parallel_cap_test.go holds the recipes to it.
 GOTEST_GUARD := $(CURDIR)/tools/gotest-guard.sh
 
 test-root:

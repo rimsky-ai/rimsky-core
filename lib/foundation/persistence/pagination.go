@@ -6,10 +6,13 @@ package persistence
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
+
+var ErrInvalidCursor = errors.New("invalid cursor")
 
 type ListPagination struct {
 	Limit  int

@@ -27,6 +27,9 @@ type Template struct {
 	Tags         []string       `json:"tags,omitempty"`
 	Spec         map[string]any `json:"spec,omitempty"`
 	NoOp         bool           `json:"no_op,omitempty"`
+
+	// @story: validation-warnings-surfaced
+	ValidationWarnings []ValidationFinding `json:"validation_warnings,omitempty"`
 }
 
 func (t *Template) Hash() string {

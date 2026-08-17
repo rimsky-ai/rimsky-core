@@ -62,10 +62,14 @@ var (
 )
 
 // @concept: frame
-const SettlingSignalInstanceKilled = "terminal/error/instance_killed"
+const SettlingSignalInstanceKilled = "terminal/error/" + ErrorClassInstanceKilled
+
+const ErrorClassInstanceKilled = "instance_killed"
 
 // @concept: cancel-siblings
-const SettlingSignalSiblingFailed = "terminal/error/sibling_failed"
+const SettlingSignalSiblingFailed = "terminal/error/" + ErrorClassSiblingFailed
+
+const ErrorClassSiblingFailed = "sibling_failed"
 
 // @concept: node-run
 // @decision: held-as-state-not-phase

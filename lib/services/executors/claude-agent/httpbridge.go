@@ -54,7 +54,7 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *
 		observability.MountTraceBridge(mux, obs.Store())
 	}
 
-	mux.HandleFunc("/execute", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/Execute", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return

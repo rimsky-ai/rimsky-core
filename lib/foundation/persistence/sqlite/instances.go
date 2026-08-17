@@ -143,7 +143,7 @@ func (s *instancesImpl) List(
 	if pag.Cursor != "" {
 		createdAt, id, err := decodeInstanceCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.InstanceRow]{}, fmt.Errorf("instances.list: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.InstanceRow]{}, persistence.ErrInvalidCursor
 		}
 		cursorCreatedAt = formatTime(createdAt)
 		cursorID = id.String()

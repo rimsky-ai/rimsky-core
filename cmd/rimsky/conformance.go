@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/dataprocessing"
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
 	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/lifecyclesubscriber"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/publisher"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/validation"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -103,7 +104,7 @@ func runConformanceLifecycleSubscriber(args []string) int {
 	}
 
 	ctx := context.Background()
-	if err := conformance.RunLifecycleCheck(ctx, *endpoint, *tlsMode, *timeout); err != nil {
+	if err := lifecyclesubscriber.RunLifecycleCheck(ctx, *endpoint, *tlsMode, *timeout); err != nil {
 		fmt.Fprintf(os.Stderr, "lifecycle-subscriber: %v\n", err)
 		return 1
 	}

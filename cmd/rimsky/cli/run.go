@@ -306,6 +306,8 @@ func ensureAgentRunning() error {
 	return nil
 }
 
+// @decision: exit-codes
+// @story: script-friendly-outcome
 func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pollInterval, timeout time.Duration) int {
 	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
@@ -317,7 +319,7 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 		inst, err := c.GetInstance(signalCtx, instanceID)
 		if err != nil {
 			if signalCtx.Err() != nil {
-				return 0
+				return ExitInterrupt
 			}
 			return reportError(err)
 		}
@@ -326,17 +328,26 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 		}
 		if !deadline.IsZero() && time.Now().After(deadline) {
 			fmt.Fprintln(os.Stderr, "timeout waiting for terminal state")
-			return 1
+			return ExitTimeout
 		}
 		select {
 		case <-signalCtx.Done():
-			return 0
+			return ExitInterrupt
 		case <-time.After(pollInterval):
 		}
 	}
+	outcome := ExitAllSuccess
+	if nodes, err := c.ListInstanceNodes(signalCtx, instanceID); err != nil {
+		if signalCtx.Err() != nil {
+			return ExitInterrupt
+		}
+		return reportError(err)
+	} else if o, _ := ClassifyInstanceOutcome(nodes.Nodes); o != OutcomeSuccess {
+		outcome = ExitAnyFailure
+	}
 	if err := c.DeleteInstance(signalCtx, instanceID); err != nil {
 		if signalCtx.Err() != nil {
-			return 0
+			return ExitInterrupt
 		}
 		return reportError(err)
 	}
@@ -345,7 +356,7 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 		if errors.As(err, &apiErr) && apiErr.Status == 409 {
 			fmt.Fprintf(os.Stderr, "warn: undeploy %s skipped (still referenced)\n", hash)
 		} else if signalCtx.Err() != nil {
-			return 0
+			return ExitInterrupt
 		} else {
 			return reportError(err)
 		}
@@ -355,11 +366,11 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 		if errors.As(err, &apiErr) && apiErr.Status == 409 {
 			fmt.Fprintf(os.Stderr, "warn: delete %s skipped (still referenced)\n", hash)
 		} else if signalCtx.Err() != nil {
-			return 0
+			return ExitInterrupt
 		} else {
 			return reportError(err)
 		}
 	}
 	fmt.Fprintln(os.Stdout, "cleanup complete")
-	return 0
+	return outcome
 }

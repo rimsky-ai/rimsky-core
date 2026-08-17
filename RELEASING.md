@@ -208,9 +208,14 @@ the full list.
 ## Go module
 
 ```
-go get github.com/rimsky-ai/rimsky-core@vX.Y.Z
 go get github.com/rimsky-ai/rimsky-core/lib/protocols@vX.Y.Z
 ```
+
+The root module is absent by the same limit that keeps
+`go install github.com/rimsky-ai/rimsky-core/cmd/rimsky@vX.Y.Z` from
+working (see "Two platform/layout limits" above): it depends on the
+unpublished `lib/*` sub-modules through `replace` directives, which a
+version fetch ignores. Install the CLI by one of the paths listed there.
 
 ## npm
 

@@ -48,6 +48,15 @@ func formatAuthAPIError(method, path string, err error) error {
 	return err
 }
 
+// @decision: auth-dry-run-request-flag
+func reportAuthError(method, path string, err error) int {
+	if code, ok := ReportDryRunPreview(err); ok {
+		return code
+	}
+	fmt.Fprintln(os.Stderr, formatAuthAPIError(method, path, err))
+	return 1
+}
+
 type roleSpec struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`

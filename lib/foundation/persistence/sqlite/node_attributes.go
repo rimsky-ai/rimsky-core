@@ -141,7 +141,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		dataToSave = string(raw)
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
-		h, werr := persistence.WriteBlobInTx(ctx, si.blob, persistence.BlobKey{
+		h, werr := persistence.WriteBlob(ctx, si.blob, persistence.BlobKey{
 			NodeID:        nodeID.String(),
 			AttributeName: "data",
 		}, raw, tx)

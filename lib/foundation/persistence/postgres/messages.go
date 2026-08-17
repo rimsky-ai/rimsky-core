@@ -151,7 +151,7 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 	if pag.Cursor != "" {
 		cursorReceived, cursorID, err := decodeMessageCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.MessageRow]{}, fmt.Errorf("postgres.Messages.List: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.MessageRow]{}, persistence.ErrInvalidCursor
 		}
 		args = append(args, cursorReceived, cursorID)
 		where += fmt.Sprintf(" AND (received_at, id) < ($%d, $%d)", len(args)-1, len(args))

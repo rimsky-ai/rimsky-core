@@ -9,18 +9,13 @@ package runtime
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
-	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func ForceFailInFlightRunsForInstance(
@@ -66,17 +61,19 @@ func forceFailRunInstanceKilled(
 		}
 		return nil, err
 	}
-	auditSig := signalpkg.Signal{
-		Type:    signalpkg.TypePath(cascade.SettlingSignalInstanceKilled),
-		Payload: eventpayload.New(&genv1.SettlingSignalPayload{ErrorClass: "instance_killed"}),
+	var nodeType string
+	nodeRow, err := args.Persist.Nodes().Get(ctx, run.NodeID, tx)
+	if err != nil {
+		return nil, err
 	}
-	var now time.Time
-	if args.Clock != nil {
-		now = args.Clock.Now()
+	if nodeRow != nil {
+		nodeType = nodeRow.NodeType
 	}
-	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
-		instanceID, run.NodeID, auditSig, now, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("forceFailRunInstanceKilled: terminal signal audit failed; kill stands",
+	// @concept: signal
+	killSig := signalpkg.BuildTerminalErrorSignal(cascade.ErrorClassInstanceKilled, nil, 0, 0, nil, nil)
+	if err := emitSignalInTxOnce(ctx, args, run.NodeID, nodeType, run.NodeRunID,
+		instanceID, run.FrameID, killSig, tx); err != nil && args.Logger != nil {
+		args.Logger.Warn("forceFailRunInstanceKilled: terminal signal emission failed; kill stands",
 			"node_run_id", run.NodeRunID.String(), "error", err.Error())
 	}
 	if err := drainWaitSetOnSettled(ctx, args, run.FrameID, run.NodeRunID, tx); err != nil && args.Logger != nil {

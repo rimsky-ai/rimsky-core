@@ -5,6 +5,7 @@ package locks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -321,4 +322,39 @@ func TestAddressBookResolveCachedHitDoesNotBlockOnOtherNamesDial(t *testing.T) {
 
 	close(f.dialGate["beta"])
 	<-betaDone
+}
+
+// @concept: service-address-book
+// @story: host-agent-late-bind-all-protocols
+func TestLateBoundProducerResolvesProxyThroughAddressBook(t *testing.T) {
+	f := newAddressBookFixture()
+	f.endpoints["rimsky-host-agent-proxy"] = ProducerEndpoint{Transport: "grpc", Endpoint: "proxy:9090"}
+
+	r := NewRegistry(
+		WithAddressBookResolution(f.lookup, f.dial, 10*time.Second, f.now),
+		WithLateBindServiceProxies(map[string]string{"claim_producer": "rimsky-host-agent-proxy"}),
+		WithLookupInstanceBindings(func(_ context.Context, instanceID string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
+			if instanceID != "instance-1" {
+				return nil, false, nil
+			}
+			return map[string]json.RawMessage{"my-store": json.RawMessage(`{}`)}, true, nil
+		}),
+	)
+
+	got, ok, err := r.ResolveWithContext(context.Background(), "my-store", "instance-1", nil)
+	if err != nil {
+		t.Fatalf("ResolveWithContext(late-bound producer): %v", err)
+	}
+	if !ok || got == nil {
+		t.Fatalf("a template naming a late-bind claim producer must reach the proxy: the proxy name resolves "+
+			"through the in-process registry and then the address book, as the executor path already does; "+
+			"got (%v, %v)", got, ok)
+	}
+	if got.Name() != "rimsky-host-agent-proxy" {
+		t.Fatalf("late-bound producer resolved to %q, want the proxy", got.Name())
+	}
+
+	if _, ok, err := r.ResolveWithContext(context.Background(), "not-bound", "instance-1", nil); err != nil || ok {
+		t.Fatalf("a producer the instance never bound must stay unresolved: got (%v, %v)", ok, err)
+	}
 }

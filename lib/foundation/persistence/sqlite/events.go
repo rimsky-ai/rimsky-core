@@ -56,7 +56,7 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	if pag.Cursor != "" {
 		oc, id, err := persistence.DecodeEventCursor(pag.Cursor)
 		if err != nil {
-			return persistence.EventListResult{}, fmt.Errorf("events.list: bad cursor: %w", err)
+			return persistence.EventListResult{}, persistence.ErrInvalidCursor
 		}
 		cursorOccurred = formatTime(oc)
 		cursorID = id

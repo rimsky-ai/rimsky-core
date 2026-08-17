@@ -107,6 +107,10 @@ func notFound(w http.ResponseWriter, msg string) {
 }
 
 func internalErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, persistence.ErrInvalidCursor) {
+		badRequest(w, persistence.ErrInvalidCursor.Error())
+		return
+	}
 	writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 }
 
@@ -382,9 +386,11 @@ func handleListFrames(deps Deps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		var res persistence.PaginatedListResult[persistence.FrameRow]
+		// @concept: cascade-graph
+		// @story: frame-origin-audit
+		var res persistence.PaginatedListResult[persistence.FrameRowWithMessage]
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			r2, err := deps.Tables.Frames().ListForObservability(ctx, filter, pag, tx)
+			r2, err := deps.Tables.Frames().ListForObservabilityWithMessage(ctx, filter, pag, tx)
 			res = r2
 			return err
 		}); err != nil {
@@ -406,9 +412,11 @@ func handleGetFrame(deps Deps) http.HandlerFunc {
 			badRequest(w, "invalid frame id")
 			return
 		}
-		var row *persistence.FrameRow
+		// @concept: cascade-graph
+		// @story: frame-origin-audit
+		var row *persistence.FrameRowWithMessage
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			r2, err := deps.Tables.Frames().GetForObservability(ctx, id, tx)
+			r2, err := deps.Tables.Frames().GetForObservabilityWithMessage(ctx, id, tx)
 			row = r2
 			return err
 		}); err != nil {

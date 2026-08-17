@@ -136,7 +136,7 @@ func (q *queueImpl) SelectCandidates(
 
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_claim_producers, d.enqueued_at, d.frame_id,
-		        d.prior_dispatch_id, d.prior_dispatch_disposition
+		        d.prior_dispatch_id, d.prior_dispatch_disposition, d.sequence
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		   JOIN rimsky_instances i ON i.id = n.instance_id
@@ -149,7 +149,7 @@ func (q *queueImpl) SelectCandidates(
 		      OR (d.required_claim_producers IS NOT NULL AND cardinality(d.required_claim_producers) > 0)
 		    )
 		    AND d.enqueued_at <= NOW()
-		    AND (d.enqueued_at > $2 OR (d.enqueued_at = $2 AND d.id > $3))
+		    AND (d.enqueued_at, d.sequence, d.id) > ($2, $3, $4)
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_node_runs other
 		       WHERE other.node_id = d.node_id
@@ -162,10 +162,10 @@ func (q *queueImpl) SelectCandidates(
 		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
 		        AND w.drained_at IS NULL
 		    )
-		  ORDER BY d.enqueued_at, d.id
+		  ORDER BY d.enqueued_at, d.sequence, d.id
 		  LIMIT $1
 		  FOR UPDATE OF d SKIP LOCKED`,
-		limit, req.CursorEnqueuedAfter, req.CursorAfterNodeRunID,
+		limit, req.CursorEnqueuedAfter, req.CursorAfterSequence, req.CursorAfterNodeRunID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.SelectCandidates: %w", err)
@@ -183,7 +183,7 @@ func (q *queueImpl) SelectCandidates(
 		if err := rows.Scan(
 			&c.NodeRunID, &c.NodeID, &c.NodeType,
 			&executorName, &c.RequiredClaimProducers, &c.EnqueuedAt, &c.FrameID,
-			&priorRunPtr, &priorDisposition,
+			&priorRunPtr, &priorDisposition, &c.Sequence,
 		); err != nil {
 			return nil, fmt.Errorf("postgres.SelectCandidates: scan: %w", err)
 		}
@@ -551,7 +551,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	if pag.Cursor != "" {
 		oc, id, err := decodeDispatchCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.DispatchRow]{}, fmt.Errorf("postgres.ListLive: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.DispatchRow]{}, persistence.ErrInvalidCursor
 		}
 		cursorEnq = &oc
 		cursorID = &id

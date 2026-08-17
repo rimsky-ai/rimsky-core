@@ -132,10 +132,11 @@ func acquireCandidate(ctx context.Context, args RunArgs, livenessInterval time.D
 	}
 	var (
 		cursorEnqueued time.Time
+		cursorSequence int64
 		cursorID       shared.UUID
 	)
 	for {
-		candidates, err := selectCandidatesShortTx(ctx, args, cursorEnqueued, cursorID)
+		candidates, err := selectCandidatesShortTx(ctx, args, cursorEnqueued, cursorSequence, cursorID)
 		if err != nil {
 			return acquisition{}, false, err
 		}
@@ -150,7 +151,7 @@ func acquireCandidate(ctx context.Context, args RunArgs, livenessInterval time.D
 			return acquisition{}, false, nil
 		}
 		last := candidates[len(candidates)-1]
-		cursorEnqueued, cursorID = last.EnqueuedAt, last.NodeRunID
+		cursorEnqueued, cursorSequence, cursorID = last.EnqueuedAt, last.Sequence, last.NodeRunID
 	}
 }
 
@@ -318,7 +319,7 @@ func acquireOneCandidateWithRetry(
 
 func selectCandidatesShortTx(
 	ctx context.Context, args RunArgs,
-	cursorEnqueued time.Time, cursorID shared.UUID,
+	cursorEnqueued time.Time, cursorSequence int64, cursorID shared.UUID,
 ) ([]persistence.Candidate, error) {
 	limit := args.SelectCandidatesLimit
 	if limit <= 0 {
@@ -329,6 +330,7 @@ func selectCandidatesShortTx(
 		out, err := args.Queue.SelectCandidates(ctx, persistence.SelectCandidatesRequest{
 			Limit:                limit,
 			CursorEnqueuedAfter:  cursorEnqueued,
+			CursorAfterSequence:  cursorSequence,
 			CursorAfterNodeRunID: cursorID,
 		}, tx)
 		if err != nil {

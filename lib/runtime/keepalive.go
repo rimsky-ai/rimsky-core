@@ -86,7 +86,7 @@ func (c *CallbackServer) renewClaimExpiryForRun(ctx context.Context, runID share
 		interval = 5 * time.Second
 	}
 	newExpiry := claimExpiryFromLiveness(c.clockNow().UTC(), interval)
-	return c.ClaimHandles.RenewExpiryForHolderRun(ctx, runID, newExpiry, tx)
+	return c.ClaimHandles.RenewExpiryForHolderRun(ctx, runID, c.SupervisorID, newExpiry, tx)
 }
 
 func (c *CallbackServer) clockNow() time.Time {

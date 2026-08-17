@@ -101,7 +101,7 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 	if pag.Cursor != "" {
 		createdAt, id, err := decodeNodeCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.NodeRow]{}, fmt.Errorf("nodes.listByInstancePaged: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.NodeRow]{}, persistence.ErrInvalidCursor
 		}
 		cursorCreatedAt = formatTime(createdAt)
 		cursorID = id.String()
@@ -847,7 +847,8 @@ func (s *nodesImpl) FindLatestCascadePending(
 	ctx context.Context, nodeID, runScopeID, frameID foundationshared.UUID, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ? AND frame_id = ?
 		    AND state = 'pending'
@@ -910,7 +911,8 @@ func (s *nodesImpl) CreateCascadePending(
 // @concept: cascade
 func (s *nodesImpl) GetRunForGate(ctx context.Context, runID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs WHERE id = ?`, runID.String(),
 	)
 	return scanGateRow(row)
@@ -1114,7 +1116,8 @@ func (s *nodesImpl) GetPriorRunBySequence(
 	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
 		  ORDER BY sequence DESC
@@ -1135,6 +1138,7 @@ func (s *nodesImpl) DeletePriorCascadeStales(
 		`DELETE FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
 		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL
+		    AND park_resumed_at IS NULL
 		  RETURNING scratch_handle, scratch_handle_backend`,
 		nodeID.String(), runScopeID.String(), beforeSeq,
 	)
@@ -1190,7 +1194,8 @@ func (s *nodesImpl) GetPriorCascadeQueuedNotClaimed(
 	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
 		    AND state IN ('pending','stale') AND creation_reason = 'cascade' AND claimed_by IS NULL
@@ -1206,7 +1211,8 @@ func (s *nodesImpl) GetMostRecentSettledRun(
 	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (*persistence.NodeRunForGate, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, '')
+		`SELECT id, node_id, run_scope_id, frame_id, sequence, state, creation_reason, COALESCE(claimed_by, ''),
+		        park_resumed_at IS NOT NULL
 		   FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
 		    AND state = 'fresh'
@@ -1378,8 +1384,9 @@ func scanGateRow(row *sql.Row) (*persistence.NodeRunForGate, error) {
 		stateStr     string
 		reasonStr    string
 		claimedByStr string
+		resumedPark  bool
 	)
-	err := row.Scan(&runIDStr, &nodeIDStr, &runScopeStr, &frameIDStr, &sequence, &stateStr, &reasonStr, &claimedByStr)
+	err := row.Scan(&runIDStr, &nodeIDStr, &runScopeStr, &frameIDStr, &sequence, &stateStr, &reasonStr, &claimedByStr, &resumedPark)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1411,5 +1418,7 @@ func scanGateRow(row *sql.Row) (*persistence.NodeRunForGate, error) {
 		State:          cascade.NodeState(stateStr),
 		CreationReason: cascade.CreationReason(reasonStr),
 		ClaimedBy:      claimedByStr,
+
+		ResumedFromPark: resumedPark,
 	}, nil
 }
