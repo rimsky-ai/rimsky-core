@@ -24,8 +24,4 @@ The ruling decides whether these kinds are debt or a gap.
 
 ## Ruling
 
-> Recommended ruling (/verify-issues): Retire the two kinds and add the writer invariant with its check. A filterable kind nobody emits is a trap by construction, and the check keeps the next one out.
->
-> Rationale: the claim family carries acquisition and resolution kinds that the code emits. Two more kinds with no writer add vocabulary without information. The pre-v1 rule favours removal over carrying them forward. Flip case: if a lineage or dashboard consumer wants the moment a claim is acquired as a distinct row, and not the sub-claim or resolution rows, wire the two kinds and say which transition writes each.
-
-<!-- Owner: this is a recommendation, not your decision. Leave it as-is to accept — the next /plan-sprint carries it, naming the generated/recommended batches at sign-off. Edit the text to redirect, empty the section to discuss live, or delete this note to adopt the ruling as your own. -->
+Finish the feature. This is an underimplemented capability a user wants, not vocabulary debt. `story:event-log-read` promises node lifecycle transitions, message activity, and supervisor decisions in one feed filterable by kind. `concept:event-log` names node transitions among the rows it writes. Every kind the enum declares and the filter accepts gets a writer at the transition it names. That covers the two kinds named here and the six others nothing writes: `state_transition`, `work_rejected`, `no_op_commit`, `claim_resolved`, `attributes_committed`, `message_sent`. Expand the event-kind vocabulary where an observable transition has no kind. Keep the writer invariant and its check, so a filterable kind nobody emits cannot recur.
