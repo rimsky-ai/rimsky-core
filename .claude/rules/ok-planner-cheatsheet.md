@@ -1,6 +1,6 @@
 # ok-planner Cheatsheet
 
-Materialized by ok-planner v18.6.2. Suite-owned:
+Materialized by ok-planner v18.8.0. Suite-owned:
 overwritten wholesale by the front door's administration (`/ok`);
 project-specific rules belong in your own files under `.claude/rules/`.
 
@@ -52,13 +52,25 @@ needs:
 `/plan-sprint` produces a sprint in `sprints/` — corpus deltas, work
 items, a fixed completion contract — pulling every ruled issue in
 without re-discussion, then resolving with the owner the unruled open
-issues that bear on the work. Executing the sprint is an ordinary
-working session or an orchestrator's job, same contract either way:
-stage the work items yourself, apply the deltas to `design/`, build,
-run the project's test suites, and finish with `/certify-work`. The
-gate's review-fix loop fixes every finding it can; only
-architect-confirmed intent forks and the remainders escalated at its
-cycle cap land in `issues/`, made ruling-ready by `/verify-issues`.
+issues that bear on the work. Executing the sprint is a team the
+session relays, same contract for every executor: stage the work
+items into the completion report (mirrored in the harness task tools
+where available), then feed one builder (`opus`) a stage at a time —
+it applies the deltas to `design/`, builds, tests what it built, and
+keeps the report — and one standing reviewer (`opus`) each landed
+stage's paths under the gate's own code-review brief. The session
+opens the report with the staged list before the build and marks the
+closing stages after the team retires; during the build it edits
+nothing. Code complete means the built work works and the reviewer's
+ledger is empty; `/certify-work` runs immediately after, cold, as the
+regression. The gate's review-fix loop runs standing agents — the
+code reviewer, the alignment judge, the fixer, the architect — over
+rounds against a finding ledger, and ends at the first round in which
+neither the fixer nor the architect edited any file (code, corpus, or
+the report's `## Divergences`). Only architect-confirmed intent
+forks — the report's claimed forks among them — and the remainders
+escalated at its cap land in `issues/`, made ruling-ready by
+`/verify-issues`.
 Whether the corpus's claims still hold is `/audit`'s question, on the
 owner's cadence, never at a close. At a release, `/document` ensures a
 current audit (running `/audit` when the tree has moved past its
@@ -93,7 +105,11 @@ during `/plan-sprint`.
 The implementation-audit corpus under
 `.ok-planner/audits/{concepts,stories,decisions}/` holds one file per
 live artifact, written only by the periodic `/audit` run, never by the
-implementing session, never hand-edited. An audit answers two
+implementing session, never hand-edited. Only a running `/audit`
+reads or writes `.ok-planner/audits/` and `.ok-planner/experiments/`:
+they record behavior at the time of the audit. An experiment the work
+breaks stays broken until the next run repairs or retires it. An
+audit answers two
 independent questions in one sentence to one paragraph: `text:`
 (`compliant` | `noncompliant`) — does the body follow its authoring
 rules — and `implementation:` (`supported` | `unsupported`) — does the
@@ -106,7 +122,9 @@ The instrument differs by kind. Story support is measured from the
 user's side: the maintained experiments at `.ok-planner/experiments/`,
 re-run at this tree through the public surface the extraction
 records — never settled by reading or by citing a test, and
-conclusions never carry. Assumptions — user-vantage priors a boxed
+conclusions never carry. Each experiment is self-contained: it uses
+only what an end user has and shares no helper code with the project
+or with another experiment. Assumptions — user-vantage priors a boxed
 agent synthesizes cold from user-visible material — are measured on
 the same instrument, each record closing with a disposition (`held` |
 `trap` | `unverified`); a contradicted assumption is documentation,

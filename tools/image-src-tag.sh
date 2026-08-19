@@ -1,5 +1,5 @@
 #!/bin/sh
-# Materialized by ok-workspaces v18.6.2 — suite-owned; overwritten on converge; do not hand-edit.
+# Materialized by ok-workspaces v18.8.0 — suite-owned; overwritten on converge; do not hand-edit.
 
 set -eu
 root=$PWD

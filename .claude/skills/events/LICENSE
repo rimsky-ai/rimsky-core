@@ -1,15 +1,8 @@
-ok-plumbline, materialized by the ok-* suite (Fall Guy LLC).
+Vendored ok-plumbline files, materialized by the ok-* suite (Fall Guy LLC).
 
-The license below covers the ok-plumbline files the suite's
-administration materialized into this directory: this file, the
-package marker, the binaries under bin/, the hooks under hooks/, the
-practice definitions, the writing, testing, and events standards
-under docs/, and the ceremony contributions under ceremony/. It
-does not cover this project's own work — config.json, the budget
-baseline, the subjects and practices this project authored, their
-generated catalog tables of contents, their audits, and anything else
-the project wrote here are the project's own, licensed however the
-project licenses itself.
+The license below covers the suite-owned files in this directory. Other
+skills under .claude/skills/ are not covered by it — they carry their own
+license, or the project's.
 
 ======================================================================
 

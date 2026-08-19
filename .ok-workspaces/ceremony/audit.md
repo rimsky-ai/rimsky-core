@@ -105,4 +105,4 @@ Status: clean | findings
 - Never edits a file, never tears down a worktree, and never re-runs
   after fixes unless asked.
 
-<!-- Materialized by ok-workspaces v18.6.2 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-workspaces v18.8.0 — suite-owned; overwritten on converge; do not hand-edit. -->
