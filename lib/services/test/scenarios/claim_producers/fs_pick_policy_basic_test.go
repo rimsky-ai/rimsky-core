@@ -118,9 +118,6 @@ func startFilesystemStore(t *testing.T, cfg server.Config) (grpcAddr string, tea
 
 	return addr, func() {
 		cancel()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
+		<-done
 	}
 }

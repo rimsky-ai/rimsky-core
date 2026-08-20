@@ -6,13 +6,13 @@ package frame_resolution
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -33,16 +33,15 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 
-	deadline := time.Now().Add(5 * time.Second)
 	var first frameRow
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the instance's single frame to end", func() bool {
 		frames := listFrames(t, h, iid)
-		if len(frames) == 1 && (frames[0].State == "failed" || frames[0].State == "completed") {
-			first = frames[0]
-			break
+		if len(frames) != 1 || (frames[0].State != "failed" && frames[0].State != "completed") {
+			return false
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		first = frames[0]
+		return true
+	})
 	require.Equal(t, "failed", first.State,
 		"frame should end failed when its expected node ended failed")
 	require.NotNil(t, first.EndedAt, "failed frame must have ended_at set")

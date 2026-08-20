@@ -5,7 +5,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -99,21 +99,18 @@ func TestSubgraphDelegateFailure_ResolvesCallerClaims(t *testing.T) {
 	midNode := h.FindNode(iid, "inner-mid")
 	require.NotNil(t, midNode, "inner-mid node missing")
 
-	for {
+	awaited.Until(t, "the caller node to hold a claim_handle row", func() bool {
 		var claimRows int
 		h.QueryRowSQL(`
 			SELECT COUNT(*) FROM rimsky_claim_handles
 			 WHERE holder_node_id = $1
 		`, []any{callerNode.ID}, &claimRows)
-		if claimRows >= 1 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return claimRows >= 1
+	})
 
 	h.WaitForNodeState(midNode.ID, cascade.NodeStateFailed)
 
-	for {
+	awaited.Until(t, "the caller node's latest run to fail", func() bool {
 		var callerState string
 		h.QueryRowSQL(`
 			SELECT COALESCE(state, 'fresh')
@@ -122,22 +119,16 @@ func TestSubgraphDelegateFailure_ResolvesCallerClaims(t *testing.T) {
 			 ORDER BY enqueued_at DESC
 			 LIMIT 1
 		`, []any{callerNode.ID}, &callerState)
-		if callerState == string(cascade.NodeStateFailed) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return callerState == string(cascade.NodeStateFailed)
+	})
 
-	for {
+	awaited.Until(t, "the caller node's claim_handles to leave the active state", func() bool {
 		var activeClaims int
 		h.QueryRowSQL(`
 			SELECT COUNT(*) FROM rimsky_claim_handles
 			 WHERE holder_node_id = $1
 			   AND state = 'active'
 		`, []any{callerNode.ID}, &activeClaims)
-		if activeClaims == 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return activeClaims == 0
+	})
 }

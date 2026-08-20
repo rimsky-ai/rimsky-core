@@ -6,7 +6,6 @@ package per_run_attributes
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -64,20 +64,15 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	deadline := time.Now().Add(15 * time.Second)
 	var latest *persistence.NodeAttributesRow
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the second run to persist its own attribute row", func() bool {
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			latest = r
 			return err
 		})
-		if latest != nil && latest.NodeRunID != firstRunID && latest.Data["value"] == "second" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.NotNil(t, latest)
+		return latest != nil && latest.NodeRunID != firstRunID && latest.Data["value"] == "second"
+	})
 	require.NotEqual(t, firstRunID, latest.NodeRunID,
 		"second run should have a different node_run_id")
 	require.Equal(t, w.ID, latest.NodeID,

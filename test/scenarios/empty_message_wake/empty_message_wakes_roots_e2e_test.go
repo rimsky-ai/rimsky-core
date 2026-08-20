@@ -5,7 +5,7 @@
 // @concept: cascade
 // @concept: message
 // @decision: empty-message-as-root-trigger
-// @decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edges-derived-on-demand
 
 package empty_message_wake
 
@@ -15,7 +15,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -23,6 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -62,7 +62,7 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 	instanceID := postCreateInstance(t, h, templateHash, "ck-empty-message-wakes-roots")
 	require.NotEmpty(t, instanceID)
 
-	time.Sleep(500 * time.Millisecond)
+	h.WaitForSchedulerQuiescence()
 	require.Empty(t, getInstanceFrames(t, h, instanceID), "instance must be idle before the wake step (STORY-instance-create-is-idle precondition)")
 	require.Empty(t, getInstanceMessages(t, h, instanceID), "message ledger must be empty before the wake step (STORY-instance-create-is-idle precondition)")
 
@@ -77,10 +77,9 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 	require.NotEmpty(t, postOut.MessageID, "POST /messages must return a non-empty message_id")
 	wakeMessageID := postOut.MessageID
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "a frame must open in response to the empty-message emit", func() bool {
 		return len(getInstanceFrames(t, h, instanceID)) >= 1
-	}, 10*time.Second, 100*time.Millisecond,
-		"a frame must open in response to the empty-message emit")
+	})
 
 	frames := getInstanceFrames(t, h, instanceID)
 	require.Len(t, frames, 1, "exactly one frame must open for one empty-message emit; got %d", len(frames))

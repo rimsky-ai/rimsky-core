@@ -20,9 +20,9 @@ To give rimsky a uniform way to accept inbound messages from peer services — s
 
 Owns: the protocol surface, the peer client, the rimsky-side dispatch helpers, and the capability check on the universal message-send surface.
 
-Does NOT own: the publisher's substrate (cron clock, HTTP endpoint, object-store, etc.), per-publisher state persistence (each publisher owns its own state DB; see `concept:sensor`), the message envelope shape (that's `concept:message`), or the deployment-tier replica posture (that's `concept:replica`).
+Does NOT own: the publisher's substrate (cron clock, HTTP endpoint, object-store, etc.), per-publisher state persistence (each publisher owns its own state DB; see `concept:sensor`), the message envelope shape (that's `concept:message`).
 
-Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifecycle), `concept:sensor` (one class of publisher implementation), `concept:message` (the envelope shape), `concept:claim-producer` and `concept:executor` (peer-service siblings with their own protocols), `concept:replica` (publisher replica posture).
+Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifecycle), `concept:sensor` (one class of publisher implementation), `concept:message` (the envelope shape), `concept:claim-producer` and `concept:executor` (peer-service siblings with their own protocols).
 
 ## Invariants
 
@@ -30,5 +30,5 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 - The subscribe verb carries the message type the publisher will stamp on every sent envelope; the subscribe surface carries no receiver-routing field — delivery routes by message type against node-subscription edges. The publisher persists the type and copies it onto each sent message envelope.
 - Send-time messages identify the sender as a publisher and present the per-subscription capability token. Rimsky derives the sender name from the publisher-subscription row; the request's declared sender is ignored for trust.
 - Mounting-to-active reconciliation, its retry cadence, and the failed-state contract are owned by `concept:publisher-subscription`.
-- Replicas are not coordinated by rimsky. Single-replica is the durable posture per `concept:replica`.
+- Rimsky addresses a publisher by its declared endpoint and coordinates nothing across the processes behind it. Whatever answers that endpoint is the publisher.
 - invariant: message-inertness — payload bytes flow from publisher → message envelope → consumer's substitution leaf uninspected outside the sanctioned read sites (the receipt-time body-schema validation among them; see `concept:inertness`).

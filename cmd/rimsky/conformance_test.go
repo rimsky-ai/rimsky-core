@@ -127,7 +127,7 @@ var conformanceSubcommands = []struct {
 	{
 		name:    "publisher",
 		run:     runConformancePublisher,
-		flags:   []string{"endpoint", "transport", "kind", "resolved-config", "timeout", "instance-id", "message-type", "control-api"},
+		flags:   []string{"endpoint", "transport", "kind", "resolved-config", "timeout", "instance-id", "message-type", "control-api", "key"},
 		reqMsg:  "--endpoint required",
 		reqExit: 2,
 	},

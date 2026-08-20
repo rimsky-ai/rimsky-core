@@ -5,12 +5,28 @@ package cli_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/internal/clitest"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
+
+func waitForListEventsCalls(t *testing.T, srv *clitest.Server, n int64) {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("the follow loop to call ListEvents %d time(s): the backlog's pages, then the "+
+		"poll that finds nothing new", n),
+		func() bool { return srv.ListEventsHitCount() >= n })
+}
+
+func waitForInstancePolls(t *testing.T, srv *clitest.Server, n int64) {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("watch to read the instance %d time(s), which it does once per poll", n),
+		func() bool { return srv.GetInstanceHitCount() >= n })
+}
 
 func TestRunWatch_Chronological(t *testing.T) {
 	srv := setupClitest(t)
@@ -37,11 +53,7 @@ func TestRunWatch_Chronological(t *testing.T) {
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit promptly on a terminal instance")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
@@ -95,11 +107,7 @@ func TestRunWatch_KindFlagFiltersServerSide(t *testing.T) {
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", "--kind", "work_started", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit promptly on a terminal instance")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
@@ -141,11 +149,7 @@ func TestRunWatch_DrainsFullBacklogAcrossMultiplePagesInChronologicalOrder(t *te
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit promptly on a terminal instance")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
@@ -203,11 +207,7 @@ func TestRunWatch_DoesNotRescanFullHistoryOnSubsequentPolls(t *testing.T) {
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10ms", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit on an idle instance")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0", exit)
@@ -223,28 +223,29 @@ func TestRunWatch_PendingMessagesBlockIdle(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.SetInstanceActivity(inst.ID, 1, 0)
+	srv.State.SetInstanceActivityScript(inst.ID,
+		clitest.InstanceActivity{PendingMessages: 1},
+		clitest.InstanceActivity{PendingMessages: 1},
+		clitest.InstanceActivity{PendingMessages: 1},
+		clitest.InstanceActivity{},
+		clitest.InstanceActivity{},
+	)
 
 	done := make(chan int, 1)
 	exit := -1
 	out := captureStdout(t, func() {
 		go func() {
-			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "20ms", inst.ID})
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "1ms", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-			t.Errorf("watch exited (%d) while a message was still pending", exit)
-		case <-time.After(200 * time.Millisecond):
-		}
-		srv.State.SetInstanceActivity(inst.ID, 0, 0)
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit after the pending message cleared")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+	if got := srv.State.InstanceActivityReads(inst.ID); got != 5 {
+		t.Fatalf("watch read the instance's activity %d time(s), want 5: the three pending-message reads must "+
+			"not count towards the idle confirmation, so the exit can only follow the two idle reads that end "+
+			"the script", got)
 	}
 	if !strings.Contains(out, "idle") {
 		t.Fatalf("watch output missing idle line; output:\n%s", out)
@@ -255,34 +256,28 @@ func TestRunWatch_IdleConfirmationResetsOnTransientBusy(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.SetInstanceActivity(inst.ID, 0, 0)
+	srv.State.SetInstanceActivityScript(inst.ID,
+		clitest.InstanceActivity{},
+		clitest.InstanceActivity{RunningFrames: 1},
+		clitest.InstanceActivity{},
+		clitest.InstanceActivity{},
+	)
 
 	done := make(chan int, 1)
 	exit := -1
 	out := captureStdout(t, func() {
 		go func() {
-			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "20ms", inst.ID})
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "1ms", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-			t.Errorf("watch exited (%d) after only a single idle poll; idleConfirmPolls should require two consecutive idle reads", exit)
-		case <-time.After(15 * time.Millisecond):
-		}
-		srv.State.SetInstanceActivity(inst.ID, 0, 1)
-		select {
-		case exit = <-done:
-			t.Errorf("watch exited (%d) despite a running frame between the two idle polls", exit)
-		case <-time.After(60 * time.Millisecond):
-		}
-		srv.State.SetInstanceActivity(inst.ID, 0, 0)
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit after two fresh consecutive idle polls following the reset")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+	if got := srv.State.InstanceActivityReads(inst.ID); got != 4 {
+		t.Fatalf("watch read the instance's activity %d time(s), want 4: an exit at 1 means a single idle read "+
+			"confirmed idle, and an exit at 3 means the running frame between the two idle reads did not reset "+
+			"the confirmation", got)
 	}
 	if !strings.Contains(out, "idle") {
 		t.Fatalf("watch output missing idle line; output:\n%s", out)
@@ -304,11 +299,7 @@ func TestRunWatch_ExitsOnIdleInstance(t *testing.T) {
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "50ms", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit on an idle instance (no open frame, no pending messages)")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
@@ -331,21 +322,18 @@ func TestRunWatch_UntilTerminatedIgnoresIdle(t *testing.T) {
 			done <- cli.RunWatch(context.Background(),
 				[]string{"--poll-interval", "50ms", "--until", "terminated", inst.ID})
 		}()
+		waitForInstancePolls(t, srv, 4)
 		select {
 		case exit = <-done:
 			t.Errorf("watch --until terminated exited (%d) on a merely-idle instance", exit)
-		case <-time.After(500 * time.Millisecond):
+		default:
 		}
 		terminatedAt, err := time.Parse(time.RFC3339, "2026-06-07T00:00:04Z")
 		if err != nil {
 			t.Fatal(err)
 		}
 		srv.State.SetInstanceTerminated(inst.ID, &terminatedAt)
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch --until terminated did not exit after termination")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
@@ -359,26 +347,26 @@ func TestRunWatch_IdleWaitsForOpenFrame(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.SetInstanceActivity(inst.ID, 0, 1)
+	srv.State.SetInstanceActivityScript(inst.ID,
+		clitest.InstanceActivity{RunningFrames: 1},
+		clitest.InstanceActivity{RunningFrames: 1},
+		clitest.InstanceActivity{RunningFrames: 1},
+		clitest.InstanceActivity{},
+		clitest.InstanceActivity{},
+	)
 
 	done := make(chan int, 1)
 	exit := -1
 	out := captureStdout(t, func() {
 		go func() {
-			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "50ms", inst.ID})
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "1ms", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-			t.Errorf("watch exited (%d) while a frame was still running", exit)
-		case <-time.After(500 * time.Millisecond):
-		}
-		srv.State.SetInstanceActivity(inst.ID, 0, 0)
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit after the frame resolved")
-		}
+		exit = <-done
 	})
+	if got := srv.State.InstanceActivityReads(inst.ID); got != 5 {
+		t.Fatalf("watch read the instance's activity %d time(s), want 5: a running frame must not count towards "+
+			"the idle confirmation, so the exit can only follow the two idle reads that end the script", got)
+	}
 	if exit != 0 {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
 	}

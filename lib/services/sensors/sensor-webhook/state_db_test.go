@@ -22,7 +22,7 @@ import (
 
 func stateColumns(ctx context.Context, t *testing.T, s *stateDB) []string {
 	t.Helper()
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.db.Query(ctx,
 		`SELECT column_name FROM information_schema.columns WHERE table_name = 'sensor_webhook_state'`)
 	if err != nil {
 		t.Fatalf("query columns: %v", err)
@@ -42,7 +42,7 @@ func stateColumns(ctx context.Context, t *testing.T, s *stateDB) []string {
 
 func dumpStateRows(ctx context.Context, t *testing.T, s *stateDB) string {
 	t.Helper()
-	rows, err := s.db.QueryContext(ctx, `SELECT to_jsonb(t)::text FROM sensor_webhook_state t`)
+	rows, err := s.db.Query(ctx, `SELECT to_jsonb(t)::text FROM sensor_webhook_state t`)
 	if err != nil {
 		t.Fatalf("dump rows: %v", err)
 	}

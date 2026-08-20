@@ -53,7 +53,7 @@ func TestExecuteHappyPath(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./codegen"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{
@@ -93,7 +93,7 @@ func TestExecuteCallbackRewrite(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	_ = collectExecute(t, client, ctx, &genv1.ExecuteRequest{
 		InstanceId:  "inst-1",
@@ -116,7 +116,7 @@ func TestExecuteErrorPreserved(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(outcome); got != "child_thing_broke" {
@@ -130,7 +130,7 @@ func TestExecuteMissingServiceName(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(outcome); got != errClassBindingNotFound {
@@ -143,7 +143,7 @@ func TestExecuteInstanceNotFound(t *testing.T) {
 	connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "missing"})
 	if got := terminalErrorClass(outcome); got != errClassBindingNotFound {
@@ -156,7 +156,7 @@ func TestExecuteAgentNotConnected(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(outcome); got != errClassHostAgentNotConnected {
@@ -170,7 +170,7 @@ func TestExecuteBindingNotFound(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"other": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(outcome); got != errClassBindingNotFound {
@@ -185,7 +185,7 @@ func TestExecuteSpawnFailed(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(outcome); got != errClassSpawnFailed {
@@ -193,18 +193,41 @@ func TestExecuteSpawnFailed(t *testing.T) {
 	}
 }
 
-func TestExecuteSpawnTimeout(t *testing.T) {
+func TestExecuteFailsSpawnWhenTheAgentNeverAcks(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	fa := connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
-	fa.setSpawnDelay(3 * time.Second)
+	fa.setSpawnSilent(true)
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 8*time.Second)
-	defer cancel()
-	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	outcome := collectExecute(t, client, callCtx("codegen"), &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(outcome); got != errClassSpawnFailed {
 		t.Fatalf("expected %s, got %q", errClassSpawnFailed, got)
+	}
+}
+
+func TestSpawnAckDeadlineOutlastsTheReadinessDeadlineTheAgentIsGiven(t *testing.T) {
+	cases := []struct {
+		name      string
+		fallback  time.Duration
+		binding   bindingSpec
+		wantReady time.Duration
+	}{
+		{"binding sets its own readiness deadline", 30 * time.Second, bindingSpec{TimeoutSeconds: 3}, 3 * time.Second},
+		{"binding declares none, so the proxy default stands", 30 * time.Second, bindingSpec{}, 30 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ready, ack := spawnDeadlines(tc.fallback, tc.binding)
+			if ready != tc.wantReady {
+				t.Fatalf("readiness deadline = %s, want %s", ready, tc.wantReady)
+			}
+			if ack <= ready {
+				t.Fatalf("ack deadline %s does not outlast the readiness deadline %s the agent is given — the "+
+					"proxy would abandon the wait as the agent reports why the child never bound, and the "+
+					"operator would read the proxy's own timeout instead of the real reason", ack, ready)
+			}
+		})
 	}
 }
 
@@ -215,7 +238,7 @@ func TestExecuteDisconnectMidDispatch(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(outcome); got != errClassHostAgentDisconnected {
@@ -238,14 +261,11 @@ func TestExecuteSupervisorCancelSendsCancelFrame(t *testing.T) {
 		_, _ = client.Execute(ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	}()
 
-	time.Sleep(300 * time.Millisecond)
+	waitFor(t, "the agent to receive the stalled dispatch, so the cancel lands mid-stream",
+		func() bool { return fa.dispatches() > 0 })
 	cancel()
 
-	select {
-	case <-fa.canceled:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("proxy did not send a CANCEL frame to the agent on supervisor cancel")
-	}
+	<-fa.canceled
 	<-done
 }
 
@@ -259,7 +279,7 @@ func TestExecuteFetcherFallbackPopulatesCache(t *testing.T) {
 	connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if terminalErrorClass(outcome) != "" {

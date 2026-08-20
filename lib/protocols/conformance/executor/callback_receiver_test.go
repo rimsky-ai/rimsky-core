@@ -206,16 +206,12 @@ func TestReceiver_RegisterThenHandle(t *testing.T) {
 		"success": map[string]any{"changed": true},
 	})
 
-	select {
-	case out := <-ch:
-		if out == nil {
-			t.Fatal("nil outcome")
-		}
-		if _, ok := out.GetOutcome().(*genv1.Outcome_Success); !ok {
-			t.Fatalf("expected Success, got %T", out.GetOutcome())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for callback")
+	out := <-ch
+	if out == nil {
+		t.Fatal("nil outcome")
+	}
+	if _, ok := out.GetOutcome().(*genv1.Outcome_Success); !ok {
+		t.Fatalf("expected Success, got %T", out.GetOutcome())
 	}
 }
 
@@ -231,16 +227,9 @@ func TestReceiver_HandleThenRegister(t *testing.T) {
 		"success": map[string]any{"changed": false},
 	})
 
-	time.Sleep(100 * time.Millisecond)
-
 	ch := r.Register(ackID)
-	select {
-	case out := <-ch:
-		if _, ok := out.GetOutcome().(*genv1.Outcome_Success); !ok {
-			t.Fatalf("expected Success, got %T", out.GetOutcome())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for buffered callback")
+	if _, ok := (<-ch).GetOutcome().(*genv1.Outcome_Success); !ok {
+		t.Fatal("expected Success from the buffered callback")
 	}
 }
 
@@ -345,21 +334,13 @@ func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
 				postCallback(t, r.URL(), ackID, map[string]any{
 					"success": map[string]any{"changed": false},
 				})
-				select {
-				case <-ch:
-				case <-time.After(2 * time.Second):
-					t.Errorf("ack=%s: timed out", ackID)
-				}
+				<-ch
 			} else {
 				postCallback(t, r.URL(), ackID, map[string]any{
 					"success": map[string]any{"changed": true},
 				})
 				ch := r.Register(ackID)
-				select {
-				case <-ch:
-				case <-time.After(2 * time.Second):
-					t.Errorf("ack=%s: timed out", ackID)
-				}
+				<-ch
 			}
 		}()
 	}
@@ -493,19 +474,15 @@ func TestReceiver_SimulateRestart_RejectsAndSignalsAckID(t *testing.T) {
 		t.Fatalf("status=%d, want %d during simulated restart", resp.StatusCode, http.StatusServiceUnavailable)
 	}
 
-	select {
-	case gotID := <-hits:
-		if gotID != ackID {
-			t.Fatalf("restart-hit ackID=%q, want %q", gotID, ackID)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the restart-simulation hit signal")
+	if gotID := <-hits; gotID != ackID {
+		t.Fatalf("restart-hit ackID=%q, want %q", gotID, ackID)
 	}
 
 	select {
 	case <-ch:
-		t.Fatal("the rejected callback must not resolve the registered channel")
-	case <-time.After(100 * time.Millisecond):
+		t.Fatal("the rejected callback must not resolve the registered channel; the POST has already come back " +
+			"503, so the handler is done with it")
+	default:
 	}
 }
 
@@ -532,13 +509,8 @@ func TestReceiver_EndSimulatedRestart_ResumesNormalDelivery(t *testing.T) {
 
 	postCallback(t, r.URL(), ackID, map[string]any{"success": map[string]any{"changed": true}})
 
-	select {
-	case out := <-ch:
-		if _, ok := out.GetOutcome().(*genv1.Outcome_Success); !ok {
-			t.Fatalf("expected Success after EndSimulatedRestart, got %T", out.GetOutcome())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for delivery after EndSimulatedRestart")
+	if out := <-ch; out.GetSuccess() == nil {
+		t.Fatalf("expected Success after EndSimulatedRestart, got %T", out.GetOutcome())
 	}
 }
 

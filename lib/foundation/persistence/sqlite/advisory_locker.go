@@ -8,6 +8,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -16,8 +17,9 @@ import (
 const migrationLockPollInterval = 25 * time.Millisecond
 
 type advisoryLockerImpl struct {
-	tickLockPath      string
-	migrationLockPath string
+	tickLockPath       string
+	migrationLockPath  string
+	contendedPollCount atomic.Int64
 }
 
 // @decision: sqlite-multiproc-safety
@@ -39,6 +41,8 @@ func (c *advisoryLockerImpl) TrySchedulerTick(_ context.Context) (bool, func(), 
 	return true, release, nil
 }
 
+func (c *advisoryLockerImpl) contendedPolls() int64 { return c.contendedPollCount.Load() }
+
 func (c *advisoryLockerImpl) AcquireMigrationLock(ctx context.Context) (func() error, error) {
 	for {
 		f, held, err := flockTry(c.migrationLockPath)
@@ -54,6 +58,7 @@ func (c *advisoryLockerImpl) AcquireMigrationLock(ctx context.Context) (func() e
 			}
 			return release, nil
 		}
+		c.contendedPollCount.Add(1)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

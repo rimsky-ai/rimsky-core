@@ -157,6 +157,7 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 		if rowB.UpdatedAt.After(rowA.UpdatedAt) {
 			break
 		}
+		//nolint:testwallclock-outcome inter-upsert cadence; this loop exits only once B's row carries a later updated_at than A's
 		time.Sleep(time.Millisecond)
 	}
 

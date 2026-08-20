@@ -6,7 +6,6 @@ package shared
 import (
 	"context"
 	"runtime"
-	"sort"
 	"sync"
 	"time"
 )
@@ -149,7 +148,6 @@ func (c *ControllableClock) flushDueLocked() {
 		}
 	}
 	c.pending = remaining
-	sort.SliceStable(due, func(i, j int) bool { return due[i].due.Before(due[j].due) })
 	for _, p := range due {
 		close(p.done)
 	}

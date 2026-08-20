@@ -10,7 +10,6 @@ package asset_management
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -114,22 +114,20 @@ func TestStory_AssetManagement_ForwardLineageToConsumingRun(t *testing.T) {
 	require.Equal(t, assetAlias, assetItem["alias"])
 
 	var producerRunID string
-	for producerRunID == "" {
+	awaited.Until(t, "a leaf-run lineage record for the producer node", func() bool {
 		producerRunID = mostRecentLeafRunID(t, h, iid, producerNode.ID)
-		if producerRunID == "" {
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
+		return producerRunID != ""
+	})
 
 	var consumerRunID string
-	for consumerRunID == "" {
+	awaited.Until(t, "a consumer leaf run citing the producer run as its source", func() bool {
 		candidate := mostRecentLeafRunID(t, h, iid, consumerNode.ID)
-		if candidate != "" && leafRunCitesSourceRun(t, h, candidate, producerRunID) {
-			consumerRunID = candidate
-		} else {
-			time.Sleep(50 * time.Millisecond)
+		if candidate == "" || !leafRunCitesSourceRun(t, h, candidate, producerRunID) {
+			return false
 		}
-	}
+		consumerRunID = candidate
+		return true
+	})
 
 	url := h.ControlBase + "/v1/lineage/by-source/run/" + producerRunID
 	out := getJSONMap(t, url)

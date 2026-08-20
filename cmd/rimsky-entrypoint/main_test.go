@@ -4,10 +4,8 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +16,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func writeFixtureBinary(t *testing.T, dir, name, body string) string {
@@ -28,17 +26,6 @@ func writeFixtureBinary(t *testing.T, dir, name, body string) string {
 		t.Fatalf("write fixture: %v", err)
 	}
 	return path
-}
-
-func TestNewLeveledHandler_HonorsLogLevel(t *testing.T) {
-	t.Setenv("RIMSKY_LOG_LEVEL", "error")
-	h := newLeveledHandler()
-	if h.Enabled(context.Background(), slog.LevelInfo) {
-		t.Fatal("newLeveledHandler() with RIMSKY_LOG_LEVEL=error still enables Info; the entrypoint's own logger ignores the level knob")
-	}
-	if !h.Enabled(context.Background(), slog.LevelError) {
-		t.Fatal("newLeveledHandler() with RIMSKY_LOG_LEVEL=error should enable Error")
-	}
 }
 
 func TestNameOf(t *testing.T) {
@@ -266,6 +253,7 @@ func waitForFile(path string) {
 		if _, err := os.Stat(path); err == nil {
 			return
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only once the file exists
 		time.Sleep(5 * time.Millisecond)
 	}
 }
@@ -545,8 +533,8 @@ func TestShutdownChildHardExitsOnSecondSignal(t *testing.T) {
 	if !errors.As(err, &exitErr) {
 		t.Fatalf("helper should have hard-exited on the second signal; got err=%v", err)
 	}
-	if exitErr.ExitCode() != shared.HardExitCode {
-		t.Errorf("second signal exit code = %d, want %d", exitErr.ExitCode(), shared.HardExitCode)
+	if exitErr.ExitCode() != serverkit.HardExitCode {
+		t.Errorf("second signal exit code = %d, want %d", exitErr.ExitCode(), serverkit.HardExitCode)
 	}
 }
 

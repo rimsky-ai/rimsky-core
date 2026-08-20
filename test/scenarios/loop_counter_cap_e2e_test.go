@@ -9,7 +9,6 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -19,6 +18,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	loop_counter "github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/loop_counter"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -135,10 +135,9 @@ func TestLoopCounterCapE2E(t *testing.T) {
 	require.Equal(t, int64(1), doneSink.Count(),
 		"done_sink invocations: got %d, want 1", doneSink.Count())
 
-	require.Eventually(t, func() bool { return loopSink.Count() == 1 }, 5*time.Second, 20*time.Millisecond,
-		"loop_sink invocations: got %d, want 1 (default most-recent cascade mode coalesces "+
-			"counter's two same-frame loop-tagged dispatches into loop_sink's latest pending only)",
-		loopSink.Count())
+	awaited.Until(t, "loop_sink to record exactly one invocation: the default most-recent cascade mode coalesces "+
+		"counter's two same-frame loop-tagged dispatches into loop_sink's latest pending",
+		func() bool { return loopSink.Count() == 1 })
 }
 
 // @concept: error-policy

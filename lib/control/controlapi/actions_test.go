@@ -239,7 +239,6 @@ func TestV1Registry(t *testing.T) {
 		"breakpoint:delete":  true,
 		"template:validate":  true,
 		"audit:read":         true,
-		"compose:origin":     true,
 		// @story: frame-origin-audit
 		"instance:list-frames": true,
 		"instance:read-frame":  true,
@@ -309,7 +308,6 @@ func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
 		"auth:revoke":             1,
 		"auth:rotate":             1,
 		"observability:read":      1,
-		composeOriginAction:       0,
 		"mcp:read":                3,
 		"service:enroll":          1,
 		"run:read":                1,

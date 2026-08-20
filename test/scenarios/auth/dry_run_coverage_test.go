@@ -546,7 +546,7 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 		}, tx); err != nil {
 			return err
 		}
-		return f.db.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateFailed, nil, false, tx)
+		return f.db.Tables().Nodes().UpdateState(ctx, runID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx)
 	}); err != nil {
 		t.Fatalf("seed failed node: %v", err)
 	}

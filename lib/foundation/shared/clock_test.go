@@ -10,21 +10,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/internal/awaited"
 	"github.com/stretchr/testify/require"
 )
 
 func TestClockSystemClockNow(t *testing.T) {
+	before := time.Now()
 	got := SystemClock{}.Now()
-	require.WithinDuration(t, time.Now(), got, time.Second)
+	after := time.Now()
+	require.False(t, got.Before(before), "SystemClock.Now() read %s, before the wall clock's %s", got, before)
+	require.False(t, got.After(after), "SystemClock.Now() read %s, after the wall clock's %s", got, after)
 }
 
 func TestClockSystemClockSleepRespectsCtx(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	start := time.Now()
-	err := SystemClock{}.Sleep(ctx, time.Hour)
-	require.ErrorIs(t, err, context.Canceled)
-	require.Less(t, time.Since(start), 200*time.Millisecond)
+	require.ErrorIs(t, SystemClock{}.Sleep(ctx, time.Hour), context.Canceled)
 }
 
 func TestClockControllableClockNow(t *testing.T) {
@@ -47,13 +48,11 @@ func TestClockControllableClockSleepBlocksUntilAdvance(t *testing.T) {
 		woke.Store(true)
 	}()
 
-	for i := 0; i < 100 && func() bool {
+	awaited.Until(t, "the sleeper to register its pending deadline", func() bool {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		return len(c.pending) == 0
-	}(); i++ {
-		time.Sleep(time.Millisecond)
-	}
+		return len(c.pending) == 1
+	})
 	require.False(t, woke.Load(), "sleeper should still be blocked")
 
 	c.Advance(50 * time.Millisecond)
@@ -62,15 +61,13 @@ func TestClockControllableClockSleepBlocksUntilAdvance(t *testing.T) {
 	require.Equal(t, start.Add(50*time.Millisecond), c.Now())
 }
 
-func TestClockControllableClockMultipleSleepersResolveInDeadlineOrder(t *testing.T) {
+func TestClockControllableClockAdvanceWakesEverySleeperItsDeadlinePassedAndNoOther(t *testing.T) {
 	start := time.Date(2026, 4, 22, 12, 0, 0, 0, time.UTC)
 	c := NewControllableClock(start)
 
-	var mu sync.Mutex
-	order := []int{}
 	var wg sync.WaitGroup
 	sleepers := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 30 * time.Millisecond}
-	wokeFlags := make([]atomic.Bool, len(sleepers))
+	wokeAt := make([]atomic.Pointer[time.Time], len(sleepers))
 
 	for i, d := range sleepers {
 		wg.Add(1)
@@ -79,39 +76,31 @@ func TestClockControllableClockMultipleSleepersResolveInDeadlineOrder(t *testing
 			if err := c.Sleep(context.Background(), dur); err != nil {
 				return
 			}
-			mu.Lock()
-			order = append(order, idx)
-			mu.Unlock()
-			wokeFlags[idx].Store(true)
+			observed := c.Now()
+			wokeAt[idx].Store(&observed)
 		}(i, d)
 	}
 
-	for i := 0; i < 200; i++ {
+	awaited.Until(t, "all three sleepers to register their pending deadlines", func() bool {
 		c.mu.Lock()
-		n := len(c.pending)
-		c.mu.Unlock()
-		if n == 3 {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
+		defer c.mu.Unlock()
+		return len(c.pending) == 3
+	})
 
 	c.Advance(25 * time.Millisecond)
-	for i := 0; i < 200; i++ {
-		if wokeFlags[0].Load() && wokeFlags[1].Load() {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
+	awaited.Until(t, "the two sleepers the advance passed to wake",
+		func() bool { return wokeAt[0].Load() != nil && wokeAt[1].Load() != nil })
 
-	mu.Lock()
-	require.Equal(t, []int{0, 1}, order)
-	mu.Unlock()
-	require.False(t, wokeFlags[2].Load())
+	require.Nil(t, wokeAt[2].Load(), "a sleeper whose deadline the advance did not reach must stay blocked")
+	for _, idx := range []int{0, 1} {
+		require.False(t, wokeAt[idx].Load().Before(start.Add(sleepers[idx])),
+			"sleeper %d woke at %s, before its %s deadline", idx, wokeAt[idx].Load(), start.Add(sleepers[idx]))
+	}
 
 	c.Advance(10 * time.Millisecond)
 	wg.Wait()
-	require.True(t, wokeFlags[2].Load())
+	require.NotNil(t, wokeAt[2].Load())
+	require.False(t, wokeAt[2].Load().Before(start.Add(sleepers[2])))
 }
 
 func TestClockControllableClockSleepRespectsCtx(t *testing.T) {
@@ -124,21 +113,12 @@ func TestClockControllableClockSleepRespectsCtx(t *testing.T) {
 		errCh <- c.Sleep(ctx, time.Hour)
 	}()
 
-	for i := 0; i < 100; i++ {
+	awaited.Until(t, "the sleeper to register its pending deadline", func() bool {
 		c.mu.Lock()
-		n := len(c.pending)
-		c.mu.Unlock()
-		if n == 1 {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
+		defer c.mu.Unlock()
+		return len(c.pending) == 1
+	})
 	cancel()
 
-	select {
-	case err := <-errCh:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Sleep did not return after ctx cancel")
-	}
+	require.ErrorIs(t, <-errCh, context.Canceled)
 }

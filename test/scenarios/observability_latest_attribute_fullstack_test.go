@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -20,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -66,15 +66,10 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	var second *persistence.NodeAttributesRow
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the second run to persist a node_attributes row carrying its own value", func() bool {
 		second = latestAttrRow(h, w.ID, h.GetLatestFrameRootRunScopeID(iid))
-		if second != nil && second.NodeRunID != firstRunID && second.Data["value"] == "second" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.NotNil(t, second, "second run should persist a node_attributes row")
+		return second != nil && second.NodeRunID != firstRunID && second.Data["value"] == "second"
+	})
 	require.NotEqual(t, firstRunID, second.NodeRunID, "second run should have a new node_run_id")
 	require.Equal(t, "second", second.Data["value"],
 		"GetLatestByNode must return the most-recent run's bag")
@@ -145,12 +140,12 @@ func createPausedInstanceLatestAttr(t *testing.T, h *scenario.Harness, templateH
 
 func waitForNodeRow(t *testing.T, h *scenario.Harness, instanceID shared.UUID, nodeType string) *persistence.NodeRow {
 	t.Helper()
-	for {
-		if n := h.FindNode(instanceID, nodeType); n != nil {
-			return n
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	var row *persistence.NodeRow
+	awaited.Until(t, "the node row of type "+nodeType+" to materialize", func() bool {
+		row = h.FindNode(instanceID, nodeType)
+		return row != nil
+	})
+	return row
 }
 
 func getJSONMap(t *testing.T, url string) map[string]any {

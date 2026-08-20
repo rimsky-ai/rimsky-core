@@ -18,142 +18,179 @@ type ProgressPrinter interface {
 	InstanceStarting(project, name string)
 	NodeRunTerminal(project, name, nodeID, outcome, reason string)
 	InstanceTerminal(project, name, outcome string, nodeCount int)
-	FrameTick(project, name string, frameNo int)
+	FrameTick(project, name, frameID string, frameNo int)
 	Summary(verb, reason string, instanceCount int)
 	Finalize()
 }
 
-func newProgressPrinter(w io.Writer, quiet, verbose, jsonMode bool) ProgressPrinter {
-	if jsonMode {
-		return newJSONPrinter(w)
+type progressVolume int
+
+const (
+	volumeQuiet progressVolume = iota
+	volumeDefault
+	volumeVerbose
+)
+
+func progressVolumeFor(quiet, verbose bool) progressVolume {
+	switch {
+	case quiet:
+		return volumeQuiet
+	case verbose:
+		return volumeVerbose
+	default:
+		return volumeDefault
 	}
-	if quiet {
-		return newQuietPrinter(w)
-	}
-	if verbose {
-		return newVerbosePrinter(w)
-	}
-	return newDefaultPrinter(w)
 }
 
-type linePrinter struct {
+type progressFormat interface {
+	instanceStarting(project, name string)
+	nodeRunTerminal(project, name, nodeID, outcome, reason string)
+	instanceTerminal(project, name, outcome string, nodeCount int)
+	frameTick(project, name, frameID string, frameNo int)
+	summary(verb, reason string, instanceCount int)
+	finalize()
+}
+
+func newProgressPrinter(w io.Writer, quiet, verbose, jsonMode bool) ProgressPrinter {
+	format := progressFormat(newLineFormat(w))
+	if jsonMode {
+		format = newJSONFormat(w)
+	}
+	return volumeGate{format: format, volume: progressVolumeFor(quiet, verbose)}
+}
+
+type volumeGate struct {
+	format progressFormat
+	volume progressVolume
+}
+
+func (g volumeGate) InstanceStarting(project, name string) {
+	if g.volume < volumeDefault {
+		return
+	}
+	g.format.instanceStarting(project, name)
+}
+
+func (g volumeGate) NodeRunTerminal(project, name, nodeID, outcome, reason string) {
+	if g.volume < volumeDefault {
+		return
+	}
+	g.format.nodeRunTerminal(project, name, nodeID, outcome, reason)
+}
+
+func (g volumeGate) InstanceTerminal(project, name, outcome string, nodeCount int) {
+	if g.volume < volumeDefault {
+		return
+	}
+	g.format.instanceTerminal(project, name, outcome, nodeCount)
+}
+
+func (g volumeGate) FrameTick(project, name, frameID string, frameNo int) {
+	if g.volume < volumeVerbose {
+		return
+	}
+	g.format.frameTick(project, name, frameID, frameNo)
+}
+
+func (g volumeGate) Summary(verb, reason string, instanceCount int) {
+	g.format.summary(verb, reason, instanceCount)
+}
+
+func (g volumeGate) Finalize() { g.format.finalize() }
+
+type lineFormat struct {
 	mu  sync.Mutex
 	buf *bufio.Writer
 }
 
-func newLinePrinter(w io.Writer) *linePrinter {
-	return &linePrinter{buf: bufio.NewWriter(w)}
+func newLineFormat(w io.Writer) *lineFormat {
+	return &lineFormat{buf: bufio.NewWriter(w)}
 }
 
-func (lp *linePrinter) emit(line string) error {
-	lp.mu.Lock()
-	defer lp.mu.Unlock()
-	if _, err := lp.buf.WriteString(line); err != nil {
+func (f *lineFormat) emit(line string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, err := f.buf.WriteString(line); err != nil {
 		return err
 	}
 	if !endsWithNewline(line) {
-		if _, err := lp.buf.WriteString("\n"); err != nil {
+		if _, err := f.buf.WriteString("\n"); err != nil {
 			return err
 		}
 	}
-	return lp.buf.Flush()
+	return f.buf.Flush()
 }
 
-func (lp *linePrinter) InstanceStarting(project, name string) {
-	_ = lp.emit(fmt.Sprintf("instance %s/%s: tracking", project, name))
+func (f *lineFormat) instanceStarting(project, name string) {
+	_ = f.emit(fmt.Sprintf("instance %s/%s: tracking", project, name))
 }
 
-func (lp *linePrinter) NodeRunTerminal(project, name, nodeID, outcome, reason string) {
+func (f *lineFormat) nodeRunTerminal(project, name, nodeID, outcome, reason string) {
 	if reason == "" {
-		_ = lp.emit(fmt.Sprintf("instance %s/%s node %s: %s", project, name, nodeID, outcome))
+		_ = f.emit(fmt.Sprintf("instance %s/%s node %s: %s", project, name, nodeID, outcome))
 		return
 	}
-	_ = lp.emit(fmt.Sprintf("instance %s/%s node %s: %s (%s)", project, name, nodeID, outcome, reason))
+	_ = f.emit(fmt.Sprintf("instance %s/%s node %s: %s (%s)", project, name, nodeID, outcome, reason))
 }
 
-func (lp *linePrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {
-	_ = lp.emit(fmt.Sprintf("instance %s/%s: %s (nodes=%d)", project, name, outcome, nodeCount))
+func (f *lineFormat) instanceTerminal(project, name, outcome string, nodeCount int) {
+	_ = f.emit(fmt.Sprintf("instance %s/%s: %s (nodes=%d)", project, name, outcome, nodeCount))
 }
 
-func (lp *linePrinter) FrameTick(project, name string, frameNo int) {}
+func (f *lineFormat) frameTick(project, name, frameID string, frameNo int) {
+	_ = f.emit(fmt.Sprintf("instance %s/%s frame %d (%s)", project, name, frameNo, frameID))
+}
 
-func (lp *linePrinter) Summary(verb, reason string, instanceCount int) {
+func (f *lineFormat) summary(verb, reason string, instanceCount int) {
 	if instanceCount > 0 {
-		_ = lp.emit(fmt.Sprintf("%s: %s (%d instance%s)", verb, reason, instanceCount, pluralS(instanceCount)))
+		_ = f.emit(fmt.Sprintf("%s: %s (%d instance%s)", verb, reason, instanceCount, pluralS(instanceCount)))
 		return
 	}
-	_ = lp.emit(fmt.Sprintf("%s: %s", verb, reason))
+	_ = f.emit(fmt.Sprintf("%s: %s", verb, reason))
 }
 
-func (lp *linePrinter) Finalize() {
-	lp.mu.Lock()
-	defer lp.mu.Unlock()
-	_ = lp.buf.Flush()
+func (f *lineFormat) finalize() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_ = f.buf.Flush()
 }
 
 func endsWithNewline(s string) bool {
 	return len(s) > 0 && s[len(s)-1] == '\n'
 }
 
-type defaultPrinter struct{ *linePrinter }
-
-func newDefaultPrinter(w io.Writer) *defaultPrinter {
-	return &defaultPrinter{linePrinter: newLinePrinter(w)}
-}
-
-type quietPrinter struct{ *linePrinter }
-
-func newQuietPrinter(w io.Writer) *quietPrinter {
-	return &quietPrinter{linePrinter: newLinePrinter(w)}
-}
-
-func (p *quietPrinter) InstanceStarting(project, name string)                         {}
-func (p *quietPrinter) NodeRunTerminal(project, name, nodeID, outcome, reason string) {}
-func (p *quietPrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {}
-func (p *quietPrinter) FrameTick(project, name string, frameNo int)                   {}
-
-type verbosePrinter struct{ *linePrinter }
-
-func newVerbosePrinter(w io.Writer) *verbosePrinter {
-	return &verbosePrinter{linePrinter: newLinePrinter(w)}
-}
-
-func (p *verbosePrinter) FrameTick(project, name string, frameNo int) {
-	_ = p.emit(fmt.Sprintf("instance %s/%s frame %d", project, name, frameNo))
-}
-
-type jsonPrinter struct {
+type jsonFormat struct {
 	mu  sync.Mutex
 	buf *bufio.Writer
 }
 
-func newJSONPrinter(w io.Writer) *jsonPrinter {
-	return &jsonPrinter{buf: bufio.NewWriter(w)}
+func newJSONFormat(w io.Writer) *jsonFormat {
+	return &jsonFormat{buf: bufio.NewWriter(w)}
 }
 
-func (p *jsonPrinter) writeRecord(rec map[string]any) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (f *jsonFormat) writeRecord(rec map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	body, err := json.Marshal(rec)
 	if err != nil {
-		_, _ = p.buf.WriteString(fmt.Sprintf(`{"event":"_marshal_error","detail":%q}`+"\n", err.Error()))
-		_ = p.buf.Flush()
+		_, _ = f.buf.WriteString(fmt.Sprintf(`{"event":"_marshal_error","detail":%q}`+"\n", err.Error()))
+		_ = f.buf.Flush()
 		return
 	}
-	_, _ = p.buf.Write(body)
-	_, _ = p.buf.WriteString("\n")
-	_ = p.buf.Flush()
+	_, _ = f.buf.Write(body)
+	_, _ = f.buf.WriteString("\n")
+	_ = f.buf.Flush()
 }
 
-func (p *jsonPrinter) InstanceStarting(project, name string) {
-	p.writeRecord(map[string]any{
+func (f *jsonFormat) instanceStarting(project, name string) {
+	f.writeRecord(map[string]any{
 		"event":    "instance_starting",
 		"project":  project,
 		"instance": name,
 	})
 }
 
-func (p *jsonPrinter) NodeRunTerminal(project, name, nodeID, outcome, reason string) {
+func (f *jsonFormat) nodeRunTerminal(project, name, nodeID, outcome, reason string) {
 	rec := map[string]any{
 		"event":    "node_terminal",
 		"project":  project,
@@ -164,11 +201,11 @@ func (p *jsonPrinter) NodeRunTerminal(project, name, nodeID, outcome, reason str
 	if reason != "" {
 		rec["reason"] = reason
 	}
-	p.writeRecord(rec)
+	f.writeRecord(rec)
 }
 
-func (p *jsonPrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {
-	p.writeRecord(map[string]any{
+func (f *jsonFormat) instanceTerminal(project, name, outcome string, nodeCount int) {
+	f.writeRecord(map[string]any{
 		"event":    "instance_terminal",
 		"project":  project,
 		"instance": name,
@@ -177,16 +214,17 @@ func (p *jsonPrinter) InstanceTerminal(project, name, outcome string, nodeCount 
 	})
 }
 
-func (p *jsonPrinter) FrameTick(project, name string, frameNo int) {
-	p.writeRecord(map[string]any{
+func (f *jsonFormat) frameTick(project, name, frameID string, frameNo int) {
+	f.writeRecord(map[string]any{
 		"event":    "frame_tick",
 		"project":  project,
 		"instance": name,
 		"frame":    frameNo,
+		"frame_id": frameID,
 	})
 }
 
-func (p *jsonPrinter) Summary(verb, reason string, instanceCount int) {
+func (f *jsonFormat) summary(verb, reason string, instanceCount int) {
 	rec := map[string]any{
 		"event":  "summary",
 		"verb":   verb,
@@ -195,11 +233,11 @@ func (p *jsonPrinter) Summary(verb, reason string, instanceCount int) {
 	if instanceCount > 0 {
 		rec["instance_count"] = instanceCount
 	}
-	p.writeRecord(rec)
+	f.writeRecord(rec)
 }
 
-func (p *jsonPrinter) Finalize() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	_ = p.buf.Flush()
+func (f *jsonFormat) finalize() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_ = f.buf.Flush()
 }

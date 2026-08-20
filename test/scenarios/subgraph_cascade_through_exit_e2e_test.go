@@ -4,14 +4,15 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -162,7 +163,7 @@ func TestSubgraphEntryAliasSubscriptionAndNilTemplateExitE2E(t *testing.T) {
 		"the exit subscribes to inner-middle and must dispatch after it settles, proving the internal cascade order survives entry absorption")
 
 	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
-	for {
+	awaited.Until(t, "the delegate call's single child RunScope to close", func() bool {
 		var childScopes, closedChildScopes int
 		h.QueryRowSQL(`
 			SELECT COUNT(*), COUNT(closed_at)
@@ -170,16 +171,13 @@ func TestSubgraphEntryAliasSubscriptionAndNilTemplateExitE2E(t *testing.T) {
 			 WHERE instance_id = $1 AND parent_run_scope_id = $2 AND graph_name = 'worker'`,
 			[]any{iid, mainScopeID}, &childScopes, &closedChildScopes)
 		require.Equal(t, 1, childScopes, "the delegate call must open exactly one child RunScope under main")
-		if closedChildScopes == 1 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return closedChildScopes == 1
+	})
 }
 
 func waitForLatestRunState(t *testing.T, h *scenario.Harness, nodeID any, want cascade.NodeState) {
 	t.Helper()
-	for {
+	awaited.Until(t, fmt.Sprintf("the node's latest run to reach state %s", want), func() bool {
 		var state string
 		h.QueryRowSQL(`
 			SELECT COALESCE(state::text, '')
@@ -188,9 +186,6 @@ func waitForLatestRunState(t *testing.T, h *scenario.Harness, nodeID any, want c
 			 ORDER BY enqueued_at DESC
 			 LIMIT 1`,
 			[]any{nodeID}, &state)
-		if state == string(want) {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return state == string(want)
+	})
 }

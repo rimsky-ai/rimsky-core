@@ -233,9 +233,11 @@ func TestSend_4xx_NilLoggerDoesNotPanic(t *testing.T) {
 func TestShouldRetry_ContextCancelInterruptsSleep(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
 	slowSleep := func(time.Duration) {
 		close(started)
-		time.Sleep(10 * time.Second)
+		<-release
 	}
 
 	done := make(chan bool, 1)
@@ -246,13 +248,8 @@ func TestShouldRetry_ContextCancelInterruptsSleep(t *testing.T) {
 	<-started
 	cancel()
 
-	select {
-	case got := <-done:
-		if got {
-			t.Fatal("expected shouldRetry to return false once ctx is cancelled")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("shouldRetry did not return promptly after ctx cancellation")
+	if got := <-done; got {
+		t.Fatal("expected shouldRetry to return false once ctx is cancelled")
 	}
 }
 

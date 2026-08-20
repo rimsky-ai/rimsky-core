@@ -7,11 +7,11 @@ import (
 	"context"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 // @story: fanout-list-array
@@ -66,13 +66,10 @@ func TestFSFanOutListArrayE2E(t *testing.T) {
 
 	wantKeys := []string{"item-1", "item-2", "item-3"}
 	var gotKeys []string
-	for {
+	awaited.Until(t, "the partition_request to open one fanout_partition RunScope per declared list item", func() bool {
 		gotKeys = partitionKeys(ctx, t, pool, instanceID)
-		if len(gotKeys) >= len(wantKeys) {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return len(gotKeys) >= len(wantKeys)
+	})
 	sort.Strings(gotKeys)
 	if len(gotKeys) != len(wantKeys) {
 		t.Fatalf("want one fanout_partition RunScope per declared list item (%v), got %v — "+

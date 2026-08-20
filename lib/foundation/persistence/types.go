@@ -10,6 +10,8 @@ import (
 
 var ErrNotFound = errors.New("persistence: not found")
 
+var ErrInternalInvariant = errors.New("persistence: internal invariant violated")
+
 type Config struct {
 	Driver   string
 	Postgres *PostgresConfig

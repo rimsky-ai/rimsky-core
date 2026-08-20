@@ -4,8 +4,8 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -91,7 +92,8 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 	require.NotNil(t, entryNode, "inner-entry node missing")
 
 	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "sub-graph RunScope (graph_name='worker') must be created at the calling-node entry-success terminal "+
+		"(applyTerminalCompleteSubgraphCaller's RunScope INSERT)", func() bool {
 		var subScopes int
 		h.QueryRowSQL(`
 			SELECT COUNT(*) FROM rimsky_run_scopes
@@ -100,9 +102,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 			   AND id <> $2
 		`, []any{iid, mainScopeID}, &subScopes)
 		return subScopes >= 1
-	}, 60*time.Second, 50*time.Millisecond,
-		"sub-graph RunScope (graph_name='worker') must be created at the calling-node entry-success terminal "+
-			"(applyTerminalCompleteSubgraphCaller's RunScope INSERT)")
+	})
 
 	for _, internal := range []struct {
 		typ    string
@@ -111,7 +111,8 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 		{"inner-mid", midNode.ID},
 		{"inner-exit", exitNode.ID},
 	} {
-		require.Eventually(t, func() bool {
+		awaited.Until(t, fmt.Sprintf("%s must run inside the sub-graph RunScope (graph_name='worker') — "+
+			"the sub-graph is the delegating node's execution unit", internal.typ), func() bool {
 			var inSubgraph int
 			h.QueryRowSQL(`
 				SELECT COUNT(*) FROM rimsky_node_runs r
@@ -119,9 +120,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 				 WHERE r.node_id = $1 AND rs.graph_name = 'worker'
 			`, []any{internal.nodeID}, &inSubgraph)
 			return inSubgraph >= 1
-		}, 60*time.Second, 50*time.Millisecond,
-			"%s must run inside the sub-graph RunScope (graph_name='worker') — "+
-				"the sub-graph is the delegating node's execution unit", internal.typ)
+		})
 	}
 
 	callerState := func() string {
@@ -151,15 +150,13 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 		return n >= 1
 	}
 
-	require.Eventually(t, func() bool { return nodeInFlight(midNode.ID) },
-		60*time.Second, 25*time.Millisecond, "inner-mid never reached an in-flight run state")
+	awaited.Until(t, "inner-mid to reach an in-flight run state", func() bool { return nodeInFlight(midNode.ID) })
 	requireCallerHeld("inner-mid is held in flight")
 	close(holdMid)
 
 	h.WaitForNodeState(midNode.ID, cascade.NodeStateFresh)
 
-	require.Eventually(t, func() bool { return nodeInFlight(exitNode.ID) },
-		60*time.Second, 25*time.Millisecond, "inner-exit never reached an in-flight run state")
+	awaited.Until(t, "inner-exit to reach an in-flight run state", func() bool { return nodeInFlight(exitNode.ID) })
 	requireCallerHeld("inner-exit is held in flight")
 	close(holdExit)
 
@@ -172,12 +169,11 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 			"node at canonicalization, so the sub-graph's entry terminal is synthesized from the "+
 			"caller's own run rather than a separate execution")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "calling node's run row must aggregate to 'fresh' after the sub-graph settles — "+
+		"sub-graph's success outcome must propagate to the parent via "+
+		"runtime/state_propagation.go::walkUpwards under strict aggregation", func() bool {
 		return callerState() == string(cascade.NodeStateFresh)
-	}, 60*time.Second, 100*time.Millisecond,
-		"calling node's run row must aggregate to 'fresh' after the sub-graph settles — "+
-			"sub-graph's success outcome must propagate to the parent via "+
-			"runtime/state_propagation.go::walkUpwards under strict aggregation")
+	})
 }
 
 func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
@@ -247,7 +243,9 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 
 	h.WaitForNodeState(midNode.ID, cascade.NodeStateFailed)
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "calling node's run row must aggregate to 'failed' — the sub-graph's terminal-error "+
+		"outcome must propagate to the parent via strict aggregation "+
+		"(runtime/state_propagation.go::walkUpwards + runtime/run_tree.go::aggregateStrict)", func() bool {
 		var callerState string
 		h.QueryRowSQL(`
 			SELECT COALESCE(state, 'fresh')
@@ -257,10 +255,7 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 			 LIMIT 1
 		`, []any{callerNode.ID}, &callerState)
 		return callerState == string(cascade.NodeStateFailed)
-	}, 90*time.Second, 100*time.Millisecond,
-		"calling node's run row must aggregate to 'failed' — the sub-graph's terminal-error "+
-			"outcome must propagate to the parent via strict aggregation "+
-			"(runtime/state_propagation.go::walkUpwards + runtime/run_tree.go::aggregateStrict)")
+	})
 
 	var callerSettlingSig string
 	h.QueryRowSQL(`

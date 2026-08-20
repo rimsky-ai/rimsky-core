@@ -16,7 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"testing"
-	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/awaited"
 )
 
 var testPaths = CliArgPaths{
@@ -482,32 +483,24 @@ func TestSpawnSigkillTerminatesWholeProcessGroup(t *testing.T) {
 	}
 
 	var childPID int
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the spawned shell to write its grandchild's pid", func() bool {
 		data, readErr := os.ReadFile(pidFile)
-		if readErr == nil && len(data) > 0 {
-			if pid, convErr := strconv.Atoi(strings.TrimSpace(string(data))); convErr == nil && pid > 0 {
-				childPID = pid
-				break
-			}
+		if readErr != nil || len(data) == 0 {
+			return false
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if childPID == 0 {
-		t.Fatal("grandchild pid was never written")
-	}
+		pid, convErr := strconv.Atoi(strings.TrimSpace(string(data)))
+		if convErr != nil || pid <= 0 {
+			return false
+		}
+		childPID = pid
+		return true
+	})
 
 	handle.SendSigkill()
 	handle.WaitExit()
 
-	deadline = time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := syscall.Kill(childPID, 0); err != nil {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("grandchild pid %d is still alive after SendSigkill; SendSigkill must terminate the whole process group, not just the direct child", childPID)
+	awaited.Until(t, fmt.Sprintf("grandchild pid %d to die with the process group SendSigkill signals", childPID),
+		func() bool { return syscall.Kill(childPID, 0) != nil })
 }
 
 func TestSpawnMissingBinaryReturnsError(t *testing.T) {

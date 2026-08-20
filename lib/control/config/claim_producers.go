@@ -443,8 +443,11 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	validatorsCfg := RemoteValidatorsConfig{Validators: make(map[string]ValidatorEntry, len(wrapper.Validators))}
 	for name, e := range wrapper.Validators {
 		protocols := e.Protocols
+		// @concept: validation
 		if len(protocols) == 0 {
-			protocols = []string{claimproducer.ProtocolValidation}
+			return RimskyConfig{}, fmt.Errorf(
+				"rimsky config %q: validators[%q]: protocols is absent, so the entry derives no role to validate and rimsky would never consult it; name the protocols whose registrations it validates",
+				path, name)
 		}
 		if err := validateProtocols(name, protocols); err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
@@ -457,6 +460,12 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		}
 		if !hasValidation {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: validators[%q]: protocols must include %q", path, name, claimproducer.ProtocolValidation)
+		}
+		// @concept: validation
+		if len(validatorRoleDiscriminators(protocols)) == 0 {
+			return RimskyConfig{}, fmt.Errorf(
+				"rimsky config %q: validators[%q]: protocols declares only %q, so the entry derives no role to validate and rimsky would never consult it; name the protocols whose registrations it validates",
+				path, name, claimproducer.ProtocolValidation)
 		}
 		tlsMode, err := parseTLSMode("validators", name, e.TLS, peerTLSDefault)
 		if err != nil {
@@ -849,4 +858,16 @@ func validateClaimProducerEntry(name string, entry ClaimProducerEntry) error {
 		}
 	}
 	return nil
+}
+
+// @concept: validation
+func validatorRoleDiscriminators(protocols []string) []string {
+	roles := make([]string, 0, len(protocols))
+	for _, p := range protocols {
+		if p == claimproducer.ProtocolValidation {
+			continue
+		}
+		roles = append(roles, p)
+	}
+	return roles
 }

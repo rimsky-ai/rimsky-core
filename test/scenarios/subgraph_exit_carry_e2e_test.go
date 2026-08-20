@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -17,6 +16,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	rimskyruntime "github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -75,7 +75,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 
 	h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh)
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "sub-graph RunScope (graph_name='worker') must close after exit terminates", func() bool {
 		var closed int
 		h.QueryRowSQL(`
 			SELECT COUNT(*) FROM rimsky_run_scopes
@@ -84,11 +84,10 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 			   AND closed_at IS NOT NULL
 		`, []any{iid}, &closed)
 		return closed >= 1
-	}, 30*time.Second, 100*time.Millisecond,
-		"sub-graph RunScope (graph_name='worker') must close after exit terminates")
+	})
 
 	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "caller's node-attributes must carry exit's writeback (result=subgraph-done) per the carry-rule", func() bool {
 		var row *persistence.NodeAttributesRow
 		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := h.Persist.NodeAttributes().GetLatestByNode(ctx, callerNode.ID, mainScopeID, tx)
@@ -100,8 +99,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 		}
 		v, ok := row.Data["result"].(string)
 		return ok && v == "subgraph-done"
-	}, 30*time.Second, 100*time.Millisecond,
-		"caller's node-attributes must carry exit's writeback (result=subgraph-done) per the carry-rule")
+	})
 
 	var exitRunID shared.UUID
 	h.QueryRowSQL(`

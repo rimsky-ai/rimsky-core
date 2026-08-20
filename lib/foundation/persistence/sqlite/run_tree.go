@@ -183,43 +183,70 @@ func (b *runTreeImpl) ListChildren(ctx context.Context, parentNodeRunID shared.U
 	return out, nil
 }
 
-func (b *runTreeImpl) UpdateStateAndOutcome(
-	ctx context.Context, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool, tx persistence.Tx,
+// @concept: transition-reason
+func (b *runTreeImpl) UpdateAggregateState(
+	ctx context.Context, runID shared.UUID, reason cascade.TransitionReason, settlingSignalType *string, changed bool, tx persistence.Tx,
 ) error {
-	changedArg := 0
-	if changed {
-		changedArg = 1
+	var stateScan string
+	if err := b.q(tx).QueryRowContext(ctx,
+		`SELECT state FROM rimsky_node_runs WHERE id = ?`, runID.String(),
+	).Scan(&stateScan); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("sqlite.run_tree.UpdateAggregateState: %w", persistence.ErrNotFound)
+		}
+		return fmt.Errorf("sqlite.run_tree.UpdateAggregateState: %w", err)
 	}
-	if settlingSignalType == nil {
-		res, err := b.q(tx).ExecContext(ctx,
-			`UPDATE rimsky_node_runs SET state = ?, changed = ? WHERE id = ?`,
-			string(state), changedArg, runID.String())
-		if err != nil {
-			return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: rows-affected: %w", err)
-		}
-		if n == 0 {
-			return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", persistence.ErrNotFound)
-		}
-		return nil
+	target, err := cascade.NextStateParent(cascade.NodeState(stateScan), reason)
+	if err != nil {
+		return fmt.Errorf("sqlite.run_tree.UpdateAggregateState: %s: %w", runID, err)
 	}
 	res, err := b.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs SET state = ?, settling_signal_type = ?, changed = ? WHERE id = ?`,
-		string(state), *settlingSignalType, changedArg, runID.String())
+		`UPDATE rimsky_node_runs
+		    SET state = ?,
+		        settling_signal_type = COALESCE(?, settling_signal_type),
+		        changed = ?
+		  WHERE id = ?`,
+		string(target), settlingSignalType, changedFlag(changed), runID.String())
 	if err != nil {
-		return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", err)
+		return fmt.Errorf("sqlite.run_tree.UpdateAggregateState: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: rows-affected: %w", err)
+		return fmt.Errorf("sqlite.run_tree.UpdateAggregateState: rows-affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("sqlite.run_tree.UpdateStateAndOutcome: %w", persistence.ErrNotFound)
+		return fmt.Errorf("sqlite.run_tree.UpdateAggregateState: %w", persistence.ErrNotFound)
 	}
 	return nil
+}
+
+func (b *runTreeImpl) UpdateOutcome(
+	ctx context.Context, runID shared.UUID, settlingSignalType *string, changed bool, tx persistence.Tx,
+) error {
+	res, err := b.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs
+		    SET settling_signal_type = COALESCE(?, settling_signal_type),
+		        changed = ?
+		  WHERE id = ?`,
+		settlingSignalType, changedFlag(changed), runID.String())
+	if err != nil {
+		return fmt.Errorf("sqlite.run_tree.UpdateOutcome: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite.run_tree.UpdateOutcome: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("sqlite.run_tree.UpdateOutcome: %w", persistence.ErrNotFound)
+	}
+	return nil
+}
+
+func changedFlag(changed bool) int {
+	if changed {
+		return 1
+	}
+	return 0
 }
 
 func (b *runTreeImpl) UpdateAggregationPolicy(

@@ -57,9 +57,7 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 	require.NotNil(t, rec)
 	require.Equal(t, 1, rec.Concurrency)
 
-	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	require.NoError(t, h.Shutdown(shutdownCtx))
+	require.NoError(t, h.Shutdown(ctx))
 
 	var afterShutdown *persistence.SupervisorRow
 	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -102,9 +100,7 @@ func TestSupervisor_ShutdownJoinsProducerVerbDispatcherBeforeReturning(t *testin
 			})
 			require.NoError(t, err)
 
-			shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			require.NoError(t, h.Shutdown(shutdownCtx))
+			require.NoError(t, h.Shutdown(ctx))
 
 			require.NoError(t, db.Close(),
 				"Shutdown must fully join its background goroutines before returning, "+
@@ -144,14 +140,12 @@ func TestSupervisor_ConcurrentShutdownDoesNotPanic(t *testing.T) {
 	const shutdownCallers = 8
 	var wg sync.WaitGroup
 	errs := make([]error, shutdownCallers)
-	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	for i := 0; i < shutdownCallers; i++ {
 		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = h.Shutdown(shutdownCtx)
+			errs[i] = h.Shutdown(ctx)
 		}()
 	}
 	wg.Wait()

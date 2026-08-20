@@ -188,13 +188,8 @@ func TestUnifiedStack_FailChDeliversFailure(t *testing.T) {
 	}
 	want := RoleFailure{Role: "supervisor", Err: errors.New("serve loop died")}
 	stack.failCh <- want
-	select {
-	case got := <-stack.FailCh():
-		if got.Role != want.Role || got.Err.Error() != want.Err.Error() {
-			t.Fatalf("FailCh delivered %+v, want %+v", got, want)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("FailCh did not deliver the queued failure")
+	if got := <-stack.FailCh(); got.Role != want.Role || got.Err.Error() != want.Err.Error() {
+		t.Fatalf("FailCh delivered %+v, want %+v", got, want)
 	}
 }
 

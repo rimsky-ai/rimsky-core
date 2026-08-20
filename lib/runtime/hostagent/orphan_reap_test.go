@@ -4,6 +4,7 @@
 package hostagent
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestOrphanReap_ProxyDisconnectSIGKILLsUnresponsiveChildOnRecovery(t *testing.T) {
@@ -57,29 +59,32 @@ func TestOrphanReap_ProxyDisconnectSIGKILLsUnresponsiveChildOnRecovery(t *testin
 
 	fp.forceDisconnect()
 
-	for !processExited(pid) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	awaited.Until(t, fmt.Sprintf("the orphaned child pid %d to exit after the agent's stream dropped", pid),
+		func() bool { return processExited(pid) })
 }
 
 func readStubchildPID(t *testing.T, path, runScopeID string) int {
 	t.Helper()
-	for {
+	pid := 0
+	awaited.Until(t, "the stub child to record its pid for run scope "+runScopeID, func() bool {
 		data, err := os.ReadFile(path)
-		if err == nil {
-			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) == 2 && fields[0] == runScopeID {
-					pid, convErr := strconv.Atoi(fields[1])
-					if convErr != nil {
-						t.Fatalf("pid log line %q: %v", line, convErr)
-					}
-					return pid
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && fields[0] == runScopeID {
+				parsed, convErr := strconv.Atoi(fields[1])
+				if convErr != nil {
+					t.Fatalf("pid log line %q: %v", line, convErr)
 				}
+				pid = parsed
+				return true
 			}
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		return false
+	})
+	return pid
 }
 
 func processAlive(pid int) bool {

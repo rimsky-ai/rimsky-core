@@ -8,7 +8,6 @@ package breakpoints
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -69,7 +68,7 @@ func TestBreakpointFiresOnAttributeLessNode_PauseBlocks(t *testing.T) {
 
 	hit := waitForHitOnBreakpoint(t, h, bpID)
 
-	time.Sleep(200 * time.Millisecond)
+	h.WaitForSchedulerQuiescence()
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"pause-mode breakpoint must block the attribute-less dispatch before Execute")
 

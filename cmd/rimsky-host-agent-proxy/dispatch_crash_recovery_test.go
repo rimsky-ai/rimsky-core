@@ -7,7 +7,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -29,7 +28,7 @@ func TestExecute_ExecutorCrashDropsSpawnAndForcesFreshSpawnOnNextDispatch(t *tes
 	client := genv1.NewExecutorClient(ts.supConn)
 
 	dispatch := func() *genv1.Outcome {
-		ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+		ctx, cancel := context.WithCancel(callCtx("codegen"))
 		defer cancel()
 		return collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-crash"})
 	}

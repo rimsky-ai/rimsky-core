@@ -49,9 +49,10 @@ type Registry interface {
 }
 
 type RegistryEntry struct {
-	Action      string
-	Routes      []RegistryRoute
-	Description string
+	Action               string
+	Routes               []RegistryRoute
+	Description          string
+	ExemptFromPermission bool
 }
 
 type RegistryRoute struct {

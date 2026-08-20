@@ -12,6 +12,8 @@ The request carries a role discriminator naming one of the protocols whose regis
 
 Used at template-registration time to give services a say in whether a node's attributes + bindings make sense in their domain. The executor-role context's attribute-schema field is the merged effective schema (the union of the executor's advertised expected-attributes schema, the template's level-1 defaults, and the per-node level-2 declaration).
 
+A service reaches this protocol two ways. A peer that also speaks a primary protocol — claim producer, executor, publisher — carries a capabilities handshake. Rimsky reads that peer's roles from the handshake. A standalone validator speaks only this protocol, so it carries no handshake. It declares in its own deployment-configuration entry the protocols whose registrations it validates, and rimsky reads its roles from that declaration.
+
 ## Boundaries
 
 Owns: the validate RPC surface, the role discriminator + per-role context types, the registration-time pipeline integration (run after the static expected-attributes schema check against the merged effective schema). Does NOT own: the per-service domain logic (lives in each service's implementation), runtime per-call validation (validation runs only at registration). Adjacent: `concept:executor`, `concept:claim-producer`, `concept:lifecycle-subscriber`, `concept:publisher`, `concept:template`.
@@ -19,5 +21,6 @@ Owns: the validate RPC surface, the role discriminator + per-role context types,
 ## Invariants
 
 - Pipeline order at template registration: (1) the static expected-attributes schema check from the executor's advertised observability capabilities, applied against the merged effective attribute schema (pure rimsky-side, no RPC); (2) validate RPC against each service advertising validation for the relevant role — per-node for the executor and claim-producer roles, per-template for the publisher and lifecycle-subscriber roles (a lifecycle subscriber is never named by the template, so every registered subscriber advertising the role is consulted template-wide); (3) errors at either step reject the registration, warnings surface to the operator.
-- A validation-supporting service's capabilities advertise the set of role discriminators the service is willing to validate.
+- A validation-supporting peer that carries a capabilities handshake advertises through that handshake the set of role discriminators it is willing to validate.
+- A standalone validator's role discriminators are the protocols its deployment-configuration entry declares, less the validation protocol itself. The deployment load fails when that set is empty, and the error names the entry. Rimsky therefore never starts holding a validator it would never consult.
 - Failure mode for unreachable services at registration: by default the registration succeeds with a warning; an operator-configurable deployment-level mode can flip this to strict so an unreachable validator rejects the registration outright.

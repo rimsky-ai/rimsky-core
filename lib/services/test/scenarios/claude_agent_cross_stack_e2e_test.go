@@ -16,9 +16,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const validatorPlaintextToken = "validator-plaintext-token-do-not-leak-9e7f7c2a"
@@ -57,7 +57,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-signoff-ok")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh")
 	})
 
 	t.Run("signoff gate rejects unsigned bound output", func(t *testing.T) {
@@ -68,10 +68,10 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-signoff-missing")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed")
 
 		// @story: claude-agent
-		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID)
 		if errorClass != "agent/signoff_unobtained" {
 			t.Fatalf("signoff-missing dispatch failed with error_class %q, want %q — "+
 				"a differently-caused failure would satisfy a bare 'failed' assertion undetected",
@@ -87,10 +87,10 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-mcp-refused")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed")
 
 		// @story: claude-agent-mcp-servers-per-node
-		errorClass, errorPayload := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		errorClass, errorPayload := waitTerminalErrorEventClaudeAgent(t, ep, nodeID)
 		if errorClass != "agent/attribute_invalid" {
 			t.Fatalf("mcp-refused dispatch failed with error_class %q, want %q", errorClass, "agent/attribute_invalid")
 		}
@@ -120,10 +120,10 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-expose-env-refused")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed")
 
 		// @story: claude-agent-expose-env-per-node
-		errorClass, errorPayload := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		errorClass, errorPayload := waitTerminalErrorEventClaudeAgent(t, ep, nodeID)
 		if errorClass != "agent/attribute_invalid" {
 			t.Fatalf("expose-env-refused dispatch failed with error_class %q, want %q", errorClass, "agent/attribute_invalid")
 		}
@@ -165,7 +165,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-env-ref-witness")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", 120*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh")
 
 		// @story: claude-agent
 		bag := getLatestAttributesClaudeAgent(t, ep, nodeID)
@@ -213,9 +213,9 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-refused")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed")
 
-		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID)
 		if errorClass != "agent/refused" {
 			t.Fatalf("refused dispatch failed with error_class %q, want %q", errorClass, "agent/refused")
 		}
@@ -228,9 +228,9 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-crash")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed")
 
-		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID, 30*time.Second)
+		errorClass, _ := waitTerminalErrorEventClaudeAgent(t, ep, nodeID)
 		if errorClass != "agent/subprocess_exit/before_complete" {
 			t.Fatalf("crash dispatch failed with error_class %q, want %q", errorClass, "agent/subprocess_exit/before_complete")
 		}
@@ -243,7 +243,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-resume-reminder")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
-		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", 90*time.Second)
+		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh")
 	})
 }
 
@@ -331,64 +331,50 @@ func withExposeEnv(names ...string) claudeAgentTemplateOption {
 	}
 }
 
-func waitNodeSettledClaudeAgent(
-	t *testing.T,
-	ep harness.RimskyEndpoint,
-	nodeID string,
-	wantState string,
-	deadline time.Duration,
-) {
+func waitNodeSettledClaudeAgent(t *testing.T, ep harness.RimskyEndpoint, nodeID, wantState string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var (
-		lastState string
-		lastBody  string
-	)
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("node %s to settle to categorical state=%q", nodeID, wantState), func() bool {
 		status, raw := ep.GetJSON(t, "/v1/nodes/"+nodeID, "")
-		if status == http.StatusOK {
-			var resp struct {
-				RunSummary harness.NodeRunSummary `json:"run_summary"`
-			}
-			lastBody = string(raw)
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				lastState = categorizeRunSummary(resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount, resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
-				if wantState == "fresh" && lastState == "fresh" {
-					if hasWorkStartedEvent(t, ep, nodeID) {
-						return
-					}
-				}
-				if wantState == "failed" && lastState == "failed" {
-					return
-				}
-			}
+		if status != http.StatusOK {
+			return false
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %s did not settle to categorical state=%q within %v; last_state=%q last_body=%s",
-		nodeID, wantState, deadline, lastState, lastBody)
+		var resp struct {
+			RunSummary harness.NodeRunSummary `json:"run_summary"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return false
+		}
+		state := categorizeRunSummary(resp.RunSummary.ActiveCount, resp.RunSummary.PendingCount,
+			resp.RunSummary.FreshCount, resp.RunSummary.FailedCount)
+		if state != wantState {
+			return false
+		}
+		return wantState != "fresh" || hasWorkStartedEvent(t, ep, nodeID)
+	})
 }
 
 func waitNodeParkedClaudeAgent(t *testing.T, ep harness.RimskyEndpoint, nodeID string) {
 	t.Helper()
-	for {
+	awaited.Until(t, fmt.Sprintf("node %s to appear in the parked-nodes diagnostics", nodeID), func() bool {
 		status, raw := ep.GetJSON(t, "/v1/admin/diagnostics/parked-nodes", "")
-		if status == http.StatusOK {
-			var resp struct {
-				ParkedNodes []struct {
-					NodeID string `json:"node_id"`
-				} `json:"parked_nodes"`
-			}
-			if json.Unmarshal(raw, &resp) == nil {
-				for _, p := range resp.ParkedNodes {
-					if p.NodeID == nodeID {
-						return
-					}
-				}
+		if status != http.StatusOK {
+			return false
+		}
+		var resp struct {
+			ParkedNodes []struct {
+				NodeID string `json:"node_id"`
+			} `json:"parked_nodes"`
+		}
+		if json.Unmarshal(raw, &resp) != nil {
+			return false
+		}
+		for _, p := range resp.ParkedNodes {
+			if p.NodeID == nodeID {
+				return true
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return false
+	})
 }
 
 // @concept: node
@@ -442,22 +428,17 @@ func hasWorkStartedEvent(t *testing.T, ep harness.RimskyEndpoint, nodeID string)
 	return false
 }
 
-func waitTerminalErrorEventClaudeAgent(
-	t *testing.T,
-	ep harness.RimskyEndpoint,
-	nodeID string,
-	deadline time.Duration,
-) (errorClass string, errorPayload map[string]any) {
+func waitTerminalErrorEventClaudeAgent(t *testing.T, ep harness.RimskyEndpoint, nodeID string) (errorClass string, errorPayload map[string]any) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		if class, payload, ok := latestTerminalErrorEventClaudeAgent(t, ep, nodeID); ok {
-			return class, payload
+	awaited.Until(t, fmt.Sprintf("node %s to record a terminal/error/* event", nodeID), func() bool {
+		class, payload, ok := latestTerminalErrorEventClaudeAgent(t, ep, nodeID)
+		if !ok {
+			return false
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %s: no terminal/error/* event observed within %v", nodeID, deadline)
-	return "", nil
+		errorClass, errorPayload = class, payload
+		return true
+	})
+	return errorClass, errorPayload
 }
 
 func latestTerminalErrorEventClaudeAgent(

@@ -679,7 +679,10 @@ func (f *fakeRunTreeDeps) LockTreeForUpdate(ctx context.Context, runID shared.UU
 func (f *fakeRunTreeDeps) ListChildren(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]persistence.NodeRunTreeRow, error) {
 	return nil, nil
 }
-func (f *fakeRunTreeDeps) UpdateStateAndOutcome(_ context.Context, _ shared.UUID, _ cascade.NodeState, _ *string, _ bool, _ persistence.Tx) error {
+func (f *fakeRunTreeDeps) UpdateAggregateState(_ context.Context, _ shared.UUID, _ cascade.TransitionReason, _ *string, _ bool, _ persistence.Tx) error {
+	return nil
+}
+func (f *fakeRunTreeDeps) UpdateOutcome(_ context.Context, _ shared.UUID, _ *string, _ bool, _ persistence.Tx) error {
 	return nil
 }
 func (f *fakeRunTreeDeps) UpdateAggregationPolicy(_ context.Context, _ shared.UUID, _ spec.AggregationPolicy, _ persistence.Tx) error {

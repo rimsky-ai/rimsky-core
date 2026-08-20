@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/awaited"
 )
 
 func startTestBridge(t *testing.T) (string, *callbackRecorder) {
@@ -184,7 +185,7 @@ func TestHTTPBridgeTraceGet(t *testing.T) {
 	resp.Body.Close()
 	recorder.waitForCall(t)
 
-	for {
+	awaited.Until(t, "the HTTP bridge's trace for disp-trace-http to report itself complete", func() bool {
 		traceResp, err := http.Get(fmt.Sprintf("%s/observability/v1/trace/%s", base, "disp-trace-http"))
 		if err != nil {
 			t.Fatal(err)
@@ -195,9 +196,6 @@ func TestHTTPBridgeTraceGet(t *testing.T) {
 		if err := json.Unmarshal(raw, &trace); err != nil {
 			t.Fatal(err)
 		}
-		if trace["complete"] == true {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return trace["complete"] == true
+	})
 }

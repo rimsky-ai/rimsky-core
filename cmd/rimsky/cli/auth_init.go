@@ -17,7 +17,7 @@ func RunAuthInit(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth init", flag.ContinueOnError)
 	var endpointFlag, keyFlag string
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
-	fs.StringVar(&keyFlag, "key", "", "API key (unused in anonymous mode)")
+	RegisterAPIKeyFlag(fs, &keyFlag)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}

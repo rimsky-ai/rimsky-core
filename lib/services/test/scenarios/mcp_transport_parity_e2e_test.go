@@ -12,11 +12,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 type mcpTransportToolCategory struct {
@@ -77,7 +77,7 @@ func TestMcpTransportParity(t *testing.T) {
 	instanceKey := "mcp-parity-seed"
 	instanceID := createInstanceAuth(t, ep, adminKey, templateID, instanceKey, map[string]any{})
 
-	_ = waitForFirstNodeID(t, ep, adminKey, instanceID, 60*time.Second)
+	_ = waitForFirstNodeID(t, ep, adminKey, instanceID)
 
 	mcpURL := ep.BaseURL + "/v1/mcp"
 
@@ -90,9 +90,20 @@ func TestMcpTransportParity(t *testing.T) {
 	mcpOnlySessionID := mcpInitialize(t, mcpURL, mcpOnlyKey)
 	mcpNotifyInitialized(t, mcpURL, mcpOnlyKey, mcpOnlySessionID)
 	mcpOnlyTools := mcpToolsList(t, mcpURL, mcpOnlyKey, mcpOnlySessionID)
-	if len(mcpOnlyTools) != 0 {
-		t.Fatalf("mcp-only key (grant {mcp:read}) saw %d tools; want 0 (Filtered() must exclude every tool whose action the grant does not match)\ntools: %v",
-			len(mcpOnlyTools), mcpOnlyTools)
+	postureExempt := map[string]bool{"health_probe": true, "auth_whoami": true, "peer_auth_ca_root": true}
+	seen := map[string]bool{}
+	for _, tool := range mcpOnlyTools {
+		if !postureExempt[tool.Name] {
+			t.Fatalf("mcp-only key (grant {mcp:read}) saw the permissioned tool %q; a tool whose action consults a grant must be filtered out\ntools: %v",
+				tool.Name, mcpOnlyTools)
+		}
+		seen[tool.Name] = true
+	}
+	for name := range postureExempt {
+		if !seen[name] {
+			t.Fatalf("mcp-only key did not see %q; a tool whose action consults no permission lists for every caller\ntools: %v",
+				name, mcpOnlyTools)
+		}
 	}
 
 	categories := []mcpTransportToolCategory{
@@ -450,7 +461,7 @@ func assertObservableStateMutationParity(t *testing.T, ep harness.RimskyEndpoint
 
 	case "breakpoint":
 		idOrKey := cat.mutationArgs["idOrKey"].(string)
-		assertBreakpointAppears(t, ep, bearer, idOrKey, "after_terminal", 10*time.Second)
+		assertBreakpointAppears(t, ep, bearer, idOrKey, "after_terminal")
 
 	case "auth":
 		status, raw := getJSONAuth(t, ep, "/v1/auth/keys", bearer)
@@ -701,40 +712,35 @@ func createInstanceAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, templat
 	return resp.InstanceID
 }
 
-func waitForFirstNodeID(t *testing.T, ep harness.RimskyEndpoint, bearer, instanceID string, deadline time.Duration) string {
+func waitForFirstNodeID(t *testing.T, ep harness.RimskyEndpoint, bearer, instanceID string) string {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
+	var nodeID string
+	awaited.Until(t, fmt.Sprintf("the first node to appear on instance %s", instanceID), func() bool {
 		status, raw := getJSONAuth(t, ep, "/v1/instances/"+instanceID+"/nodes", bearer)
-		if status == http.StatusOK {
-			var resp struct {
-				Nodes []struct {
-					ID string `json:"id"`
-				} `json:"nodes"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil && len(resp.Nodes) > 0 {
-				return resp.Nodes[0].ID
-			}
+		if status != http.StatusOK {
+			return false
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("waitForFirstNodeID: no nodes appeared on instance %s within %v", instanceID, deadline)
-	return ""
+		var resp struct {
+			Nodes []struct {
+				ID string `json:"id"`
+			} `json:"nodes"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil || len(resp.Nodes) == 0 {
+			return false
+		}
+		nodeID = resp.Nodes[0].ID
+		return true
+	})
+	return nodeID
 }
 
-func assertBreakpointAppears(t *testing.T, ep harness.RimskyEndpoint, bearer, idOrKey, checkpoint string, deadline time.Duration) {
+func assertBreakpointAppears(t *testing.T, ep harness.RimskyEndpoint, bearer, idOrKey, checkpoint string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("the %s breakpoint created over MCP to appear in the REST breakpoint list for %s",
+		checkpoint, idOrKey), func() bool {
 		status, raw := getJSONAuth(t, ep, "/v1/instances/"+idOrKey+"/breakpoints", bearer)
-		if status == http.StatusOK && strings.Contains(string(raw), `"`+checkpoint+`"`) {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	status, raw := getJSONAuth(t, ep, "/v1/instances/"+idOrKey+"/breakpoints", bearer)
-	t.Fatalf("breakpoint mutation parity: list missing %s breakpoint after MCP breakpoint_create within %v\nfinal status: %d\nbody: %s",
-		checkpoint, deadline, status, string(raw))
+		return status == http.StatusOK && strings.Contains(string(raw), `"`+checkpoint+`"`)
+	})
 }
 
 func toolNames(tools []toolEntry) []string {

@@ -29,7 +29,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-const gracefulStopBudget = 5 * time.Second
+// @decision: graceful-shutdown
+const gracefulStopBudget = bridge.BundledServiceGrace
 
 type Config struct {
 	Connection        string

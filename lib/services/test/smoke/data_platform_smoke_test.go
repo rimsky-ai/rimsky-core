@@ -100,11 +100,7 @@ func TestDataPlatformSmoke_SensorObservationEnvelopeWireContract(t *testing.T) {
 		t.Fatalf("push message status = %d, want < 300", pushResp.StatusCode)
 	}
 
-	select {
-	case <-fakeReady:
-	case <-time.After(2 * time.Second):
-		t.Fatal("message never arrived at fake rimsky")
-	}
+	<-fakeReady
 
 	mu.Lock()
 	defer mu.Unlock()

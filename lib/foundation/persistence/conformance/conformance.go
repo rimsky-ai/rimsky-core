@@ -20,9 +20,21 @@ func Suite(
 ) {
 	t.Helper()
 	t.Run("DispatchClaimRelease", func(t *testing.T) { testDispatchClaimRelease(t, factory(t)) })
-	t.Run("DispatchReleaseClaimSkipsTerminalRun", func(t *testing.T) { testDispatchReleaseClaimSkipsTerminalRun(t, factory(t)) })
+	t.Run("DispatchReleaseClaimRefusesTerminalRun", func(t *testing.T) { testDispatchReleaseClaimRefusesTerminalRun(t, factory(t)) })
+	t.Run("ReleaseClaimReadsTheStateTheCompetingWriterCommitted", func(t *testing.T) {
+		testReleaseClaimReadsTheStateTheCompetingWriterCommitted(t, factory(t))
+	})
+	t.Run("ReleaseClaimWithDispositionReadsTheStateTheCompetingWriterCommitted", func(t *testing.T) {
+		testReleaseClaimWithDispositionReadsTheStateTheCompetingWriterCommitted(t, factory(t))
+	})
+	t.Run("RunStateWritesRouteThroughTheSwitch", func(t *testing.T) {
+		t.Run("PromotionAndRelease", func(t *testing.T) { testPromotionAndReleaseRouteThroughTheSwitch(t, factory(t)) })
+		t.Run("IllegalPairRefusedAtTheWriter", func(t *testing.T) { testStateWriterRefusesAPairTheSwitchRejects(t, factory(t)) })
+		t.Run("AggregateWritePersistsTheSwitchTarget", func(t *testing.T) { testAggregateWritePersistsTheStateTheSwitchReturns(t, factory(t)) })
+	})
 	t.Run("VerifyBeforeRunRead", func(t *testing.T) { testVerifyBeforeRunRead(t, factory(t)) })
 	t.Run("MigrationIdempotency", func(t *testing.T) { testMigrationIdempotency(t, factory(t)) })
+	t.Run("MigrationRejectsAChangedFile", func(t *testing.T) { testMigrationRejectsAChangedFile(t, factory(t), rawExec, rawQuery) })
 	t.Run("AdvisoryLockerSchedulerTick", func(t *testing.T) { testAdvisoryLockerSchedulerTick(t, factory(t)) })
 	t.Run("ForeignKeyCascade", func(t *testing.T) { testForeignKeyCascade(t, factory(t)) })
 	t.Run("ClaimScopeByteEquality", func(t *testing.T) { testClaimScopeByteEquality(t, factory(t)) })

@@ -4,6 +4,7 @@
 package imagetag
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,79 +12,95 @@ import (
 	"testing"
 )
 
-func TestImageRefUsesEnvTagWhenSet(t *testing.T) {
-	t.Setenv(EnvVar, "tag-under-test")
+func TestImageRefResolvesByThePerRunTagInTheEnvironment(t *testing.T) {
+	t.Setenv(EnvVar, "run-0123456789ab")
 	got := Ref("rimsky-all-in-one")
-	want := "rimsky-all-in-one:tag-under-test"
+	want := "rimsky-all-in-one:run-0123456789ab"
 	if got != want {
 		t.Fatalf("Ref with %s set: got %q, want %q", EnvVar, got, want)
 	}
 }
 
-func TestSrcTagDeterministicAndContentSensitive(t *testing.T) {
-	script := srcTagScriptPath(t)
-	repo := t.TempDir()
-	gitIn(t, repo, "init", "-q")
-	writeTracked(t, repo, "tracked.txt", "one")
-
-	first := srcTagIn(t, script, repo)
-	second := srcTagIn(t, script, repo)
-	if first != second {
-		t.Fatalf("same tree hashed differently: %q vs %q", first, second)
+func TestAnUnsetTagResolvesToANameNoRegistryHoldsAndFailsNamingTheVariable(t *testing.T) {
+	t.Setenv(EnvVar, "")
+	ref := Ref("rimsky-all-in-one")
+	if ref != "rimsky-all-in-one:"+UnsetTag {
+		t.Fatalf("Ref with %s unset = %q, want the self-describing %q tag", EnvVar, ref, UnsetTag)
 	}
-	if !strings.HasPrefix(first, "src-") || len(first) != len("src-")+12 {
-		t.Fatalf("tag %q does not match src-<12-hex-tree-hash>", first)
+	if !strings.Contains(UnsetTag, EnvVar) {
+		t.Errorf("the unset tag %q does not name the variable, so a raw docker error would not say what is missing", UnsetTag)
 	}
 
-	writeTracked(t, repo, "tracked.txt", "two")
-	changed := srcTagIn(t, script, repo)
-	if changed == first {
-		t.Fatalf("content change did not move the tag (still %q)", first)
+	cause := errors.New("pull access denied for rimsky-all-in-one, repository does not exist")
+	if !IsMissingLocalImage(ref, cause) {
+		t.Fatalf("a run with no tag is not reported as a missing rimsky image, so the caller cannot explain it")
 	}
-
-	gitIn(t, repo, "add", "-A")
-	committed := srcTagIn(t, script, repo)
-	if committed != changed {
-		t.Fatalf("staging alone moved the tag: %q vs %q — the tag must hash content, not index state", committed, changed)
+	msg := MissingImageError(ref, cause).Error()
+	for _, want := range []string{EnvVar, BuildCommand, "rimsky-all-in-one"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the unset-tag failure does not name %q: %s", want, msg)
+		}
+	}
+	if strings.Contains(msg, ":latest") && !strings.Contains(msg, "never :latest") {
+		t.Errorf("the unset-tag failure offers :latest as a way out: %s", msg)
 	}
 }
 
-func srcTagScriptPath(t *testing.T) string {
+func TestMissingImageErrorNamesTheVariableAndTheBuildCommand(t *testing.T) {
+	cause := errors.New("No such image: rimsky-all-in-one:run-0123456789ab")
+	err := MissingImageError("rimsky-all-in-one:run-0123456789ab", cause)
+	for _, want := range []string{EnvVar, BuildCommand, "rimsky-all-in-one:run-0123456789ab"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the missing-image error does not name %q: %v", want, err)
+		}
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("the missing-image error drops the docker failure it wraps: %v", err)
+	}
+}
+
+func TestMissingImageErrorFiresOnlyForRimskyImages(t *testing.T) {
+	cause := errors.New("No such image: postgres:16")
+	if IsMissingLocalImage("postgres:16", cause) {
+		t.Errorf("a missing third-party image is reported as a rimsky build gap")
+	}
+	if !IsMissingLocalImage("rimsky-all-in-one:run-0123456789ab", cause) {
+		t.Errorf("a missing rimsky image is not reported as a rimsky build gap")
+	}
+}
+
+func TestRunTagScriptMintsAFreshTagOnEveryCall(t *testing.T) {
+	script := filepath.Join(repoRoot(t), RunTagScript)
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("the run-tag script the profile declares is missing: %v", err)
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 5; i++ {
+		tag := mint(t, script)
+		if !strings.HasPrefix(tag, "run-") || len(tag) != len("run-")+12 {
+			t.Fatalf("%s printed %q, want a run-<12 hex> tag", RunTagScript, tag)
+		}
+		if seen[tag] {
+			t.Fatalf("%s printed %q twice — a per-run tag must be fresh on every call, or two runs share images", RunTagScript, tag)
+		}
+		seen[tag] = true
+	}
+}
+
+func repoRoot(t *testing.T) string {
 	t.Helper()
-	rootOut, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		t.Fatalf("git rev-parse --show-toplevel: %v", err)
 	}
-	return filepath.Join(strings.TrimSpace(string(rootOut)), Script)
+	return strings.TrimSpace(string(out))
 }
 
-func gitIn(t *testing.T, dir string, args ...string) {
+func mint(t *testing.T, script string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
-	}
-}
-
-func writeTracked(t *testing.T, dir, name, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-}
-
-func srcTagIn(t *testing.T, script, dir string) string {
-	t.Helper()
-	cmd := exec.Command(script)
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := exec.Command(script).Output()
 	if err != nil {
-		var stderr string
-		if ee, ok := err.(*exec.ExitError); ok {
-			stderr = string(ee.Stderr)
-		}
-		t.Fatalf("%s in %s: %v\n%s", script, dir, err, stderr)
+		t.Fatalf("%s: %v", script, err)
 	}
 	return strings.TrimSpace(string(out))
 }

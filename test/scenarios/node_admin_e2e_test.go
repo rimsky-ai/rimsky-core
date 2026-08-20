@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	graphshared "github.com/rimsky-ai/rimsky-core/lib/graph/shared"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -157,7 +157,7 @@ func countTerminalSuccess(t *testing.T, h *scenario.Harness, nodeID shared.UUID)
 
 func waitForTerminalSuccessCountGreaterThan(t *testing.T, h *scenario.Harness, nodeID shared.UUID, baseline int) {
 	t.Helper()
-	for countTerminalSuccess(t, h, nodeID) <= baseline {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, fmt.Sprintf("node %s to log more than %d terminal/success events", nodeID, baseline), func() bool {
+		return countTerminalSuccess(t, h, nodeID) > baseline
+	})
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 var onboardingInstanceIDLine = regexp.MustCompile(`(?m)^instance_id=([0-9a-fA-F-]{36})\s*$`)
@@ -36,12 +38,12 @@ func TestOnboardingDemo_RunSettlesIdle(t *testing.T) {
 	)
 
 	binPath := filepath.Join(t.TempDir(), "rimsky")
-	buildOnboardingRimskyCLI(t, binPath)
+	buildRimskyCLI(t, binPath)
 
 	demoScript := repoExampleSpecPath(t, "test/fixtures/demos/onboarding-demo.sh")
 	repoExampleSpecPath(t, "test/fixtures/demos/onboarding-template.yaml")
 
-	stdout, exitCode := runDemoScript(t, ctx, demoScript, binPath, ep.BaseURL, 180*time.Second)
+	stdout, exitCode := runDemoScript(t, ctx, demoScript, binPath, ep.BaseURL)
 	if exitCode != 0 {
 		t.Fatalf("onboarding-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
 	}
@@ -51,11 +53,11 @@ func TestOnboardingDemo_RunSettlesIdle(t *testing.T) {
 	}
 	instanceID := match[1]
 
-	requireOnboardingInstanceIdle(t, ep, instanceID, 60*time.Second)
+	requireInstanceIdle(t, ep, instanceID)
 
-	requireOnboardingNodeDispatched(t, ep, instanceID, "verifier", 60*time.Second)
+	requireOnboardingNodeDispatched(t, ep, instanceID, "verifier")
 
-	stdout2, exitCode2 := runDemoScript(t, ctx, demoScript, binPath, ep.BaseURL, 180*time.Second)
+	stdout2, exitCode2 := runDemoScript(t, ctx, demoScript, binPath, ep.BaseURL)
 	if exitCode2 != 0 {
 		t.Fatalf("onboarding-demo.sh (second run) exited %d (want 0)\nstdout:\n%s", exitCode2, stdout2)
 	}
@@ -68,11 +70,9 @@ func TestOnboardingDemo_RunSettlesIdle(t *testing.T) {
 	}
 }
 
-func runDemoScript(t *testing.T, ctx context.Context, scriptPath, binPath, baseURL string, timeout time.Duration) (string, int) {
+func runDemoScript(t *testing.T, ctx context.Context, scriptPath, binPath, baseURL string) (string, int) {
 	t.Helper()
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, "/bin/bash", scriptPath)
+	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
 	cmd.Env = append(os.Environ(),
 		"RIMSKY_BIN="+binPath,
 		"RIMSKY_CONTROL_API_URL="+baseURL,
@@ -96,10 +96,10 @@ func runDemoScript(t *testing.T, ctx context.Context, scriptPath, binPath, baseU
 	return combined, exitErr.ExitCode()
 }
 
-func buildOnboardingRimskyCLI(t *testing.T, binPath string) {
+func buildRimskyCLI(t *testing.T, binPath string) {
 	t.Helper()
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/rimsky")
-	cmd.Dir = repoRootForOnboarding(t)
+	cmd.Dir = repoRoot(t)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -110,7 +110,7 @@ func buildOnboardingRimskyCLI(t *testing.T, binPath string) {
 	}
 }
 
-func repoRootForOnboarding(t *testing.T) string {
+func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -119,56 +119,46 @@ func repoRootForOnboarding(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", ".."))
 }
 
-func requireOnboardingInstanceIdle(t *testing.T, ep harness.RimskyEndpoint, instanceID string, deadline time.Duration) {
+func requireInstanceIdle(t *testing.T, ep harness.RimskyEndpoint, instanceID string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastFrames, lastMessages string
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("instance %s to settle idle — no running frame, no pending message", instanceID), func() bool {
 		framesStatus, framesRaw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/frames?state=running", "")
 		msgsStatus, msgsRaw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/messages?pending=true", "")
-		if framesStatus == http.StatusOK && msgsStatus == http.StatusOK {
-			var frames struct {
-				Frames []json.RawMessage `json:"frames"`
-			}
-			var msgs struct {
-				Messages []json.RawMessage `json:"messages"`
-			}
-			lastFrames, lastMessages = string(framesRaw), string(msgsRaw)
-			if json.Unmarshal(framesRaw, &frames) == nil && json.Unmarshal(msgsRaw, &msgs) == nil &&
-				len(frames.Frames) == 0 && len(msgs.Messages) == 0 {
-				return
-			}
+		if framesStatus != http.StatusOK || msgsStatus != http.StatusOK {
+			return false
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("instance %s did not settle idle (no running frame, no pending message) within %v — the run never resolved\nlast frames body:\n%s\nlast messages body:\n%s",
-		instanceID, deadline, lastFrames, lastMessages)
+		var frames struct {
+			Frames []json.RawMessage `json:"frames"`
+		}
+		var msgs struct {
+			Messages []json.RawMessage `json:"messages"`
+		}
+		return json.Unmarshal(framesRaw, &frames) == nil && json.Unmarshal(msgsRaw, &msgs) == nil &&
+			len(frames.Frames) == 0 && len(msgs.Messages) == 0
+	})
 }
 
-func requireOnboardingNodeDispatched(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
+func requireOnboardingNodeDispatched(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastBody string
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				Events []struct {
-					Kind string `json:"kind"`
-				} `json:"events"`
-			}
-			lastBody = string(raw)
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				for _, e := range resp.Events {
-					if e.Kind == "work_started" {
-						return
-					}
-				}
+	awaited.Until(t, fmt.Sprintf("node %q on instance %s to emit work_started, the evidence that the "+
+		"verifier-shape-checks executor was dispatched against", nodeType, instanceID), func() bool {
+		status, raw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
+		if status != http.StatusOK {
+			return false
+		}
+		var resp struct {
+			Events []struct {
+				Kind string `json:"kind"`
+			} `json:"events"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return false
+		}
+		for _, e := range resp.Events {
+			if e.Kind == "work_started" {
+				return true
 			}
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %q on instance %s never emitted `work_started` within %v — the verifier-shape-checks executor was never dispatched against\nlast GET /v1/observability/nodes/%s/%s body:\n%s",
-		nodeType, instanceID, deadline, instanceID, nodeType, lastBody)
+		return false
+	})
 }

@@ -5,14 +5,15 @@ package hostagent
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func tryReadStatusChildren(path string) ([]ChildStatus, bool) {
@@ -29,13 +30,16 @@ func tryReadStatusChildren(path string) ([]ChildStatus, bool) {
 
 func waitForStatusChildren(t *testing.T, path string, want int) []ChildStatus {
 	t.Helper()
-	for {
+	var out []ChildStatus
+	awaited.Until(t, fmt.Sprintf("the agent's status file to report %d spawned child(ren)", want), func() bool {
 		children, ok := tryReadStatusChildren(path)
-		if ok && len(children) == want {
-			return children
+		if !ok || len(children) != want {
+			return false
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		out = children
+		return true
+	})
+	return out
 }
 
 // @story: host-agent-control-plane

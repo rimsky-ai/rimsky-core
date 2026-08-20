@@ -68,11 +68,12 @@ func WaitForEvent(ctx context.Context, t testing.TB, db persistence.Tables, m Ma
 		if err == nil && len(matched) >= m.minCount() {
 			return matched
 		}
-		if poll%40 == 0 {
-			t.Logf("eventwait.WaitForEvent: still polling for matcher {%s} (observed: %d matched, last err=%v) — "+
-				"blocks until the event appears; the test guard's no-progress watchdog is the only backstop",
-				m, len(matched), err)
+		if poll == 1 {
+			t.Logf("eventwait.WaitForEvent: polling for matcher {%s} (first observation: %d matched, err=%v) — "+
+				"blocks until the event appears and says so once, so a wait that never ends leaves the test "+
+				"guard's no-progress watchdog free to trip", m, len(matched), err)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the matcher is satisfied
 		time.Sleep(pollInterval)
 	}
 }

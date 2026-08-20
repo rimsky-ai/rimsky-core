@@ -17,6 +17,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/sillyname"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 type proxyTestServer struct {
@@ -72,7 +73,7 @@ type fakeAgent struct {
 
 	mu              sync.Mutex
 	spawnFail       bool
-	spawnDelay      time.Duration
+	spawnSilent     bool
 	dropOnFirst     bool
 	stallData       bool
 	handler         dispatchHandler
@@ -107,14 +108,21 @@ func connectFakeAgent(t *testing.T, ts *proxyTestServer, apiKey, localBase strin
 	fa := &fakeAgent{stream: stream, handler: handler, reaped: make(chan string, 8), canceled: make(chan string, 8)}
 	go fa.loop(t)
 
-	waitFor(t, func() bool { _, ok := ts.state.lookupAgent(apiKey); return ok })
+	waitFor(t, "the proxy to register the agent holding key "+apiKey,
+		func() bool { _, ok := ts.state.lookupAgent(apiKey); return ok })
 	return fa
 }
 
-func (fa *fakeAgent) setSpawnFail(v bool)           { fa.mu.Lock(); fa.spawnFail = v; fa.mu.Unlock() }
-func (fa *fakeAgent) setSpawnDelay(d time.Duration) { fa.mu.Lock(); fa.spawnDelay = d; fa.mu.Unlock() }
-func (fa *fakeAgent) setDropOnFirst(v bool)         { fa.mu.Lock(); fa.dropOnFirst = v; fa.mu.Unlock() }
-func (fa *fakeAgent) setStallData(v bool)           { fa.mu.Lock(); fa.stallData = v; fa.mu.Unlock() }
+func (fa *fakeAgent) dispatches() int {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	return fa.dispatchCount
+}
+
+func (fa *fakeAgent) setSpawnFail(v bool)   { fa.mu.Lock(); fa.spawnFail = v; fa.mu.Unlock() }
+func (fa *fakeAgent) setSpawnSilent(v bool) { fa.mu.Lock(); fa.spawnSilent = v; fa.mu.Unlock() }
+func (fa *fakeAgent) setDropOnFirst(v bool) { fa.mu.Lock(); fa.dropOnFirst = v; fa.mu.Unlock() }
+func (fa *fakeAgent) setStallData(v bool)   { fa.mu.Lock(); fa.stallData = v; fa.mu.Unlock() }
 
 func (fa *fakeAgent) setSpawnObserver(f func(*genv1.Spawn)) {
 	fa.mu.Lock()
@@ -163,15 +171,15 @@ func (fa *fakeAgent) loop(t *testing.T) {
 func (fa *fakeAgent) handleSpawn(sp *genv1.Spawn) {
 	fa.mu.Lock()
 	fail := fa.spawnFail
-	delay := fa.spawnDelay
+	silent := fa.spawnSilent
 	observer := fa.spawnObserver
 	caps := fa.capabilities
 	fa.mu.Unlock()
 	if observer != nil {
 		observer(sp)
 	}
-	if delay > 0 {
-		time.Sleep(delay)
+	if silent {
+		return
 	}
 	ack := &genv1.SpawnAck{SpawnId: sp.GetSpawnId(), Status: genv1.SpawnAck_SPAWN_STATUS_READY, Capabilities: caps}
 	if fail {
@@ -250,14 +258,7 @@ func staticFetcher(instanceID string, entry *instanceCacheEntry) instanceFetcher
 	}
 }
 
-func waitFor(t *testing.T, cond func() bool) {
+func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("condition not met within deadline")
+	awaited.Until(t, what, cond)
 }

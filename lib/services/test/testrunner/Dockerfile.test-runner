@@ -10,7 +10,9 @@
 #
 # Build context: the rimsky-core repo root. The test packages build against
 # the in-tree modules via go.work — no module proxy, no published-tag pin.
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
@@ -19,7 +21,7 @@ COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
 COPY lib/services/go.mod lib/services/go.sum ./lib/services/
 RUN cd lib/services && go mod download
 COPY . .
-RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/test-runner ./test/testrunner
+RUN cd lib/services && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/test-runner ./test/testrunner
 # One binary per test-bearing package, named by its repo-relative dir with
 # `/` mangled to `__` (the runner entrypoint reverses the mangling). The
 # enumeration is `go list` over the same patterns `make test-services` runs,
@@ -29,7 +31,7 @@ RUN mkdir -p /tests && \
     for dir in $(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.Dir}}{{end}}' ./test/...); do \
       rel="${dir#/src/}"; \
       out="/tests/$(printf '%s' "$rel" | sed 's,/,__,g').test"; \
-      (cd "$dir" && CGO_ENABLED=0 GOOS=linux go test -trimpath -c -o "$out" .) || exit 1; \
+      (cd "$dir" && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go test -trimpath -c -o "$out" .) || exit 1; \
     done
 
 FROM gcr.io/distroless/static:nonroot

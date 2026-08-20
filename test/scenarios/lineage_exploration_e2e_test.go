@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -20,6 +19,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -109,10 +109,9 @@ func TestLineageExploration(t *testing.T) {
 	require.NotEqual(t, "", consumerRunID,
 		"the consumer's leaf-run id must be discoverable from the leaf_run projection")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the consumer's lineage row must carry a substitution_refs entry citing the producer's run (source_kind=run); without this the ancestor walk has no link to follow", func() bool {
 		return consumerCitesAProducerRun(t, h, iid, producerNode.ID, consumerRunID)
-	}, 30*time.Second, 200*time.Millisecond,
-		"the consumer's lineage row must carry a substitution_refs entry citing the producer's run (source_kind=run); without this the ancestor walk has no link to follow")
+	})
 
 	{
 		url := h.ControlBase + "/v1/lineage/runs/" + consumerRunID
@@ -160,13 +159,12 @@ func TestLineageExploration(t *testing.T) {
 	}
 
 	var claimHandleID string
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the producer's committed claim handle id must be discoverable from rimsky_claim_handles; the claim_terminal lineage row lands asynchronously after the producer's commit", func() bool {
 		claimHandleID = mostRecentClaimHandleID(t, h, iid)
 		return claimHandleID != ""
-	}, 30*time.Second, 200*time.Millisecond,
-		"the producer's committed claim handle id must be discoverable from rimsky_claim_handles; the claim_terminal lineage row lands asynchronously after the producer's commit")
+	})
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "GET /v1/lineage/claims/{claim_handle_id} must return the claim_terminal lineage row the engine wrote on the producer's claim Commit", func() bool {
 		url := h.ControlBase + "/v1/lineage/claims/" + claimHandleID
 		status, body := httpGetJSON(t, url)
 		if status != http.StatusOK {
@@ -184,8 +182,7 @@ func TestLineageExploration(t *testing.T) {
 			return false
 		}
 		return rec["claim_handle_id"] == claimHandleID
-	}, 60*time.Second, 200*time.Millisecond,
-		"GET /v1/lineage/claims/{claim_handle_id} must return the claim_terminal lineage row the engine wrote on the producer's claim Commit")
+	})
 
 	{
 		citedProducerRunID := consumerCitedProducerRunID(t, h, iid, producerNode.ID, consumerRunID)
@@ -216,7 +213,7 @@ func TestLineageExploration(t *testing.T) {
 			"by-source pivot on the cited producer run-id must surface the consumer's lineage row (the consumer's substitution_refs cite this producer run); without this the reverse pivot is broken")
 	}
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "by-producer pivot must return >=1 claim_terminal record for the producer-store name; without this the named-producer pivot is broken", func() bool {
 		url := h.ControlBase + "/v1/lineage/by-producer/" + producerName
 		status, body := httpGetJSON(t, url)
 		if status != http.StatusOK {
@@ -231,8 +228,7 @@ func TestLineageExploration(t *testing.T) {
 			return false
 		}
 		return len(records) >= 1
-	}, 60*time.Second, 200*time.Millisecond,
-		"by-producer pivot must return >=1 claim_terminal record for the producer-store name; without this the named-producer pivot is broken")
+	})
 
 	t.Logf("STORY-lineage-exploration GREEN: producer_run_id=%s consumer_run_id=%s claim_handle_id=%s",
 		producerRunID, consumerRunID, claimHandleID)
@@ -414,7 +410,7 @@ func waitForLineageReady(
 	instanceID, producerNodeID, consumerNodeID interface{ String() string },
 ) {
 	t.Helper()
-	for {
+	awaited.Until(t, "leaf-run lineage records for both the producer and the consumer node", func() bool {
 		var nProducer, nConsumer int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -430,9 +426,6 @@ func waitForLineageReady(
 			   AND instance_id = $1
 			   AND record->>'node_id' = $2
 		`, []any{mustUUID(instanceID.String()), consumerNodeID.String()}, &nConsumer)
-		if nProducer >= 1 && nConsumer >= 1 {
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+		return nProducer >= 1 && nConsumer >= 1
+	})
 }

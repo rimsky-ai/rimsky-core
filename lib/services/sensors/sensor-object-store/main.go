@@ -8,8 +8,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
@@ -24,16 +22,19 @@ func (a slogAdapter) Info(msg string, args ...any)  { a.l.Info(msg, args...) }
 func (a slogAdapter) Warn(msg string, args ...any)  { a.l.Warn(msg, args...) }
 func (a slogAdapter) Error(msg string, args ...any) { a.l.Error(msg, args...) }
 
+// @decision: default-port-allocation
+const defaultGRPCPort = 9083
+
 func main() {
 	host := envOr("RIMSKY_SENSOR_OBJECT_STORE_HOST", "0.0.0.0")
-	port, err := agentport.Resolve("RIMSKY_SENSOR_OBJECT_STORE_PORT", 9083)
+	port, err := agentport.Resolve("RIMSKY_SENSOR_OBJECT_STORE_PORT", defaultGRPCPort)
 	if err != nil {
 		slog.Error("sensor-object-store port", "error", err.Error())
 		os.Exit(1)
 	}
 	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(serverkit.NewJSONLogger())
 	slog.Info("sensor-object-store starting",
 		"grpc_port", port,
 		"rimsky_endpoint", rimskyEndpoint)
@@ -44,8 +45,9 @@ func main() {
 		slog.Info("sensor-object-store backend registered", "backend", name)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// @decision: graceful-shutdown
+	ctx, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
+	defer stopSignals()
 
 	identity, err := peerauth.LoadFromEnv(ctx, "sensor-object-store")
 	if err != nil {
@@ -76,13 +78,6 @@ func main() {
 	srv := identity.GRPCServer()
 	genv1.RegisterPublisherServer(srv, svc)
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		slog.Info("sensor-object-store stopping")
-		cancel()
-	}()
 	serverkit.RunGRPC(ctx, srv, lis, "sensor-object-store")
 }
 

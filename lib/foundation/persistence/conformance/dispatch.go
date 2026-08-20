@@ -5,6 +5,7 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -137,7 +138,8 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 }
 
 // @concept: node-run
-func testDispatchReleaseClaimSkipsTerminalRun(t *testing.T, d persistence.Database) {
+// @concept: transition-reason
+func testDispatchReleaseClaimRefusesTerminalRun(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
@@ -152,11 +154,11 @@ func testDispatchReleaseClaimSkipsTerminalRun(t *testing.T, d persistence.Databa
 		t.Fatalf("settle run terminal ahead of a delayed release race: %v", err)
 	}
 
-	if err := q.ReleaseClaim(ctx, nodeRunID, supID); err != nil {
-		t.Fatalf("ReleaseClaim on a terminal run must no-op, not error: %v", err)
+	if err := q.ReleaseClaim(ctx, nodeRunID, supID); !errors.Is(err, cascade.ErrIllegalTransition) {
+		t.Fatalf("ReleaseClaim on a terminal run must fail with the illegal-transition sentinel; got %v", err)
 	}
-	if err := q.ReleaseClaimWithDisposition(ctx, nodeRunID, supID, "stale_recovery"); err != nil {
-		t.Fatalf("ReleaseClaimWithDisposition on a terminal run must no-op, not error: %v", err)
+	if err := q.ReleaseClaimWithDisposition(ctx, nodeRunID, supID, "stale_recovery"); !errors.Is(err, cascade.ErrIllegalTransition) {
+		t.Fatalf("ReleaseClaimWithDisposition on a terminal run must fail with the illegal-transition sentinel; got %v", err)
 	}
 
 	var gate *persistence.NodeRunForGate

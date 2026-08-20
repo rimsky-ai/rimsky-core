@@ -87,11 +87,11 @@ func TestRunInstanceCreate_OK(t *testing.T) {
 func TestRunInstanceList(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
-	key := "compose:p:n"
+	key := "p:n"
 	if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := cli.RunInstanceList(context.Background(), []string{"--key-prefix", "compose:p:"}); got != 0 {
+	if got := cli.RunInstanceList(context.Background(), []string{"--key-prefix", "p:"}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
 }
@@ -181,7 +181,7 @@ func TestRunInstanceStatus_JSONHasAllSections(t *testing.T) {
 func TestRunInstanceStatus_KeyResolution(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
-	key := "compose:p:n"
+	key := "p:n"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
 	if got := cli.RunInstanceStatus(context.Background(), []string{key}); got != 0 {
@@ -192,7 +192,7 @@ func TestRunInstanceStatus_KeyResolution(t *testing.T) {
 func TestRunInstanceStatus_SingleGetInstanceRoundTrip(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
-	key := "compose:p:n"
+	key := "p:n"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
 
@@ -209,7 +209,7 @@ func TestRunInstanceStatus_SingleGetInstanceRoundTrip(t *testing.T) {
 func TestRunInstanceGet_ByKeyAndUUID(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
-	key := "compose:p:n"
+	key := "p:n"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
 
 	var exit int
@@ -277,11 +277,7 @@ func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit promptly on a terminal instance")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Errorf("exit %d, want 0", exit)
@@ -314,11 +310,7 @@ func TestRunWatch_DrainsAllEventsBeforeTerminal(t *testing.T) {
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
 		}()
-		select {
-		case exit = <-done:
-		case <-time.After(5 * time.Second):
-			t.Error("watch did not exit promptly on a terminal instance")
-		}
+		exit = <-done
 	})
 	if exit != 0 {
 		t.Errorf("exit %d, want 0", exit)
@@ -351,7 +343,7 @@ func TestRunInstanceEvents_NoFollow(t *testing.T) {
 func TestRunInstanceEvents_KeyResolution(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
-	key := "compose:p:n"
+	key := "p:n"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "x", Payload: map[string]any{}})
 	if got := cli.RunInstanceEvents(context.Background(), []string{key}); got != 0 {
@@ -407,9 +399,10 @@ func TestRunInstanceEvents_Follow_NoDuplicates(t *testing.T) {
 		done <- cli.RunInstanceEvents(ctx, []string{"--follow", "--poll-interval", "20ms", inst.ID})
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	waitForListEventsCalls(t, srv, 2)
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "k3", Payload: map[string]any{}})
-	time.Sleep(150 * time.Millisecond)
+	afterAdd := srv.ListEventsHitCount()
+	waitForListEventsCalls(t, srv, afterAdd+2)
 
 	cancel()
 	_ = wOut.Close()
@@ -450,7 +443,7 @@ func TestLooksLikeUUID(t *testing.T) {
 	if !cli.LooksLikeUUID("0fb9b8a5-7c1c-4cb9-8c1f-cf1f8fcb1234") {
 		t.Error("uuid not detected")
 	}
-	if cli.LooksLikeUUID("compose:p:n") {
+	if cli.LooksLikeUUID("p:n") {
 		t.Error("non-uuid detected as uuid")
 	}
 }

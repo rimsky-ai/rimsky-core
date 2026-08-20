@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -126,14 +127,10 @@ func RunComposeDown(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	cfgPath, _ := cli.DefaultConfigPath()
-	endpoint, err := cli.ResolveEndpointForCompose(flags.common.Endpoint, os.Getenv("RIMSKY_CONTROL_API_URL"), cfgPath, m.Context)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
+	c, _, code := clientForContext(&flags.common, m.Context)
+	if code != 0 {
+		return code
 	}
-	c := cli.NewClient(endpoint)
-	c.SetComposeOrigin(true)
 	return runComposeDownWithManifest(ctx, m, c, flags)
 }
 
@@ -150,8 +147,18 @@ func runComposeDownWithManifest(ctx context.Context, m *Manifest, c *cli.Client,
 	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
 		return 2
 	}
-	if _, _, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout}); err != nil {
+	asJSON := flags.common.Format == cli.FormatJSON
+	narration := io.Writer(os.Stdout)
+	if asJSON {
+		narration = os.Stderr
+	}
+	created, applied, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: narration})
+	if err != nil {
 		return reportApplyError(err)
+	}
+	if asJSON {
+		_ = cli.EmitJSON(os.Stdout, newApplyResult(m.Project, applied, created))
+		return 0
 	}
 	fmt.Fprintln(os.Stdout, "compose down complete")
 	return 0

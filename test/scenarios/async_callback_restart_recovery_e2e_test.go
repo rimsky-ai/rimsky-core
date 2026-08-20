@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -70,22 +70,15 @@ func TestAsyncCallback_SurvivesRegistryLoss_ViaProductionRegisteredAck(t *testin
 			"change_summary":   "async-ok-post-registry-loss",
 		},
 	})
-	deadline := time.Now().Add(10 * time.Second)
-	var status int
 	var respBody []byte
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the callback endpoint to honour the ack after the in-memory registry entry is gone, "+
+		"by falling back to lookupAsyncCtxByAck's DB-backed reconstruction", func() bool {
 		resp, err := http.Post(cbURL, "application/json", bytes.NewReader(body))
 		require.NoError(t, err)
-		status = resp.StatusCode
+		status := resp.StatusCode
 		respBody, _ = readAllAndClose(resp)
-		if status == http.StatusOK {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	require.Equal(t, http.StatusOK, status,
-		"callback must still be honored after the in-memory registry entry is gone — the handler "+
-			"must fall back to lookupAsyncCtxByAck's DB-backed reconstruction of the ack; body=%s", respBody)
+		return status == http.StatusOK
+	})
 
 	var ack struct {
 		AckStatus string `json:"ack_status"`
@@ -110,24 +103,24 @@ func TestAsyncCallback_SurvivesRegistryLoss_ViaProductionRegisteredAck(t *testin
 
 func waitForAsyncAckRegistered(t *testing.T, h *scenario.Harness, nodeID shared.UUID, out *string) {
 	t.Helper()
-	for {
+	awaited.Until(t, "a node run for "+nodeID.String()+" to carry an async_ack_id", func() bool {
 		var count int
 		h.QueryRowSQL(`
 			SELECT count(*) FROM rimsky_node_runs
 			 WHERE node_id = $1 AND async_ack_id IS NOT NULL`,
 			[]any{nodeID}, &count)
-		if count > 0 {
-			var ackID string
-			h.QueryRowSQL(`
-				SELECT async_ack_id FROM rimsky_node_runs
-				 WHERE node_id = $1 AND async_ack_id IS NOT NULL
-				 ORDER BY enqueued_at DESC LIMIT 1`,
-				[]any{nodeID}, &ackID)
-			*out = ackID
-			return
+		if count == 0 {
+			return false
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		var ackID string
+		h.QueryRowSQL(`
+			SELECT async_ack_id FROM rimsky_node_runs
+			 WHERE node_id = $1 AND async_ack_id IS NOT NULL
+			 ORDER BY enqueued_at DESC LIMIT 1`,
+			[]any{nodeID}, &ackID)
+		*out = ackID
+		return true
+	})
 }
 
 func readAllAndClose(resp *http.Response) ([]byte, error) {

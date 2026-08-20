@@ -79,7 +79,7 @@ func TestParkedResumeDoesNotSpuriouslyCascadeSuccessSubscriberOnError(t *testing
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFailed)
 	h.WaitForEventCount(worker.ID, "terminal/error/stub/boom", 1)
 
-	time.Sleep(2 * time.Second)
+	h.WaitForSchedulerQuiescence()
 
 	var downstreamLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

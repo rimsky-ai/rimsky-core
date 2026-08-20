@@ -274,11 +274,12 @@ func startHttpNodeBinary(t *testing.T, binary string, errorClassField string) st
 		go func() { _ = cmd.Wait(); close(done) }()
 		select {
 		case <-done:
+		//nolint:testwallclock-pacing a teardown grace before SIGKILL; the arm kills the child and reaches no verdict
 		case <-time.After(5 * time.Second):
 			_ = cmd.Process.Kill()
 		}
 	})
-	waitDialable(addr)
+	waitDialable(t, addr)
 	return addr
 }
 

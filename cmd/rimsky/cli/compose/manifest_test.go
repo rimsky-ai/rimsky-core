@@ -38,7 +38,7 @@ instances:
 	if m.Project != "ingest-pipeline" {
 		t.Errorf("project: %q", m.Project)
 	}
-	if m.PrefixedTag("a@1.0") != "compose:ingest-pipeline:a@1.0" {
+	if m.PrefixedTag("a@1.0") != "ingest-pipeline:a@1.0" {
 		t.Errorf("prefixed: %q", m.PrefixedTag("a@1.0"))
 	}
 }
@@ -58,16 +58,16 @@ func TestValidate_BadProjectName(t *testing.T) {
 	}
 }
 
-func TestValidate_TemplateReservedPrefix(t *testing.T) {
+// @concept: tag
+func TestValidate_AcceptsATagCarryingAnyPrefix(t *testing.T) {
 	m := &Manifest{
 		Project: "p",
 		Templates: []TemplateRef{
 			{Path: "x.yml", Tag: "compose:p:foo"},
 		},
 	}
-	err := m.Validate()
-	if err == nil || !strings.Contains(err.Error(), "reserved prefix") {
-		t.Errorf("got %v", err)
+	if err := m.Validate(); err != nil {
+		t.Errorf("no tag prefix is reserved, so the manifest accepts any valid tag identifier; got %v", err)
 	}
 }
 
@@ -375,7 +375,7 @@ func TestSiblingRimskyYMLPath_Absent(t *testing.T) {
 
 func TestResolveTemplateRef(t *testing.T) {
 	m := &Manifest{Project: "p"}
-	if r, k := m.ResolveTemplateRef("a@1.0"); r != "compose:p:a@1.0" || k != "tag" {
+	if r, k := m.ResolveTemplateRef("a@1.0"); r != "p:a@1.0" || k != "tag" {
 		t.Errorf("got %q,%q", r, k)
 	}
 	hash := "sha256-" + strings.Repeat("0", 64)

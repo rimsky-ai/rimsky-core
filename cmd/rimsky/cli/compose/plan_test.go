@@ -115,7 +115,7 @@ func TestComputePlan_TagMv(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	oldHash, _ := srv.State.RegisterTemplate(map[string]any{"name": "old", "version": "1.0", "nodes": []any{}}, "compose:p:a@1.0", "")
+	oldHash, _ := srv.State.RegisterTemplate(map[string]any{"name": "old", "version": "1.0", "nodes": []any{}}, "p:a@1.0", "")
 	srv.State.SetTemplateState(oldHash, "deployed")
 	dir, m := makeManifest(t, `project: p
 templates:
@@ -147,7 +147,7 @@ func TestComputePlan_RemoveFromManifest(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:legacy@0.9", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "p:legacy@0.9", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	_, m := makeManifest(t, "project: p\n")
 	state, _ := compose.QueryState(context.Background(), c, m.Project)
@@ -184,11 +184,11 @@ templates:
 	if err != nil {
 		t.Fatal(err)
 	}
-	registeredHash, _ := srv.State.RegisterTemplate(specToMap(t, spec), "compose:p:a@1.0", "")
+	registeredHash, _ := srv.State.RegisterTemplate(specToMap(t, spec), "p:a@1.0", "")
 	if registeredHash != hash {
 		t.Fatalf("fixture hash mismatch: registered %q resolved %q", registeredHash, hash)
 	}
-	srv.State.SetTagHash("compose:p:b@1.0", hash)
+	srv.State.SetTagHash("p:b@1.0", hash)
 	srv.State.SetTemplateState(hash, "deployed")
 
 	state, err := compose.QueryState(context.Background(), c, m.Project)
@@ -207,7 +207,7 @@ templates:
 	}
 	sawTagDelete := false
 	for _, s := range plan.Steps {
-		if s.Action == compose.ActionTagDelete && s.Tag == "compose:p:b@1.0" {
+		if s.Action == compose.ActionTagDelete && s.Tag == "p:b@1.0" {
 			sawTagDelete = true
 		}
 	}
@@ -236,12 +236,12 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:hello"
+	key := "p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FailedCount: 1}})
 	now := time.Now()
@@ -299,12 +299,12 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:hello"
+	key := "p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
 	now := time.Now()
@@ -351,12 +351,12 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:hello"
+	key := "p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FailedCount: 1}})
 	now := time.Now()
@@ -383,10 +383,10 @@ func TestComputePlan_InstanceDeletesAreDeterministicallySorted(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:a@1.0", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "p:a@1.0", "")
 	srv.State.SetTemplateState(hash, "deployed")
 
-	keys := []string{"compose:p:zebra", "compose:p:apple", "compose:p:mango", "compose:p:banana", "compose:p:cherry"}
+	keys := []string{"p:zebra", "p:apple", "p:mango", "p:banana", "p:cherry"}
 	now := time.Now()
 	for _, key := range keys {
 		key := key
@@ -424,9 +424,9 @@ func TestComputePlan_NonTerminalOrphan(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:a@1.0", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "p:a@1.0", "")
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:orphan"
+	key := "p:orphan"
 	if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -462,12 +462,12 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:hello"
+	key := "p:hello"
 	if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -504,12 +504,12 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:hello"
+	key := "p:hello"
 	if _, _, err := srv.State.CreateInstance(hash, &key, map[string]any{"count": 7}); err != nil {
 		t.Fatal(err)
 	}
@@ -571,12 +571,12 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:hello"
+	key := "p:hello"
 	if _, _, err := srv.State.CreateInstance(hash, &key, map[string]any{"count": 7}); err != nil {
 		t.Fatal(err)
 	}
@@ -617,12 +617,12 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:hello"
+	key := "p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}})
 	now := time.Now()

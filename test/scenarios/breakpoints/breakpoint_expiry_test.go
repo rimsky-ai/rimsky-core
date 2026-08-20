@@ -16,6 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -52,10 +53,9 @@ func TestBreakpointExpiry(t *testing.T) {
 	require.NotNil(t, getBreakpointRow(t, h, bpID),
 		"breakpoint should exist immediately after creation")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "breakpoint row should be deleted by SweepExpired within TTL + sweep cadence", func() bool {
 		return getBreakpointRow(t, h, bpID) == nil
-	}, 5*time.Second, 100*time.Millisecond,
-		"breakpoint row should be deleted by SweepExpired within TTL + sweep cadence")
+	})
 
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)

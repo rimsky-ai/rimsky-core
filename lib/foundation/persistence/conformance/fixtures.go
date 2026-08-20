@@ -261,3 +261,48 @@ func forceRunStateToFresh(
 	}
 	return nil
 }
+
+// @concept: transition-reason
+func driveRunToState(
+	ctx context.Context, t *testing.T, d persistence.Database, runID shared.UUID, target cascade.NodeState,
+) {
+	t.Helper()
+	hops, err := legalHopsFromStale(target)
+	if err != nil {
+		t.Fatalf("driveRunToState(%s): %v", target, err)
+	}
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for _, h := range hops {
+			if err := d.Tables().Nodes().UpdateState(ctx, runID, h.state, h.reason, nil, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("driveRunToState(%s): %v", target, err)
+	}
+}
+
+type stateHop struct {
+	state  cascade.NodeState
+	reason cascade.TransitionReason
+}
+
+func legalHopsFromStale(target cascade.NodeState) ([]stateHop, error) {
+	running := stateHop{cascade.NodeStateRunning, cascade.ReasonDispatchClaimed}
+	switch target {
+	case cascade.NodeStateStale:
+		return nil, nil
+	case cascade.NodeStateRunning:
+		return []stateHop{running}, nil
+	case cascade.NodeStateFresh:
+		return []stateHop{{cascade.NodeStateFresh, cascade.ReasonAcquirePass}}, nil
+	case cascade.NodeStateFailed:
+		return []stateHop{{cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp}}, nil
+	case cascade.NodeStateHeld:
+		return []stateHop{running, {cascade.NodeStateHeld, cascade.ReasonHandlerHeld}}, nil
+	case cascade.NodeStateParked:
+		return []stateHop{running, {cascade.NodeStateParked, cascade.ReasonHandlerPark}}, nil
+	}
+	return nil, fmt.Errorf("no legal path from stale to %s", target)
+}

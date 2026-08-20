@@ -5,6 +5,7 @@ package scenarios
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -394,21 +396,10 @@ func readSingleClaimHandle(t *testing.T, h *scenario.Harness, nodeID shared.UUID
 
 func requireClaimHandleState(t *testing.T, h *scenario.Harness, acquirerNodeID shared.UUID, want spec.ClaimHandleState, wantHeld bool) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	var lastState spec.ClaimHandleState
-	var lastHeld bool
-	for time.Now().Before(deadline) {
+	awaited.Until(t, fmt.Sprintf("the acquirer's claim_handle to reach state=%s is_held=%v", want, wantHeld), func() bool {
 		row := readSingleClaimHandle(t, h, acquirerNodeID)
-		lastState = row.State
-		lastHeld = row.IsHeld
-		if row.State == want && row.IsHeld == wantHeld {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.Failf(t, "claim_handle did not reach expected state",
-		"want state=%s is_held=%v; last seen state=%s is_held=%v",
-		want, wantHeld, lastState, lastHeld)
+		return row.State == want && row.IsHeld == wantHeld
+	})
 }
 
 func unwrapJSONString(raw json.RawMessage) string {

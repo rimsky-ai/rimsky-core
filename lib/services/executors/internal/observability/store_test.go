@@ -124,11 +124,7 @@ func TestStoreStreamTraceNoDropUnderConcurrentAppend(t *testing.T) {
 
 	s.MarkTerminal(nodeRunID)
 
-	select {
-	case <-streamDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("StreamTrace did not return after MarkTerminal")
-	}
+	<-streamDone
 
 	got := stream.snapshot()
 	if len(got) == 0 || got[len(got)-1].EventId != "trace_complete" {
@@ -169,11 +165,7 @@ func TestStoreStreamTrace_IdleTimeoutIsDistinctFromGenuineCompletion(t *testing.
 		streamDone <- s.StreamTrace(&genv1.StreamTraceRequest{DispatchId: nodeRunID}, stream)
 	}()
 
-	select {
-	case <-streamDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("StreamTrace did not return after the idle timeout elapsed")
-	}
+	<-streamDone
 
 	got := stream.snapshot()
 	if len(got) != 1 {

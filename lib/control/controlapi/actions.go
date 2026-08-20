@@ -236,12 +236,14 @@ func BuildV1Registry() *ActionRegistry {
 var v1Actions = []ActionEntry{
 	{Action: "health:probe", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/health"}},
+		MCPTools:    []string{"health_probe"},
 		Posture:     PostureUnauthenticated,
 		Description: "Liveness probe for infrastructure. Requires no token: it answers success while persistence is reachable and non-success when it is not, and persistence availability is the one dependency it checks."},
 
 	// @concept: peer-auth
 	{Action: "peer-auth:ca-root", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/ca-root"}},
+		MCPTools:    []string{"peer_auth_ca_root"},
 		Posture:     PostureUnauthenticated,
 		MountedWhen: "peer authentication is configured with a deployment CA",
 		Description: "Serve the deployment CA root certificate as PEM. Unauthenticated by necessity: a service needs this root to verify the control API's certificate before it can present a token to enroll, so requiring a token would be a chicken-and-egg. The root is a public certificate; nothing secret is disclosed."},
@@ -249,6 +251,7 @@ var v1Actions = []ActionEntry{
 	// @concept: api-key
 	{Action: "auth:whoami", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/auth/whoami"}},
+		MCPTools:    []string{"auth_whoami"},
 		Posture:     PostureIdentityOnly,
 		Description: "Echo the caller's own identity. Requires a valid token but no permission: a permission on this route could only ask whether a key may learn its own name, and a denial would be unlearnable — the caller cannot discover which key it is holding in order to ask for the grant. Not grantable; naming it in a permission is refused."},
 
@@ -481,12 +484,6 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"observability_get"},
 		MountedWhen: "an observability handler is configured",
 		Description: "Read observability data via /v1/observability/*; the MCP tool takes the path below /v1/observability/ as its path_suffix argument."},
-
-	// @concept: permission
-	{Action: composeOriginAction, IsWrite: false,
-		Routes:      nil,
-		MCPTools:    nil,
-		Description: "Capability marker for the privileged compose-CLI: grants the bearer the right to create reserved-prefix `compose:<project>:<...>` tags and instance keys. No route maps to this action; it is consulted server-side when a request stamps the X-Rimsky-Compose-Origin header."},
 
 	{Action: "mcp:read", IsWrite: false,
 		Routes:      []Route{{Method: "POST", Path: "/v1/mcp"}, {Method: "GET", Path: "/v1/mcp"}, {Method: "DELETE", Path: "/v1/mcp"}},

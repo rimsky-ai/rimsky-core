@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -132,35 +131,17 @@ func postMessage(t *testing.T, ep harness.RimskyEndpoint, path string, body map[
 	return resp.StatusCode, out, decoded.MessageID
 }
 
-const countInstanceMessagesStableWindow = 1 * time.Second
-
 func countInstanceMessages(t *testing.T, ep harness.RimskyEndpoint, path string) int {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	last := -1
-	stableSince := time.Now()
-	for {
-		status, raw := ep.GetJSON(t, path, "")
-		if status != http.StatusOK {
-			t.Fatalf("GET %s returned %d, want 200\nbody: %s", path, status, string(raw))
-		}
-		var resp struct {
-			Messages []json.RawMessage `json:"messages"`
-		}
-		if err := json.Unmarshal(raw, &resp); err != nil {
-			t.Fatalf("decode GET %s response: %v\nbody: %s", path, err, string(raw))
-		}
-		n := len(resp.Messages)
-		if n != last {
-			last = n
-			stableSince = time.Now()
-		}
-		if time.Since(stableSince) >= countInstanceMessagesStableWindow {
-			return last
-		}
-		if !time.Now().Before(deadline) {
-			return last
-		}
-		time.Sleep(100 * time.Millisecond)
+	status, raw := ep.GetJSON(t, path, "")
+	if status != http.StatusOK {
+		t.Fatalf("GET %s returned %d, want 200\nbody: %s", path, status, string(raw))
 	}
+	var resp struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode GET %s response: %v\nbody: %s", path, err, string(raw))
+	}
+	return len(resp.Messages)
 }

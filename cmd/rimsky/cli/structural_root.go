@@ -11,7 +11,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// @decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edges-derived-on-demand
 // @decision: compose-driver-sends-empty-message-after-create
 func TemplateHasStructuralRoot(ctx context.Context, c *Client, hash string) (bool, error) {
 	if hash == "" {

@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 // @story: fs-fanout-expand-folder
@@ -77,13 +77,10 @@ func TestFSFanOutExpandFolderE2E(t *testing.T) {
 	sort.Strings(sortedWant)
 
 	var gotKeys []string
-	for {
+	awaited.Until(t, "the partition_request to open one fanout_partition RunScope per matched file", func() bool {
 		gotKeys = partitionKeys(ctx, t, pool, instanceID)
-		if len(gotKeys) >= len(sortedWant) {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return len(gotKeys) >= len(sortedWant)
+	})
 	sort.Strings(gotKeys)
 	if len(gotKeys) != len(sortedWant) {
 		t.Fatalf("want one fanout_partition RunScope per matched file (%v), got %v — "+

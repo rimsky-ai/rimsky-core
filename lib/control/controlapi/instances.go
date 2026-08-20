@@ -265,10 +265,6 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		if body.InstanceKey != nil && *body.InstanceKey == "" {
 			body.InstanceKey = nil
 		}
-		if body.InstanceKey != nil && strings.HasPrefix(*body.InstanceKey, composeReservedPrefix) && !isComposeOrigin(req) {
-			badRequest(w, "instance_key uses reserved prefix \"compose:\" (managed by the compose command)")
-			return
-		}
 		if strings.TrimSpace(body.Template) == "" {
 			badRequest(w, "template is required (tag or hash)")
 			return

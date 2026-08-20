@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
 // @concept: sensor
-// @concept: replica
 
 package main
 
@@ -49,7 +48,24 @@ func (d *dedupingReceiver) snapshot() (total, accepted int) {
 	return d.totalPosts, d.acceptedCount
 }
 
-func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
+const subscriptionWindowCron = "*/5 * * * *"
+
+func subscribeCron(t *testing.T, s *SensorService, subscriptionID string, at time.Time) {
+	t.Helper()
+	s.clock = func() time.Time { return at }
+	raw, err := json.Marshal(map[string]any{"cron": subscriptionWindowCron})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: subscriptionID, InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+		MessageType: "invalidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOneFireWindowPostsOneEnvelopeNamingItsSubscription(t *testing.T) {
 	var fireCount int64
 	var bodies []map[string]any
 	var bodiesMu sync.Mutex
@@ -67,16 +83,7 @@ func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
 
 	s := NewSensorService(srv.URL, noopLogger{})
 	registerTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	s.clock = func() time.Time { return registerTime }
-	cfg := map[string]any{"cron": "*/5 * * * *"}
-	raw, _ := json.Marshal(cfg)
-	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
-		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-		MessageType: "invalidate",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	subscribeCron(t, s, "w1", registerTime)
 
 	s.clock = func() time.Time { return registerTime.Add(6 * time.Minute) }
 	s.Tick(context.Background())
@@ -94,69 +101,43 @@ func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
 	}
 }
 
-func TestMultiReplica_SameSubscriptionSameWindow_CollapsesToOneAcceptedMessage(t *testing.T) {
+func TestRefiringTheSameWindowAfterARestartIsAbsorbedByTheIdempotentSend(t *testing.T) {
 	srv, recv := newDedupingReceiver()
 	defer srv.Close()
 
-	replicaA := NewSensorService(srv.URL, noopLogger{})
-	replicaB := NewSensorService(srv.URL, noopLogger{})
+	beforeRestart := NewSensorService(srv.URL, noopLogger{})
+	afterRestart := NewSensorService(srv.URL, noopLogger{})
 
 	registerTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	for _, s := range []*SensorService{replicaA, replicaB} {
-		s.clock = func() time.Time { return registerTime }
-		cfg := map[string]any{"cron": "*/5 * * * *"}
-		raw, _ := json.Marshal(cfg)
-		_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
-			PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-			MessageType: "invalidate",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	for _, s := range []*SensorService{replicaA, replicaB} {
-		s.clock = func() time.Time { return registerTime.Add(6 * time.Minute) }
+	fireWindow := registerTime.Add(6 * time.Minute)
+	for _, s := range []*SensorService{beforeRestart, afterRestart} {
+		subscribeCron(t, s, "w1", registerTime)
+		s.clock = func() time.Time { return fireWindow }
 		s.Tick(context.Background())
 	}
 
 	total, accepted := recv.snapshot()
 	if total != 2 {
-		t.Errorf("POSTs from two independent replicas: got %d, want 2 "+
-			"(no cross-replica coordination; each replica fires on its own)", total)
+		t.Errorf("POSTs after the restart refired the window: got %d, want 2 "+
+			"(a restarted sensor carries no memory of the fire and posts again)", total)
 	}
 	if accepted != 1 {
 		t.Errorf("dedup-accepted messages: got %d, want 1 "+
-			"(same subscription + same fire window must produce identical idempotency "+
-			"keys, so a real control-API dedup collapses the two POSTs to one enqueued "+
-			"message; this is deliberate, not leader election)", accepted)
+			"(the same subscription and the same fire window derive the same idempotency "+
+			"key, so the control API's idempotent send absorbs the second post)", accepted)
 	}
 }
 
-func TestMultiReplica_DistinctSubscriptions_NeverCollapse(t *testing.T) {
+func TestDistinctSubscriptionsNeverShareAnIdempotencyKey(t *testing.T) {
 	srv, recv := newDedupingReceiver()
 	defer srv.Close()
 
-	replicaA := NewSensorService(srv.URL, noopLogger{})
-	replicaB := NewSensorService(srv.URL, noopLogger{})
-
 	registerTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	cfg := map[string]any{"cron": "*/5 * * * *"}
-	raw, _ := json.Marshal(cfg)
-	subs := map[*SensorService]string{replicaA: "w1", replicaB: "w2"}
-	for s, subID := range subs {
-		s.clock = func() time.Time { return registerTime }
-		_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
-			PublisherSubscriptionId: subID, InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-			MessageType: "invalidate",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	for s := range subs {
-		s.clock = func() time.Time { return registerTime.Add(6 * time.Minute) }
+	fireWindow := registerTime.Add(6 * time.Minute)
+	for _, subscriptionID := range []string{"w1", "w2"} {
+		s := NewSensorService(srv.URL, noopLogger{})
+		subscribeCron(t, s, subscriptionID, registerTime)
+		s.clock = func() time.Time { return fireWindow }
 		s.Tick(context.Background())
 	}
 

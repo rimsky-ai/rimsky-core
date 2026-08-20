@@ -18,7 +18,6 @@ import (
 
 func main() {
 	list := flag.Bool("list", false, "print every violation instead of writing the baseline")
-	grow := flag.Bool("grow", false, "allow the baseline to record an increased per-file count (the ratchet is one-way without this)")
 	flag.Parse()
 
 	repoRoot, err := findRepoRoot()
@@ -33,30 +32,35 @@ func main() {
 	}
 	if *list {
 		for _, v := range violations {
-			fmt.Printf("%s:%d: %s: %s\n", v.File, v.Line, v.Detector, v.Source)
+			fmt.Printf("%s:%d: %s: %s — %s\n", v.File, v.Line, v.Kind, v.Source, v.Detail)
 		}
 		fmt.Printf("wallclock-lint: %d violation(s)\n", len(violations))
 		return
 	}
+
+	if hard := scan.NonBaselineable(violations); len(hard) > 0 {
+		for _, v := range hard {
+			fmt.Fprintf(os.Stderr, "wallclock-lint: %s:%d: %s: %s — %s\n", v.File, v.Line, v.Kind, v.Source, v.Detail)
+		}
+		fmt.Fprintln(os.Stderr, "wallclock-lint: a declared wait class the lint refuses cannot be recorded in the baseline — "+
+			"the baseline carries the unclassified backlog alone")
+		os.Exit(1)
+	}
+
 	counts := scan.CountsByFile(violations)
 	out := filepath.Join(repoRoot, "tools", "wallclock-lint", "baseline.json")
-	if !*grow {
-		baseline := readBaseline(out)
-		var grown []string
-		for file, n := range counts {
-			if n > baseline[file] {
-				grown = append(grown, file)
-			}
+	previous, err := readBaseline(out)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wallclock-lint:", err)
+		os.Exit(1)
+	}
+	if grown := grownFiles(previous, counts); len(grown) > 0 {
+		for _, g := range grown {
+			fmt.Fprintf(os.Stderr, "wallclock-lint: %s has %d unclassified wall-clock wait(s), the recorded baseline allows %d\n",
+				g.file, g.now, g.was)
 		}
-		if len(grown) > 0 {
-			sort.Strings(grown)
-			for _, f := range grown {
-				fmt.Fprintf(os.Stderr, "wallclock-lint: %s would grow past its recorded baseline (%d -> %d)\n", f, baseline[f], counts[f])
-			}
-			fmt.Fprintln(os.Stderr, "wallclock-lint: refusing to record an increased per-file count — fix the new "+
-				"wall-clock verdict idiom(s) or rerun with -grow to deliberately raise the baseline")
-			os.Exit(1)
-		}
+		fmt.Fprintln(os.Stderr, "wallclock-lint: the ratchet is one-way — convert the new wait rather than recording it")
+		os.Exit(1)
 	}
 	blob, err := json.MarshalIndent(counts, "", "  ")
 	if err != nil {
@@ -70,16 +74,36 @@ func main() {
 	fmt.Printf("wallclock-lint: %d violation(s) across %d file(s) -> %s\n", len(violations), len(counts), out)
 }
 
-func readBaseline(path string) map[string]int {
-	baseline := map[string]int{}
+func readBaseline(path string) (map[string]int, error) {
 	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return map[string]int{}, nil
+	}
 	if err != nil {
-		return baseline
+		return nil, err
 	}
-	if err := json.Unmarshal(raw, &baseline); err != nil {
-		return map[string]int{}
+	counts := map[string]int{}
+	if err := json.Unmarshal(raw, &counts); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return baseline
+	return counts, nil
+}
+
+type grownFile struct {
+	file string
+	was  int
+	now  int
+}
+
+func grownFiles(previous, current map[string]int) []grownFile {
+	var out []grownFile
+	for file, now := range current {
+		if was := previous[file]; now > was {
+			out = append(out, grownFile{file: file, was: was, now: now})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].file < out[j].file })
+	return out
 }
 
 func findRepoRoot() (string, error) {

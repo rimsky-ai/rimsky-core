@@ -232,10 +232,12 @@ func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing
 
 	failedSig := "terminal/error/aggregate/strict_failed"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.NodeRunTree().UpdateStateAndOutcome(ctx, f.runA, cascade.NodeStateFailed, &failedSig, false, tx); err != nil {
+		if err := store.Nodes().UpdateState(ctx, f.runA,
+			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &failedSig, tx); err != nil {
 			return err
 		}
-		return store.NodeRunTree().UpdateStateAndOutcome(ctx, f.runB, cascade.NodeStateFailed, &failedSig, false, tx)
+		return store.Nodes().UpdateState(ctx, f.runB,
+			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &failedSig, tx)
 	}); err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}

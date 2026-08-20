@@ -156,7 +156,7 @@ const syntheticSupervisorYAML = `# Default supervisor tuning baked into the rims
 # (claim_producers, named_locks, executors) lives separately in rimsky.yml
 # under RIMSKY_CONFIG.
 #
-# Single-container defaults: the async-callback listener binds 0.0.0.0:9100 and
+# Single-container defaults: the async-callback listener binds 0.0.0.0:8081 and
 # advertises 127.0.0.1, because every rimsky role (scheduler, supervisor,
 # control-api) runs in the single all-in-one process inside this container. Override advertise_host
 # via RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST when executors run outside the
@@ -166,17 +166,9 @@ concurrency: 8
 claim_poll_interval_ms: 200
 callback:
   host: 0.0.0.0
-  port: 9100
+  port: 8081
   advertise_host: 127.0.0.1
 `
-
-func WriteSyntheticSupervisorYAML(runDir string) error {
-	path := filepath.Join(runDir, "supervisor.yml")
-	if err := os.WriteFile(path, []byte(syntheticSupervisorYAML), 0o644); err != nil {
-		return fmt.Errorf("write synthetic supervisor.yml to %q: %w", path, err)
-	}
-	return nil
-}
 
 type supervisorYAMLProbe struct {
 	SupervisorID        string                      `yaml:"supervisor_id,omitempty"`

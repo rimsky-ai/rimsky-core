@@ -58,7 +58,7 @@ func TestEventsFollowOpaqueCursor(t *testing.T) {
 		done <- cli.RunInstanceEvents(ctx, []string{"--follow", "--poll-interval", "20ms", inst.ID})
 	}()
 
-	time.Sleep(400 * time.Millisecond)
+	waitForListEventsCalls(t, srv, 4)
 	cancel()
 	exit := <-done
 	os.Stdout = saved

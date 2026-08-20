@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -53,26 +53,15 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 			"change_summary":   "async-ok",
 		},
 	})
-	deadline := time.Now().Add(10 * time.Second)
-	var status int
-	var lastErr error
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the supervisor's async-callback endpoint to accept the success body", func() bool {
 		resp, err := http.Post(cbURL, "application/json", bytes.NewReader(body))
 		if err != nil {
-			lastErr = err
-			time.Sleep(200 * time.Millisecond)
-			continue
+			return false
 		}
-		lastErr = nil
-		status = resp.StatusCode
+		status := resp.StatusCode
 		_ = resp.Body.Close()
-		if status == http.StatusOK {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	require.NoError(t, lastErr, "callback dial never succeeded")
-	require.Equal(t, http.StatusOK, status, "callback did not become available")
+		return status == http.StatusOK
+	})
 
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 

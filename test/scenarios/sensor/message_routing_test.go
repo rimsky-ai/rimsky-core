@@ -22,6 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -126,13 +127,10 @@ func TestMessageRouting_PublisherEnvelopeDeliveredThroughRealPipeline(t *testing
 		"the sender must be the subscription row's publisher_name, not caller-supplied")
 	require.Equal(t, "sensor/observation", row.Type)
 
-	for {
+	awaited.Until(t, "the routed message to be marked delivered", func() bool {
 		row = getRoutedMessage(t, h, msgID)
-		if row.DeliveredAt != nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return row.DeliveredAt != nil
+	})
 	require.NotNil(t, row.FrameID,
 		"a delivered message must be stamped with the frame that consumed it — mark and deliver commit together")
 	require.False(t, row.Cancelled)
@@ -213,14 +211,14 @@ func TestMessageRouting_MarkDeliveredImpliesReceiverRunInSameFrame(t *testing.T)
 		[]byte(`{"observed_at":"2026-05-17T12:00:00Z"}`), "k-mark-deliver")
 
 	var row *persistence.MessageRow
-	for {
+	awaited.Until(t, "the routed message to be marked delivered", func() bool {
 		r := getRoutedMessage(t, h, msgID)
-		if r != nil && r.DeliveredAt != nil {
-			row = r
-			break
+		if r == nil || r.DeliveredAt == nil {
+			return false
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		row = r
+		return true
+	})
 	require.NotNil(t, row.FrameID,
 		"a delivered message must be stamped with the frame that consumed it")
 

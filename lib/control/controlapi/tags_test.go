@@ -141,19 +141,20 @@ func TestMoveTag_HappyPath_RepointsTag(t *testing.T) {
 	require.True(t, found, "moved tag must still be listed")
 }
 
-func TestCreateTag_RejectsComposePrefixWithoutOriginHeader(t *testing.T) {
+// @concept: tag
+func TestCreateTag_ReservesNoPrefix(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("compose-tag-"+uuid.NewString()))
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("prefixed-tag-"+uuid.NewString()))
 	tplID := out["template_id"].(string)
 
-	status, body := h.httpJSON(t, "POST", "/v1/tags", map[string]any{
-		"tag": "compose:env-" + uuid.NewString(), "template": tplID,
-	})
-	require.Equal(t, http.StatusBadRequest, status, body,
-		"the compose: prefix is reserved for the compose command and must be rejected from a plain caller")
+	for _, tag := range []string{"compose:env-" + uuid.NewString(), "project-alpha:env-" + uuid.NewString()} {
+		status, body := h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": tplID})
+		require.Equalf(t, http.StatusCreated, status,
+			"the server reserves no tag prefix, so any caller may name a tag under any prefix; tag %q got %v", tag, body)
+	}
 }
 
 func TestMoveTag_404OnMissing(t *testing.T) {

@@ -106,7 +106,7 @@ func TestApplyTerminalComplete_SubgraphExit_EmitsNormalLeafRunRow(t *testing.T) 
 		}, tx); err != nil {
 			return err
 		}
-		return tables.NodeRunTree().UpdateStateAndOutcome(ctx, exitNodeRunID, cascade.NodeStateRunning, nil, false, tx)
+		return tables.Nodes().UpdateState(ctx, exitNodeRunID, cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
 	}))
 
 	args := RunArgs{

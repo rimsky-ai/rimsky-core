@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -61,7 +60,7 @@ func TestSoftInstancePause(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	time.Sleep(1 * time.Second)
+	h.WaitForSchedulerQuiescence()
 	heldCount := stubObservedCount(h, "worker")
 	require.Equal(t, startCount, heldCount,
 		"soft-pause should hold new claims; observed count must not advance while paused")

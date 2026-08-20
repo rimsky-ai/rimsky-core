@@ -12,6 +12,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -127,17 +128,9 @@ func TestCascadeDefersDuringFlight_WalkerQueuesNewPendingWithoutMutatingInFlight
 
 	h.WaitForEventCount(b.ID, "parked_resume_started", 1)
 
-	deadline := time.Now().Add(45 * time.Second)
-	var observedAfter int
-	for time.Now().Before(deadline) {
-		observedAfter = len(bObs())
-		if observedAfter >= 5 {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	time.Sleep(1 * time.Second)
-	observedAfter = len(bObs())
+	awaited.Until(t, "all five b invocations to reach the stub", func() bool { return len(bObs()) >= 5 })
+	h.WaitForSchedulerQuiescence()
+	observedAfter := len(bObs())
 	require.Equal(t, 5, observedAfter,
 		"b must be invoked exactly five times in total: (1) b1 park, (2) b1 deadline-resume, "+
 			"(3) b2, (4) b3, (5) b4 — one queued cascade-driven b-run per a self-cascade "+

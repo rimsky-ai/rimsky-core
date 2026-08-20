@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images check-image-freshness push-images publish-protocols check-clean smoke-all test-all test-root test-foundation test-protocols test-services test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images push-images verify-published-platforms publish-protocols check-clean smoke-all test-all test-root test-foundation test-protocols test-services test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -12,8 +12,13 @@ proto-gen:
 test:
 	$(GOTEST_GUARD) -p 2 -parallel 4 ./...
 
+# CGO_ENABLED=0 on every build this tree runs, per decision:build-cgo-disabled:
+# the image builds and the goreleaser CLI build already set it, and the host
+# targets a developer invokes set it here, so every binary produced from this
+# tree is pure Go and links no C runtime. test/plumbline/build_chain_test.go
+# enumerates every build invocation in the tree and holds them all to it.
 build:
-	go build ./...
+	CGO_ENABLED=0 go build ./...
 
 lint: license-lint
 	golangci-lint run
@@ -90,15 +95,14 @@ test-protocols:
 test-services:
 	cd lib/services && $(GOTEST_GUARD) -p 2 -parallel 4 ./...
 
-# test-all builds the core + service + test images BEFORE running any
-# module's tests: the services scenarios under lib/services/test/ resolve
-# every rimsky image by the content-
-# addressed :$(SRC_TAG) of the tree they run from (RIMSKY_IMAGE_TAG
-# overrides; never :latest), so a suite can only ever find an image built
-# from its own source — a stale image is unrepresentable and shows up as a
-# loud image-not-found naming the build command. Building first means every
-# test-all run proves the source tree as it stands. Docker layer caching
-# keeps the rebuild cheap when nothing image-relevant changed.
+# test-all mints this run's tag, builds the core + service + test images
+# under it, and only then runs any module's tests: the services scenarios
+# under lib/services/test/ resolve every rimsky image by RIMSKY_IMAGE_TAG
+# alone — never :latest, and with no fallback — so a suite can only ever
+# find an image this run built. A stale image is unrepresentable, and a
+# missing one shows up as a loud image-not-found naming the variable and
+# the build command. Docker layer caching keeps the rebuild cheap when
+# nothing image-relevant changed.
 test-all: core-images service-images test-images test-root test-foundation test-protocols test-services
 
 # Local test-speed observability. Runs every Go test across all modules under
@@ -127,10 +131,10 @@ test-report:
 	@gotestsum tool slowest --jsonfile .test-report/all.json --threshold=$(SLOW_THRESHOLD) --num=$(SLOW_NUM)
 
 build-all:
-	go build ./...
-	cd lib/foundation && go build ./...
-	cd lib/protocols && go build ./...
-	cd lib/services && go build ./...
+	CGO_ENABLED=0 go build ./...
+	cd lib/foundation && CGO_ENABLED=0 go build ./...
+	cd lib/protocols && CGO_ENABLED=0 go build ./...
+	cd lib/services && CGO_ENABLED=0 go build ./...
 
 # ── rimsky CLI targets ──
 
@@ -140,7 +144,7 @@ build-all:
 VERSION ?= $(shell git describe --tags --match='v[0-9]*' --always --dirty 2>/dev/null || echo dev)
 
 cli:
-	go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky ./cmd/rimsky/
+	CGO_ENABLED=0 go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky ./cmd/rimsky/
 
 cli-check:
 	goreleaser check
@@ -148,24 +152,36 @@ cli-check:
 cli-snapshot: cli-check
 	goreleaser release --snapshot --clean --skip=publish
 
-# Content-addressed image tag: a git tree-object hash of the working tree,
-# derived by tools/image-src-tag.sh (shared with the services test harness).
-# Every local image build below is tagged :$(SRC_TAG) alongside its existing
-# tags, so an image either matches the tree that asks for it or does not
-# exist — the docker-suite harness resolves by SRC_TAG, never :latest.
-# Lazily computed once per make invocation, only when a rule expands it.
-SRC_TAG = $(eval SRC_TAG := $(shell ./tools/image-src-tag.sh))$(SRC_TAG)
+# Per-run image tag. One verification run mints one tag, builds every image
+# it verifies under that tag, and hands the tag to its suites through
+# RIMSKY_IMAGE_TAG — the one variable the harness reads. The tag comes from
+# the ok-workspaces run-tag script the profile declares
+# (.ok-workspaces/config.json, runTag.path): it prints run-<12 hex>, a new
+# value on every call. Building and verifying inside one run makes staleness
+# unrepresentable, and a tag unique to the run keeps concurrent runs and
+# concurrent workspaces from colliding.
+#
+# Minted lazily, once per make invocation, only when a rule expands it — so
+# `make core-images test-all` tags and resolves one set of images. A tag
+# already in the environment wins, which is how CI and `make test-in-stack`
+# build under a tag and then run suites in a separate process against it.
+RUN_TAG_SCRIPT := .ok-workspaces/bin/run-tag
 
-IMAGE_LABELS = --label org.rimsky.project=rimsky-core --label org.rimsky.src-tree=$(SRC_TAG)
+ifeq ($(origin RIMSKY_IMAGE_TAG), undefined)
+RIMSKY_IMAGE_TAG = $(eval RIMSKY_IMAGE_TAG := $(shell $(RUN_TAG_SCRIPT)))$(RIMSKY_IMAGE_TAG)
+endif
+export RIMSKY_IMAGE_TAG
+
+IMAGE_LABELS = --label org.rimsky.project=rimsky-core
 
 # $(call build-image,<dockerfile>,<image>[,<extra docker-build args>])
 define build-image
-docker build -f $(1) $(IMAGE_LABELS) $(3) -t $(2):$(VERSION) -t $(2):latest -t $(2):$(SRC_TAG) .
+docker build -f $(1) $(IMAGE_LABELS) $(3) -t $(2):$(VERSION) -t $(2):latest -t $(2):$(RIMSKY_IMAGE_TAG) .
 endef
 
 # Test-only images are never published, so no $(VERSION) tag.
 define build-test-image
-docker build -f $(1) $(IMAGE_LABELS) $(3) -t $(2):latest -t $(2):$(SRC_TAG) .
+docker build -f $(1) $(IMAGE_LABELS) $(3) -t $(2):latest -t $(2):$(RIMSKY_IMAGE_TAG) .
 endef
 
 # Distributed images, built from this tree (Dockerfiles live in dockerfiles/).
@@ -176,18 +192,19 @@ endef
 #   rimsky-all-in-one       — the `rimsky` image plus baked zero-config SQLite
 #                             defaults; runs out of the box for local dev, not
 #                             for production (Dockerfile.all-in-one). Built FROM
-#                             the rimsky:$(VERSION) image, so it follows it here.
+#                             rimsky:$(RIMSKY_IMAGE_TAG) — this run's own rimsky
+#                             image — so it follows it here.
 #   rimsky-host-agent-proxy — the late-bound host-agent proxy service
 #                             (Dockerfile.go-base, single binary).
 #   rimsky-conformance      — bundled protocol conformance runners; pick one
 #                             by container command (Dockerfile.conformance).
-# Each image is tagged $(VERSION) + latest + $(SRC_TAG). The CLI ships as a
+# Each image is tagged $(VERSION) + latest + $(RIMSKY_IMAGE_TAG). The CLI ships as a
 # binary, not an image: `make cli` for a local build, and goreleaser for
 # release archives (`make cli-check` / `make cli-snapshot` to verify;
 # `goreleaser release` runs in the release flow — see RELEASING.md).
 core-images:
 	$(call build-image,dockerfiles/Dockerfile.rimsky,rimsky)
-	$(call build-image,dockerfiles/Dockerfile.all-in-one,rimsky-all-in-one,--build-arg RIMSKY_BASE=rimsky:$(VERSION))
+	$(call build-image,dockerfiles/Dockerfile.all-in-one,rimsky-all-in-one,--build-arg RIMSKY_BASE=rimsky:$(RIMSKY_IMAGE_TAG))
 	$(call build-image,dockerfiles/Dockerfile.go-base,rimsky-host-agent-proxy,--build-arg BINARY=rimsky-host-agent-proxy)
 	$(call build-image,dockerfiles/Dockerfile.conformance,rimsky-conformance)
 
@@ -197,7 +214,7 @@ core-images:
 # repo root so the build can reach lib/protocols + lib/services + go.work
 # (the bundled services build against the in-tree protocols module via the
 # workspace, with no published-tag pin). Each image is tagged $(VERSION) +
-# latest + $(SRC_TAG), with a `rimsky-` prefix matching the core-image naming.
+# latest + $(RIMSKY_IMAGE_TAG), with a `rimsky-` prefix matching the core-image naming.
 service-images:
 	$(call build-image,lib/services/claim_producers/filesystem/Dockerfile.filesystem,rimsky-claim-producer-filesystem)
 	$(call build-image,lib/services/claim_producers/postgres/Dockerfile.postgres,rimsky-claim-producer-postgres)
@@ -212,7 +229,7 @@ service-images:
 	$(call build-image,lib/services/executors/claude-agent/Dockerfile,rimsky-executor-claude-agent)
 
 # Test-only images consumed by the services integration harnesses.
-# Built ONCE here by stable name (never published, so :latest + :$(SRC_TAG)
+# Built ONCE here by stable name (never published, so :latest + :$(RIMSKY_IMAGE_TAG)
 # only) and referenced BY NAME from the tests — never rebuilt inline at test
 # time. An inline testcontainers WithDockerfile build with the repo root as
 # context re-tags on every source edit, orphaning the prior image ID as a
@@ -221,11 +238,11 @@ service-images:
 # as service-images: the Go builds need go.work + the workspace modules.
 test-images: service-images
 	$(call build-test-image,lib/services/test/stubexecutor/Dockerfile.stubexecutor,rimsky-test/stubexecutor)
-	$(call build-test-image,lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent,rimsky-test/claude-agent-fake,--build-arg BASE_TAG=$(SRC_TAG))
+	$(call build-test-image,lib/services/test/scenarios/claude_agent_fake_cli/Dockerfile.fake-claude-agent,rimsky-test/claude-agent-fake,--build-arg BASE_TAG=$(RIMSKY_IMAGE_TAG))
 	$(call build-test-image,lib/services/test/overlapproducer/Dockerfile.overlapproducer,rimsky-test/overlapproducer)
 	$(call build-test-image,lib/services/test/testrunner/Dockerfile.test-runner,rimsky-test/test-runner)
 
-# In-stack execution path per the ratified image-freshness mechanism: the
+# In-stack execution path per the per-run tag contract: the
 # host-side driver test (lib/services/test/instackdriver) boots a rimsky
 # stack via testcontainers, then runs rimsky-test/test-runner — docker-stack
 # test binaries compiled from this same tree by `test-images` — INSIDE the
@@ -235,19 +252,15 @@ test-images: service-images
 test-in-stack: core-images test-images
 	cd lib/services && $(GOTEST_GUARD) -count=1 ./test/instackdriver/...
 
-# Retention for the content-addressed :src-* tags — one accumulates per source
-# tree built. Prunes rimsky-labeled images older than REAP_HOURS (default 72)
-# except image IDs still pointed to by :latest or :$(VERSION), then prunes
-# dangling rimsky-labeled layers. Prints what it removes.
+# Retention for the per-run :run-* tags — one accumulates per verification
+# run. Prunes every rimsky-labeled image older than REAP_HOURS (default 72)
+# by age alone, then prunes dangling rimsky-labeled layers. Age is the whole
+# rule: a per-run tag is never reused, so no tag is worth keeping for a
+# later run, and anything a current run needs it built itself minutes ago.
+# Prints what it removes.
 REAP_HOURS ?= 72
 reap-images:
-	REAP_HOURS=$(REAP_HOURS) VERSION=$(VERSION) ./tools/reap-images.sh
-
-# Determinism guard for the SRC_TAG derivation: proves (in a temp git repo)
-# that an unchanged tree hashes identically twice and a content change moves
-# the hash, plus the resolver's env-override plumbing. No docker required.
-check-image-freshness:
-	go test ./test/support/imagetag -count=1 -v
+	REAP_HOURS=$(REAP_HOURS) ./tools/reap-images.sh
 
 # The 15-image set published by this repo. Single source of truth for `scan`
 # and (in symbolic form) push-images. Order matters for push-images:
@@ -339,10 +352,21 @@ buildx-builder:
 	@docker buildx inspect rimsky-builder >/dev/null 2>&1 \
 	  || docker buildx create --name rimsky-builder --driver docker-container
 
-# Shared flags for every buildx --push invocation below.
+# Shared flags for every buildx --push invocation below. Every published tag
+# is a multi-platform index covering Linux on Intel and ARM, per
+# decision:release-distribution — the binaries inside are pure Go and
+# cross-compile, so the second platform costs build time and nothing else.
+PUBLISH_PLATFORMS := linux/amd64,linux/arm64
+
 BUILDX_PUSH = docker buildx build --builder rimsky-builder --push \
+              --platform $(PUBLISH_PLATFORMS) \
               --provenance=mode=max --sbom=true
 
+# Ordering is load-bearing: `rimsky` is pushed first because
+# `rimsky-all-in-one` FROMs it through the registry, and a multi-platform
+# build resolves that base as an index — one manifest per platform — rather
+# than a single manifest. The base must therefore already carry both
+# platforms when the all-in-one build reads it.
 push-images: check-clean buildx-builder
 	# Core images. `rimsky` first; `rimsky-all-in-one` FROMs it via the registry.
 	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.rimsky \
@@ -389,7 +413,11 @@ push-images: check-clean buildx-builder
 #   test-all       — full Go test suite, including testcontainer scenarios
 #                    (requires Docker daemon for the testcontainer tests)
 #   scan           — docker scout cves against every locally-built image
-#   push-images    — buildx build + push with SBOM + provenance attestations
+#   push-images    — buildx build + push, multi-platform, with SBOM +
+#                    provenance attestations
+#   verify-published-platforms
+#                  — read each pushed tag's platforms back from the registry
+#                    and fail on a tag carrying one platform
 #
 # test-all itself depends on core-images + service-images + test-images
 # (see its comment above): the services scenarios resolve images by the
@@ -405,7 +433,17 @@ push-images: check-clean buildx-builder
 # LATEST_TAG=dev so the floating tag pushed alongside :$(VERSION) is :dev
 # instead of :latest. If scan finds vulnerabilities, the chain stops before
 # push.
-release: lint core-images service-images test-all scan push-images
+# Closing verify: read each pushed tag's published platform list back from
+# the registry and fail when a tag carries one platform. It checks the one
+# property no earlier step can see — what the registry actually holds. An
+# image that lost its platform list still passes lint, scan, and every local
+# suite, so only the registry answers the question.
+verify-published-platforms:
+	REGISTRY=$(REGISTRY) VERSION=$(VERSION) LATEST_TAG=$(LATEST_TAG) \
+	  PLATFORMS="$(PUBLISH_PLATFORMS)" IMAGES="$(IMAGES)" \
+	  ./tools/verify-published-platforms.sh
+
+release: lint core-images service-images test-all scan push-images verify-published-platforms
 
 # Mechanical pre-release / dev channel. Derives a SemVer-2.0 pre-release
 # version (v<next-minor>.0-dev.<YYYYMMDD>.g<sha>) from the latest stable
@@ -470,7 +508,7 @@ DOCKER_RUN = docker run --rm \
   -v rimsky-gobin:/go/bin
 
 build-docker:
-	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) go build ./...
+	$(DOCKER_RUN) -e CGO_ENABLED=0 $(DOCKER_GO_IMAGE) go build ./...
 
 test-docker:
 	$(DOCKER_RUN) -v /var/run/docker.sock:/var/run/docker.sock \

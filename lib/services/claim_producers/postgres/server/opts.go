@@ -20,6 +20,7 @@ import (
 
 const ConfigEnv = "RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG"
 
+// @decision: default-port-allocation
 const (
 	defaultGRPCPort = 9101
 	defaultHTTPPort = 9111

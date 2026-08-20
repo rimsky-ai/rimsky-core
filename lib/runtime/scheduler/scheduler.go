@@ -6,6 +6,7 @@ package scheduler
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
@@ -47,6 +48,12 @@ type Handle struct {
 	stopOnce            sync.Once
 	done                chan struct{}
 	lastOrphanBlobSweep time.Time
+	ticksCompleted      atomic.Uint64
+}
+
+// @decision: polling-audit
+func (h *Handle) TicksCompleted() uint64 {
+	return h.ticksCompleted.Load()
 }
 
 func (h *Handle) Shutdown(ctx context.Context) error {
@@ -111,6 +118,7 @@ func runLoop(cfg Config, h *Handle) {
 		if err := tick(context.Background(), cfg, h); err != nil {
 			cfg.Logger.Error("scheduler tick failed", "error", err.Error())
 		}
+		h.ticksCompleted.Add(1)
 		timer := time.NewTimer(cfg.TickInterval)
 		select {
 		case <-h.stop:

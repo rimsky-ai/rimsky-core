@@ -61,7 +61,6 @@ func (f *fakeQueue) StampPriorDispatch(_ context.Context, _ shared.UUID, _ share
 	return nil
 }
 
-func (f *fakeQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error { return nil }
 func (f *fakeQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{Kind: "not_found"}, nil
 }

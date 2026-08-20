@@ -255,7 +255,7 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 // @concept: signal
 // @concept: message-schema
 // @concept: cascade
-// @decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edges-derived-on-demand
 // @story: empty-message-wakes-roots
 func BuildSubscriptionEdges(
 	tmpl spec.TemplateSpec,
@@ -278,7 +278,7 @@ func BuildSubscriptionEdges(
 		if subgraphInternal[def.Type] {
 			continue
 		}
-		// @decision: structural-root-edge-injection-at-registration
+		// @decision: structural-root-edges-derived-on-demand
 		hasUpstream := false
 		for _, s := range def.Subscribes {
 			if s.Node == def.Type {
@@ -295,7 +295,7 @@ func BuildSubscriptionEdges(
 				}
 			}
 		}
-		// @decision: structural-root-edge-injection-at-registration
+		// @decision: structural-root-edges-derived-on-demand
 		// @story: empty-message-wakes-roots
 		if !hasUpstream && len(messageRefs[def.Type]) > 0 {
 			hasUpstream = true
@@ -314,7 +314,7 @@ func BuildSubscriptionEdges(
 }
 
 // @concept: node-subscription
-// @decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edges-derived-on-demand
 func subgraphInternalNodeTypes(tmpl spec.TemplateSpec) map[string]bool {
 	out := make(map[string]bool, 8)
 	if len(tmpl.Graphs) == 0 {

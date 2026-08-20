@@ -23,6 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -310,14 +311,14 @@ func testClaimHandoffDurable_InstanceTerminationRelease(t *testing.T) {
 
 func requireProducerRelease(t *testing.T, stub *stubstore.Store, claimID string) {
 	t.Helper()
-	for {
+	awaited.Until(t, "the producer to be sent a release for claim "+claimID, func() bool {
 		for _, c := range stub.Calls() {
 			if c.Verb == "release" && c.ClaimID == claimID {
-				return
+				return true
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return false
+	})
 }
 
 type durableOpts struct {
@@ -446,24 +447,10 @@ func startDurableHandoffHarness(t *testing.T, opts durableHandoffOpts) (*scenari
 
 func requireDurableCommittedHandle(t *testing.T, h *scenario.Harness, acquirerNodeID shared.UUID) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	var last *persistence.ClaimHandleRow
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the acquirer's claim_handle to reach committed+durable", func() bool {
 		row := readDurableClaimHandle(t, h, acquirerNodeID)
-		if row != nil {
-			last = row
-			if row.State == spec.ClaimHandleStateCommitted && row.Lifetime == spec.ClaimLifetimeDurable {
-				return
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if last == nil {
-		require.Fail(t, "no claim_handle row found for acquirer")
-		return
-	}
-	require.Failf(t, "claim_handle did not reach committed+durable",
-		"last seen state=%s lifetime=%s", last.State, last.Lifetime)
+		return row != nil && row.State == spec.ClaimHandleStateCommitted && row.Lifetime == spec.ClaimLifetimeDurable
+	})
 }
 
 func readDurableClaimHandle(t *testing.T, h *scenario.Harness, acquirerNodeID shared.UUID) *persistence.ClaimHandleRow {
@@ -502,20 +489,15 @@ func requireClaimHandleAbsent(t *testing.T, h *scenario.Harness, acquirerNodeID 
 
 func requireClaimHandleGoneByID(t *testing.T, h *scenario.Harness, id shared.UUID) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "claim_handle row "+id.String()+" to be deleted after DELETE /v1/instances/{id}", func() bool {
 		var got *persistence.ClaimHandleRow
 		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.ClaimHandles().Get(h.Ctx, id, tx)
 			got = r
 			return err
 		}))
-		if got == nil {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.Fail(t, "claim_handle row was not deleted after DELETE /v1/instances/{id}")
+		return got == nil
+	})
 }
 
 func requireInstanceGone(t *testing.T, h *scenario.Harness, instanceID shared.UUID) {
@@ -532,17 +514,14 @@ func requireInstanceGone(t *testing.T, h *scenario.Harness, instanceID shared.UU
 
 func requireSecondRun(t *testing.T, h *scenario.Harness, nodeID, prevRunID shared.UUID) {
 	t.Helper()
-	for {
+	awaited.Until(t, "a second node run for node "+nodeID.String(), func() bool {
 		var n int
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND id <> $2`,
 			uuid.UUID(nodeID), uuid.UUID(prevRunID),
 		).Scan(&n))
-		if n > 0 {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return n > 0
+	})
 }
 
 func requireSubstitutedAddrEquals(t *testing.T, h *scenario.Harness, runID shared.UUID, key string, wantAddress json.RawMessage, msg string) {

@@ -13,9 +13,9 @@ import (
 	neturl "net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestClaimProducerObservabilityDashboard(t *testing.T) {
@@ -60,11 +60,11 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		t.Logf("creating instance %d...", i)
 		instanceID := createObsInstance(t, ep, templateID, fmt.Sprintf("ck-obs-%d", i))
 		t.Logf("instance %d=%s, waiting for producer to record commit...", i, instanceID)
-		waitForLedgerClaimCount(t, fs.HostHTTPBridge, i+1, 90*time.Second)
+		waitForLedgerClaimCount(t, fs.HostHTTPBridge, i+1)
 		t.Logf("instance %d=%s reached commit in producer ledger", i, instanceID)
 	}
 
-	peerEntry := pollGetClaimProducerPeer(t, ep, "docs", 30*time.Second)
+	peerEntry := pollGetClaimProducerPeer(t, ep, "docs")
 
 	if peerEntry.HTTPBridgeURL == "" {
 		t.Fatalf("dashboard /v1/observability/claim-producers/docs returned empty http_bridge_url; "+
@@ -145,9 +145,7 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 			pickClaim.ClaimID, len(detail.History), detail)
 	}
 
-	streamCtx, streamCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer streamCancel()
-	streamEvents := streamClaim(t, streamCtx, fs.HostHTTPBridge, pickClaim.ClaimID)
+	streamEvents := streamClaim(t, ctx, fs.HostHTTPBridge, pickClaim.ClaimID)
 	if len(streamEvents) < 2 {
 		t.Fatalf("stream for claim %q produced %d events, want >= 2 (the falsifier 'streamed state lags or drops' would manifest as missing events); events=%+v",
 			pickClaim.ClaimID, len(streamEvents), streamEvents)
@@ -160,7 +158,7 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		}
 	}
 	if !hasTerminal {
-		t.Fatalf("stream for claim %q never produced a claim_terminal event before the read deadline; "+
+		t.Fatalf("the stream for claim %q closed without a claim_terminal event; "+
 			"a dropped terminal marker is the 'streamed claim state ... drops' falsifier. Events: %+v",
 			pickClaim.ClaimID, streamEvents)
 	}
@@ -254,29 +252,25 @@ type peerAdminView struct {
 	Description string `json:"description,omitempty"`
 }
 
-func pollGetClaimProducerPeer(t *testing.T, ep harness.RimskyEndpoint, name string, deadline time.Duration) peerJSON {
+func pollGetClaimProducerPeer(t *testing.T, ep harness.RimskyEndpoint, name string) peerJSON {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var last peerJSON
-	for time.Now().Before(end) {
+	var peer peerJSON
+	awaited.Until(t, fmt.Sprintf("the dashboard at /v1/observability/claim-producers/%s to converge to "+
+		"reachable with an http_bridge_url and capabilities", name), func() bool {
 		status, raw := ep.GetJSON(t, "/v1/observability/claim-producers/"+name, "")
-		if status == http.StatusOK {
-			var body struct {
-				Peer peerJSON `json:"peer"`
-			}
-			if err := json.Unmarshal(raw, &body); err != nil {
-				t.Fatalf("decode /v1/observability/claim-producers/%s: %v; raw=%s", name, err, string(raw))
-			}
-			last = body.Peer
-			if last.Reachability == "reachable" && last.HTTPBridgeURL != "" && last.Capabilities != nil {
-				return last
-			}
+		if status != http.StatusOK {
+			return false
 		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("dashboard /v1/observability/claim-producers/%s never converged to reachable+http_bridge_url within %v; last=%+v",
-		name, deadline, last)
-	return last
+		var body struct {
+			Peer peerJSON `json:"peer"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("decode /v1/observability/claim-producers/%s: %v; raw=%s", name, err, string(raw))
+		}
+		peer = body.Peer
+		return peer.Reachability == "reachable" && peer.HTTPBridgeURL != "" && peer.Capabilities != nil
+	})
+	return peer
 }
 
 type claimSummary struct {
@@ -384,10 +378,8 @@ func streamClaim(t *testing.T, ctx context.Context, bridge, claimID string) []ma
 			break
 		}
 	}
-	if err := scanner.Err(); err != nil && err != context.DeadlineExceeded {
-		if ctx.Err() == nil {
-			t.Fatalf("scanner: %v", err)
-		}
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		t.Fatalf("scanner: %v", err)
 	}
 	return events
 }
@@ -487,34 +479,25 @@ func createObsInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, inst
 	return createScenarioInstanceFromSource(t, ep, templateID, instanceKey, "claim-producer-obs")
 }
 
-func waitForLedgerClaimCount(t *testing.T, bridge string, want int, deadline time.Duration) {
+func waitForLedgerClaimCount(t *testing.T, bridge string, want int) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastCommitted int
-	for time.Now().Before(end) {
-		committed := 0
-		cursor := ""
-		for page := 0; page < 32; page++ {
-			p := getClaimsPage(t, bridge, cursor, 50)
-			for _, c := range p.Claims {
-				if c.State == "COMMITTED" {
-					committed++
+	awaited.Until(t, fmt.Sprintf("rimsky to open and commit %d claim(s) against the store, which the producer "+
+		"ledger reports as COMMITTED; a broken supervisor-dispatch-to-ClaimProducer wiring never gets there", want),
+		func() bool {
+			committed := 0
+			cursor := ""
+			for page := 0; page < 32; page++ {
+				p := getClaimsPage(t, bridge, cursor, 50)
+				for _, c := range p.Claims {
+					if c.State == "COMMITTED" {
+						committed++
+					}
 				}
+				if p.NextCursor == "" {
+					break
+				}
+				cursor = p.NextCursor
 			}
-			if p.NextCursor == "" {
-				break
-			}
-			cursor = p.NextCursor
-		}
-		lastCommitted = committed
-		if committed >= want {
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("producer ledger never reported >= %d COMMITTED claims within %v; last committed count=%d. "+
-		"This means rimsky never opened and committed a claim against the store — the wiring "+
-		"between the rimsky supervisor's executor dispatch and the store's "+
-		"ClaimProducer surface is broken at some point. Check rimsky logs.",
-		want, deadline, lastCommitted)
+			return committed >= want
+		})
 }

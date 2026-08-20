@@ -56,6 +56,7 @@ func WaitForInstancesTerminal(
 	}
 
 	seenNodeTerminal := make(map[string]bool)
+	frames := newFrameTicker()
 
 	remaining := make(map[string]bool, len(instanceIDs))
 	for _, id := range instanceIDs {
@@ -74,12 +75,12 @@ func WaitForInstancesTerminal(
 
 	for len(remaining) > 0 {
 		for id := range remaining {
+			name := keys[id]
+			if name == "" {
+				name = id
+			}
 			nodes, nerr := client.ListInstanceNodes(ctx, id)
 			if nerr == nil && nodes != nil {
-				name := keys[id]
-				if name == "" {
-					name = id
-				}
 				for _, n := range nodes.Nodes {
 					if !isNodeSettled(n.RunSummary) {
 						continue
@@ -95,22 +96,18 @@ func WaitForInstancesTerminal(
 				return outcomes, ctx.Err()
 			}
 
-			if nodes == nil {
-				continue
-			}
-			idle, ierr := instanceIsIdle(ctx, client, id)
+			idle, running, ierr := instanceIsIdle(ctx, client, id)
 			if ierr != nil {
 				if ctx.Err() != nil {
 					return outcomes, ctx.Err()
 				}
 				continue
 			}
-			if !idle {
-				continue
+			for _, f := range frames.observe(id, running) {
+				printer.FrameTick(project, name, f.id, f.ordinal)
 			}
-			name := keys[id]
-			if name == "" {
-				name = id
+			if nodes == nil || !idle {
+				continue
 			}
 			outcome, nodeCount := classifyInstanceOutcome(nodes.Nodes)
 			outcomes[id] = outcome
@@ -146,22 +143,53 @@ func nextWaitPollInterval(tickCount int, current time.Duration) time.Duration {
 	return current
 }
 
+// @concept: frame
+type observedFrame struct {
+	id      string
+	ordinal int
+}
+
+type frameTicker struct {
+	seen  map[string]map[string]bool
+	count map[string]int
+}
+
+func newFrameTicker() *frameTicker {
+	return &frameTicker{seen: map[string]map[string]bool{}, count: map[string]int{}}
+}
+
+func (ft *frameTicker) observe(instanceID string, running []cli.FrameItem) []observedFrame {
+	var fresh []observedFrame
+	for _, f := range running {
+		if ft.seen[instanceID][f.FrameID] {
+			continue
+		}
+		if ft.seen[instanceID] == nil {
+			ft.seen[instanceID] = map[string]bool{}
+		}
+		ft.seen[instanceID][f.FrameID] = true
+		ft.count[instanceID]++
+		fresh = append(fresh, observedFrame{id: f.FrameID, ordinal: ft.count[instanceID]})
+	}
+	return fresh
+}
+
 // @story: one-shot-to-terminal
 // @concept: frame
-func instanceIsIdle(ctx context.Context, client instanceClient, id string) (bool, error) {
+func instanceIsIdle(ctx context.Context, client instanceClient, id string) (bool, []cli.FrameItem, error) {
 	frames, err := client.ListInstanceFrames(ctx, id, "running")
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if len(frames.Frames) > 0 {
-		return false, nil
+		return false, frames.Frames, nil
 	}
 	pending := true
 	messages, err := client.ListInstanceMessages(ctx, id, cli.ListMessagesQuery{Pending: &pending})
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
-	return len(messages.Messages) == 0, nil
+	return len(messages.Messages) == 0, nil, nil
 }
 
 // @concept: node-run

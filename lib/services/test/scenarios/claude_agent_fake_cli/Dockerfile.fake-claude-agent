@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.7
 ARG BASE_TAG
-FROM golang:1.25-alpine AS fakebuilder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS fakebuilder
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
@@ -9,8 +11,8 @@ COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
 COPY lib/services/go.mod lib/services/go.sum ./lib/services/
 RUN cd lib/services && go mod download
 COPY . .
-RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/fake-claude ./test/scenarios/claude_agent_fake_cli/fakeclaude
-RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/fake-claude-server ./test/scenarios/claude_agent_fake_cli/fakeclaudeserver
+RUN cd lib/services && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/fake-claude ./test/scenarios/claude_agent_fake_cli/fakeclaude
+RUN cd lib/services && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/fake-claude-server ./test/scenarios/claude_agent_fake_cli/fakeclaudeserver
 
 FROM rimsky-executor-claude-agent:${BASE_TAG}
 USER root

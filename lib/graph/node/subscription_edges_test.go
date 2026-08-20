@@ -134,7 +134,7 @@ func TestBuildSubscriptionEdges_NoImplicitEdgeFromEnvRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
-	// @decision: structural-root-edge-injection-at-registration
+	// @decision: structural-root-edges-derived-on-demand
 	for _, sender := range out.Senders() {
 		if sender != "" {
 			t.Fatalf("an env directive alone must not register a cascade-coupling subscription edge "+
@@ -256,7 +256,7 @@ func TestParseSubstitutionDirective_EventFormRetired(t *testing.T) {
 	}
 }
 
-// @decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edges-derived-on-demand
 // @story: empty-message-wakes-roots
 func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
@@ -287,7 +287,7 @@ func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
 	}
 }
 
-// @decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edges-derived-on-demand
 func TestBuildSubscriptionEdges_StructuralRootInjection_AttributeRef(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "upstream", Executor: "stub",
@@ -390,7 +390,7 @@ func TestBuildSubscriptionEdges_Error_MissingForceUpstreamRefresh(t *testing.T) 
 	}
 }
 
-// @decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edges-derived-on-demand
 // @story: empty-message-wakes-roots
 func TestBuildSubscriptionEdges_MessageRefSuppressesStructuralRoot(t *testing.T) {
 	tmpl := spec.TemplateSpec{

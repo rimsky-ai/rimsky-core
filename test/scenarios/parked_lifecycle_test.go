@@ -17,6 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -207,18 +208,15 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	h.WaitForAllRunsTerminal(acq.ID)
 	h.WaitForAllRunsTerminal(inh.ID)
 
-	var activeCount int
-	for {
+	awaited.Until(t, "every claim_handle row of the instance to leave the active state", func() bool {
+		var activeCount int
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_claim_handles lh
 			   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 			  WHERE n.instance_id = $1 AND lh.state = 'active'`, uuid.UUID(iid),
 		).Scan(&activeCount))
-		if activeCount == 0 {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+		return activeCount == 0
+	})
 	var committedCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles lh

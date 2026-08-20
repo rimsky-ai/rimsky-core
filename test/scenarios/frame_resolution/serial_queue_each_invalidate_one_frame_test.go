@@ -4,12 +4,13 @@
 package frame_resolution
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -33,16 +34,9 @@ func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {
 		postInvalidateMessage(t, h, iid)
 	}
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, fmt.Sprintf("all %d frames to reach the completed state", totalFrames), func() bool {
 		return countFramesByState(t, h, iid, "completed") == totalFrames
-	}, 60*time.Second, 100*time.Millisecond,
-		"expected %d completed frames; got: queued=%d running=%d completed=%d failed=%d",
-		totalFrames,
-		countFramesByState(t, h, iid, "queued"),
-		countFramesByState(t, h, iid, "running"),
-		countFramesByState(t, h, iid, "completed"),
-		countFramesByState(t, h, iid, "failed"),
-	)
+	})
 
 	frames := listFrames(t, h, iid)
 	require.Len(t, frames, totalFrames, "expected exactly %d frames", totalFrames)

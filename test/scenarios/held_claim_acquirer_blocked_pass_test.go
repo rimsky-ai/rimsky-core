@@ -6,7 +6,6 @@ package scenarios
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -17,6 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -92,17 +92,14 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/")
 
 	var activeCount int
-	for {
+	awaited.Until(t, "every claim_handle row for the instance to leave the active state", func() bool {
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_claim_handles lh
 			   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 			  WHERE n.instance_id = $1 AND lh.state = 'active'`, uuid.UUID(iid),
 		).Scan(&activeCount))
-		if activeCount == 0 {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return activeCount == 0
+	})
 	require.Equal(t, 0, activeCount,
 		"every rimsky_claim_handles row for this instance must reach a terminal state — auto-terminal must fire when the held-claim acquirer takes resolve=pass; non-zero indicates the inheritor-rows-active leak has regressed")
 

@@ -8,11 +8,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 type RepeatedFlag []string
@@ -133,10 +135,6 @@ func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 	}
 	rf.Params = pp
 
-	if rf.Tag != "" && strings.HasPrefix(rf.Tag, ReservedTagPrefix) {
-		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q\n", rf.Tag, ReservedTagPrefix)
-		return nil, RunFlags{}, 2
-	}
 	return &common, rf, 0
 }
 
@@ -309,8 +307,9 @@ func ensureAgentRunning() error {
 // @decision: exit-codes
 // @story: script-friendly-outcome
 func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pollInterval, timeout time.Duration) int {
-	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
-	defer cancel()
+	// @decision: graceful-shutdown
+	signalCtx, stopSignals := serverkit.ShutdownContext(ctx, slog.Default())
+	defer stopSignals()
 	deadline := time.Time{}
 	if timeout > 0 {
 		deadline = time.Now().Add(timeout)

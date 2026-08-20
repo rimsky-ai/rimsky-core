@@ -15,7 +15,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -364,9 +364,7 @@ func TestStory_AssetManagement_CrossInstanceIsolation(t *testing.T) {
 
 func requireDurableCommitted(t *testing.T, h *scenario.Harness, producerNodeID shared.UUID) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	var last *persistence.ClaimHandleRow
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the producer's durable claim_handle to reach committed for node "+producerNodeID.String(), func() bool {
 		var rows []persistence.ClaimHandleRow
 		require.NoError(t, h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := h.Persist.ClaimHandles().ListByHolderNode(ctx, producerNodeID, tx)
@@ -375,21 +373,12 @@ func requireDurableCommitted(t *testing.T, h *scenario.Harness, producerNodeID s
 		}))
 		for i := range rows {
 			r := &rows[i]
-			if r.Lifetime == spec.ClaimLifetimeDurable {
-				last = r
-				if r.State == spec.ClaimHandleStateCommitted {
-					return
-				}
+			if r.Lifetime == spec.ClaimLifetimeDurable && r.State == spec.ClaimHandleStateCommitted {
+				return true
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if last == nil {
-		require.Fail(t, "no durable claim_handle row found for producer", "node_id=%s", producerNodeID)
-		return
-	}
-	require.Failf(t, "durable claim_handle did not reach committed",
-		"last seen state=%s lifetime=%s", last.State, last.Lifetime)
+		return false
+	})
 }
 
 func countTerminalSuccessForInstance(t *testing.T, h *scenario.Harness, instanceID shared.UUID) int {
@@ -416,9 +405,7 @@ func countCommittedLineageRows(t *testing.T, h *scenario.Harness, instanceID sha
 
 func waitForCountGreaterThan(t *testing.T, fn func() int, baseline int) {
 	t.Helper()
-	for fn() <= baseline {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, fmt.Sprintf("the observed count to rise above %d", baseline), func() bool { return fn() > baseline })
 }
 
 func getJSONMap(t *testing.T, url string) map[string]any {

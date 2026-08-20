@@ -32,7 +32,7 @@ func (e executor) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv
 			delay = 60_000
 		}
 		select {
-		//nolint:testwallclock // the stub honours a template-declared delay_ms; simulated work, never a verdict input
+		//nolint:testwallclock-pacing the stub honours a template-declared delay_ms; simulated work, never a verdict input
 		case <-time.After(time.Duration(delay) * time.Millisecond):
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -126,7 +126,7 @@ func main() {
 		}()
 		select {
 		case <-done:
-		//nolint:testwallclock // graceful-shutdown grace before a hard stop; never a verdict input
+		//nolint:testwallclock-pacing graceful-shutdown grace before a hard stop; never a verdict input
 		case <-time.After(2 * time.Second):
 			srv.Stop()
 		}

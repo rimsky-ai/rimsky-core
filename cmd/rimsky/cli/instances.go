@@ -8,12 +8,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
-	"os/signal"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
@@ -221,7 +222,8 @@ func RunInstanceDelete(ctx context.Context, args []string) int {
 	if err := c.DeleteInstance(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}
-	fmt.Fprintf(os.Stdout, "%s deleted\n", rest[0])
+	reportRemoval(os.Stdout, common.Format, removalResult{Ref: rest[0], Removed: true},
+		fmt.Sprintf("%s deleted", rest[0]))
 	return 0
 }
 
@@ -447,8 +449,9 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 		id = inst.UUID()
 	}
 
-	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
-	defer cancel()
+	// @decision: graceful-shutdown
+	signalCtx, stopSignals := serverkit.ShutdownContext(ctx, slog.Default())
+	defer stopSignals()
 
 	var lastSeenID int64
 	for {

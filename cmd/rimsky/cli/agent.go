@@ -10,15 +10,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
@@ -140,8 +140,12 @@ func runAgentStart(args []string) int {
 	}
 
 	if *foreground {
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
+		logger := serverkit.NewJSONLoggerForLevel(cfg.LogLevel)
+		slog.SetDefault(logger)
+
+		// @decision: graceful-shutdown
+		ctx, stopSignals := serverkit.ShutdownContext(context.Background(), logger)
+		defer stopSignals()
 		if err := hostagent.Run(ctx, cfg); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1

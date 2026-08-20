@@ -6,16 +6,17 @@ package scenarios
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 type execLogLine struct {
@@ -61,12 +62,16 @@ func readExecLog(t *testing.T, path string) []execLogLine {
 
 func waitForExecLog(t *testing.T, path string) execLogLine {
 	t.Helper()
-	for {
-		if lines := readExecLog(t, path); len(lines) > 0 {
-			return lines[0]
+	var first execLogLine
+	awaited.Until(t, "an exec-log line at "+path, func() bool {
+		lines := readExecLog(t, path)
+		if len(lines) == 0 {
+			return false
 		}
-		time.Sleep(75 * time.Millisecond)
-	}
+		first = lines[0]
+		return true
+	})
+	return first
 }
 
 func TestHostAgentPerBindingExecOverrides(t *testing.T) {
@@ -113,11 +118,10 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 			"timeout_seconds": 3,
 		})
 
-		const boundedBudget = 15 * time.Second
-		start := time.Now()
 		fx.waitForNodeEventKind(t, iid, "terminal/error/spawn_failed")
-		require.Less(t, time.Since(start), boundedBudget,
-			"the per-binding timeout must bound the spawn wait below the global default")
+		payload := fx.nodeEventPayload(t, iid, "terminal/error/spawn_failed")
+		require.Contains(t, fmt.Sprint(payload), "within 3s",
+			"the readiness poll must report the per-binding timeout_seconds=3, not the global default; payload=%v", payload)
 	})
 
 	t.Run("no_overrides_still_spawns", func(t *testing.T) {

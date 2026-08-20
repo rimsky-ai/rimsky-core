@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/awaited"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 )
@@ -44,16 +45,14 @@ func (r *callbackRecorder) post(url string, body map[string]any, _ *slog.Logger)
 
 func (r *callbackRecorder) waitForCall(t *testing.T) capturedCallback {
 	t.Helper()
-	for {
+	awaited.Until(t, "the executor to post its async callback", func() bool {
 		r.mu.Lock()
-		if len(r.calls) > 0 {
-			call := r.calls[0]
-			r.mu.Unlock()
-			return call
-		}
-		r.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
-	}
+		defer r.mu.Unlock()
+		return len(r.calls) > 0
+	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls[0]
 }
 
 func startTestExecutor(t *testing.T) (*ExecutorServer, *ObservabilityServer, *callbackRecorder) {
@@ -264,25 +263,22 @@ func TestGrpcObservabilityCapabilitiesAndTrace(t *testing.T) {
 	}
 	recorder.waitForCall(t)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		trace, err := obsClient.GetTrace(context.Background(), &genv1.GetTraceRequest{DispatchId: "disp-trace"})
+	var trace *genv1.Trace
+	awaited.Until(t, "the observability trace for disp-trace to report itself complete", func() bool {
+		got, err := obsClient.GetTrace(context.Background(), &genv1.GetTraceRequest{DispatchId: "disp-trace"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if trace.GetComplete() {
-			categories := map[string]bool{}
-			for _, ev := range trace.GetEvents() {
-				categories[ev.GetCategory()] = true
-			}
-			if !categories["step_started"] || !categories["step_completed"] {
-				t.Fatalf("trace categories = %v", categories)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+		trace = got
+		return got.GetComplete()
+	})
+	categories := map[string]bool{}
+	for _, ev := range trace.GetEvents() {
+		categories[ev.GetCategory()] = true
 	}
-	t.Fatal("trace did not complete")
+	if !categories["step_started"] || !categories["step_completed"] {
+		t.Fatalf("trace categories = %v", categories)
+	}
 }
 
 func TestGrpcExecuteParseErrorPostsErrorCallback(t *testing.T) {

@@ -5,14 +5,12 @@ package scenarios
 
 import (
 	"testing"
-	"time"
-
-	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -84,9 +82,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 	iid := h.CreateInstanceWithOverrides(tid, "ck-bm-fanout", map[string]any{}, overrides)
 
 	wantTags := map[string]bool{"for-a": true, "for-b": true, "for-c": true}
-	converged := false
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "each child_key matcher to fire on its own child's dispatch exactly once", func() bool {
 		seen := map[string]int{}
 		for _, o := range h.Stub.Observed() {
 			if o.NodeType != "fan-child" {
@@ -98,92 +94,19 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 			}
 			seen[tag]++
 		}
-		if len(seen) == len(wantTags) {
-			ok := true
-			for want := range wantTags {
-				if seen[want] != 1 {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				converged = true
-				break
+		if len(seen) != len(wantTags) {
+			return false
+		}
+		for want := range wantTags {
+			if seen[want] != 1 {
+				return false
 			}
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !converged {
-		obs := h.Stub.Observed()
-		t.Logf("stub observed %d dispatches:", len(obs))
-		for i, o := range obs {
-			t.Logf("  [%d] node_type=%s attributes=%#v", i, o.NodeType, o.Attributes)
-		}
-		t.Logf("rimsky_node_runs rows for this instance:")
-		h.QuerySQL(`
-			SELECT r.id::text, r.node_id::text, rs.parent_run_id::text, rs.partition_key,
-			       r.state::text, r.claimed_by
-			  FROM rimsky_node_runs r
-			  JOIN rimsky_nodes n      ON n.id  = r.node_id
-			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
-			 WHERE n.instance_id = $1
-			 ORDER BY r.enqueued_at
-		`, []any{iid}, func(scan func(...any) error) error {
-			var id, nid, parent, ck, state, claimedBy *string
-			if err := scan(&id, &nid, &parent, &ck, &state, &claimedBy); err != nil {
-				return err
-			}
-			t.Logf("  run id=%v node=%v parent=%v partition_key=%v state=%v claimed_by=%v",
-				strDeref(id), strDeref(nid), strDeref(parent), strDeref(ck),
-				strDeref(state), strDeref(claimedBy))
-			return nil
-		})
-		t.Logf("rimsky_claim_handles rows for this instance:")
-		h.QuerySQL(`
-			SELECT lh.id::text, lh.parent_claim_handle_id::text, lh.state, lh.expected_children_count
-			  FROM rimsky_claim_handles lh
-			  JOIN rimsky_nodes n ON n.id = lh.holder_node_id
-			 WHERE n.instance_id = $1
-		`, []any{iid}, func(scan func(...any) error) error {
-			var id, parent, state *string
-			var expected *int64
-			if err := scan(&id, &parent, &state, &expected); err != nil {
-				return err
-			}
-			t.Logf("  claim_handle id=%v parent=%v state=%v expected_children=%v",
-				strDeref(id), strDeref(parent), strDeref(state), expected)
-			return nil
-		})
-		t.Logf("rimsky_events of interest for this instance:")
-		h.QuerySQL(`
-			SELECT kind, payload::text
-			  FROM rimsky_events
-			 WHERE instance_id = $1
-			   AND (kind IN ('fan_out_dispatched','fanout.children_created','attributes_substituted',
-			                 'attribute_override_matched','terminal/success')
-			        OR kind LIKE 'terminal/error/%')
-			 ORDER BY id
-		`, []any{iid}, func(scan func(...any) error) error {
-			var kind, payload string
-			if err := scan(&kind, &payload); err != nil {
-				return err
-			}
-			t.Logf("  event %s %s", kind, payload)
-			return nil
-		})
-		t.Fatalf("each child_key matcher should fire on its own child's dispatch exactly once; observed tag distribution did not converge")
-	}
+		return true
+	})
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the three override match-counts to read [1, 1, 1]", func() bool {
 		c := attributeOverrideMatchCounts(t, h, iid, 3)
 		return len(c) == 3 && c[0] == 1 && c[1] == 1 && c[2] == 1
-	}, 10*time.Second, 50*time.Millisecond,
-		"AttributeOverridesMatchCounts mismatch (want [1, 1, 1])")
-}
-
-func strDeref(p *string) string {
-	if p == nil {
-		return "<nil>"
-	}
-	return *p
+	})
 }

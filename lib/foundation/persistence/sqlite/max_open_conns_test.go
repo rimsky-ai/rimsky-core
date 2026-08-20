@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
@@ -65,10 +64,8 @@ func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 		t.Fatalf("writer tx setup: %v", writerErr)
 	}
 
-	readCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
 	var one int
-	if err := db.QueryRowContext(readCtx, `SELECT 1`).Scan(&one); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT 1`).Scan(&one); err != nil {
 		close(release)
 		wg.Wait()
 		t.Fatalf("parallel read starved by held writer: %v", err)

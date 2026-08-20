@@ -6,8 +6,8 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"os"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/server"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/runner"
 )
@@ -15,7 +15,7 @@ import (
 const serviceName = "claim-producer-postgres"
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(serverkit.NewJSONLogger())
 
 	opts, err := server.LoadOptsFromEnv()
 	if err != nil {

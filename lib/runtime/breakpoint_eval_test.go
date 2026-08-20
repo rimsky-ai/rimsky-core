@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func seedBreakpointEvalFixture(t *testing.T, ctx context.Context, tables persistence.Tables) shared.UUID {
@@ -103,6 +105,38 @@ func listHitsForBreakpoint(t *testing.T, ctx context.Context, tables persistence
 		t.Fatalf("list hits: %v", err)
 	}
 	return out
+}
+
+func waitForSingleHit(t *testing.T, ctx context.Context, tables persistence.Tables, bpID shared.UUID) shared.UUID {
+	t.Helper()
+	var id shared.UUID
+	awaited.Until(t, fmt.Sprintf("breakpoint %s to record its hit row", bpID), func() bool {
+		hits := listHitsForBreakpoint(t, ctx, tables, bpID)
+		if len(hits) != 1 {
+			return false
+		}
+		id = hits[0].ID
+		return true
+	})
+	return id
+}
+
+func waitForEvaluatorOwnHit(t *testing.T, ctx context.Context, tables persistence.Tables, bpID shared.UUID) shared.UUID {
+	t.Helper()
+	var id shared.UUID
+	awaited.Until(t, fmt.Sprintf("the evaluator to write its own unresumed hit row for breakpoint %s", bpID), func() bool {
+		for _, h := range listHitsForBreakpoint(t, ctx, tables, bpID) {
+			if h.ResumedAt != nil {
+				continue
+			}
+			if _, isSeed := h.Snapshot["seed"]; !isSeed {
+				id = h.ID
+				return true
+			}
+		}
+		return false
+	})
+	return id
 }
 
 func resumeHit(t *testing.T, ctx context.Context, tables persistence.Tables, hitID shared.UUID, overlay map[string]any) {
@@ -237,11 +271,7 @@ func TestEvaluateBreakpoints_NotifyOnlyDoesNotBlock(t *testing.T) {
 			t.Errorf("EvaluateBreakpoints: %v", err)
 		}
 	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("notify_only EvaluateBreakpoints did not return within 2s")
-	}
+	<-done
 	if got := len(listHitsForBreakpoint(t, ctx, tables, bpID)); got != 1 {
 		t.Fatalf("expected 1 hit row, got %d", got)
 	}
@@ -275,42 +305,27 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	waitForHit := func() shared.UUID {
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			hits := listHitsForBreakpoint(t, ctx, tables, bpID)
-			if len(hits) == 1 {
-				return hits[0].ID
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-		t.Fatalf("hit row never appeared")
-		return shared.UUID{}
-	}
-	hitID := waitForHit()
+	hitID := waitForSingleHit(t, ctx, tables, bpID)
 
 	select {
-	case <-resultCh:
-		t.Fatalf("EvaluateBreakpoints returned before resume")
-	case <-time.After(100 * time.Millisecond):
+	case res := <-resultCh:
+		t.Fatalf("EvaluateBreakpoints returned before resume, with the hit row already written: merged=%#v err=%v",
+			res.merged, res.err)
+	default:
 	}
 
 	resumeHit(t, ctx, tables, hitID, map[string]any{"base": "y", "added": 1})
 
-	select {
-	case res := <-resultCh:
-		if res.err != nil {
-			t.Fatalf("EvaluateBreakpoints error: %v", res.err)
-		}
-		if got := res.merged["base"]; got != "y" {
-			t.Errorf("base after merge: got %v want y", got)
-		}
-		got := res.merged["added"]
-		if gotF, ok := got.(float64); !ok || gotF != 1 {
-			t.Errorf("added after merge: got %v (%T) want 1 (numeric)", got, got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("EvaluateBreakpoints did not return after resume within 2s")
+	res := <-resultCh
+	if res.err != nil {
+		t.Fatalf("EvaluateBreakpoints error: %v", res.err)
+	}
+	if got := res.merged["base"]; got != "y" {
+		t.Errorf("base after merge: got %v want y", got)
+	}
+	got := res.merged["added"]
+	if gotF, ok := got.(float64); !ok || gotF != 1 {
+		t.Errorf("added after merge: got %v (%T) want 1 (numeric)", got, got)
 	}
 }
 
@@ -353,24 +368,10 @@ func TestEvaluateBreakpoints_LaterBreakpointSeesEarlierResumeOverlay(t *testing.
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	waitForHit := func(bpID shared.UUID) shared.UUID {
-		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			hits := listHitsForBreakpoint(t, ctx, tables, bpID)
-			if len(hits) == 1 {
-				return hits[0].ID
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-		t.Fatalf("hit row for breakpoint %s never appeared", bpID)
-		return shared.UUID{}
-	}
-
-	hit1ID := waitForHit(bp1ID)
+	hit1ID := waitForSingleHit(t, ctx, tables, bp1ID)
 	resumeHit(t, ctx, tables, hit1ID, map[string]any{"added": float64(1)})
 
-	hit2ID := waitForHit(bp2ID)
+	hit2ID := waitForSingleHit(t, ctx, tables, bp2ID)
 
 	hits2 := listHitsForBreakpoint(t, ctx, tables, bp2ID)
 	if len(hits2) != 1 {
@@ -384,16 +385,12 @@ func TestEvaluateBreakpoints_LaterBreakpointSeesEarlierResumeOverlay(t *testing.
 
 	resumeHit(t, ctx, tables, hit2ID, nil)
 
-	select {
-	case res := <-resultCh:
-		if res.err != nil {
-			t.Fatalf("EvaluateBreakpoints error: %v", res.err)
-		}
-		if res.merged["added"] != float64(1) {
-			t.Fatalf("final merged attributes missing bp1's overlay: %#v", res.merged)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("EvaluateBreakpoints did not return after both resumes within 2s")
+	res := <-resultCh
+	if res.err != nil {
+		t.Fatalf("EvaluateBreakpoints error: %v", res.err)
+	}
+	if res.merged["added"] != float64(1) {
+		t.Fatalf("final merged attributes missing bp1's overlay: %#v", res.merged)
 	}
 }
 
@@ -425,33 +422,19 @@ func TestEvaluateBreakpoints_CascadeDeletedHitTreatedAsAutoResume(t *testing.T) 
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		hits := listHitsForBreakpoint(t, ctx, tables, bpID)
-		if len(hits) == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("hit row never appeared")
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waitForSingleHit(t, ctx, tables, bpID)
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return tables.Breakpoints().Delete(ctx, bpID, tx)
 	}); err != nil {
 		t.Fatalf("delete breakpoint: %v", err)
 	}
 
-	select {
-	case res := <-resultCh:
-		if res.err != nil {
-			t.Fatalf("EvaluateBreakpoints error: %v", res.err)
-		}
-		if got := res.merged["base"]; got != "x" {
-			t.Errorf("base after cascade-delete-while-waiting: got %v want x", got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("EvaluateBreakpoints did not return after cascade delete within 2s")
+	res := <-resultCh
+	if res.err != nil {
+		t.Fatalf("EvaluateBreakpoints error: %v", res.err)
+	}
+	if got := res.merged["base"]; got != "x" {
+		t.Errorf("base after cascade-delete-while-waiting: got %v want x", got)
 	}
 }
 
@@ -603,7 +586,8 @@ func TestEvaluateBreakpoints_OverflowAutoResumeAfterTTLSweepUnblocksRunner(t *te
 		t.Fatalf("seed 100 hits: %v", err)
 	}
 
-	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+	evalTables := countingOverflowTables(tables)
+	args := runtime.RunArgs{Persist: evalTables, Logger: shared.SilentLogger{}}
 	cc := newCheckpointContext(instanceID)
 
 	type evalResult struct {
@@ -616,10 +600,11 @@ func TestEvaluateBreakpoints_OverflowAutoResumeAfterTTLSweepUnblocksRunner(t *te
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
+	evalTables.waitForCapacityChecks(t, blockedOverflowChecks)
 	select {
-	case <-resultCh:
-		t.Fatalf("EvaluateBreakpoints returned while queue at cap")
-	case <-time.After(400 * time.Millisecond):
+	case res := <-resultCh:
+		t.Fatalf("EvaluateBreakpoints returned while the queue was at cap: merged=%#v err=%v", res.merged, res.err)
+	default:
 	}
 
 	if n := unresumedCountForBreakpoint(t, ctx, tables, bpID); n != 100 {
@@ -639,36 +624,11 @@ func TestEvaluateBreakpoints_OverflowAutoResumeAfterTTLSweepUnblocksRunner(t *te
 		t.Fatalf("AutoResumeStale: %v", err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	var newHitID shared.UUID
-	for time.Now().Before(deadline) {
-		hits := listHitsForBreakpoint(t, ctx, tables, bpID)
-		for _, h := range hits {
-			if h.ResumedAt != nil {
-				continue
-			}
-			if _, isSeed := h.Snapshot["seed"]; !isSeed {
-				newHitID = h.ID
-				break
-			}
-		}
-		if newHitID != (shared.UUID{}) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if newHitID == (shared.UUID{}) {
-		t.Fatalf("evaluator never wrote its own hit row after the TTL sweep freed capacity")
-	}
+	newHitID := waitForEvaluatorOwnHit(t, ctx, tables, bpID)
 	resumeHit(t, ctx, tables, newHitID, nil)
 
-	select {
-	case res := <-resultCh:
-		if res.err != nil {
-			t.Fatalf("EvaluateBreakpoints err: %v", res.err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("EvaluateBreakpoints did not return after the sweep + final resume")
+	if res := <-resultCh; res.err != nil {
+		t.Fatalf("EvaluateBreakpoints err: %v", res.err)
 	}
 
 	var stale *persistence.BreakpointHitRow
@@ -720,7 +680,8 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 		t.Fatalf("seed 100 hits: %v", err)
 	}
 
-	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+	evalTables := countingOverflowTables(tables)
+	args := runtime.RunArgs{Persist: evalTables, Logger: shared.SilentLogger{}}
 	cc := newCheckpointContext(instanceID)
 
 	type evalResult struct {
@@ -733,44 +694,20 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
+	evalTables.waitForCapacityChecks(t, blockedOverflowChecks)
 	select {
-	case <-resultCh:
-		t.Fatalf("EvaluateBreakpoints returned while queue at cap")
-	case <-time.After(400 * time.Millisecond):
+	case res := <-resultCh:
+		t.Fatalf("EvaluateBreakpoints returned while the queue was at cap: merged=%#v err=%v", res.merged, res.err)
+	default:
 	}
 
 	resumeHit(t, ctx, tables, hitIDs[0], nil)
 
-	deadline := time.Now().Add(2 * time.Second)
-	var newHitID shared.UUID
-	for time.Now().Before(deadline) {
-		hits := listHitsForBreakpoint(t, ctx, tables, bpID)
-		for _, h := range hits {
-			if h.ResumedAt != nil {
-				continue
-			}
-			if _, isSeed := h.Snapshot["seed"]; !isSeed {
-				newHitID = h.ID
-				break
-			}
-		}
-		if newHitID != (shared.UUID{}) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if newHitID == (shared.UUID{}) {
-		t.Fatalf("evaluator never wrote its own hit row after drain")
-	}
+	newHitID := waitForEvaluatorOwnHit(t, ctx, tables, bpID)
 	resumeHit(t, ctx, tables, newHitID, nil)
 
-	select {
-	case res := <-resultCh:
-		if res.err != nil {
-			t.Fatalf("EvaluateBreakpoints err: %v", res.err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("EvaluateBreakpoints did not return after final resume")
+	if res := <-resultCh; res.err != nil {
+		t.Fatalf("EvaluateBreakpoints err: %v", res.err)
 	}
 }
 
@@ -932,7 +869,8 @@ func TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(parent)
-	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
+	evalTables := countingOverflowTables(tables)
+	args := runtime.RunArgs{Persist: evalTables, Logger: shared.SilentLogger{}}
 	cc := newCheckpointContext(instanceID)
 
 	type evalResult struct {
@@ -945,26 +883,23 @@ func TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	time.Sleep(400 * time.Millisecond)
+	evalTables.waitForCapacityChecks(t, blockedOverflowChecks)
 	select {
-	case <-resultCh:
-		t.Fatalf("EvaluateBreakpoints returned before cancel (queue at cap should block)")
+	case res := <-resultCh:
+		t.Fatalf("EvaluateBreakpoints returned before cancel, with the queue at cap: merged=%#v err=%v",
+			res.merged, res.err)
 	default:
 	}
 
 	cancel()
 
-	select {
-	case res := <-resultCh:
-		var infraErr *runtime.BreakpointInfraError
-		if !errors.As(res.err, &infraErr) {
-			t.Fatalf("expected *BreakpointInfraError on ctx cancel, got %T: %v", res.err, res.err)
-		}
-		if infraErr.Phase != "ctx_cancelled" {
-			t.Errorf("Phase: got %q want %q", infraErr.Phase, "ctx_cancelled")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("EvaluateBreakpoints did not return within 2s of cancel")
+	res := <-resultCh
+	var infraErr *runtime.BreakpointInfraError
+	if !errors.As(res.err, &infraErr) {
+		t.Fatalf("expected *BreakpointInfraError on ctx cancel, got %T: %v", res.err, res.err)
+	}
+	if infraErr.Phase != "ctx_cancelled" {
+		t.Errorf("Phase: got %q want %q", infraErr.Phase, "ctx_cancelled")
 	}
 }
 
@@ -996,31 +931,17 @@ func TestEvaluateBreakpoints_CtxCancelDuringWaitForResume(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		hits := listHitsForBreakpoint(t, parent, tables, bpID)
-		if len(hits) == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("hit row never appeared (goroutine never reached waitForResume)")
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+	waitForSingleHit(t, parent, tables, bpID)
 
 	cancel()
 
-	select {
-	case res := <-resultCh:
-		var infraErr *runtime.BreakpointInfraError
-		if !errors.As(res.err, &infraErr) {
-			t.Fatalf("expected *BreakpointInfraError on ctx cancel, got %T: %v", res.err, res.err)
-		}
-		if infraErr.Phase != "ctx_cancelled" {
-			t.Errorf("Phase: got %q want %q", infraErr.Phase, "ctx_cancelled")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("EvaluateBreakpoints did not return within 2s of cancel")
+	res := <-resultCh
+	var infraErr *runtime.BreakpointInfraError
+	if !errors.As(res.err, &infraErr) {
+		t.Fatalf("expected *BreakpointInfraError on ctx cancel, got %T: %v", res.err, res.err)
+	}
+	if infraErr.Phase != "ctx_cancelled" {
+		t.Errorf("Phase: got %q want %q", infraErr.Phase, "ctx_cancelled")
 	}
 }
 
@@ -1100,6 +1021,41 @@ func TestEvaluateBreakpoints_OverflowCheckPhaseLabel(t *testing.T) {
 	if infraErr.Phase != "overflow_check" {
 		t.Errorf("Phase: got %q want %q", infraErr.Phase, "overflow_check")
 	}
+}
+
+const blockedOverflowChecks = 3
+
+func countingOverflowTables(inner persistence.Tables) *overflowCountingTables {
+	return &overflowCountingTables{
+		Tables: inner,
+		hits:   &overflowCountingHits{BreakpointHitTable: inner.BreakpointHits()},
+	}
+}
+
+type overflowCountingTables struct {
+	persistence.Tables
+	hits *overflowCountingHits
+}
+
+func (c *overflowCountingTables) BreakpointHits() persistence.BreakpointHitTable {
+	return c.hits
+}
+
+func (c *overflowCountingTables) waitForCapacityChecks(t *testing.T, n int64) {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("the evaluator to re-read the breakpoint queue's capacity %d time(s), which it "+
+		"does once per pass of the overflow-block loop", n),
+		func() bool { return c.hits.checks.Load() >= n })
+}
+
+type overflowCountingHits struct {
+	persistence.BreakpointHitTable
+	checks atomic.Int64
+}
+
+func (c *overflowCountingHits) UnresumedCount(ctx context.Context, bpID shared.UUID, tx persistence.Tx) (int, error) {
+	c.checks.Add(1)
+	return c.BreakpointHitTable.UnresumedCount(ctx, bpID, tx)
 }
 
 type failingHitsTables struct {

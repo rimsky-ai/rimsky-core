@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
-	"time"
 )
 
 func TestLoadRimskyConfigYAML_ValidatorsAndDataProcessorsTopLevelBlocks(t *testing.T) {
@@ -84,6 +84,46 @@ validators:
 	}
 }
 
+// @concept: validation
+func TestLoadRimskyConfigYAML_ValidatorEntryDerivingNoRoleRejected(t *testing.T) {
+	for name, entry := range map[string]struct {
+		protocols   string
+		wantMessage string
+	}{
+		"declaring only validation": {protocols: "    protocols: [validation]\n", wantMessage: "protocols declares only"},
+		"declaring no protocols":    {wantMessage: "protocols is absent"},
+	} {
+		protocols := entry.protocols
+		wantMessage := entry.wantMessage
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "rimsky.yml")
+			body := `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+validators:
+  policy-checker:
+    endpoint: grpc://policy-checker:9090
+` + protocols
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatalf("write rimsky.yml: %v", err)
+			}
+			_, err := LoadRimskyConfigYAML(path)
+			if err == nil {
+				t.Fatal("LoadRimskyConfigYAML: a standalone validator deriving no role must be rejected")
+			}
+			if !strings.Contains(err.Error(), "policy-checker") {
+				t.Fatalf("the refusal must name the entry; got %v", err)
+			}
+			if !strings.Contains(err.Error(), wantMessage) {
+				t.Fatalf("the refusal must say what the entry declared; want a message containing %q, got %v", wantMessage, err)
+			}
+		})
+	}
+}
+
 func TestDialPublisherAndValidationRegistries_DialsStandaloneTopLevelBlocks(t *testing.T) {
 	validators := RemoteValidatorsConfig{Validators: map[string]ValidatorEntry{
 		"policy-checker": {
@@ -98,7 +138,7 @@ func TestDialPublisherAndValidationRegistries_DialsStandaloneTopLevelBlocks(t *t
 		},
 	}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, validatorReg, dpReg, closers, err := DialPublisherAndValidationRegistries(
 		ctx, RemoteClaimProducersConfig{}, ExecutorsConfig{}, RemotePublishersConfig{}, validators, dataProcessors)

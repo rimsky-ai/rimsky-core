@@ -10,7 +10,6 @@ package scenarios
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -19,22 +18,20 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state cascade.NodeState) {
-	for {
+	awaited.Until(h.T, "node "+nodeID.String()+" to reach state "+string(state), func() bool {
 		var latest *persistence.NodeRunLatest
 		_ = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 			r, err := h.Persist.Nodes().GetLatestRunForNode(ctx, nodeID, tx)
 			latest = r
 			return err
 		})
-		if latest != nil && latest.State == state {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return latest != nil && latest.State == state
+	})
 }
 
 func TestCascadeSignalBlind_E2E(t *testing.T) {
@@ -255,20 +252,13 @@ func testCascadeAttributeChangedDiffGate(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake", nil, "diff-gate-kick")
 
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if countByType("sender") >= 3 {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
+	awaited.Until(t, "sender to re-fire via its self-edge on attribute/counter/changed for three rounds "+
+		"(round 1: default→{counter:1,score:42}; round 2: counter 1→2; round 3: counter 2→3); "+
+		"the fourth round has no diff so cascade stops", func() bool {
+		return countByType("sender") >= 3
+	})
 
-	require.GreaterOrEqual(t, countByType("sender"), 3,
-		"sender must re-fire via its self-edge on attribute/counter/changed for three rounds "+
-			"(round 1: default→{counter:1,score:42}; round 2: counter 1→2; round 3: counter 2→3); "+
-			"the fourth round has no diff so cascade stops. got %d", countByType("sender"))
-
-	time.Sleep(3 * time.Second)
+	h.WaitForSchedulerQuiescence()
 
 	require.Equal(t, 1, countByType("receiver"),
 		"diff-gate: receiver subscribes to sender's attribute/score/changed. score stays at 42 across "+

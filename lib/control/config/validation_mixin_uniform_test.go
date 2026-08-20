@@ -8,7 +8,6 @@ import (
 	"net"
 	"sort"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -108,7 +107,7 @@ func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
 		},
 	}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, validators, _, closers, err := DialPublisherAndValidationRegistries(ctx, producers, execs, publishers, RemoteValidatorsConfig{}, RemoteDataProcessorsConfig{})
 	if err != nil {

@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"testing"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -33,7 +32,7 @@ func TestConcurrentDispatchesOnSameSpawnNoHeadOfLineBlocking(t *testing.T) {
 
 	client := genv1.NewExecutorClient(ts.supConn)
 
-	slowCtx, slowCancel := context.WithTimeout(callCtx("codegen"), 10*time.Second)
+	slowCtx, slowCancel := context.WithCancel(callCtx("codegen"))
 	defer slowCancel()
 	slowDone := make(chan *genv1.Outcome, 1)
 	go func() {
@@ -46,12 +45,12 @@ func TestConcurrentDispatchesOnSameSpawnNoHeadOfLineBlocking(t *testing.T) {
 		slowDone <- outcome
 	}()
 
-	waitFor(t, func() bool {
+	waitFor(t, "the slow Execute to open its spawn, so the fast one shares it", func() bool {
 		_, ok := ts.state.lookupSpawnByRunScopeBinding("inst-1", "codegen")
 		return ok
 	})
 
-	fastCtx, fastCancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	fastCtx, fastCancel := context.WithCancel(callCtx("codegen"))
 	defer fastCancel()
 	outcome, err := client.Execute(fastCtx, &genv1.ExecuteRequest{InstanceId: "inst-1", NodeId: "fast"})
 	if err != nil {
@@ -100,7 +99,7 @@ func TestConcurrentDispatchesShareOneSpawn(t *testing.T) {
 	results := make(chan error, n)
 	for i := 0; i < n; i++ {
 		go func() {
-			ctx, cancel := context.WithTimeout(callCtx("codegen"), 10*time.Second)
+			ctx, cancel := context.WithCancel(callCtx("codegen"))
 			defer cancel()
 			_, err := client.Execute(ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 			results <- err

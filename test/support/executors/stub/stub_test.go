@@ -11,10 +11,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func listenForTest(t testing.TB, s *Stub) string {
@@ -126,10 +129,10 @@ func TestDelayRespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	start := time.Now()
 	_, err := c.Execute(ctx, &genv1.ExecuteRequest{NodeType: "t.slow"})
 	require.Error(t, err)
-	require.Less(t, time.Since(start), 400*time.Millisecond, "should return quickly after cancellation")
+	require.Equal(t, codes.DeadlineExceeded, status.Code(err),
+		"the delay must abandon on the caller's cancellation rather than run to completion; got %v", err)
 }
 
 func TestUnknownNodeTypeReturnsError(t *testing.T) {
@@ -290,18 +293,16 @@ func TestHoldUntilBlocksUntilSignal(t *testing.T) {
 		done <- outcome
 	}()
 
+	awaited.Until(t, "the dispatch to block inside the stub's hold", func() bool { return s.Holding() == 1 })
+
 	select {
 	case <-done:
 		t.Fatal("Execute returned before hold released")
-	case <-time.After(80 * time.Millisecond):
+	default:
 	}
 
 	close(hold)
 
-	select {
-	case outcome := <-done:
-		require.NotNil(t, outcome.GetSuccess())
-	case <-time.After(2 * time.Second):
-		t.Fatal("Execute did not return after hold released")
-	}
+	outcome := <-done
+	require.NotNil(t, outcome.GetSuccess())
 }

@@ -7,11 +7,12 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	claudeagent "github.com/rimsky-ai/rimsky-core/lib/services/executors/claude-agent"
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(serverkit.NewJSONLogger())
 	opts, err := claudeagent.LoadOptsFromEnv()
 	if err != nil {
 		slog.Error("claude-agent config", "error", err.Error())

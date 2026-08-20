@@ -181,11 +181,7 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	}
 
 	failedRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, f2)
-	if err := inTx(ctx, d.Tables(), func(tx persistence.Tx) error {
-		return d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, failedRunID, cascade.NodeStateFailed, nil, false, tx)
-	}); err != nil {
-		t.Fatalf("seed failed node_run for f2: %v", err)
-	}
+	driveRunToState(ctx, t, d, failedRunID, cascade.NodeStateFailed)
 	frameOp(ctx, t, d, "MarkFrameEnded (failed derivation)", func(tx persistence.Tx) error {
 		transitioned, err := frames.MarkFrameEnded(ctx, f2, tx)
 		if err != nil {
@@ -279,10 +275,12 @@ func testFrameRowCascadeImmutable(t *testing.T, d persistence.Database) {
 
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	frameOp(ctx, t, d, "cascade write set: run state transitions", func(tx persistence.Tx) error {
-		if err := d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateRunning, nil, false, tx); err != nil {
+		if err := d.Tables().Nodes().UpdateState(ctx, runID,
+			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx); err != nil {
 			return err
 		}
-		return d.Tables().NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateFresh, nil, false, tx)
+		return d.Tables().Nodes().UpdateState(ctx, runID,
+			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, nil, tx)
 	})
 
 	var after *persistence.FrameRow

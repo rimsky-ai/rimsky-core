@@ -23,14 +23,14 @@ func TestEffectiveCallbackHostPort(t *testing.T) {
 	}{
 		{
 			name:          "advertise host without port reuses bind port",
-			listenerAddr:  "0.0.0.0:9100",
+			listenerAddr:  "0.0.0.0:8081",
 			advertiseHost: "rimsky-supervisor",
 			wantHost:      "rimsky-supervisor",
-			wantPort:      9100,
+			wantPort:      8081,
 		},
 		{
 			name:          "advertise host and port both override",
-			listenerAddr:  "0.0.0.0:9100",
+			listenerAddr:  "0.0.0.0:8081",
 			advertiseHost: "rimsky-supervisor",
 			advertisePort: 9200,
 			wantHost:      "rimsky-supervisor",
@@ -38,15 +38,15 @@ func TestEffectiveCallbackHostPort(t *testing.T) {
 		},
 		{
 			name:         "explicit non-wildcard bind host is a legal advertise fallback",
-			listenerAddr: "10.1.2.3:9100",
+			listenerAddr: "10.1.2.3:8081",
 			wantHost:     "10.1.2.3",
-			wantPort:     9100,
+			wantPort:     8081,
 		},
 		{
 			name:         "loopback bind host is a legal advertise fallback",
-			listenerAddr: "127.0.0.1:9100",
+			listenerAddr: "127.0.0.1:8081",
 			wantHost:     "127.0.0.1",
-			wantPort:     9100,
+			wantPort:     8081,
 		},
 	}
 
@@ -66,7 +66,7 @@ func TestEffectiveCallbackHostPort(t *testing.T) {
 }
 
 func TestEffectiveCallbackHostPort_FailsFastOnWildcardBindWithoutAdvertise(t *testing.T) {
-	for _, listenerAddr := range []string{"0.0.0.0:9100", "[::]:9100"} {
+	for _, listenerAddr := range []string{"0.0.0.0:8081", "[::]:8081"} {
 		t.Run(listenerAddr, func(t *testing.T) {
 			_, _, err := effectiveCallbackHostPort(listenerAddr, "", 0)
 			if err == nil {
@@ -82,7 +82,7 @@ func TestEffectiveCallbackHostPort_FailsFastOnWildcardBindWithoutAdvertise(t *te
 
 func TestAdvertisedURLMatchesPersistedHostPort(t *testing.T) {
 	const (
-		listenerAddr  = "0.0.0.0:9100"
+		listenerAddr  = "0.0.0.0:8081"
 		advertiseHost = "rimsky-supervisor"
 		advertisePort = 9200
 	)

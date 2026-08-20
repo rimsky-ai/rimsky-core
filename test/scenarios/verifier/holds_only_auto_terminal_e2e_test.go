@@ -5,7 +5,6 @@ package verifier
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -68,9 +68,8 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(coholder.ID, cascade.NodeStateFresh)
 
-	deadline := time.Now().Add(5 * time.Second)
 	var commitCount, abandonCount int
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the holds-only claim to drive its aggregate Commit", func() bool {
 		commitCount, abandonCount = 0, 0
 		for _, c := range sub.Calls() {
 			switch c.Verb {
@@ -80,11 +79,8 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 				abandonCount++
 			}
 		}
-		if commitCount >= 1 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return commitCount >= 1
+	})
 	require.Equal(t, 1, commitCount,
 		"a holds:-only claim must drive exactly one aggregate Commit over the co-holder set")
 	require.Equal(t, 0, abandonCount,

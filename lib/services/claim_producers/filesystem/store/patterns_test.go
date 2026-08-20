@@ -38,7 +38,6 @@ func TestPattern_RingMode_LiveDiscovery(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("iter %d: expected Available", i)
 		}
-		time.Sleep(2 * time.Millisecond)
 		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address, ""))
 	}
 	must(t, os.MkdirAll(filepath.Join(root, sub, "gamma"), 0o755))

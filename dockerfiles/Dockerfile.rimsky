@@ -14,7 +14,9 @@
 # sqlite with state at /var/lib/rimsky/state.db (development only — use the
 # postgres driver for deployed instances).
 
-FROM golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 # The Go workspace ties four modules together (root + lib/foundation
 # + lib/protocols + lib/services). Copy every module manifest plus
@@ -29,17 +31,17 @@ COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
 COPY lib/services/go.mod lib/services/go.sum ./lib/services/
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" \
       -o /out/rimsky-scheduler   ./cmd/rimsky-scheduler && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" \
       -o /out/rimsky-supervisor  ./cmd/rimsky-supervisor && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" \
       -o /out/rimsky-control-api ./cmd/rimsky-control-api && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" \
       -o /out/rimsky-migrate     ./cmd/rimsky-migrate && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" \
       -o /out/rimsky-entrypoint  ./cmd/rimsky-entrypoint && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" \
       -o /out/rimsky             ./cmd/rimsky
 
 # Stage an empty /var/lib/rimsky directory we can COPY into the

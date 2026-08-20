@@ -139,20 +139,38 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 		})
 	}
 
+	endedAt := func(fid shared.UUID, label string) time.Time {
+		t.Helper()
+		var out time.Time
+		frameOp(ctx, t, d, "read ended_at "+label, func(tx persistence.Tx) error {
+			row, err := frames.GetForObservability(ctx, fid, tx)
+			if err != nil {
+				return err
+			}
+			if row == nil || row.EndedAt == nil {
+				t.Fatalf("%s carries no ended_at after terminate", label)
+			}
+			out = *row.EndedAt
+			return nil
+		})
+		return out
+	}
+
 	terminate(fix.FrameID, "fixture frame")
-	time.Sleep(20 * time.Millisecond)
 	f1 := mintRunningFrame("f1")
 	runOnF1 := seedConformanceRunForNode(ctx, t, d, fix.NodeID, f1)
 	terminate(f1, "f1")
-	time.Sleep(20 * time.Millisecond)
-	betweenF1F2 := time.Now()
-	time.Sleep(20 * time.Millisecond)
 	f2 := mintRunningFrame("f2")
 	terminate(f2, "f2")
-	time.Sleep(20 * time.Millisecond)
 	f3 := mintRunningFrame("f3")
 	terminate(f3, "f3")
 	runningF := mintRunningFrame("running survivor")
+
+	betweenF1F2 := endedAt(f2, "f2")
+	if f1End := endedAt(f1, "f1"); !f1End.Before(betweenF1F2) {
+		t.Fatalf("f1 ended_at %s is not before f2's %s: the store must stamp two separately committed frame "+
+			"ends in commit order, or no cutoff separates them", f1End, betweenF1F2)
+	}
 
 	n, err := frames.PruneTraceForRetention(ctx, 0, time.Time{})
 	if err != nil {

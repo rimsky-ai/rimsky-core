@@ -5,12 +5,12 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -65,10 +65,8 @@ func TestAttributeOverridesMatchOverlayUnused_CounterZeroForNonFiringEntries(t *
 	require.NotNil(t, n)
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
-	var lastCounts []int64
-	require.Eventually(t, func() bool {
-		lastCounts = attributeOverrideMatchCounts(t, h, iid, 5)
-		return len(lastCounts) == 5 && lastCounts[0] == 1 && lastCounts[1] == 0 && lastCounts[2] == 1 && lastCounts[3] == 0 && lastCounts[4] == 0
-	}, 5*time.Second, 50*time.Millisecond,
-		"match-counts should be [1, 0, 1, 0, 0]; got=%v", &lastCounts)
+	awaited.Until(t, "the five override match-counts to read [1, 0, 1, 0, 0]", func() bool {
+		counts := attributeOverrideMatchCounts(t, h, iid, 5)
+		return len(counts) == 5 && counts[0] == 1 && counts[1] == 0 && counts[2] == 1 && counts[3] == 0 && counts[4] == 0
+	})
 }

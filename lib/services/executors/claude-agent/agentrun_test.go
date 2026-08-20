@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/awaited"
 )
 
 type fakeHandle struct {
@@ -75,28 +76,22 @@ func (h *fakeHandle) emitStdout(chunk string) {
 	}
 }
 
-func (h *fakeHandle) waitStdoutRegistered() {
-	for {
+func (h *fakeHandle) waitStdoutRegistered(t *testing.T) {
+	t.Helper()
+	awaited.Until(t, "the run to register a stdout callback on the spawned handle", func() bool {
 		h.mu.Lock()
-		n := len(h.stdoutCbs)
-		h.mu.Unlock()
-		if n > 0 {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
+		defer h.mu.Unlock()
+		return len(h.stdoutCbs) > 0
+	})
 }
 
-func (h *fakeHandle) waitStderrRegistered() {
-	for {
+func (h *fakeHandle) waitStderrRegistered(t *testing.T) {
+	t.Helper()
+	awaited.Until(t, "the run to register a stderr callback on the spawned handle", func() bool {
 		h.mu.Lock()
-		n := len(h.stderrCbs)
-		h.mu.Unlock()
-		if n > 0 {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
+		defer h.mu.Unlock()
+		return len(h.stderrCbs) > 0
+	})
 }
 
 func (h *fakeHandle) exit(result ExitResult) {
@@ -184,19 +179,31 @@ func (r *fakeRunner) Resume(req CliResumeRequest) (CliHandle, error) {
 
 func (r *fakeRunner) waitForSpawn(t *testing.T) CliSpawnRequest {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	return r.waitForSpawnCount(t, 1)[0]
+}
+
+func (r *fakeRunner) waitForSpawnCount(t *testing.T, want int) []CliSpawnRequest {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("the run to spawn the CLI %d time(s)", want), func() bool {
 		r.mu.Lock()
-		if len(r.spawns) > 0 {
-			req := r.spawns[0]
-			r.mu.Unlock()
-			return req
-		}
-		r.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("spawn was not called within 5s")
-	return CliSpawnRequest{}
+		defer r.mu.Unlock()
+		return len(r.spawns) >= want
+	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]CliSpawnRequest(nil), r.spawns[:want]...)
+}
+
+func (r *fakeRunner) waitForResumeCount(t *testing.T, want int) []CliResumeRequest {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("the run to resume the CLI session %d time(s)", want), func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return len(r.resumes) >= want
+	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]CliResumeRequest(nil), r.resumes[:want]...)
 }
 
 func baseRunOpts(runner CliRunner) AgentRunOptions {
@@ -440,18 +447,7 @@ func TestRunAgentBlockedAndParkViaMcp(t *testing.T) {
 	opts2 := baseRunOpts(runner)
 	done2 := make(chan AgentOutcome, 1)
 	go func() { done2 <- RunAgent(opts2) }()
-	deadline := time.Now().Add(5 * time.Second)
-	var req2 CliSpawnRequest
-	for time.Now().Before(deadline) {
-		runner.mu.Lock()
-		if len(runner.spawns) > 1 {
-			req2 = runner.spawns[1]
-			runner.mu.Unlock()
-			break
-		}
-		runner.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-	}
+	req2 := runner.waitForSpawnCount(t, 2)[1]
 	client2, token2 := mcpClientFor(t, req2)
 	resumeAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	if _, rpcErr := client2.callTool("report_park",
@@ -711,7 +707,7 @@ func TestRunAgentSilenceTimeoutFiresWithOpenToolUse(t *testing.T) {
 	opts.CliConfig = &CliConfig{SilenceTimeoutMs: &silence}
 	done := make(chan AgentOutcome, 1)
 	go func() { done <- RunAgent(opts) }()
-	h.waitStdoutRegistered()
+	h.waitStdoutRegistered(t)
 	h.emitStdout(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_hung","name":"Bash"}]}}` + "\n")
 
 	outcome := <-done
@@ -729,7 +725,7 @@ func TestRunAgentToolUseTimeout(t *testing.T) {
 	done := make(chan AgentOutcome, 1)
 	go func() { done <- RunAgent(opts) }()
 	runner.waitForSpawn(t)
-	h.waitStdoutRegistered()
+	h.waitStdoutRegistered(t)
 	h.emitStdout(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_stuck","name":"Bash","input":{}}]}}` + "\n")
 
 	outcome := <-done
@@ -758,7 +754,7 @@ func TestRunAgentToolUseEndClearsOpenToolUseBeforeItTimesOut(t *testing.T) {
 	done := make(chan AgentOutcome, 1)
 	go func() { done <- RunAgent(opts) }()
 	runner.waitForSpawn(t)
-	h.waitStdoutRegistered()
+	h.waitStdoutRegistered(t)
 	h.emitStdout(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_quick","name":"Bash","input":{}}]}}` + "\n")
 	h.emitStdout(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_quick"}]}}` + "\n")
 
@@ -816,23 +812,7 @@ func TestRunAgentCleanExitTriggersResumeReminder(t *testing.T) {
 	code := 0
 	first.exit(ExitResult{ExitCode: &code})
 
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		runner.mu.Lock()
-		if len(runner.resumes) > 0 {
-			runner.mu.Unlock()
-			break
-		}
-		runner.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
-	}
-	runner.mu.Lock()
-	if len(runner.resumes) != 1 {
-		runner.mu.Unlock()
-		t.Fatal("expected a resume attempt after clean exit without report")
-	}
-	resumeReq := runner.resumes[0]
-	runner.mu.Unlock()
+	resumeReq := runner.waitForResumeCount(t, 1)[0]
 	if resumeReq.SessionID != "run-1" || !strings.Contains(resumeReq.Prompt, "report_complete") {
 		t.Fatalf("resume request wrong: %+v", resumeReq)
 	}
@@ -860,16 +840,8 @@ func TestRunAgentRetryLegRateLimitParks(t *testing.T) {
 	code := 0
 	first.exit(ExitResult{ExitCode: &code})
 
-	for {
-		runner.mu.Lock()
-		n := len(runner.resumes)
-		runner.mu.Unlock()
-		if n > 0 {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	retry.waitStderrRegistered()
+	runner.waitForResumeCount(t, 1)
+	retry.waitStderrRegistered(t)
 	retry.emitStderr("API Error: 429 rate_limit_error; anthropic-ratelimit-requests-reset: 4070908800")
 	retryCode := 1
 	retry.exit(ExitResult{ExitCode: &retryCode})
@@ -891,23 +863,7 @@ func TestRunAgentSessionTokenTriggersResumePath(t *testing.T) {
 	done := make(chan AgentOutcome, 1)
 	go func() { done <- RunAgent(opts) }()
 
-	deadline := time.Now().Add(5 * time.Second)
-	var resumeReq CliResumeRequest
-	found := false
-	for time.Now().Before(deadline) {
-		runner.mu.Lock()
-		if len(runner.resumes) > 0 {
-			resumeReq = runner.resumes[0]
-			found = true
-			runner.mu.Unlock()
-			break
-		}
-		runner.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !found {
-		t.Fatal("expected resume for non-empty session token")
-	}
+	resumeReq := runner.waitForResumeCount(t, 1)[0]
 	if resumeReq.SessionID != "prior-session" {
 		t.Fatalf("resume session = %q", resumeReq.SessionID)
 	}
@@ -933,23 +889,7 @@ func TestRunAgentCleanExitOnResumedRunRetriesOnReboundSession(t *testing.T) {
 	done := make(chan AgentOutcome, 1)
 	go func() { done <- RunAgent(opts) }()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		runner.mu.Lock()
-		n := len(runner.resumes)
-		runner.mu.Unlock()
-		if n > 0 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	runner.mu.Lock()
-	if len(runner.resumes) != 1 {
-		runner.mu.Unlock()
-		t.Fatal("expected the first resume attempt")
-	}
-	firstResumeReq := runner.resumes[0]
-	runner.mu.Unlock()
+	firstResumeReq := runner.waitForResumeCount(t, 1)[0]
 	if firstResumeReq.SessionID != "prior-session" || firstResumeReq.NewSessionID != "run-1" {
 		t.Fatalf("first resume wrong: %+v", firstResumeReq)
 	}
@@ -957,23 +897,7 @@ func TestRunAgentCleanExitOnResumedRunRetriesOnReboundSession(t *testing.T) {
 	code := 0
 	firstLeg.exit(ExitResult{ExitCode: &code})
 
-	deadline = time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		runner.mu.Lock()
-		n := len(runner.resumes)
-		runner.mu.Unlock()
-		if n > 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	runner.mu.Lock()
-	if len(runner.resumes) != 2 {
-		runner.mu.Unlock()
-		t.Fatal("expected a reminder-retry resume after the clean exit on the resumed leg")
-	}
-	retryReq := runner.resumes[1]
-	runner.mu.Unlock()
+	retryReq := runner.waitForResumeCount(t, 2)[1]
 	if retryReq.SessionID != "run-1" {
 		t.Fatalf("reminder retry must resume the session the run actually started with (rebound to run-1 via --session-id on the first resume), got SessionID = %q", retryReq.SessionID)
 	}

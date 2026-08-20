@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sync"
 	"testing"
 
@@ -102,12 +101,7 @@ func captureRun(t *testing.T, fn func() int) (string, int) {
 
 func repoExampleSpecPath(t *testing.T, rel string) string {
 	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed to locate the test source file")
-	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", ".."))
-	path := filepath.Join(repoRoot, filepath.FromSlash(rel))
+	path := filepath.Join(repoRoot(t), filepath.FromSlash(rel))
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("test fixture %s not found at %s: %v", rel, path, err)
 	}

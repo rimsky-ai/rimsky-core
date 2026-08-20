@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const queueItemsTable = "items_unavailable"
@@ -93,7 +93,7 @@ func testClaimUnavailableDelivered(t *testing.T) {
 	instanceID := ep.CreateInstance(t, templateID, "ck-pg-claim-unavailable", "pg-error-classes")
 
 	requireEventKind(t, ep, instanceID,
-		"terminal/error/pg/claim_unavailable", 90*time.Second,
+		"terminal/error/pg/claim_unavailable",
 		"the empty pick-policy items table must deliver the producer-declared "+
 			"pg/claim_unavailable class as a real signal, not only the synthetic "+
 			"acquire/unavailable")
@@ -167,7 +167,7 @@ func testNotReplaceableDelivered(t *testing.T) {
 	instanceID := ep.CreateInstance(t, templateID, "ck-pg-not-replaceable", "pg-error-classes")
 
 	requireEventKind(t, ep, instanceID,
-		"terminal/error/pg/not_atomically_replaceable", 90*time.Second,
+		"terminal/error/pg/not_atomically_replaceable",
 		"a write-intent Open on a canonical with an external cross-schema dependent must "+
 			"fail fast at Open and deliver the producer-declared pg/not_atomically_replaceable "+
 			"class as a real signal, never staging then cascade-destroying the dependent")
@@ -223,30 +223,30 @@ func seedSwapCollision(t *testing.T, pool *pgxpool.Pool, canonical string) {
 	}
 }
 
-func requireEventKind(t *testing.T, ep harness.RimskyEndpoint, instanceID, kind string, deadline time.Duration, why string) {
+func requireEventKind(t *testing.T, ep harness.RimskyEndpoint, instanceID, kind, why string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
 	path := fmt.Sprintf("/v1/events?instance_id=%s&kind=%s", instanceID, kind)
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, path, "")
-		if status == http.StatusOK {
+	awaited.Until(t, fmt.Sprintf("event kind %q to land on the event log for instance %s — %s", kind, instanceID, why),
+		func() bool {
+			status, raw := ep.GetJSON(t, path, "")
+			if status != http.StatusOK {
+				return false
+			}
 			var resp struct {
 				Events []struct {
 					Kind string `json:"kind"`
 				} `json:"events"`
 			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				for _, e := range resp.Events {
-					if e.Kind == kind {
-						return
-					}
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				return false
+			}
+			for _, e := range resp.Events {
+				if e.Kind == kind {
+					return true
 				}
 			}
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("event kind %q never landed on the event log for instance %s within %v — %s",
-		kind, instanceID, deadline, why)
+			return false
+		})
 }
 
 func requireNoStagingAndDependentsIntact(t *testing.T, pool *pgxpool.Pool, canonical string) {

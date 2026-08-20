@@ -5,17 +5,17 @@ package frame_resolution
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -95,35 +95,37 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	var maxRunning atomic.Int32
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		n := countFramesByState(t, h, iid, "running")
-		if int32(n) > maxRunning.Load() {
-			maxRunning.Store(int32(n))
-		}
-		require.LessOrEqual(t, n, 1,
-			"observed %d running frames simultaneously for instance %s", n, iid)
-		time.Sleep(20 * time.Millisecond)
-	}
-
 	waitFramesCompletedOrAllEnded(t, h, iid, N+1)
+
+	var overlaps int
+	h.QueryRowSQL(`
+		SELECT count(*)
+		  FROM rimsky_frames a
+		  JOIN rimsky_frames b
+		    ON b.instance_id = a.instance_id
+		   AND b.frame_id <> a.frame_id
+		   AND a.started_at IS NOT NULL
+		   AND b.started_at IS NOT NULL
+		   AND b.started_at < coalesce(a.ended_at, 'infinity'::timestamptz)
+		   AND a.started_at < coalesce(b.ended_at, 'infinity'::timestamptz)
+		 WHERE a.instance_id = $1
+	`, []any{uuid.UUID(iid)}, &overlaps)
+	require.Zero(t, overlaps,
+		"two frames of instance %s overlapped in the durable frame record — per-instance ordering serializes frames, "+
+			"so no frame may start before the previous one ended", iid)
 }
 
 func waitFramesCompletedOrAllEnded(t *testing.T, h *scenario.Harness, iid shared.UUID, wantCompleted int) {
 	t.Helper()
-	for {
+	awaited.Until(t, fmt.Sprintf("%d completed frame(s) for instance %s, or every frame ended", wantCompleted, iid), func() bool {
 		if countFramesByState(t, h, iid, "completed") == wantCompleted {
-			return
+			return true
 		}
 		var n int
 		_ = h.Pool.QueryRow(context.Background(), `
 			SELECT count(*) FROM rimsky_frames
 			WHERE instance_id = $1 AND ended_at IS NULL
 		`, uuid.UUID(iid)).Scan(&n)
-		if n == 0 {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return n == 0
+	})
 }

@@ -6,12 +6,14 @@ package scenarios
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const singleProcessSpillThreshold = 256
@@ -70,7 +72,7 @@ func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 			len(got), len(singleProcessPayload))
 	}
 
-	logs := waitForLogLine(ctx, t, h, "reaped blob orphan", 60*time.Second)
+	logs := waitForLogLine(ctx, t, h, "reaped blob orphan")
 	if strings.Contains(logs, "reap blob orphan failed") {
 		t.Fatalf("orphan-blob sweep logged reap failures — the scheduler role cannot delete blobs the supervisor role wrote:\n%s", logs)
 	}
@@ -134,17 +136,12 @@ func readWorkerPayload(t *testing.T, ep harness.RimskyEndpoint, instanceID strin
 	return payload
 }
 
-func waitForLogLine(ctx context.Context, t *testing.T, h *harness.RimskyHandle, needle string, deadline time.Duration) string {
+func waitForLogLine(ctx context.Context, t *testing.T, h *harness.RimskyHandle, needle string) string {
 	t.Helper()
-	end := time.Now().Add(deadline)
 	var logs string
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("the container logs to carry %q", needle), func() bool {
 		logs = h.ReadLogs(ctx, t)
-		if strings.Contains(logs, needle) {
-			return logs
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("container logs never contained %q within %v — the orphan-blob sweep did not reap; last logs:\n%s", needle, deadline, logs)
+		return strings.Contains(logs, needle)
+	})
 	return logs
 }

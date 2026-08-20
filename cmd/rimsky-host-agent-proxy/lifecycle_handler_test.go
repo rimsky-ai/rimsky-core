@@ -50,7 +50,7 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 
 	const runScopeID = "run-scope-xyz"
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	_ = collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1", RunScopeId: runScopeID})
 
@@ -70,13 +70,8 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 		t.Fatalf("OnRunScopeTerminal: %v", err)
 	}
 
-	select {
-	case got := <-fa.reaped:
-		if got != spawnID {
-			t.Fatalf("reaped wrong spawn: got %q want %q", got, spawnID)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("agent did not receive a Reap")
+	if got := <-fa.reaped; got != spawnID {
+		t.Fatalf("reaped wrong spawn: got %q want %q", got, spawnID)
 	}
 
 	if _, ok := ts.state.lookupSpawn(spawnID); ok {
@@ -191,23 +186,18 @@ func TestLocalHttpForwardRoundTrip(t *testing.T) {
 		SpawnId:   "spawn-1",
 	})
 
-	select {
-	case frame := <-conn.sendCh:
-		resp := frame.GetHttpResponse()
-		if resp == nil {
-			t.Fatalf("expected LocalHttpResponse, got %T", frame.GetBody())
-		}
-		if resp.GetForwardId() != "fwd-1" {
-			t.Fatalf("forward id mismatch: %q", resp.GetForwardId())
-		}
-		if resp.GetStatus() != http.StatusAccepted {
-			t.Fatalf("status mismatch: %d", resp.GetStatus())
-		}
-		if string(resp.GetBody()) != "upstream-ack" {
-			t.Fatalf("body mismatch: %q", resp.GetBody())
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("no LocalHttpResponse enqueued")
+	resp := (<-conn.sendCh).GetHttpResponse()
+	if resp == nil {
+		t.Fatal("expected LocalHttpResponse on the connection's send channel")
+	}
+	if resp.GetForwardId() != "fwd-1" {
+		t.Fatalf("forward id mismatch: %q", resp.GetForwardId())
+	}
+	if resp.GetStatus() != http.StatusAccepted {
+		t.Fatalf("status mismatch: %d", resp.GetStatus())
+	}
+	if string(resp.GetBody()) != "upstream-ack" {
+		t.Fatalf("body mismatch: %q", resp.GetBody())
 	}
 
 	if gotBody.Load() != `{"hello":"world"}` {
@@ -235,11 +225,7 @@ func TestLocalHttpForwardReusedSpawnPerCallbackPath(t *testing.T) {
 		SpawnId:   "spawn-1",
 	})
 
-	select {
-	case <-conn.sendCh:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("no LocalHttpResponse enqueued")
-	}
+	<-conn.sendCh
 
 	if got := gotPath.Load(); got != "/v1/callback/ack-2" {
 		t.Fatalf("callback routed to wrong ack path: got %v, want /v1/callback/ack-2", got)
@@ -252,13 +238,7 @@ func TestLocalHttpForwardNoSpawn(t *testing.T) {
 	fwd := newHTTPForwarder(state)
 	fwd.handle(conn, &genv1.LocalHttpForward{ForwardId: "fwd-1", SpawnId: "unknown"})
 
-	select {
-	case frame := <-conn.sendCh:
-		resp := frame.GetHttpResponse()
-		if resp.GetStatus() != http.StatusBadGateway {
-			t.Fatalf("expected BadGateway for unknown spawn, got %d", resp.GetStatus())
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("no response for unknown spawn")
+	if resp := (<-conn.sendCh).GetHttpResponse(); resp.GetStatus() != http.StatusBadGateway {
+		t.Fatalf("expected BadGateway for unknown spawn, got %d", resp.GetStatus())
 	}
 }

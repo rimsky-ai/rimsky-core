@@ -294,11 +294,16 @@ func (q *queueImpl) PromoteClaimedToRunning(
 		return false, errors.New("sqlite.PromoteClaimedToRunning: tx required")
 	}
 	now := nowUTC()
+	// @concept: transition-reason
+	target, err := cascade.NextState(cascade.NodeStateStale, cascade.ReasonDispatchClaimed)
+	if err != nil {
+		return false, fmt.Errorf("sqlite.PromoteClaimedToRunning: %w", err)
+	}
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET state = 'running', last_progress_at = ?
+		    SET state = ?, last_progress_at = ?
 		  WHERE id = ? AND claimed_by = ? AND state = 'stale'`,
-		now, nodeRunID.String(), supervisorID,
+		string(target), now, nodeRunID.String(), supervisorID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("sqlite.PromoteClaimedToRunning: %w", err)
@@ -391,42 +396,92 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 	return out, rows.Err()
 }
 
+// @concept: transition-reason
 func (q *queueImpl) ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error {
-	_, err := q.db.ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
-		  WHERE id = ? AND claimed_by = ? AND state NOT IN ('fresh', 'failed')`,
-		nodeRunID.String(), expectedClaimedBy,
-	)
-	return err
-}
-
-func (q *queueImpl) ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID) error {
-	_, err := q.db.ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
-		  WHERE id = ?`,
-		nodeRunID.String(),
-	)
-	return err
+	if q.tables == nil {
+		return errors.New("sqlite.ReleaseClaim: queue not wired with tables")
+	}
+	return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		current, held, err := q.claimedRunStateInTx(ctx, tx, nodeRunID, expectedClaimedBy)
+		if err != nil || !held {
+			return err
+		}
+		target, err := cascade.NextState(current, cascade.ReasonDispatchReleased)
+		if err != nil {
+			return fmt.Errorf("sqlite.ReleaseClaim: %s: %w", nodeRunID, err)
+		}
+		res, err := q.q(tx).ExecContext(ctx,
+			`UPDATE rimsky_node_runs
+			    SET claimed_by = NULL, claimed_at = NULL, state = ?
+			  WHERE id = ? AND claimed_by = ? AND state = ?`,
+			string(target), nodeRunID.String(), expectedClaimedBy, string(current),
+		)
+		if err != nil {
+			return fmt.Errorf("sqlite.ReleaseClaim: %w", err)
+		}
+		return releasedExactlyOneRow("sqlite.ReleaseClaim", nodeRunID, res)
+	})
 }
 
 // @concept: node-run
+// @concept: transition-reason
 func (q *queueImpl) ReleaseClaimWithDisposition(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string, disposition string) error {
 	if disposition == "" {
 		return errors.New("sqlite.ReleaseClaimWithDisposition: disposition required")
 	}
-	_, err := q.db.ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale',
-		        prior_dispatch_id = id, prior_dispatch_disposition = ?
-		  WHERE id = ? AND claimed_by = ? AND state NOT IN ('fresh', 'failed')`,
-		disposition, nodeRunID.String(), expectedClaimedBy,
-	)
+	if q.tables == nil {
+		return errors.New("sqlite.ReleaseClaimWithDisposition: queue not wired with tables")
+	}
+	return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		current, held, err := q.claimedRunStateInTx(ctx, tx, nodeRunID, expectedClaimedBy)
+		if err != nil || !held {
+			return err
+		}
+		target, err := cascade.NextState(current, cascade.ReasonDispatchReleased)
+		if err != nil {
+			return fmt.Errorf("sqlite.ReleaseClaimWithDisposition: %s: %w", nodeRunID, err)
+		}
+		res, err := q.q(tx).ExecContext(ctx,
+			`UPDATE rimsky_node_runs
+			    SET claimed_by = NULL, claimed_at = NULL, state = ?,
+			        prior_dispatch_id = id, prior_dispatch_disposition = ?
+			  WHERE id = ? AND claimed_by = ? AND state = ?`,
+			string(target), disposition, nodeRunID.String(), expectedClaimedBy, string(current),
+		)
+		if err != nil {
+			return fmt.Errorf("sqlite.ReleaseClaimWithDisposition: %w", err)
+		}
+		return releasedExactlyOneRow("sqlite.ReleaseClaimWithDisposition", nodeRunID, res)
+	})
+}
+
+func releasedExactlyOneRow(op string, nodeRunID shared.UUID, res sql.Result) error {
+	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("sqlite.ReleaseClaimWithDisposition: %w", err)
+		return fmt.Errorf("%s: rows-affected: %w", op, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%s: %s: the row read earlier in this BEGIN IMMEDIATE transaction did not match the release write: %w",
+			op, nodeRunID, persistence.ErrInternalInvariant)
 	}
 	return nil
+}
+
+func (q *queueImpl) claimedRunStateInTx(
+	ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, expectedClaimedBy string,
+) (cascade.NodeState, bool, error) {
+	var state string
+	err := q.q(tx).QueryRowContext(ctx,
+		`SELECT state FROM rimsky_node_runs WHERE id = ? AND claimed_by = ?`,
+		nodeRunID.String(), expectedClaimedBy,
+	).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("sqlite.claimedRunStateInTx: %w", err)
+	}
+	return cascade.NodeState(state), true, nil
 }
 
 // @concept: node-run

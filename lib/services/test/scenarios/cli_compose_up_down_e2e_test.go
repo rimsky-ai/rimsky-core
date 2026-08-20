@@ -5,20 +5,22 @@ package scenarios
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const composeProject = "project-alpha"
 
-const composePrefix = "compose:" + composeProject + ":"
+// @concept: tag
+const composePrefix = composeProject + ":"
 
 func TestCLICompose_UpThenDown(t *testing.T) {
 	ctx := context.Background()
@@ -88,12 +90,37 @@ func TestCLICompose_UpThenDown(t *testing.T) {
 		t.Fatalf("create manual non-compose tag %q: %v", manualTag, err)
 	}
 
+	foreignHash := deployScenarioTemplate(t, ep, map[string]any{
+		"spec": map[string]any{
+			"name":    "foreign-under-project-prefix",
+			"version": "1",
+			"nodes":   []map[string]any{{"type": "keeper", "executor": "stub"}},
+		},
+	})
+	foreignTag := composePrefix + "foreign@1"
+	if _, err := c.CreateTag(ctx, cli.CreateTagRequest{Tag: foreignTag, Template: foreignHash}); err != nil {
+		t.Fatalf("the server reserves no prefix, so another client may name a tag under the project prefix; creating %q failed: %v", foreignTag, err)
+	}
+
+	foreignStatus, foreignExit := captureRun(t, func() int {
+		return compose.RunComposeStatus(ctx, []string{"-f", manifestPath, "--endpoint", ep.BaseURL})
+	})
+	if foreignExit != 0 {
+		t.Fatalf("rimsky compose status exited %d after another client named a tag under the prefix\n--- output ---\n%s\n--- end ---", foreignExit, foreignStatus)
+	}
+	if !strings.Contains(foreignStatus, foreignTag) {
+		t.Fatalf("compose status did not list %q: compose manages any tag under its project prefix\n--- output ---\n%s\n--- end ---", foreignTag, foreignStatus)
+	}
+	if code := compose.RunComposePlan(ctx, []string{"-f", manifestPath, "--endpoint", ep.BaseURL}); code != 3 {
+		t.Fatalf("rimsky compose plan exited %d after another client named a tag under the prefix (want 3: compose owns that tag as drift)", code)
+	}
+
 	for _, key := range composeInstanceKeys {
 		if _, err := c.TerminateInstance(ctx, key, "compose teardown e2e"); err != nil {
 			t.Fatalf("terminate compose instance %q: %v", key, err)
 		}
 	}
-	waitForInstancesTerminal(t, ctx, c, composeInstanceKeys, 60*time.Second)
+	waitForInstancesTerminal(t, ctx, c, composeInstanceKeys)
 
 	if code := compose.RunComposeDown(ctx, []string{"-f", manifestPath, "--endpoint", ep.BaseURL, "--yes"}); code != 0 {
 		t.Fatalf("rimsky compose down exited %d (want 0)", code)
@@ -111,6 +138,10 @@ func TestCLICompose_UpThenDown(t *testing.T) {
 		if tagExists(t, ctx, c, tagName) {
 			t.Fatalf("compose down left tag %q behind", tagName)
 		}
+	}
+
+	if tagExists(t, ctx, c, foreignTag) {
+		t.Fatalf("compose down left %q behind: compose tears down any tag under its project prefix, whoever named it", foreignTag)
 	}
 
 	if !tagExists(t, ctx, c, manualTag) {
@@ -213,22 +244,15 @@ func tagExists(t *testing.T, ctx context.Context, c *cli.Client, name string) bo
 	}
 }
 
-func waitForInstancesTerminal(t *testing.T, ctx context.Context, c *cli.Client, keys []string, deadline time.Duration) {
+func waitForInstancesTerminal(t *testing.T, ctx context.Context, c *cli.Client, keys []string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
 	for _, key := range keys {
-		for {
+		awaited.Until(t, fmt.Sprintf("instance %q to reach terminal (terminated_at)", key), func() bool {
 			inst, err := c.GetInstance(ctx, key)
 			if err != nil {
 				t.Fatalf("read instance %q while waiting for terminal: %v", key, err)
 			}
-			if inst.TerminatedAt != nil && strings.TrimSpace(*inst.TerminatedAt) != "" {
-				break
-			}
-			if !time.Now().Before(end) {
-				t.Fatalf("instance %q did not reach terminal (terminated_at) within %v", key, deadline)
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
+			return inst.TerminatedAt != nil && strings.TrimSpace(*inst.TerminatedAt) != ""
+		})
 	}
 }

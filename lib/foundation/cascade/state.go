@@ -51,7 +51,10 @@ var (
 
 	ReasonCascadeResume = TransitionReason{Kind: "cascade_resume"}
 
-	ReasonChildTransitioned = TransitionReason{Kind: "child_transitioned"}
+	ReasonDispatchReleased = TransitionReason{Kind: "dispatch_released"}
+
+	ReasonAggregateSettledSuccess = TransitionReason{Kind: "aggregate_settled_success"}
+	ReasonAggregateSettledFailure = TransitionReason{Kind: "aggregate_settled_failure"}
 
 	ReasonSubGraphInternalCascadeFired = TransitionReason{Kind: "subgraph_internal_cascade_fired"}
 
@@ -101,6 +104,8 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateFailed, nil
 		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
+		case ReasonDispatchReleased.Kind:
+			return NodeStateStale, nil
 		}
 	case NodeStateRunning:
 		switch reason.Kind {
@@ -122,6 +127,8 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateFailed, nil
 		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
+		case ReasonDispatchReleased.Kind:
+			return NodeStateStale, nil
 		}
 	case NodeStateHeld:
 		switch reason.Kind {
@@ -133,6 +140,8 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateFailed, nil
 		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
+		case ReasonDispatchReleased.Kind:
+			return NodeStateStale, nil
 		}
 	case NodeStateParked:
 		switch reason.Kind {
@@ -144,16 +153,27 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateFailed, nil
 		case ReasonSiblingCancelled.Kind:
 			return NodeStateFailed, nil
+		case ReasonDispatchReleased.Kind:
+			return NodeStateStale, nil
 		}
 	}
 	return "", fmt.Errorf("%w: from=%s reason=%s", ErrIllegalTransition, current, reason.Kind)
 }
 
 // @concept: node-run
+// @concept: transition-reason
 func NextStateParent(current NodeState, reason TransitionReason) (NodeState, error) {
 	switch reason.Kind {
-	case ReasonChildTransitioned.Kind:
-		return "", &parentAggregateOK{From: current}
+	case ReasonAggregateSettledSuccess.Kind:
+		if aggregatingParentState(current) {
+			return NodeStateFresh, nil
+		}
+		return "", fmt.Errorf("%w: from=%s reason=%s", ErrIllegalTransition, current, reason.Kind)
+	case ReasonAggregateSettledFailure.Kind:
+		if aggregatingParentState(current) {
+			return NodeStateFailed, nil
+		}
+		return "", fmt.Errorf("%w: from=%s reason=%s", ErrIllegalTransition, current, reason.Kind)
 	case ReasonSubGraphInternalCascadeFired.Kind:
 		if current == NodeStateRunning {
 			return NodeStateRunning, nil
@@ -163,17 +183,23 @@ func NextStateParent(current NodeState, reason TransitionReason) (NodeState, err
 	return NextState(current, reason)
 }
 
-type parentAggregateOK struct {
-	From NodeState
+func aggregatingParentState(current NodeState) bool {
+	switch current {
+	case NodeStateStale, NodeStateRunning, NodeStateHeld, NodeStateFresh, NodeStateFailed:
+		return true
+	}
+	return false
 }
 
-func (e *parentAggregateOK) Error() string {
-	return fmt.Sprintf("parent aggregation in progress from=%s (caller chooses target)", e.From)
-}
-
-func IsParentAggregateOK(err error) bool {
-	var pok *parentAggregateOK
-	return errors.As(err, &pok)
+// @concept: transition-reason
+func AggregateSettledReason(target NodeState) (TransitionReason, error) {
+	switch target {
+	case NodeStateFresh:
+		return ReasonAggregateSettledSuccess, nil
+	case NodeStateFailed:
+		return ReasonAggregateSettledFailure, nil
+	}
+	return TransitionReason{}, fmt.Errorf("%w: aggregation settled on non-terminal state %s", ErrIllegalTransition, target)
 }
 
 // @concept: node-run

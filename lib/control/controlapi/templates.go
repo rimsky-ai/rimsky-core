@@ -277,10 +277,6 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid tag identifier")
 			return
 		}
-		if tag != "" && strings.HasPrefix(tag, composeReservedPrefix) && !isComposeOrigin(req) {
-			badRequest(w, "tag uses reserved prefix \"compose:\" (managed by the compose command)")
-			return
-		}
 
 		spec := *specBody
 		hooks, infra := validatorHooksFor(deps, spec)

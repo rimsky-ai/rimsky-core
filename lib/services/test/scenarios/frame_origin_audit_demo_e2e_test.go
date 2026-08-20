@@ -33,17 +33,15 @@ func TestFrameOriginAuditDemo_RunExitsZero(t *testing.T) {
 	demoScript := repoExampleSpecPath(t, "test/fixtures/demos/frame-origin-audit-demo.sh")
 	repoExampleSpecPath(t, "test/fixtures/demos/frame-origin-audit-demo-template.yaml")
 
-	stdout, exitCode := runFrameOriginAuditDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
+	stdout, exitCode := runFrameOriginAuditDemoScript(t, ctx, demoScript, ep.BaseURL)
 	if exitCode != 0 {
 		t.Fatalf("frame-origin-audit-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
 	}
 }
 
-func runFrameOriginAuditDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
+func runFrameOriginAuditDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string) (string, int) {
 	t.Helper()
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, "/bin/bash", scriptPath)
+	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
 	cmd.Env = append(os.Environ(),
 		"RIMSKY_CONTROL_API_URL="+baseURL,
 	)

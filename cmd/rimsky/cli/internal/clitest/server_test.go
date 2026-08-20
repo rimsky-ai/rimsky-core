@@ -68,7 +68,7 @@ func TestServer_InstanceLifecycle(t *testing.T) {
 	c := cli.NewClient(srv.URL)
 	tpl, _ := c.RegisterTemplate(context.Background(), cli.RegisterTemplateRequest{Spec: minimalSpecTyped(), Tag: "t1"})
 	_, _ = c.DeployTemplate(context.Background(), "t1")
-	key := "compose:p:n"
+	key := "p:n"
 	inst, err := c.CreateInstance(context.Background(), cli.CreateInstanceRequest{Template: "t1", InstanceKey: &key})
 	if err != nil {
 		t.Fatal(err)

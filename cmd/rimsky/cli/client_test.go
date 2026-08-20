@@ -200,7 +200,7 @@ func TestClient_DeleteTag(t *testing.T) {
 }
 
 func TestClient_CreateInstance(t *testing.T) {
-	key := "compose:p:n"
+	key := "p:n"
 	srv := helperServer(t, http.MethodPost, "/v1/instances",
 		map[string]any{"template": "sha256-abc", "instance_key": key},
 		http.StatusCreated,

@@ -15,6 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -103,13 +104,14 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 
 	h.WaitForNodeState(cN.ID, cascade.NodeStateFresh)
 
+	var cRow *persistence.NodeAttributesRow
+	awaited.Until(t, "c to see both upstreams' first-fire values", func() bool {
+		cRow = latestAttrRowMultiHardDep(t, h, iid, cN.ID)
+		return cRow != nil && cRow.Data["a_val"] == "from-a-1" && cRow.Data["b_val"] == "from-b-1"
+	})
+
 	bootCounts := awaitStableDispatchCounts(t, h)
 	require.GreaterOrEqual(t, bootCounts["c"], 1, "boot: c must have dispatched")
-
-	cRow := latestAttrRowMultiHardDep(t, h, iid, cN.ID)
-	require.NotNil(t, cRow)
-	require.Equal(t, "from-a-1", cRow.Data["a_val"], "c should see a's first-fire value")
-	require.Equal(t, "from-b-1", cRow.Data["b_val"], "c should see b's first-fire value")
 
 	h.Stub.WhenType("trigger").Success(map[string]any{"t_value": "t-2"}, true, "ok")
 	h.Stub.WhenType("a").Success(map[string]any{"a_value": "from-a-2"}, true, "ok")
@@ -118,15 +120,10 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake/trigger", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "frame 2 to terminate with c seeing both upstreams' second-fire values", func() bool {
 		cRow = latestAttrRowMultiHardDep(t, h, iid, cN.ID)
-		if cRow != nil && cRow.Data["a_val"] == "from-a-2" && cRow.Data["b_val"] == "from-b-2" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.NotNil(t, cRow)
+		return cRow != nil && cRow.Data["a_val"] == "from-a-2" && cRow.Data["b_val"] == "from-b-2"
+	})
 	require.Equal(t, "from-a-2", cRow.Data["a_val"],
 		"frame 2 must terminate with c seeing a's second-fire value")
 	require.Equal(t, "from-b-2", cRow.Data["b_val"],
@@ -156,26 +153,8 @@ func dispatchCountsByType(h *scenario.Harness) map[string]int {
 
 func awaitStableDispatchCounts(t *testing.T, h *scenario.Harness) map[string]int {
 	t.Helper()
-	const quiesce = 2 * time.Second
-	deadline := time.Now().Add(20 * time.Second)
-	last := len(h.Stub.Observed())
-	stableSince := time.Now()
-	for time.Now().Before(deadline) {
-		time.Sleep(100 * time.Millisecond)
-		cur := len(h.Stub.Observed())
-		if cur != last {
-			last = cur
-			stableSince = time.Now()
-			continue
-		}
-		if time.Since(stableSince) >= quiesce {
-			return dispatchCountsByType(h)
-		}
-	}
-	require.FailNow(t, "dispatch count never stabilized",
-		"dispatches kept arriving past the deadline — mutual re-seeding tail; per-type counts: %v",
-		dispatchCountsByType(h))
-	return nil
+	h.WaitForSchedulerQuiescence()
+	return dispatchCountsByType(h)
 }
 
 func lastDispatchIndex(h *scenario.Harness, typ string) int {

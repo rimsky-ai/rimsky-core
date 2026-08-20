@@ -105,6 +105,7 @@ publishers:
 validators:
   shape:
     endpoint: grpc://shape:9095
+    protocols: [validation, executor]
 data_processors:
   dp:
     endpoint: grpc://dp:9099

@@ -6,8 +6,8 @@
 package runtree
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +16,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -114,8 +115,9 @@ func readPersistedTree(t *testing.T, h *scenario.Harness, iid any) persistedTree
 
 func waitForParentMainRunState(t *testing.T, h *scenario.Harness, nodeID any, mainScopeID string, want cascade.NodeState) string {
 	t.Helper()
-	for {
-		var state, runID string
+	var runID string
+	awaited.Until(t, fmt.Sprintf("the parent's main-scope run to reach state %s", want), func() bool {
+		var state string
 		h.QueryRowSQL(`
 			SELECT COALESCE(state::text, ''), COALESCE(id::text, '')
 			  FROM rimsky_node_runs
@@ -123,11 +125,9 @@ func waitForParentMainRunState(t *testing.T, h *scenario.Harness, nodeID any, ma
 			 ORDER BY enqueued_at DESC
 			 LIMIT 1`,
 			[]any{nodeID, mainScopeID}, &state, &runID)
-		if state == string(want) {
-			return runID
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return state == string(want)
+	})
+	return runID
 }
 
 func TestRunTreePersistedShapeAndStrictAggregation_AllSuccess(t *testing.T) {

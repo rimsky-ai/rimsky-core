@@ -8,7 +8,6 @@ package scenarios
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -40,9 +40,9 @@ func countTerminalSuccessEvents(t *testing.T, h *scenario.Harness, nodeID shared
 
 func waitForTerminalSuccessCount(t *testing.T, h *scenario.Harness, nodeID shared.UUID, want int) {
 	t.Helper()
-	for countTerminalSuccessEvents(t, h, nodeID) < want {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, fmt.Sprintf("%d terminal/success event(s) on node %s", want, nodeID), func() bool {
+		return countTerminalSuccessEvents(t, h, nodeID) >= want
+	})
 }
 
 func TestPureCascadeNode(t *testing.T) {

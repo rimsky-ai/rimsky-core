@@ -9,7 +9,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `api-key` (aliases: bearer token) — A high-entropy, rimsky-issued credential carried by control-api clients as `Authorization: Bearer <key>`.
 - `asset` — An asset is a documented compound, not a new primitive: a claim against a data-processing-capable producer with a durable lifetime.
 - `atomic-staging` — Producer-side stage-then-swap pattern: writers stage data into a side area; on `Commit` the producer atomically swaps the staging into the canonical view; on `Abandon` the staging is dropped.
-- `attribute` — Attributes are the typed inputs, outputs, and configuration of a node, declared by a JSON Schema in the template's `attributes:` block.
+- `attribute` — Attributes are the typed inputs, outputs, and configuration of a node, declared by a schema in the template's attributes block.
 - `auto-terminal` (aliases: held-claim resolution) — The mechanism that fires the producer's Commit or Abandon verb exactly once at the end of a held claim's holding-subgraph.
 - `blob-backend` — The blob-backend interface is the abstraction that backs spilled byte streams from two surfaces: attribute values and scratch.
 - `breakpoint` — A breakpoint is a runtime-installed pause-point on a live `concept:instance`, identified by UUID and bound to a `(matcher, checkpoint, signal_type?, mode, overflow_policy, ttl_seconds?)` tuple.
@@ -60,14 +60,13 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `persistence-database` (aliases: persistence-driver) — The top-level database interface is the umbrella over the rimsky persistence layer.
 - `publisher` — A publisher is a peer service that publishes messages into rimsky.
 - `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, type) triple.
-- `replica` — A replica is one running pod/process of a rimsky-platform binary, behind a deployment-tier load-balancing layer.
-- `rimsky` (aliases: rimsky-cli) — Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus two embedded one-shot orchestration modes (ephemeral-run for a single template, compose one-shot for a manifest) that self-host the runtime stack to drive to terminal without standing up rimsky infrastructure.
+- `rimsky` (aliases: rimsky-cli) — Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack.
 - `rimsky-yml` (aliases: unified config) — A single YAML file at a well-known default path read by every runtime process plus the migrate step.
 - `role-template` (aliases: bundled role) — A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time.
 - `run-scope` — RunScope is the first-class execution context for one graph instantiation (root / sub-graph / fanout_partition).
 - `sensor` — A sensor is a class of `concept:publisher` implementation that observes external state.
-- `service` — An out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky.
-- `service-address-book` — The shared, persisted catalog of the deployment's declared dispatch peers — executor and claim-producer store names mapped to endpoints — published by the control plane at startup and on configuration reload and resolved read-through by every supervisor.
+- `service` — A rimsky-orchestrated implementation of one or more of rimsky's service protocols, running either as an out-of-process binary or as an in-process handler within the rimsky all-in-one process.
+- `service-address-book` — The shared, persisted catalog of the deployment's declared dispatch peers — executor names and claim-producer store names, each mapped to its endpoint.
 - `signal` — A signal is the unified emission shape for any transition that affects a node-run.
 - `sub-graph` — A sub-graph is a graph with declared `entry:` and `exit:` nodes; invocable from another node via `delegate: <graph-name>`.
 - `supervisor` — One of the three rimsky runtime binaries.
@@ -75,8 +74,8 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `template` (aliases: canonical-spec) — A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, frame-resolution policy, handler declarations, quality rules.
 - `terminal-resolution` (aliases: executor-terminal-spine) — The end-to-end spine that takes a single executor Outcome off the wire and converges it onto exactly four decisions: (1) what canonical signal type-path to emit (and the verdict's `tags` set as the discriminator that subscribers CEL-filter against), (2) what to do with the node-run row (delete vs retry-enqueue), (3) what producer verb (`Commit` / `Abandon` / nothing) to fire on every acquired claim, (4) when to delete the persisted claim-handle rows claimant-guarded.
 - `terminal-tag` — A terminal tag is a string member of the `tags` set carried on a settling terminal verdict (Success / Error / Park).
-- `transition-reason` — The transition reason is the closed enum carried on every node-state transition.
+- `transition-reason` — The transition reason is the closed vocabulary of named values carried on every write of a node-run's state column.
 - `validation` — Cross-cutting service protocol.
-- `wait-set` — The wait-set is a per-frame persisted ledger that records "receiver R is waiting for sender S in frame F under (topic_kind, subscription_scope, topic_filter)."
+- `wait-set` — The wait-set is a per-frame persisted ledger that records "cascade-driven pending receiver R is waiting for sender S in frame F" keyed by frame, receiver run, sender run, and topic kind.
 - `write-semantics` — A per-claim enum (`sync | staged_async | blocking_async | read_only`) that determines how the coexistence matrix treats concurrent claims on byte-equal claim scope (per `concept:claim-scope`).
 

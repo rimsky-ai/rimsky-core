@@ -5,7 +5,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -83,7 +83,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 	downstreamNode := h.FindNode(iid, "downstream")
 	require.NotNil(t, downstreamNode, "downstream node missing")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "all three partition children should settle (fresh or failed)", func() bool {
 		var settledRuns int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -95,8 +95,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 			   AND r.node_id = $2
 		`, []any{iid, parentNode.ID}, &settledRuns)
 		return settledRuns >= 3
-	}, 60*time.Second, 100*time.Millisecond,
-		"all three partition children should settle (fresh or failed)")
+	})
 
 	var failedPartitionRuns int
 	h.QueryRowSQL(`
@@ -114,7 +113,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 			"a best-effort-only e2e proof can never exercise")
 
 	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "strict aggregation must fail the fan-parent's own (unpartitioned) run on any child failure", func() bool {
 		var n int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -122,8 +121,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 			 WHERE node_id = $1 AND run_scope_id = $2 AND state = 'failed'
 		`, []any{parentNode.ID, mainScopeID}, &n)
 		return n == 1
-	}, 60*time.Second, 100*time.Millisecond,
-		"strict aggregation must fail the fan-parent's own (unpartitioned) run on any child failure")
+	})
 
 	var parentSettlingSignal string
 	h.QueryRowSQL(`

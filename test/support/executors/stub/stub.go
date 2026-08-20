@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,6 +58,7 @@ func postAsyncProbeCallback(callbackURL, ackID string) {
 		if attempt == asyncProbeCallbackMaxAttempts {
 			return
 		}
+		//nolint:testwallclock-pacing backoff between best-effort probe posts; the loop returns either way and reaches no verdict
 		time.Sleep(delay)
 		delay *= 2
 	}
@@ -133,7 +135,10 @@ type Stub struct {
 	stubMode          bool
 	ignoreCancelProbe bool
 	observed          []ObservedRequest
+	holding           atomic.Int64
 }
+
+func (s *Stub) Holding() int64 { return s.holding.Load() }
 
 type ObservedRequest struct {
 	NodeID                   string
@@ -361,17 +366,21 @@ func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.O
 
 	if sc.delay > 0 {
 		select {
+		//nolint:testwallclock-pacing the stub simulates a script-declared execution delay; never a verdict input
 		case <-time.After(sc.delay):
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
 	if sc.holdUntil != nil {
+		s.holding.Add(1)
 		select {
 		case <-sc.holdUntil:
 		case <-ctx.Done():
+			s.holding.Add(-1)
 			return nil, ctx.Err()
 		}
+		s.holding.Add(-1)
 	}
 
 	switch sc.terminal {

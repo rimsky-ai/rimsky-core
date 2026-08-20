@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -47,9 +48,25 @@ func TestReleaseChainOrder(t *testing.T) {
 		t.Fatalf("Makefile has no release target")
 	}
 	deps := strings.Fields(m[1])
-	want := []string{"lint", "core-images", "service-images", "test-all", "scan", "push-images"}
+	want := []string{"lint", "core-images", "service-images", "test-all", "scan", "push-images", "verify-published-platforms"}
 	if strings.Join(deps, " ") != strings.Join(want, " ") {
 		t.Errorf("release chain is %v, want the decided order %v", deps, want)
+	}
+}
+
+// @decision: release-distribution
+// @decision: release-chain
+func TestEveryPushedTagIsAMultiPlatformIndexAndTheChainReadsItBack(t *testing.T) {
+	makefile := readBuildFile(t, "Makefile")
+	if !regexp.MustCompile(`(?m)^PUBLISH_PLATFORMS := linux/amd64,linux/arm64$`).MatchString(makefile) {
+		t.Errorf("the published platform matrix is no longer exactly linux/amd64 + linux/arm64 — an operator on one processor would have no published image")
+	}
+	if !regexp.MustCompile(`(?s)BUILDX_PUSH = [^\n]*(\\\n[^\n]*)*--platform \$\(PUBLISH_PLATFORMS\)`).MatchString(makefile) {
+		t.Errorf("push-images no longer builds every published tag for the whole platform matrix")
+	}
+	assertMakeTarget(t, makefile, "verify-published-platforms")
+	if !strings.Contains(makefile, "./tools/verify-published-platforms.sh") {
+		t.Errorf("the verify-published-platforms target no longer runs the script whose behaviour release_platform_verify_test.go drives")
 	}
 }
 
@@ -90,7 +107,6 @@ func TestBundledServiceImagesBuildFromColocatedDockerfiles(t *testing.T) {
 }
 
 // @decision: image-two-stage
-// @decision: build-cgo-disabled
 func TestImagesAreTwoStageStaticNonRoot(t *testing.T) {
 	for _, rel := range []string{"dockerfiles/Dockerfile.rimsky", "dockerfiles/Dockerfile.go-base", "dockerfiles/Dockerfile.conformance"} {
 		df := readBuildFile(t, rel)
@@ -104,10 +120,208 @@ func TestImagesAreTwoStageStaticNonRoot(t *testing.T) {
 		if !strings.Contains(df, "nonroot") {
 			t.Errorf("%s no longer runs as a non-root user", rel)
 		}
-		if !strings.Contains(df, "CGO_ENABLED=0") {
-			t.Errorf("%s builds without CGO_ENABLED=0 — CGO is disabled for all builds", rel)
+	}
+}
+
+var goCompilesABinary = regexp.MustCompile(`\bgo build\b|\bgo test\b[^\n]*\s-c\b`)
+
+var dockerfileEnvDisablesCGO = regexp.MustCompile(`(?m)^\s*ENV\s+CGO_ENABLED=0\b`)
+
+var lineContinuation = regexp.MustCompile(`\\\s*\n\s*`)
+
+var dockerfileStageStart = regexp.MustCompile(`(?i)^FROM\s`)
+
+var dockerfileStagePinsBuildPlatform = regexp.MustCompile(`(?i)^FROM\s+--platform=\$\{?BUILDPLATFORM\}?\s`)
+
+var dockerfileDeclaresTargetOS = regexp.MustCompile(`(?m)^\s*ARG\s+TARGETOS\b`)
+
+var dockerfileDeclaresTargetArch = regexp.MustCompile(`(?m)^\s*ARG\s+TARGETARCH\b`)
+
+type dockerfileCompile struct {
+	text                    string
+	stageDisablesCGO        bool
+	stagePinsBuildPlatform  bool
+	stageDeclaresTargetOS   bool
+	stageDeclaresTargetArch bool
+}
+
+func dockerfileGoCompileLines(src string) []dockerfileCompile {
+	var out []dockerfileCompile
+	var stage dockerfileCompile
+	for _, line := range strings.Split(lineContinuation.ReplaceAllString(src, " "), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if dockerfileStageStart.MatchString(trimmed) {
+			stage = dockerfileCompile{stagePinsBuildPlatform: dockerfileStagePinsBuildPlatform.MatchString(trimmed)}
+			continue
+		}
+		if dockerfileEnvDisablesCGO.MatchString(trimmed) {
+			stage.stageDisablesCGO = true
+		}
+		if dockerfileDeclaresTargetOS.MatchString(trimmed) {
+			stage.stageDeclaresTargetOS = true
+		}
+		if dockerfileDeclaresTargetArch.MatchString(trimmed) {
+			stage.stageDeclaresTargetArch = true
+		}
+		for _, invocation := range strings.Split(trimmed, "&&") {
+			invocation = strings.TrimSpace(invocation)
+			if !goCompilesABinary.MatchString(invocation) {
+				continue
+			}
+			compile := stage
+			compile.text = invocation
+			out = append(out, compile)
 		}
 	}
+	return out
+}
+
+var compileTakesItsTargetFromTheBuild = regexp.MustCompile(`GOOS=\$\{?TARGETOS\}?\s+GOARCH=\$\{?TARGETARCH\}?`)
+
+// @decision: release-distribution
+func TestEveryGoCompilingImageCrossCompilesForTheRequestedPlatform(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	compiling := 0
+	for _, rel := range dockerfilesUnder(t, repoRoot) {
+		lines := dockerfileGoCompileLines(readBuildFile(t, rel))
+		if len(lines) == 0 {
+			continue
+		}
+		compiling++
+		for _, line := range lines {
+			if !line.stagePinsBuildPlatform {
+				t.Errorf("%s compiles Go in a stage whose FROM carries no `--platform=$BUILDPLATFORM`, so a multi-platform build runs the toolchain under emulation instead of cross-compiling: %s", rel, line.text)
+			}
+			if !line.stageDeclaresTargetOS || !line.stageDeclaresTargetArch {
+				t.Errorf("%s compiles Go in a stage declaring no `ARG TARGETOS` / `ARG TARGETARCH`, so the build cannot read the platform buildx asked for: %s", rel, line.text)
+			}
+			if !compileTakesItsTargetFromTheBuild.MatchString(line.text) {
+				t.Errorf("%s pins the compile to a fixed platform instead of `GOOS=$TARGETOS GOARCH=$TARGETARCH`, so every published platform would carry the same binary: %s", rel, line.text)
+			}
+		}
+	}
+	if compiling != dockerfilesCompilingGo {
+		t.Errorf("%d Dockerfiles compile Go, want the %d this check enumerates", compiling, dockerfilesCompilingGo)
+	}
+}
+
+const dockerfilesCompilingGo = 18
+
+// @decision: build-cgo-disabled
+func TestAStageLevelCGOEnvNeverExemptsAnotherStagesCompile(t *testing.T) {
+	body := "FROM golang AS builder\n" +
+		"RUN go build ./cmd/one\n" +
+		"FROM golang AS second\n" +
+		"ENV CGO_ENABLED=0\n" +
+		"RUN go build ./cmd/two\n" +
+		"RUN CGO_ENABLED=0 GOOS=linux \\\n    go build ./cmd/three\n" +
+		"RUN CGO_ENABLED=0 go build ./cmd/four && \\\n    go build ./cmd/five\n"
+	got := dockerfileGoCompileLines(body)
+	if len(got) != 5 {
+		t.Fatalf("compile lines = %+v, want the five go build invocations", got)
+	}
+	if got[0].stageDisablesCGO {
+		t.Errorf("the builder stage carries no ENV CGO_ENABLED=0, yet a later stage's ENV exempted it: %+v", got[0])
+	}
+	if !got[1].stageDisablesCGO {
+		t.Errorf("a compile in the stage that sets ENV CGO_ENABLED=0 is not covered by it: %+v", got[1])
+	}
+	if !strings.Contains(got[2].text, "CGO_ENABLED=0 GOOS=linux  go build") {
+		t.Errorf("a backslash continuation no longer reads as one invocation: %q", got[2].text)
+	}
+	if !strings.Contains(got[3].text, "CGO_ENABLED=0 go build ./cmd/four") {
+		t.Errorf("the first link of an && chain is not read as its own invocation: %q", got[3].text)
+	}
+	if strings.Contains(got[4].text, "CGO_ENABLED=0") {
+		t.Errorf("a later link of an && chain inherits the first link's env, so a compile added without it could never fail the check: %q", got[4].text)
+	}
+}
+
+// @decision: build-cgo-disabled
+func TestEveryBuildInvocationInTheTreeDisablesCGO(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+
+	var compiling []string
+	for _, rel := range dockerfilesUnder(t, repoRoot) {
+		body := readBuildFile(t, rel)
+		lines := dockerfileGoCompileLines(body)
+		if len(lines) == 0 {
+			continue
+		}
+		compiling = append(compiling, rel)
+		for _, line := range lines {
+			if line.stageDisablesCGO || strings.Contains(line.text, "CGO_ENABLED=0") {
+				continue
+			}
+			t.Errorf("%s compiles Go without CGO_ENABLED=0, and its own build stage sets no `ENV CGO_ENABLED=0` either: %s", rel, line.text)
+		}
+	}
+	if len(compiling) != dockerfilesCompilingGo {
+		t.Errorf("%d Dockerfiles compile Go, want the %d this check enumerates — a new one must be held to the CGO posture too:\n  %s",
+			len(compiling), dockerfilesCompilingGo, strings.Join(compiling, "\n  "))
+	}
+
+	for _, line := range goCompileLines(readBuildFile(t, "Makefile")) {
+		if !strings.Contains(line, "CGO_ENABLED=0") {
+			t.Errorf("a Makefile target compiles Go without CGO_ENABLED=0: %s", line)
+		}
+	}
+
+	goreleaser := readBuildFile(t, ".goreleaser.yaml")
+	if !regexp.MustCompile(`(?s)builds:.*?env:\s*\n\s*-\s*CGO_ENABLED=0`).MatchString(goreleaser) {
+		t.Errorf(".goreleaser.yaml builds the CLI archives without CGO_ENABLED=0")
+	}
+}
+
+func dockerfilesUnder(t *testing.T, repoRoot string) []string {
+	t.Helper()
+	var found []string
+	err := filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".ok-planner", "node_modules", "bin":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasPrefix(d.Name(), "Dockerfile") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		found = append(found, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s for Dockerfiles: %v", repoRoot, err)
+	}
+	sort.Strings(found)
+	return found
+}
+
+func goCompileLines(src string) []string {
+	var out []string
+	for _, line := range strings.Split(lineContinuation.ReplaceAllString(src, " "), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		for _, invocation := range strings.Split(trimmed, "&&") {
+			invocation = strings.TrimSpace(invocation)
+			if goCompilesABinary.MatchString(invocation) {
+				out = append(out, invocation)
+			}
+		}
+	}
+	return out
 }
 
 // @decision: image-tagging-version-and-channel

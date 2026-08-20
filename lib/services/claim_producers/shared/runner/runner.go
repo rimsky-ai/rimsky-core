@@ -6,10 +6,11 @@ package runner
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
-	"os/signal"
-	"syscall"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func Fatal(serviceName string, err error) {
@@ -35,13 +36,7 @@ func Listen(host string, grpcPort, httpPort, adminPort int) (grpcLis, httpLis, a
 	return grpcLis, httpLis, adminLis, nil
 }
 
+// @decision: graceful-shutdown
 func SignalContext() (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.Background())
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		cancel()
-	}()
-	return ctx, cancel
+	return serverkit.ShutdownContext(context.Background(), slog.Default())
 }

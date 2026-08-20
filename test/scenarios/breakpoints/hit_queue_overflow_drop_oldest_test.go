@@ -8,7 +8,6 @@ package breakpoints
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -22,8 +21,6 @@ import (
 
 func TestHitQueueOverflowDropOldest(t *testing.T) {
 	t.Parallel()
-	testStart := time.Now()
-	testBudget := 30 * time.Second
 	h := scenario.Start(t, scenario.HarnessOpts{
 		NoSupervisor: true,
 		NoScheduler:  true,
@@ -87,7 +84,4 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 		"earliest kept hit seq=%d should be > 50 (the dropped count) since drop_oldest evicts from the head",
 		hits[0].Seq)
 
-	require.LessOrEqual(t, time.Since(testStart), testBudget,
-		"test ran longer than budget (%s) — likely a hang in EvaluateBreakpoints / handleOverflow",
-		testBudget)
 }

@@ -4,8 +4,8 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -140,13 +141,10 @@ func TestSubgraphMultiCaller_SharedInternalsScopeSeparated(t *testing.T) {
 
 func waitForRunCount(t *testing.T, h *scenario.Harness, nodeID shared.UUID, state string, want int) {
 	t.Helper()
-	for {
+	awaited.Until(t, fmt.Sprintf("%d run(s) of node %s in state %s", want, nodeID, state), func() bool {
 		var n int
 		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1 AND state = $2`,
 			[]any{nodeID, state}, &n)
-		if n >= want {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return n >= want
+	})
 }

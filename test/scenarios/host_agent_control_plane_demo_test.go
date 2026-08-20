@@ -15,9 +15,9 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const demoScriptRelPath = "test/fixtures/demos/host-agent-control-plane-demo.sh"
@@ -123,9 +123,9 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 		t.Fatalf("rimsky agent stop did not report `stopped (pid %d)`; stdout:\n%s", daemonPid, stopOut)
 	}
 
-	waitProcessGone(daemonPid)
+	waitProcessGone(t, daemonPid)
 
-	waitChildrenGone(preStopChildren)
+	waitChildrenGone(t, preStopChildren)
 
 	if _, statErr := os.Stat(termLog); statErr != nil {
 		t.Fatalf("stubchild term log %s missing — the agent did not signal the spawned child during stop: %v",
@@ -245,10 +245,11 @@ func findChildrenByExe(exePath string) []int {
 	return pids
 }
 
-func waitChildrenGone(pids []int) {
-	for len(stillAlive(pids)) != 0 {
-		time.Sleep(100 * time.Millisecond)
-	}
+func waitChildrenGone(t *testing.T, pids []int) {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("every spawned child of %v to exit", pids), func() bool {
+		return len(stillAlive(pids)) == 0
+	})
 }
 
 func stillAlive(pids []int) []int {
@@ -261,8 +262,9 @@ func stillAlive(pids []int) []int {
 	return live
 }
 
-func waitProcessGone(pid int) {
-	for syscall.Kill(pid, 0) == nil {
-		time.Sleep(50 * time.Millisecond)
-	}
+func waitProcessGone(t *testing.T, pid int) {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("process %d to exit", pid), func() bool {
+		return syscall.Kill(pid, 0) != nil
+	})
 }

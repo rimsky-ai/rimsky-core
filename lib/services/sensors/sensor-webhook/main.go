@@ -10,9 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,18 +27,24 @@ func (a slogAdapter) Info(msg string, args ...any)  { a.l.Info(msg, args...) }
 func (a slogAdapter) Warn(msg string, args ...any)  { a.l.Warn(msg, args...) }
 func (a slogAdapter) Error(msg string, args ...any) { a.l.Error(msg, args...) }
 
+// @decision: default-port-allocation
+const (
+	defaultGRPCPort = 9084
+	defaultHTTPPort = 9184
+)
+
 func main() {
 	host := envOr("RIMSKY_SENSOR_WEBHOOK_HOST", "0.0.0.0")
 	// @concept: service
-	grpcPort, err := agentport.Resolve("RIMSKY_SENSOR_WEBHOOK_PORT", 9084)
+	grpcPort, err := agentport.Resolve("RIMSKY_SENSOR_WEBHOOK_PORT", defaultGRPCPort)
 	if err != nil {
 		slog.Error("sensor-webhook config", "error", err.Error())
 		os.Exit(1)
 	}
-	webhookPort := atoiOr("RIMSKY_SENSOR_WEBHOOK_HTTP_PORT", 9184)
+	webhookPort := atoiOr("RIMSKY_SENSOR_WEBHOOK_HTTP_PORT", defaultHTTPPort)
 	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(serverkit.NewJSONLogger())
 	slog.Info("sensor-webhook starting",
 		"grpc_port", grpcPort,
 		"webhook_port", webhookPort,
@@ -52,8 +56,9 @@ func main() {
 	})
 	svc := NewSensorService(rimskyEndpoint, router, slogAdapter{l: slog.Default()})
 
-	ctxState, cancelState := context.WithCancel(context.Background())
-	defer cancelState()
+	// @decision: graceful-shutdown
+	ctxState, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
+	defer stopSignals()
 
 	identity, err := peerauth.LoadFromEnv(ctxState, "sensor-webhook")
 	if err != nil {
@@ -94,14 +99,12 @@ func main() {
 	genv1.RegisterPublisherServer(grpcSrv, svc)
 	go serverkit.Serve(grpcSrv, lis, "sensor-webhook")
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	<-ctxState.Done()
 	slog.Info("sensor-webhook stopping")
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), serverkit.BundledServiceGrace)
 	defer stopCancel()
 	_ = webhookSrv.Shutdown(stopCtx)
-	serverkit.GracefulStop(grpcSrv, serverkit.DefaultStopBudget)
+	serverkit.GracefulStop(grpcSrv, serverkit.BundledServiceGrace)
 }
 
 func envOr(k, def string) string {

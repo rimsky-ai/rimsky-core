@@ -48,6 +48,20 @@ linters-settings:
             desc: "see pgx isolation rule above"
           - pkg: "github.com/jackc/pgx/v5/pgconn"
             desc: "see pgx isolation rule above"
+      # pgx-stdlib-adapter: the native pgx interface is the only way this
+      # repo reaches Postgres (decision:postgres-pgx-v5). The driver's
+      # standard-SQL adapter reaches the same database a second way, so
+      # this rule denies it everywhere, with no exemption. The rule names
+      # the adapter package alone: database/sql itself backs the whole
+      # SQLite backend and supplies the null and sentinel types the
+      # Postgres queue-park code uses.
+      pgx-stdlib-adapter:
+        list-mode: lax
+        files:
+          - "$all"
+        deny:
+          - pkg: "github.com/jackc/pgx/v5/stdlib"
+            desc: "reach Postgres through the native pgx interface, never through the driver's standard-SQL adapter (decision:postgres-pgx-v5)."
       foundation-internal-isolation:
         list-mode: lax
         files:

@@ -4,7 +4,7 @@
 package locks
 
 import (
-	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -67,9 +68,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	dialCtx, dialCancel := context.WithTimeout(h.Ctx, 5*time.Second)
-	defer dialCancel()
-	client, err := peer.Dial(dialCtx, "content", "grpc://"+endpoint, peer.TLSModeOff)
+	client, err := peer.Dial(h.Ctx, "content", "grpc://"+endpoint, peer.TLSModeOff)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	reg := locks.NewRegistry()
@@ -154,18 +153,15 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 
 func waitForActiveClaimScopeCount(t *testing.T, h *scenario.Harness, producerName string, want int) {
 	t.Helper()
-	for {
+	awaited.Until(t, fmt.Sprintf("%d active claim_scope handle(s) for producer %s", want, producerName), func() bool {
 		var n int
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_claim_handles
 			  WHERE producer_name = $1 AND lock_kind = 'claim_scope' AND state = 'active'`,
 			producerName,
 		).Scan(&n))
-		if n >= want {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return n >= want
+	})
 }
 
 func TestClaimScope_DisjointScopesCoexist(t *testing.T) {

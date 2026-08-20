@@ -7,7 +7,6 @@ package per_run_attributes
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -65,21 +65,16 @@ func TestPerRunAttributes_FreshScopeDefaultsAtFrameStart(t *testing.T) {
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "mutated-frame-2"}, true, "ok")
 	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-2", t.Name()))
 
-	deadline := time.Now().Add(15 * time.Second)
 	var secondRun *persistence.NodeAttributesRow
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the second frame to dispatch a distinct node run carrying its own mutated value", func() bool {
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, w.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			secondRun = r
 			return err
 		})
-		if secondRun != nil && secondRun.NodeRunID != firstRun.NodeRunID &&
-			secondRun.Data["value"] == "mutated-frame-2" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.NotNil(t, secondRun)
+		return secondRun != nil && secondRun.NodeRunID != firstRun.NodeRunID &&
+			secondRun.Data["value"] == "mutated-frame-2"
+	})
 	require.NotEqual(t, firstRun.NodeRunID, secondRun.NodeRunID,
 		"the second frame must dispatch a distinct node_run")
 

@@ -7,10 +7,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
-	"os/signal"
 	"sort"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func RunWatch(ctx context.Context, args []string) int {
@@ -49,8 +51,9 @@ func RunWatch(ctx context.Context, args []string) int {
 		id = inst.UUID()
 	}
 
-	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
-	defer cancel()
+	// @decision: graceful-shutdown
+	signalCtx, stopSignals := serverkit.ShutdownContext(ctx, slog.Default())
+	defer stopSignals()
 
 	var lastSeenID int64
 	var consecutiveIdle int

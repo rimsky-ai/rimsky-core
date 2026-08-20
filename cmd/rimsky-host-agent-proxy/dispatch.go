@@ -30,6 +30,16 @@ const (
 	errClassContractMismatch      = "contract_mismatch"
 )
 
+const spawnAckReportGrace = 2 * time.Second
+
+func spawnDeadlines(defaultReady time.Duration, binding bindingSpec) (ready, ack time.Duration) {
+	ready = defaultReady
+	if binding.TimeoutSeconds > 0 {
+		ready = time.Duration(binding.TimeoutSeconds) * time.Second
+	}
+	return ready, ready + spawnAckReportGrace
+}
+
 const serviceNameHeader = peer.ServiceNameMetadataKey
 
 type resolveError struct {
@@ -145,11 +155,8 @@ func spawnChild(
 
 	cwd, _ := entry.params["cwd"].(string)
 
-	effectiveTimeout := timeout
-	if binding.TimeoutSeconds > 0 {
-		effectiveTimeout = time.Duration(binding.TimeoutSeconds) * time.Second
-	}
-	readyTimeout := int32(effectiveTimeout / time.Second)
+	readyDeadline, ackDeadline := spawnDeadlines(timeout, binding)
+	readyTimeout := int32(readyDeadline / time.Second)
 	if !agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_Spawn{Spawn: &genv1.Spawn{
 		SpawnId: spawnID,
 		Binding: &genv1.Binding{
@@ -176,8 +183,9 @@ func spawnChild(
 			return "", nil, &resolveError{class: errClassSpawnFailed, msg: msg}
 		}
 		return spawnID, ack.GetCapabilities(), nil
-	case <-time.After(effectiveTimeout):
-		return "", nil, &resolveError{class: errClassSpawnFailed, msg: "spawn ack timed out"}
+	case <-time.After(ackDeadline):
+		return "", nil, &resolveError{class: errClassSpawnFailed,
+			msg: fmt.Sprintf("agent sent no spawn ack within %s, the readiness deadline plus %s", ackDeadline, spawnAckReportGrace)}
 	case <-agent.closed:
 		return "", nil, &resolveError{class: errClassHostAgentDisconnected, msg: "agent disconnected during spawn"}
 	}

@@ -6,7 +6,6 @@ package per_run_attributes
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -106,19 +106,14 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "c to see both upstreams' second-fire values", func() bool {
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			cRow = r
 			return err
 		})
-		if cRow != nil && cRow.Data["a_val"] == "from-a-2" && cRow.Data["b_val"] == "from-b-2" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.NotNil(t, cRow)
+		return cRow != nil && cRow.Data["a_val"] == "from-a-2" && cRow.Data["b_val"] == "from-b-2"
+	})
 	require.Equal(t, "from-a-2", cRow.Data["a_val"], "c should see a's second-fire value")
 	require.Equal(t, "from-b-2", cRow.Data["b_val"],
 		"c should see b's second-fire value (upstream-refresh cascade re-fired b)")
@@ -208,34 +203,24 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 
 	h.PostInstanceMessage(iid, "test/wake/c", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	bDeadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(bDeadline) {
+	awaited.Until(t, "b to re-run with from-b-2", func() bool {
 		var bRow *persistence.NodeAttributesRow
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, bN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			bRow = r
 			return err
 		})
-		if bRow != nil && bRow.Data["b_value"] == "from-b-2" {
-			t.Logf("b re-ran successfully with from-b-2")
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return bRow != nil && bRow.Data["b_value"] == "from-b-2"
+	})
 
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "c to see b's second-fire value", func() bool {
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			cRow = r
 			return err
 		})
-		if cRow != nil && cRow.Data["b_val"] == "from-b-2" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.NotNil(t, cRow)
+		return cRow != nil && cRow.Data["b_val"] == "from-b-2"
+	})
 	require.Equal(t, "from-b-2", cRow.Data["b_val"],
 		"c's direct invalidate must pull b (force_upstream_refresh: true) into the frame; "+
 			"b's second-fire value is the load-bearing observable for the upstream-refresh "+

@@ -432,7 +432,7 @@ func seedTerminalRunUnderEndedFrame(
     `, runID, uuid.UUID(nodeID), uuid.UUID(frameID), uuid.UUID(runScopeID))
 	sig := "terminal/success"
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateFresh, &sig, false, tx)
+		return h.persist.NodeRunTree().UpdateOutcome(ctx, runID, &sig, false, tx)
 	}))
 	return runScopeID, frameID
 }
@@ -751,6 +751,7 @@ func TestDebugOverride_TOCTOU_GateAndMutationShareTx(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
+			//nolint:testwallclock-pacing widens the interleaving this loop probes; both the 200 and the 409 branch are asserted, so no verdict reads it
 			time.Sleep(time.Microsecond * 250)
 			_ = h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				_, err := h.persist.Instances().SetPaused(ctx, instUUID, false, tx)

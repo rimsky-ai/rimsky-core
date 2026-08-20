@@ -5,12 +5,12 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -98,20 +98,9 @@ func TestMostRecentCoalescesCascades(t *testing.T) {
 		return out
 	}
 
-	deadline := time.Now().Add(45 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(bObs()) >= 1 {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-
-	settleDeadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(settleDeadline) {
-		require.LessOrEqual(t, len(bObs()), 1,
-			"a duplicate b dispatch must not arrive during the post-coalesce settle window")
-		time.Sleep(150 * time.Millisecond)
-	}
+	awaited.Until(t, "b's coalesced dispatch to reach the stub", func() bool { return len(bObs()) >= 1 })
+	h.WaitForAllRunsTerminal(b.ID)
+	h.WaitForSchedulerQuiescence()
 
 	require.Equal(t, 1, len(bObs()),
 		"under cascade_mode=most-recent, five cascade rounds from a (a1..a5 all emit "+

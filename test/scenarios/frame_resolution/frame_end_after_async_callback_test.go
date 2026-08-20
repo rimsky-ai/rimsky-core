@@ -9,13 +9,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -55,11 +55,9 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 	require.Equal(t, 0, countFramesByState(t, h, iid, "completed"),
 		"frame must not complete before callback resolves")
 
-	for i := 0; i < 5; i++ {
-		time.Sleep(200 * time.Millisecond)
-		require.Equal(t, 0, countFramesByState(t, h, iid, "completed"),
-			"frame completed prematurely while async dispatch was open")
-	}
+	h.WaitForSchedulerQuiescence()
+	require.Equal(t, 0, countFramesByState(t, h, iid, "completed"),
+		"frame completed prematurely while async dispatch was open")
 
 	cbURL := "http://" + h.Supervisor.CallbackAddr() + "/v1/callback/ack-frame-async"
 	body, _ := json.Marshal(map[string]any{
@@ -69,19 +67,13 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 			"change_summary":   "async-ok",
 		},
 	})
-	deadline := time.Now().Add(10 * time.Second)
-	var status int
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the supervisor's async-callback endpoint to accept the success body", func() bool {
 		resp, err := http.Post(cbURL, "application/json", bytes.NewReader(body))
 		require.NoError(t, err)
-		status = resp.StatusCode
+		status := resp.StatusCode
 		_ = resp.Body.Close()
-		if status == http.StatusOK {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	require.Equal(t, http.StatusOK, status, "callback did not become available")
+		return status == http.StatusOK
+	})
 
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 

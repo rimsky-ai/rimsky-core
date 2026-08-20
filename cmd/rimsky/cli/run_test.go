@@ -6,10 +6,10 @@ package cli_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestRunRun_Keep(t *testing.T) {
@@ -27,13 +27,9 @@ func TestRunRun_NoKeep(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if id := srv.State.MarkFirstActiveTerminated(); id != "" {
-				return
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
+		awaited.Until(t, "an active instance the stub can mark terminated", func() bool {
+			return srv.State.MarkFirstActiveTerminated() != ""
+		})
 	}()
 	defer func() { <-done }()
 

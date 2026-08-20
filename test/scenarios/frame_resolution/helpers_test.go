@@ -4,12 +4,14 @@
 package frame_resolution
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -75,9 +77,9 @@ func postInvalidateMessage(t *testing.T, h *scenario.Harness, instanceID shared.
 
 func waitForFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUID, state string, want int) {
 	t.Helper()
-	for countFramesByState(t, h, instanceID, state) != want {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, fmt.Sprintf("%d frame(s) in state %s for instance %s", want, state, instanceID), func() bool {
+		return countFramesByState(t, h, instanceID, state) == want
+	})
 }
 
 // @concept: run-scope

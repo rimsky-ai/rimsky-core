@@ -16,6 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/ports"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
@@ -33,7 +34,7 @@ type supervisorYAMLConfig struct {
 
 type supervisorYAMLCallback struct {
 	Host          string `yaml:"host"`
-	Port          int    `yaml:"port"`
+	Port          *int   `yaml:"port"`
 	AdvertiseHost string `yaml:"advertise_host"`
 	AdvertisePort int    `yaml:"advertise_port"`
 }
@@ -77,7 +78,11 @@ func resolveSupervisorConfig(cfg supervisorYAMLConfig) (supervisorResolvedConfig
 	if callbackHost == "" {
 		callbackHost = "0.0.0.0"
 	}
-	callbackPort := cfg.Callback.Port
+	// @decision: default-port-allocation
+	callbackPort := ports.SupervisorCallback
+	if cfg.Callback.Port != nil {
+		callbackPort = *cfg.Callback.Port
+	}
 
 	advertiseHost := os.Getenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST")
 	advertiseHostSource := "env:RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST"

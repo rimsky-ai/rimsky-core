@@ -25,14 +25,21 @@ type Opts struct {
 
 const DefaultErrorClassField = "error_class"
 
+// @decision: default-port-allocation
+const (
+	defaultGRPCPort = 9091
+	defaultHTTPPort = 9092
+)
+
 func LoadOptsFromEnv() (Opts, error) {
 	opts := Opts{Host: envOr("RIMSKY_EXECUTOR_HOST", "0.0.0.0")}
-	grpcPort, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", 9091)
+	grpcPort, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", defaultGRPCPort)
 	if err != nil {
 		return Opts{}, err
 	}
 	opts.GRPCPort = grpcPort
-	if opts.HTTPPort, err = atoi(envOr("RIMSKY_EXECUTOR_PORT_HTTP", strconv.Itoa(opts.GRPCPort+1)), "RIMSKY_EXECUTOR_PORT_HTTP"); err != nil {
+	httpFallback := grpcPort + 1
+	if opts.HTTPPort, err = atoi(envOr("RIMSKY_EXECUTOR_PORT_HTTP", strconv.Itoa(httpFallback)), "RIMSKY_EXECUTOR_PORT_HTTP"); err != nil {
 		return Opts{}, err
 	}
 	if opts.MaxBodyBytes, err = atoi(envOr("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", "10485760"), "RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES"); err != nil {
@@ -41,6 +48,7 @@ func LoadOptsFromEnv() (Opts, error) {
 	opts.StubMode = envOr("RIMSKY_EXECUTOR_STUB_MODE", "0") == "1"
 	opts.HTTPBridgeURL = envOr("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL", "")
 	opts.ErrorClassField = envOr("RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD", DefaultErrorClassField)
+	// @decision: destination-allowlists-default-closed
 	guard, err := egress.NewGuardFromEnv("RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST")
 	if err != nil {
 		return Opts{}, err

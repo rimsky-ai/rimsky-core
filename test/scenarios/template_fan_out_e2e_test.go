@@ -4,8 +4,8 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -15,6 +15,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -80,7 +81,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "supervisor must materialize three sub-claim rows from SplitScope's three sub-scopes", func() bool {
 		var subClaims int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -89,10 +90,11 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 			   AND holder_node_id = $1
 		`, []any{parentNode.ID}, &subClaims)
 		return subClaims == 3
-	}, 60*time.Second, 50*time.Millisecond,
-		"supervisor must materialize three sub-claim rows from SplitScope's three sub-scopes")
+	})
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "all three partition children must be in flight at once: every dispatch is held open until this "+
+		"test releases it, so three work_started events can only coexist if the three were dispatched "+
+		"in parallel — serialized dispatch stalls on the first hold and never reaches the third", func() bool {
 		var ws int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -100,10 +102,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 			 WHERE node_id = $1 AND kind = 'work_started'
 		`, []any{parentNode.ID}, &ws)
 		return ws >= 3
-	}, 60*time.Second, 25*time.Millisecond,
-		"all three partition children must be in flight at once: every dispatch is held open until this "+
-			"test releases it, so three work_started events can only coexist if the three were dispatched "+
-			"in parallel — serialized dispatch stalls on the first hold and never reaches the third")
+	})
 
 	terminalChildren := func() int {
 		var n int
@@ -132,9 +131,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 
 	for i, hold := range holds[:len(holds)-1] {
 		close(hold)
-		require.Eventually(t, func() bool { return terminalChildren() == i+1 },
-			60*time.Second, 25*time.Millisecond,
-			"released partition child %d never reached a terminal run state", i+1)
+		awaited.Until(t, fmt.Sprintf("released partition child %d to reach a terminal run state", i+1), func() bool { return terminalChildren() == i+1 })
 		requireParentNotSettled(i + 1)
 	}
 	close(holds[len(holds)-1])
@@ -194,7 +191,7 @@ func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "sub-claim materialization must precede leaf execution — three sub-claim rows expected", func() bool {
 		var subClaims int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -203,17 +200,14 @@ func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
 			   AND holder_node_id = $1
 		`, []any{parentNode.ID}, &subClaims)
 		return subClaims == 3
-	}, 60*time.Second, 50*time.Millisecond,
-		"sub-claim materialization must precede leaf execution — three sub-claim rows expected")
+	})
 
 	h.WaitForNodeState(parentNode.ID, cascade.NodeStateFailed)
 
-	var parentSettlingSig string
-	var lastReadErr error
-	sigDeadline := time.Now().Add(30 * time.Second)
-	for {
+	awaited.Until(t, "the parent main-scope run's settling_signal_type to carry the strict_failed aggregate signal "+
+		"(aggregateStrict's projection from sub-claim Abandon → parent Failed)", func() bool {
 		var sig string
-		lastReadErr = h.Pool.QueryRow(h.Ctx, `
+		if err := h.Pool.QueryRow(h.Ctx, `
 			SELECT COALESCE(r.settling_signal_type, '')
 			  FROM rimsky_node_runs r
 			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
@@ -221,20 +215,11 @@ func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
 			   AND rs.partition_key = ''
 			 ORDER BY COALESCE(r.active_terminal_at, r.enqueued_at) DESC
 			 LIMIT 1
-		`, parentNode.ID).Scan(&sig)
-		if lastReadErr == nil {
-			parentSettlingSig = sig
+		`, parentNode.ID).Scan(&sig); err != nil {
+			return false
 		}
-		if parentSettlingSig == "terminal/error/aggregate/strict_failed" {
-			break
-		}
-		if time.Now().After(sigDeadline) {
-			t.Fatalf("parent main-scope run's settling_signal_type must carry the strict_failed aggregate signal "+
-				"(aggregateStrict's projection from sub-claim Abandon → parent Failed); last read: %q (last read error: %v)",
-				parentSettlingSig, lastReadErr)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return sig == "terminal/error/aggregate/strict_failed"
+	})
 }
 
 func parentNodeState(t *testing.T, h *scenario.Harness, nodeID shared.UUID) cascade.NodeState {

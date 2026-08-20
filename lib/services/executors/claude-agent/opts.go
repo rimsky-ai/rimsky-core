@@ -70,16 +70,22 @@ type Opts struct {
 	StubMode                   bool
 }
 
+// @decision: default-port-allocation
+const (
+	defaultGRPCPort = 9090
+	defaultHTTPPort = 9190
+)
+
 func StubModeEnabled() bool {
 	return os.Getenv("RIMSKY_EXECUTOR_STUB_MODE") == "1"
 }
 
 func LoadOptsFromEnv() (Opts, error) {
-	grpcPort, err := intFromEnv("RIMSKY_EXECUTOR_PORT_GRPC", 9090)
+	grpcPort, err := intFromEnv("RIMSKY_EXECUTOR_PORT_GRPC", defaultGRPCPort)
 	if err != nil {
 		return Opts{}, err
 	}
-	httpPort, err := intFromEnv("RIMSKY_EXECUTOR_PORT_HTTP", 9190)
+	httpPort, err := intFromEnv("RIMSKY_EXECUTOR_PORT_HTTP", defaultHTTPPort)
 	if err != nil {
 		return Opts{}, err
 	}

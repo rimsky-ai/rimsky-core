@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -22,6 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -116,18 +116,16 @@ func startPublisherPeer(t *testing.T, impl genv1.PublisherServer) string {
 
 func waitForSubscriptionState(t *testing.T, h *scenario.Harness, instanceID any, want string) (id, resolvedConfig string) {
 	t.Helper()
-	for {
-		var subID, state, cfg string
+	awaited.Until(t, "the instance's publisher subscription to reach state "+want, func() bool {
+		var state string
 		h.QueryRowSQL(`
 			SELECT COALESCE(id::text, ''), COALESCE(state, ''), COALESCE(resolved_config::text, '')
 			  FROM rimsky_publisher_subscriptions
 			 WHERE instance_id = $1`,
-			[]any{instanceID}, &subID, &state, &cfg)
-		if state == want {
-			return subID, cfg
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+			[]any{instanceID}, &id, &state, &resolvedConfig)
+		return state == want
+	})
+	return id, resolvedConfig
 }
 
 func TestLifecycleStartStop_RealSubscriptionLifecycle(t *testing.T) {

@@ -7,7 +7,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -28,7 +27,7 @@ func TestSpawnChild_InstanceLevelParamsCwdThreadsOntoSpawnCwd(t *testing.T) {
 	ts.state.cacheInstance("inst-cwd", map[string]bindingSpec{"codegen": {Path: "./codegen"}}, "owner-1", map[string]any{"cwd": wantCwd})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{

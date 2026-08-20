@@ -7,13 +7,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func main() {
+	// @decision: logging-slog-only
+	slog.SetDefault(serverkit.NewJSONLogger())
+
 	if len(os.Args) < 2 {
 		printRootUsage(os.Stderr)
 		os.Exit(2)

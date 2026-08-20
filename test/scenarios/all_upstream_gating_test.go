@@ -7,13 +7,13 @@ package scenarios
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -127,32 +127,26 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 
 	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(b.ID, cascade.NodeStateFresh)
-	require.Eventually(t, func() bool { return countRuns("c") >= 2 },
-		30*time.Second, 25*time.Millisecond, "c should dispatch into its hold")
+	awaited.Until(t, "c should dispatch into its hold", func() bool { return countRuns("c") >= 2 })
 
-	deadline := time.Now().Add(1500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		var ineligibleRowViolations int
-		h.QueryRowSQL(
-			`SELECT COUNT(*) FROM rimsky_node_runs
-			  WHERE node_id = $1
-			    AND state IN ('stale','running','held','parked')`,
-			[]any{d.ID}, &ineligibleRowViolations)
-		require.Zero(t, ineligibleRowViolations,
-			"d's run row was claimed or left dispatch-eligible while subscribed upstream c was in-flight in the frame")
-		require.Equal(t, baselineDRuns, countRuns("d"),
-			"d dispatched while subscribed upstream c was still in-flight in the frame")
-		time.Sleep(50 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	var ineligibleRowViolations int
+	h.QueryRowSQL(
+		`SELECT COUNT(*) FROM rimsky_node_runs
+		  WHERE node_id = $1
+		    AND state IN ('stale','running','held','parked')`,
+		[]any{d.ID}, &ineligibleRowViolations)
+	require.Zero(t, ineligibleRowViolations,
+		"d's run row was claimed or left dispatch-eligible while subscribed upstream c was in-flight in the frame")
+	require.Equal(t, baselineDRuns, countRuns("d"),
+		"d dispatched while subscribed upstream c was still in-flight in the frame")
 
 	close(releaseC)
 	h.WaitForNodeState(c.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(d.ID, cascade.NodeStateFresh)
 
-	require.Eventually(t, func() bool { return countRuns("d") == baselineDRuns+1 },
-		10*time.Second, 25*time.Millisecond,
-		"d should run exactly once after the last upstream settles")
-	time.Sleep(1 * time.Second)
+	awaited.Until(t, "d should run exactly once after the last upstream settles", func() bool { return countRuns("d") == baselineDRuns+1 })
+	h.WaitForSchedulerQuiescence()
 	require.Equal(t, baselineDRuns+1, countRuns("d"),
 		"d must run exactly once per frame, not once per settling sender")
 

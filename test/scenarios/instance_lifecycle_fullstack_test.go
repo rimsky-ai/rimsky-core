@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -45,16 +46,13 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	})
 
 	iid := postCreateInstanceIdle(t, h.ControlBase, tid, "ck-instance-lifecycle-idle")
-	idleDeadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(idleDeadline) {
-		idleFrames := getInstanceFramesInst(t, h.ControlBase, iid)
-		require.Emptyf(t, idleFrames,
-			"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d frames", len(idleFrames))
-		idleMessages := getInstanceMessagesInst(t, h.ControlBase, iid)
-		require.Emptyf(t, idleMessages,
-			"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d messages in ledger", len(idleMessages))
-		time.Sleep(50 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	idleFrames := getInstanceFramesInst(t, h.ControlBase, iid)
+	require.Emptyf(t, idleFrames,
+		"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d frames", len(idleFrames))
+	idleMessages := getInstanceMessagesInst(t, h.ControlBase, iid)
+	require.Emptyf(t, idleMessages,
+		"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d messages in ledger", len(idleMessages))
 
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w, "worker node must materialize on create")
@@ -66,20 +64,10 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 			"instance")
 
 	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
-	postWakeDeadline := time.Now().Add(15 * time.Second)
-	postWakeSuccessCount := 0
-	for time.Now().Before(postWakeDeadline) {
-		postWakeSuccessCount = countEvents(t, h.ControlBase, iid, w.ID, "terminal/success")
-		if postWakeSuccessCount > 0 {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.Greater(t, postWakeSuccessCount, 0,
-		"STORY-instance-lifecycle falsifier: no terminal/success event "+
-			"appeared for the worker after the empty-message wake — the "+
-			"supervisor must begin dispatching against the instance after "+
-			"the empty-message wake")
+	awaited.Until(t, "a terminal/success event for the worker after the empty-message wake, proving the "+
+		"supervisor begins dispatching against the instance once woken", func() bool {
+		return countEvents(t, h.ControlBase, iid, w.ID, "terminal/success") > 0
+	})
 	h.WaitForNodeState(w.ID, cascade.NodeStateFresh)
 
 	listBody := getJSONMapInst(t, h.ControlBase+"/v1/instances?template_hash="+tid)
@@ -115,15 +103,11 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	pauseObserveDeadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(pauseObserveDeadline) {
-		midSuccessCount := countEvents(t, h.ControlBase, iid, w.ID, "terminal/success")
-		require.Equal(t, preSuccessCount, midSuccessCount,
-			"while paused, no new terminal/success event must appear on /v1/events — "+
-				"the supervisor must stop claiming new dispatches for the paused instance "+
-				"(spec falsifier: pause is recorded but the supervisor keeps dispatching)")
-		time.Sleep(50 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	require.Equal(t, preSuccessCount, countEvents(t, h.ControlBase, iid, w.ID, "terminal/success"),
+		"while paused, no new terminal/success event must appear on /v1/events — "+
+			"the supervisor must stop claiming new dispatches for the paused instance "+
+			"(spec falsifier: pause is recorded but the supervisor keeps dispatching)")
 
 	var pendingMessages int
 	h.QueryRowSQL(
@@ -140,18 +124,10 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	getAfterResume := getJSONMapInst(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Equal(t, false, getAfterResume["paused"], "paused must be false after /resume")
 
-	deadline := time.Now().Add(15 * time.Second)
-	postResumeSuccessCount := preSuccessCount
-	for time.Now().Before(deadline) {
-		postResumeSuccessCount = countEvents(t, h.ControlBase, iid, w.ID, "terminal/success")
-		if postResumeSuccessCount > preSuccessCount {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.Greater(t, postResumeSuccessCount, preSuccessCount,
-		"after /resume the supervisor must pick the queued dispatch back up "+
-			"and a new terminal/success event must appear on /v1/events")
+	awaited.Until(t, "a new terminal/success event after /resume, proving the supervisor picks the queued "+
+		"dispatch back up", func() bool {
+		return countEvents(t, h.ControlBase, iid, w.ID, "terminal/success") > preSuccessCount
+	})
 
 	termResp := doPost(t, h.ControlBase+"/v1/instances/"+iid.String()+"/terminate", nil)
 	require.Equal(t, http.StatusOK, termResp.status,
@@ -235,16 +211,13 @@ func doDelete(t *testing.T, url string) httpResp {
 
 func waitForInstanceTerminated(t *testing.T, h *scenario.Harness, iid shared.UUID) {
 	t.Helper()
-	for {
+	awaited.Until(t, "instance "+iid.String()+" to carry a terminated_at", func() bool {
 		var terminatedAt *time.Time
 		h.QueryRowSQL(
 			`SELECT terminated_at FROM rimsky_instances WHERE id = $1`,
 			[]any{iid}, &terminatedAt)
-		if terminatedAt != nil {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return terminatedAt != nil
+	})
 }
 
 func postCreateInstanceIdle(t *testing.T, controlBase, templateHash, instanceKey string) shared.UUID {

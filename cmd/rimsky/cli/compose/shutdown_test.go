@@ -51,7 +51,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 )
 
 func main() {
@@ -76,12 +75,9 @@ func main() {
 	}()
 	ch := make(chan os.Signal, 4)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
-	go func() {
-		for sig := range ch {
-			fmt.Fprintln(os.Stderr, "child ignoring:", sig)
-		}
-	}()
-	time.Sleep(10 * time.Minute)
+	for sig := range ch {
+		fmt.Fprintln(os.Stderr, "child ignoring:", sig)
+	}
 }
 `
 
@@ -207,12 +203,11 @@ func TestInstallSecondSignalEscalator_HardExitsAndKillsChildren(t *testing.T) {
 
 		sigCh := make(chan os.Signal, 1)
 		done := make(chan struct{})
-		compose.InstallSecondSignalEscalator(sigCh, done, []*hostagent.SpawnedService{
-			{Cmd: child, Exited: exited},
+		compose.InstallSecondSignalEscalator(sigCh, done, func() []*hostagent.SpawnedService {
+			return []*hostagent.SpawnedService{{Cmd: child, Exited: exited}}
 		}, nil)
 		sigCh <- syscall.SIGINT
-		time.Sleep(10 * time.Second)
-		os.Exit(99)
+		<-make(chan struct{})
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run", "TestInstallSecondSignalEscalator_HardExitsAndKillsChildren")
@@ -334,5 +329,40 @@ func TestDrain_Idempotent(t *testing.T) {
 	}
 	if second != first {
 		t.Errorf("second Drain = %d, want cached %d", second, first)
+	}
+}
+
+// @decision: graceful-shutdown
+func TestArmOnFirstSignal_ObservesTheFirstSignalDuringDrainAndHardExitsOnTheSecond(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGINT semantics differ on Windows")
+	}
+	if os.Getenv("RIMSKY_TEST_ARM_ON_FIRST_SIGNAL") == "1" {
+		logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+		escalation, stopSignals := compose.NewSignalEscalation(&compose.SpawnedRegistry{}, logger)
+		defer stopSignals()
+
+		observed := escalation.ArmOnFirstSignal(logger, "compose run")
+		escalation.Signals() <- syscall.SIGINT
+		<-observed
+		escalation.Signals() <- syscall.SIGINT
+		<-make(chan struct{})
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run", "TestArmOnFirstSignal_ObservesTheFirstSignalDuringDrainAndHardExitsOnTheSecond")
+	cmd.Env = append(os.Environ(), "RIMSKY_TEST_ARM_ON_FIRST_SIGNAL=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("the second signal did not exit the process: err=%v, stderr=%s", err, stderr.String())
+	}
+	if exitErr.ExitCode() != 130 {
+		t.Fatalf("second-signal exit code = %d, want 130; stderr=%s", exitErr.ExitCode(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "signal while draining") {
+		t.Errorf("the first signal during the drain was swallowed rather than observed; stderr=%s", stderr.String())
 	}
 }

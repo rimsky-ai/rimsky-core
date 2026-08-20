@@ -25,7 +25,9 @@ var allReasons = []TransitionReason{
 	ReasonAutoTerminalCommit,
 	ReasonAutoTerminalAbandon,
 	ReasonDeadlineResume,
-	ReasonChildTransitioned,
+	ReasonDispatchReleased,
+	ReasonAggregateSettledSuccess,
+	ReasonAggregateSettledFailure,
 	ReasonInstanceKilled,
 	ReasonSiblingCancelled,
 }
@@ -55,6 +57,7 @@ func TestTransitionTable(t *testing.T) {
 			"policy_give_up":      NodeStateFailed,
 			"instance_killed":     NodeStateFailed,
 			"sibling_cancelled":   NodeStateFailed,
+			"dispatch_released":   NodeStateStale,
 		},
 		NodeStateRunning: {
 			"handler_complete":      NodeStateFresh,
@@ -66,17 +69,20 @@ func TestTransitionTable(t *testing.T) {
 			"auto_terminal_abandon": NodeStateFailed,
 			"instance_killed":       NodeStateFailed,
 			"sibling_cancelled":     NodeStateFailed,
+			"dispatch_released":     NodeStateStale,
 		},
 		NodeStateHeld: {
 			"auto_terminal_commit":  NodeStateFresh,
 			"auto_terminal_abandon": NodeStateFailed,
 			"instance_killed":       NodeStateFailed,
 			"sibling_cancelled":     NodeStateFailed,
+			"dispatch_released":     NodeStateStale,
 		},
 		NodeStateParked: {
 			"deadline_resume":   NodeStateStale,
 			"instance_killed":   NodeStateFailed,
 			"sibling_cancelled": NodeStateFailed,
+			"dispatch_released": NodeStateStale,
 		},
 	}
 
@@ -142,16 +148,20 @@ func TestInFlightAndTerminalHelpers(t *testing.T) {
 	}
 }
 
-func TestNextStateParent_ChildTransitioned_AggregateOK(t *testing.T) {
+func TestAggregateSettledReasonNamesTheReasonForEachTerminalTarget(t *testing.T) {
 	t.Parallel()
-	for _, from := range allStates {
-		t.Run(string(from), func(t *testing.T) {
-			_, err := NextStateParent(from, ReasonChildTransitioned)
-			require.Error(t, err)
-			require.True(t, IsParentAggregateOK(err),
-				"expected aggregate-OK sentinel for parent aggregation from %s (terminal parents admit late child transitions), got %v",
-				from, err)
-		})
+	reason, err := AggregateSettledReason(NodeStateFresh)
+	require.NoError(t, err)
+	require.Equal(t, ReasonAggregateSettledSuccess, reason)
+
+	reason, err = AggregateSettledReason(NodeStateFailed)
+	require.NoError(t, err)
+	require.Equal(t, ReasonAggregateSettledFailure, reason)
+
+	for _, s := range InFlightStates {
+		_, err := AggregateSettledReason(s)
+		require.ErrorIs(t, err, ErrIllegalTransition,
+			"aggregation settling on the non-terminal state %s has no reason", s)
 	}
 }
 
@@ -188,13 +198,54 @@ func TestNextStateParent_LeafReasonsStillRouteToNextState(t *testing.T) {
 	require.True(t, errors.Is(err, ErrIllegalTransition))
 }
 
-func TestNextState_ChildTransitionedIsIllegalForLeafRuns(t *testing.T) {
+func TestNextState_AggregateSettlementIsIllegalForLeafRuns(t *testing.T) {
 	t.Parallel()
-	for _, from := range allStates {
+	for _, reason := range []TransitionReason{ReasonAggregateSettledSuccess, ReasonAggregateSettledFailure} {
+		for _, from := range allStates {
+			t.Run(reason.Kind+"/"+string(from), func(t *testing.T) {
+				_, err := NextState(from, reason)
+				require.ErrorIs(t, err, ErrIllegalTransition)
+			})
+		}
+	}
+}
+
+func TestNextStateParent_AggregateSettlementNeedsAParentThatCanCarryChildren(t *testing.T) {
+	t.Parallel()
+	targets := map[string]NodeState{
+		ReasonAggregateSettledSuccess.Kind: NodeStateFresh,
+		ReasonAggregateSettledFailure.Kind: NodeStateFailed,
+	}
+	for _, reason := range []TransitionReason{ReasonAggregateSettledSuccess, ReasonAggregateSettledFailure} {
+		for _, from := range []NodeState{NodeStateStale, NodeStateRunning, NodeStateHeld, NodeStateFresh, NodeStateFailed} {
+			t.Run(reason.Kind+"/admits/"+string(from), func(t *testing.T) {
+				got, err := NextStateParent(from, reason)
+				require.NoError(t, err)
+				require.Equal(t, targets[reason.Kind], got)
+			})
+		}
+		for _, from := range []NodeState{NodeStatePending, NodeStateParked} {
+			t.Run(reason.Kind+"/refuses/"+string(from), func(t *testing.T) {
+				_, err := NextStateParent(from, reason)
+				require.ErrorIs(t, err, ErrIllegalTransition)
+			})
+		}
+	}
+}
+
+func TestNextState_ReleaseReturnsAClaimedRunToStale(t *testing.T) {
+	t.Parallel()
+	for _, from := range []NodeState{NodeStateStale, NodeStateRunning, NodeStateHeld, NodeStateParked} {
 		t.Run(string(from), func(t *testing.T) {
-			_, err := NextState(from, ReasonChildTransitioned)
-			require.Error(t, err)
-			require.True(t, errors.Is(err, ErrIllegalTransition))
+			got, err := NextState(from, ReasonDispatchReleased)
+			require.NoError(t, err)
+			require.Equal(t, NodeStateStale, got)
+		})
+	}
+	for _, from := range []NodeState{NodeStatePending, NodeStateFresh, NodeStateFailed} {
+		t.Run("unclaimable/"+string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonDispatchReleased)
+			require.ErrorIs(t, err, ErrIllegalTransition)
 		})
 	}
 }

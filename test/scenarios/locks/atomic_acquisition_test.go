@@ -19,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -256,18 +257,15 @@ func TestClaimHandleRowReleasedAfterTerminal(t *testing.T) {
 	require.NotNil(t, n)
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
-	var activeCount int
-	for {
+	awaited.Until(t, "every claim_handle of the worker node to leave the active state", func() bool {
+		var activeCount int
 		err := h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_claim_handles
 			  WHERE holder_node_id = $1 AND state = 'active'`, n.ID,
 		).Scan(&activeCount)
 		require.NoError(t, err)
-		if activeCount == 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return activeCount == 0
+	})
 
 	var nullHolderCount int
 	err := h.Pool.QueryRow(h.Ctx,

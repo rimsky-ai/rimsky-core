@@ -15,15 +15,15 @@ import (
 func TestQueryState_FiltersByPrefix(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:foo", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "p:foo", "")
 	srv.State.SetTemplateState(hash, "deployed")
-	srv.State.SetTagHash("compose:other:foo", hash)
+	srv.State.SetTagHash("other:foo", hash)
 	srv.State.SetTagHash("manual-foo", hash)
-	key := "compose:p:hello"
+	key := "p:hello"
 	if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {
 		t.Fatal(err)
 	}
-	other := "compose:other:bar"
+	other := "other:bar"
 	if _, _, err := srv.State.CreateInstance(hash, &other, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestQueryState_FiltersByPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Tags) != 1 || state.Tags[0].Tag != "compose:p:foo" {
+	if len(state.Tags) != 1 || state.Tags[0].Tag != "p:foo" {
 		t.Errorf("tags: %+v", state.Tags)
 	}
 	if _, ok := state.TemplatesByH[hash]; !ok {

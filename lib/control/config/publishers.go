@@ -199,14 +199,8 @@ func DialPublisherAndValidationRegistries(
 		if _, already := validationClients[name]; already {
 			continue
 		}
-		supportedRoles := make([]string, 0, len(e.Protocols))
-		for _, p := range e.Protocols {
-			if p != claimproducer.ProtocolValidation {
-				supportedRoles = append(supportedRoles, p)
-			}
-		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		c, dErr := peer.DialValidation(dialCtx, name, e.Endpoint, e.TLS, supportedRoles)
+		c, dErr := peer.DialValidation(dialCtx, name, e.Endpoint, e.TLS, validatorRoleDiscriminators(e.Protocols))
 		cancel()
 		if dErr != nil {
 			closeAll()

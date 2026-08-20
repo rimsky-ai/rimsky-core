@@ -4,7 +4,6 @@
 package frame_resolution
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -20,10 +19,6 @@ import (
 
 func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	_ = ctx
-
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true})
 
 	tid := h.DeployTemplate(node.TemplateSpec{

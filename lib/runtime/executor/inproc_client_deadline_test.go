@@ -18,13 +18,8 @@ import (
 type deadlineHonoringHandler struct{}
 
 func (deadlineHonoringHandler) Execute(ctx context.Context, _ *genv1.ExecuteRequest, _ HandlerContext) (*genv1.Outcome, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(5 * time.Second):
-		t := &genv1.Outcome_Success{Success: &genv1.Success{Changed: false}}
-		return &genv1.Outcome{Outcome: t}, nil
-	}
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func TestInProcessClient_HonorsCallerDeadline(t *testing.T) {
@@ -49,15 +44,10 @@ func TestInProcessClient_HonorsCallerDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	start := time.Now()
 	_, _, err = client.Execute(ctx, req)
-	elapsed := time.Since(start)
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
-	}
-	if elapsed > 1*time.Second {
-		t.Fatalf("elapsed = %v, want < 1s (handler should have honored 50ms deadline)", elapsed)
 	}
 }
 

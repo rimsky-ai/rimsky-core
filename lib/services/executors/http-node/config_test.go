@@ -37,3 +37,18 @@ func TestLoadOptsFromEnv_ValidEnvSucceeds(t *testing.T) {
 		t.Fatalf("MaxBodyBytes = %d, want 2048", opts.MaxBodyBytes)
 	}
 }
+
+// @decision: default-port-allocation
+func TestLoadOptsFromEnv_HTTPPortFollowsTheGRPCPortWhenTheOperatorSetsNeither(t *testing.T) {
+	opts, err := LoadOptsFromEnv()
+	if err != nil {
+		t.Fatalf("LoadOptsFromEnv: %v", err)
+	}
+	if opts.GRPCPort != defaultGRPCPort {
+		t.Fatalf("GRPCPort = %d, want the allocated default %d", opts.GRPCPort, defaultGRPCPort)
+	}
+	if opts.HTTPPort != defaultHTTPPort {
+		t.Fatalf("HTTPPort = %d, want the allocated default %d — the fallback is the gRPC port plus one, so the two allocated defaults must be consecutive",
+			opts.HTTPPort, defaultHTTPPort)
+	}
+}

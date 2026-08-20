@@ -5,6 +5,7 @@ package claudeagent_test
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/awaited"
 )
 
 func servicesModuleRoot(t *testing.T) string {
@@ -106,17 +108,14 @@ func TestClaudeAgentBinaryHonorsRimskyAgentPort(t *testing.T) {
 		<-exited
 	})
 
-	for {
+	awaited.Until(t, fmt.Sprintf("claude-agent to serve capabilities on RIMSKY_AGENT_PORT %d", agentPort), func() bool {
 		select {
 		case <-exited:
 			t.Fatalf("claude-agent exited before binding RIMSKY_AGENT_PORT %d", agentPort)
 		default:
 		}
-		if err := dialCapabilities(t, "127.0.0.1:"+strconv.Itoa(agentPort), time.Second); err == nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return dialCapabilities(t, "127.0.0.1:"+strconv.Itoa(agentPort), time.Second) == nil
+	})
 
 	if err := dialCapabilities(t, "127.0.0.1:"+strconv.Itoa(ignoredPort), 500*time.Millisecond); err == nil {
 		t.Fatalf("claude-agent unexpectedly bound the fallback RIMSKY_EXECUTOR_PORT_GRPC %d when RIMSKY_AGENT_PORT was set", ignoredPort)

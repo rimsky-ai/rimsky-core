@@ -17,6 +17,7 @@ type Guard struct {
 	allow []*net.IPNet
 }
 
+// @decision: destination-allowlists-default-closed
 func NewGuardFromEnv(envVar string) (Guard, error) {
 	raw := strings.TrimSpace(os.Getenv(envVar))
 	if raw == "" {
@@ -65,6 +66,7 @@ func nonPublic(ip net.IP) bool {
 		ip.IsMulticast() || ip.IsUnspecified()
 }
 
+// @decision: destination-allowlists-default-closed
 func (g Guard) CheckAddr(address string) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -117,6 +119,7 @@ func stripHeadersOnCrossOriginRedirect(req *http.Request, via []*http.Request) e
 
 type schemeGuard struct{ base http.RoundTripper }
 
+// @decision: destination-allowlists-default-closed
 func (t schemeGuard) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.URL.Scheme != "http" && r.URL.Scheme != "https" {
 		return nil, fmt.Errorf("egress: scheme %q not permitted (only http/https)", r.URL.Scheme)

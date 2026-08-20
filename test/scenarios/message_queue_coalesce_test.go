@@ -6,7 +6,6 @@ package scenarios
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -233,29 +233,23 @@ func TestMessageQueueCoalesce_BacklogModePreservesEveryMessage(t *testing.T) {
 }
 
 func waitForNodeRunning(h *scenario.Harness, nodeID shared.UUID) {
-	for {
+	awaited.Until(h.T, "node "+nodeID.String()+" to have a running run", func() bool {
 		var count int
 		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1 AND state = 'running'`,
 			[]any{nodeID}, &count)
-		if count > 0 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return count > 0
+	})
 }
 
 func waitForMessageQueueQuiescent(h *scenario.Harness, instanceID shared.UUID) {
-	for {
+	awaited.Until(h.T, "instance "+instanceID.String()+" to hold no undelivered message and no open frame", func() bool {
 		var pending, running int
 		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_messages WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE`,
 			[]any{instanceID}, &pending)
 		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NULL`,
 			[]any{instanceID}, &running)
-		if pending == 0 && running == 0 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return pending == 0 && running == 0
+	})
 }
 
 func requireSingleMessageID(t *testing.T, h *scenario.Harness, instanceID shared.UUID, idempotencyKey string) string {

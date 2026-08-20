@@ -5,18 +5,20 @@ package main
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// @decision: postgres-pgx-v5
 type stateDB struct {
-	db *sql.DB
+	db *pgxpool.Pool
 }
 
 func openStateDB(ctx context.Context) (*stateDB, error) {
@@ -24,17 +26,17 @@ func openStateDB(ctx context.Context) (*stateDB, error) {
 	if dsn == "" {
 		return nil, nil
 	}
-	db, err := sql.Open("pgx", dsn)
+	db, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open state db: %w", err)
 	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+	if err := db.Ping(ctx); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("ping state db: %w", err)
 	}
 	s := &stateDB{db: db}
 	if err := s.bootstrap(ctx); err != nil {
-		_ = db.Close()
+		db.Close()
 		return nil, fmt.Errorf("bootstrap state db: %w", err)
 	}
 	return s, nil
@@ -56,7 +58,7 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
 	`
-	_, err := s.db.ExecContext(ctx, schema)
+	_, err := s.db.Exec(ctx, schema)
 	return err
 }
 
@@ -64,7 +66,8 @@ func (s *stateDB) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	s.db.Close()
+	return nil
 }
 
 func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
@@ -93,7 +96,7 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 		}
 		matchStatus += fmt.Sprintf("%d", c)
 	}
-	_, err := s.db.ExecContext(ctx, q,
+	_, err := s.db.Exec(ctx, q,
 		w.SubscriptionID, w.InstanceID, w.URL, w.PollInterval.String(),
 		matchStatus, w.MatchJSONKey, w.MatchJSONVal,
 		w.MessageType)
@@ -104,7 +107,7 @@ func (s *stateDB) DeleteSubscription(ctx context.Context, subscriptionID string)
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sensor_http_state WHERE publisher_subscription_id = $1`, subscriptionID)
+	_, err := s.db.Exec(ctx, `DELETE FROM sensor_http_state WHERE publisher_subscription_id = $1`, subscriptionID)
 	return err
 }
 
@@ -112,7 +115,7 @@ func (s *stateDB) UpdateLastHash(ctx context.Context, subscriptionID, hash strin
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.db.Exec(ctx,
 		`UPDATE sensor_http_state SET last_hash = $1, last_poll_at = now() WHERE publisher_subscription_id = $2`,
 		hash, subscriptionID)
 	return err
@@ -136,7 +139,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	if s == nil {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.db.Query(ctx,
 		`SELECT publisher_subscription_id, instance_id, url, poll_interval,
 		        COALESCE(match_status, ''),
 		        COALESCE(match_json_key, ''),
@@ -162,7 +165,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 	if s == nil {
 		return nil, nil
 	}
-	row := s.db.QueryRowContext(ctx,
+	row := s.db.QueryRow(ctx,
 		`SELECT publisher_subscription_id, instance_id, url, poll_interval,
 		        COALESCE(match_status, ''),
 		        COALESCE(match_json_key, ''),
@@ -173,7 +176,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 		subscriptionID)
 	w, err := scanSubscriptionState(row.Scan)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -186,15 +189,15 @@ func scanSubscriptionState(scan func(...any) error) (SubscriptionState, error) {
 		w            SubscriptionState
 		pollInterval string
 		matchStatus  string
-		lastPollAt   sql.NullTime
+		lastPollAt   *time.Time
 	)
 	if err := scan(&w.SubscriptionID, &w.InstanceID, &w.URL, &pollInterval,
 		&matchStatus, &w.MatchJSONKey, &w.MatchJSONVal,
 		&w.MessageType, &w.StartedAt, &w.LastHash, &lastPollAt); err != nil {
 		return SubscriptionState{}, err
 	}
-	if lastPollAt.Valid {
-		w.LastPollAt = lastPollAt.Time
+	if lastPollAt != nil {
+		w.LastPollAt = *lastPollAt
 	}
 	if pollInterval != "" {
 		d, err := time.ParseDuration(pollInterval)

@@ -130,11 +130,10 @@ func applyTerminalCompleteSubgraphCaller(
 	if err := applyTerminalScratchInTx(ctx, args, acq, t.Scratch, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
 	}
-	stayState, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired)
-	if err != nil {
-		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: audit running-stay transition: %w", err)
-	}
-	if err := args.Persist.NodeRunTree().UpdateStateAndOutcome(ctx, acq.NodeRunID, stayState, &settlingSig, t.Changed, tx); err != nil {
+	// @concept: transition-reason
+	if err := args.Persist.NodeRunTree().UpdateAggregateState(
+		ctx, acq.NodeRunID, cascade.ReasonSubGraphInternalCascadeFired, &settlingSig, t.Changed, tx,
+	); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
 	}
 	if err := emitAttributeChangesForRunInTx(ctx, args, acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, nil, nil, tx); err != nil {

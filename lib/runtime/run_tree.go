@@ -69,8 +69,9 @@ type AggregateResult struct {
 	Action AggregateAction
 }
 
+// @concept: transition-reason
 func recordRunTreeChanged(
-	ctx context.Context, args RunArgs, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool, tx persistence.Tx,
+	ctx context.Context, args RunArgs, runID shared.UUID, settlingSignalType *string, changed bool, tx persistence.Tx,
 ) error {
 	if args.Persist == nil {
 		return nil
@@ -79,7 +80,7 @@ func recordRunTreeChanged(
 	if rt == nil {
 		return nil
 	}
-	return rt.UpdateStateAndOutcome(ctx, runID, state, settlingSignalType, changed, tx)
+	return rt.UpdateOutcome(ctx, runID, settlingSignalType, changed, tx)
 }
 
 func childStatesForAggregate(children []persistence.NodeRunTreeRow) []ChildState {

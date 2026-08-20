@@ -9,12 +9,12 @@ package runtree
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestStrictAggregation_FailedChildCancelsInFlightSiblings(t *testing.T) {
@@ -34,18 +34,15 @@ func TestStrictAggregation_FailedChildCancelsInFlightSiblings(t *testing.T) {
 
 	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 
-	for {
+	awaited.Until(t, "all three partition runs to be running", func() bool {
 		var n int
 		h.QueryRowSQL(`
 			SELECT COUNT(*) FROM rimsky_node_runs r
 			JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
 			WHERE rs.instance_id = $1 AND rs.partition_key <> '' AND r.state = 'running'`,
 			[]any{iid}, &n)
-		if n == 3 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return n == 3
+	})
 
 	cbBase := "http://" + h.Supervisor.CallbackAddr()
 	body, _ := json.Marshal(map[string]any{

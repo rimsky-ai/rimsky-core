@@ -6,7 +6,6 @@ package scenarios
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -134,24 +134,21 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
 
 	bID := b.ID
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, b.ID, tx)
-			if err != nil {
-				return err
-			}
-			if rb != nil {
-				require.Equal(t, cascade.NodeStateFresh, rb.State,
-					"b should remain fresh on a no-op commit")
-			}
-			return nil
-		}))
-		require.Empty(t,
-			eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
-			"b must leave no dispatch/terminal events on the ledger — a changed=false terminal must not fire a when:payload.changed subscriber")
-		time.Sleep(50 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, b.ID, tx)
+		if err != nil {
+			return err
+		}
+		if rb != nil {
+			require.Equal(t, cascade.NodeStateFresh, rb.State,
+				"b should remain fresh on a no-op commit")
+		}
+		return nil
+	}))
+	require.Empty(t,
+		eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
+		"b must leave no dispatch/terminal events on the ledger — a changed=false terminal must not fire a when:payload.changed subscriber")
 
 	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -197,24 +194,21 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 	h.WaitForNodeState(a.ID, cascade.NodeStateFailed)
 
 	bID := b.ID
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, b.ID, tx)
-			if err != nil {
-				return err
-			}
-			if rb != nil {
-				require.NotEqual(t, cascade.NodeStateRunning, rb.State,
-					"b should not run while upstream is failed")
-			}
-			return nil
-		}))
-		require.Empty(t,
-			eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
-			"b must leave no dispatch/terminal events on the ledger — a terminal/success subscriber must not fire on the upstream's terminal/error/<class>")
-		time.Sleep(50 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		rb, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, b.ID, tx)
+		if err != nil {
+			return err
+		}
+		if rb != nil {
+			require.NotEqual(t, cascade.NodeStateRunning, rb.State,
+				"b should not run while upstream is failed")
+		}
+		return nil
+	}))
+	require.Empty(t,
+		eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
+		"b must leave no dispatch/terminal events on the ledger — a terminal/success subscriber must not fire on the upstream's terminal/error/<class>")
 
 	var aLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -303,34 +297,28 @@ func TestExecutorErroredPassResolution_NewShape(t *testing.T) {
 
 func waitForSettlingSignalType(t *testing.T, h *scenario.Harness, nodeID shared.UUID, want string) {
 	t.Helper()
-	for {
+	awaited.Until(t, "node "+nodeID.String()+" to settle with signal type "+want, func() bool {
 		var latest *persistence.NodeRunLatest
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, nodeID, tx)
 			latest = r
 			return err
 		})
-		if latest != nil && latest.SettlingSignalType != nil && *latest.SettlingSignalType == want {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return latest != nil && latest.SettlingSignalType != nil && *latest.SettlingSignalType == want
+	})
 }
 
 func waitForSettlingSignalTypePrefix(t *testing.T, h *scenario.Harness, nodeID shared.UUID, prefix string) {
 	t.Helper()
-	for {
+	awaited.Until(t, "node "+nodeID.String()+" to settle with a signal type under "+prefix, func() bool {
 		var latest *persistence.NodeRunLatest
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, nodeID, tx)
 			latest = r
 			return err
 		})
-		if latest != nil && latest.SettlingSignalType != nil && strings.HasPrefix(*latest.SettlingSignalType, prefix) {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return latest != nil && latest.SettlingSignalType != nil && strings.HasPrefix(*latest.SettlingSignalType, prefix)
+	})
 }
 
 func TestPureCascadeOutcomeColumn(t *testing.T) {

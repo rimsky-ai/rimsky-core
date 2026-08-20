@@ -32,14 +32,22 @@ func seedNodeRunInState(
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
-			NodeRunID: runID, NodeID: nodeID, FrameID: frameID, RunScopeID: runScopeID, ExecutorName: "test-executor",
-		}, tx); err != nil {
-			return err
+		if state == cascade.NodeStatePending {
+			created, err := store.Nodes().CreateCascadePending(ctx, nodeID, runScopeID, frameID, tx)
+			if err != nil {
+				return err
+			}
+			runID = created
+			return nil
 		}
-		return store.NodeRunTree().UpdateStateAndOutcome(ctx, runID, state, nil, false, tx)
+		return store.NodeRunTree().CreateRootNodeRun(ctx, persistence.CreateRootNodeRunInput{
+			NodeRunID: runID, NodeID: nodeID, FrameID: frameID, RunScopeID: runScopeID, ExecutorName: "test-executor",
+		}, tx)
 	}); err != nil {
 		t.Fatalf("seedNodeRunInState(%s): %v", state, err)
+	}
+	if state != cascade.NodeStatePending {
+		driveRunToState(ctx, t, d, runID, state)
 	}
 	return runID
 }

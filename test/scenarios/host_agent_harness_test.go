@@ -21,6 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -76,15 +77,16 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-func waitDialable(addr string) {
-	for {
+func waitDialable(t *testing.T, addr string) {
+	t.Helper()
+	awaited.Until(t, "a TCP listener to accept connections on "+addr, func() bool {
 		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return
+		if err != nil {
+			return false
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		_ = conn.Close()
+		return true
+	})
 }
 
 type agentStartOptions struct {
@@ -115,18 +117,14 @@ func startAgent(t *testing.T, proxyAddr string, opts agentStartOptions) (context
 
 func waitAgentConnected(t *testing.T, statusFile string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the agent to report connected via status file "+statusFile, func() bool {
 		body, err := os.ReadFile(statusFile)
-		if err == nil {
-			var snap hostagent.StatusSnapshot
-			if jerr := json.Unmarshal(body, &snap); jerr == nil && snap.Connected {
-				return
-			}
+		if err != nil {
+			return false
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("agent did not report connected via status file %s within deadline", statusFile)
+		var snap hostagent.StatusSnapshot
+		return json.Unmarshal(body, &snap) == nil && snap.Connected
+	})
 }
 
 type fixtureOpts struct {
@@ -214,11 +212,12 @@ func startProxyOnPort(t *testing.T, port int, controlBase, adminKey string) {
 		go func() { _ = cmd.Wait(); close(done) }()
 		select {
 		case <-done:
+		//nolint:testwallclock-pacing a teardown grace before SIGKILL; the arm kills the child and reaches no verdict
 		case <-time.After(5 * time.Second):
 			_ = cmd.Process.Kill()
 		}
 	})
-	waitDialable(addr)
+	waitDialable(t, addr)
 }
 
 func lateBindTemplateSpec(name string) map[string]any {
@@ -245,9 +244,40 @@ func (fx *hostAgentFixture) createLateBindInstance(t *testing.T, templateHash, i
 	return fx.h.CreateInstanceWithServiceBindingsAndTarget(templateHash, instanceKey, fx.adminKey, map[string]any{}, bindings, fx.targetRoutingIdentity)
 }
 
+func (fx *hostAgentFixture) nodeEventPayload(t *testing.T, instanceID shared.UUID, kind string) map[string]any {
+	t.Helper()
+	worker := fx.h.FindNode(instanceID, "worker")
+	if worker == nil {
+		t.Fatalf("instance %s has no worker node", instanceID)
+	}
+	nid := worker.ID
+	var payload map[string]any
+	if err := fx.h.InTx(func(tx persistence.Tx) error {
+		r, err := fx.h.Persist.Events().List(fx.h.Ctx,
+			persistence.EventListFilter{NodeID: &nid},
+			persistence.ListPagination{Limit: 500}, tx)
+		if err != nil {
+			return err
+		}
+		for _, e := range r.Events {
+			if e.KindRaw == kind {
+				payload = e.Payload.Map()
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("list events for node %s: %v", nid, err)
+	}
+	if payload == nil {
+		t.Fatalf("node %s logged no %s event", nid, kind)
+	}
+	return payload
+}
+
 func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared.UUID, kinds ...string) string {
 	t.Helper()
-	for {
+	var found string
+	awaited.Until(t, fmt.Sprintf("the worker node of instance %s to log one of the event kinds %v", instanceID, kinds), func() bool {
 		worker := fx.h.FindNode(instanceID, "worker")
 		if worker != nil {
 			nid := worker.ID
@@ -270,9 +300,11 @@ func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared
 				return nil
 			})
 			if seen != "" {
-				return seen
+				found = seen
+				return true
 			}
 		}
-		time.Sleep(75 * time.Millisecond)
-	}
+		return false
+	})
+	return found
 }

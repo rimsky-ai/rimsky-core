@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const cronPublisherName = "tick"
@@ -54,7 +55,7 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 	statePool := connectSensorStatePostgres(ctx, t, statePGContainer.hostDSN)
 	defer statePool.Close()
 
-	subID, originalNextFire := waitForSensorCronSubscriptionPersisted(t, ctx, statePool, 90*time.Second)
+	subID, originalNextFire := waitForSensorCronSubscriptionPersisted(t, ctx, statePool)
 	t.Logf("sensor-cron persisted subscription %s with next_fire_at=%s (originally scheduled)",
 		subID, originalNextFire.UTC().Format(time.RFC3339Nano))
 
@@ -69,11 +70,11 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 	t.Logf("sensor-cron restarted at %s; recovered watermark should fire on first Tick",
 		restartAt.Format(time.RFC3339Nano))
 
-	requireRecoveredPublisherMessage(t, ep, instanceID, cronPublisherName, restartAt, originalNextFire, 90*time.Second)
+	requireRecoveredPublisherMessage(t, ep, instanceID, cronPublisherName, restartAt, originalNextFire)
 
 	ep.RequireNodeTerminalSucceeded(t, instanceID, cronReactorNode)
 
-	requireSensorCronAdvancedWatermark(t, ctx, statePool, subID, originalNextFire, 60*time.Second)
+	requireSensorCronAdvancedWatermark(t, ctx, statePool, subID, originalNextFire)
 }
 
 type sensorStatePostgres struct {
@@ -96,92 +97,76 @@ func connectSensorStatePostgres(ctx context.Context, t *testing.T, hostDSN strin
 	return pool
 }
 
-func waitForSensorCronSubscriptionPersisted(t *testing.T, ctx context.Context, pool *pgxpool.Pool, deadline time.Duration) (string, time.Time) {
+func waitForSensorCronSubscriptionPersisted(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (string, time.Time) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		var subID string
-		var nextFire time.Time
-		err := pool.QueryRow(ctx,
+	var subID string
+	var nextFire time.Time
+	awaited.Until(t, "the Subscribe path to write a subscription through to the durable sensor_cron_state", func() bool {
+		return pool.QueryRow(ctx,
 			`SELECT publisher_subscription_id, next_fire_at FROM sensor_cron_state LIMIT 1`,
-		).Scan(&subID, &nextFire)
-		if err == nil {
-			return subID, nextFire
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("sensor-cron never persisted a subscription to sensor_cron_state within %v — "+
-		"the Subscribe path is not writing through to the durable state DB", deadline)
-	return "", time.Time{}
+		).Scan(&subID, &nextFire) == nil
+	})
+	return subID, nextFire
 }
 
 func sleepUntilPast(target time.Time, extra time.Duration) {
 	deadline := target.Add(extra)
 	if d := time.Until(deadline); d > 0 {
+		//nolint:testwallclock-pacing advances the real clock past a cron window the sensor reads from the host clock and no test can drive; the verdict is which window the revived sensor fires for, never how long this took
 		time.Sleep(d)
 	}
 }
 
-func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, instanceID, wantSender string, restartAt, wantFireAt time.Time, deadline time.Duration) {
+func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, instanceID, wantSender string, restartAt, wantFireAt time.Time) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSeen string
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("the revived sensor-cron to deliver a publisher message for the durably-recovered "+
+		"window %s on instance %s; a sensor that lost its subscription, or recomputed next_fire_at from the wall "+
+		"clock, never delivers one", wantFireAt.UTC().Format(time.RFC3339Nano), instanceID), func() bool {
 		status, raw := ep.GetJSON(t,
 			"/v1/instances/"+instanceID+"/messages?sender_kind=publisher", "")
-		if status == http.StatusOK {
-			var resp struct {
-				Messages []struct {
-					Type        string          `json:"type"`
-					Sender      string          `json:"sender"`
-					SenderKind  string          `json:"sender_kind"`
-					Payload     json.RawMessage `json:"payload"`
-					ReceivedAt  time.Time       `json:"received_at"`
-					DeliveredAt *time.Time      `json:"delivered_at"`
-				} `json:"messages"`
+		if status != http.StatusOK {
+			return false
+		}
+		var resp struct {
+			Messages []struct {
+				Type        string          `json:"type"`
+				Sender      string          `json:"sender"`
+				SenderKind  string          `json:"sender_kind"`
+				Payload     json.RawMessage `json:"payload"`
+				ReceivedAt  time.Time       `json:"received_at"`
+				DeliveredAt *time.Time      `json:"delivered_at"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return false
+		}
+		for _, m := range resp.Messages {
+			if m.SenderKind != "publisher" || !m.ReceivedAt.After(restartAt) {
+				continue
 			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				for _, m := range resp.Messages {
-					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s received=%s delivered=%v payload=%s",
-						m.Type, m.Sender, m.SenderKind,
-						m.ReceivedAt.UTC().Format(time.RFC3339Nano), m.DeliveredAt, string(m.Payload))
-					if m.SenderKind != "publisher" {
-						continue
-					}
-					if !m.ReceivedAt.After(restartAt) {
-						continue
-					}
-					if m.Sender != wantSender {
-						t.Fatalf("publisher message persisted with sender=%q, want %q "+
-							"(rimsky must derive sender from publisher_subscriptions."+
-							"publisher_name, not the sensor request body's sender). "+
-							"Message received_at=%s, restartAt=%s",
-							m.Sender, wantSender,
-							m.ReceivedAt.UTC().Format(time.RFC3339Nano),
-							restartAt.UTC().Format(time.RFC3339Nano))
-					}
-					gotFireAt := decodeFireAtPayload(t, m.Payload)
-					if !gotFireAt.Truncate(time.Second).Equal(wantFireAt.UTC().Truncate(time.Second)) {
-						t.Fatalf("recovered publisher message fired for window fire_at=%s, want the "+
-							"durably-recovered window %s — a sensor that lost its watermark and "+
-							"rescheduled from wall clock instead of recovering the durable next_fire_at "+
-							"would also fire After(restartAt) but for a DIFFERENT window",
-							gotFireAt.Format(time.RFC3339Nano), wantFireAt.UTC().Format(time.RFC3339Nano))
-					}
-					if m.DeliveredAt == nil {
-						continue
-					}
-					return
-				}
+			if m.Sender != wantSender {
+				t.Fatalf("publisher message persisted with sender=%q, want %q "+
+					"(rimsky must derive sender from publisher_subscriptions."+
+					"publisher_name, not the sensor request body's sender). "+
+					"Message received_at=%s, restartAt=%s",
+					m.Sender, wantSender,
+					m.ReceivedAt.UTC().Format(time.RFC3339Nano),
+					restartAt.UTC().Format(time.RFC3339Nano))
+			}
+			gotFireAt := decodeFireAtPayload(t, m.Payload)
+			if !gotFireAt.Truncate(time.Second).Equal(wantFireAt.UTC().Truncate(time.Second)) {
+				t.Fatalf("recovered publisher message fired for window fire_at=%s, want the "+
+					"durably-recovered window %s — a sensor that lost its watermark and "+
+					"rescheduled from wall clock instead of recovering the durable next_fire_at "+
+					"would also fire After(restartAt) but for a DIFFERENT window",
+					gotFireAt.Format(time.RFC3339Nano), wantFireAt.UTC().Format(time.RFC3339Nano))
+			}
+			if m.DeliveredAt != nil {
+				return true
 			}
 		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("no publisher message received after restart (%s) for instance %s within %v; "+
-		"last seen=%q — the revived sensor-cron either did not recover the durable "+
-		"subscription (in-memory mode bug) or recomputed next_fire_at from wall clock "+
-		"(durability contract violation)",
-		restartAt.UTC().Format(time.RFC3339Nano), instanceID, deadline, lastSeen)
+		return false
+	})
 }
 
 func decodeFireAtPayload(t *testing.T, raw json.RawMessage) time.Time {
@@ -199,27 +184,16 @@ func decodeFireAtPayload(t *testing.T, raw json.RawMessage) time.Time {
 	return fireAt.UTC()
 }
 
-func requireSensorCronAdvancedWatermark(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string, original time.Time, deadline time.Duration) {
+func requireSensorCronAdvancedWatermark(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string, original time.Time) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var last time.Time
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("sensor-cron to advance next_fire_at past %s, the durable watermark move that "+
+		"keeps the next Tick from re-firing the same window", original.UTC().Format(time.RFC3339Nano)), func() bool {
 		var nextFire time.Time
 		err := pool.QueryRow(ctx,
 			`SELECT next_fire_at FROM sensor_cron_state WHERE publisher_subscription_id = $1`, subID,
 		).Scan(&nextFire)
-		if err == nil {
-			last = nextFire
-			if nextFire.After(original) {
-				return
-			}
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("sensor-cron did not advance next_fire_at past %s within %v (last seen %s) — "+
-		"the durable watermark must move forward after a fire, otherwise the next Tick "+
-		"would re-fire the same window",
-		original.UTC().Format(time.RFC3339Nano), deadline, last.UTC().Format(time.RFC3339Nano))
+		return err == nil && nextFire.After(original)
+	})
 }
 
 func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {

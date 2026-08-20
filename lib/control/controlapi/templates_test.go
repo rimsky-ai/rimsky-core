@@ -393,15 +393,16 @@ func TestTemplateRegister_IdempotentReRegisterWithSameTagOK(t *testing.T) {
 	require.Equal(t, first["template_id"], second["template_id"])
 }
 
-func TestTemplateRegister_RejectsComposeReservedTag(t *testing.T) {
+// @concept: tag
+func TestTemplateRegister_ReservesNoTagPrefix(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	body := templateBodyWithTag("compose-reserved-"+uuid.NewString(), "compose:"+uuid.NewString())
+	body := templateBodyWithTag("prefixed-tag-"+uuid.NewString(), "compose:"+uuid.NewString())
 	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
-	require.Equal(t, http.StatusBadRequest, status, out,
-		"register-with-tag must enforce the compose: reserved-prefix guard, same as POST /v1/tags")
+	require.Equalf(t, http.StatusCreated, status,
+		"register-with-tag reserves no prefix, so any caller may register a template under any tag prefix; got %v", out)
 }
 
 func TestTemplateDeploy_StateTransitions(t *testing.T) {

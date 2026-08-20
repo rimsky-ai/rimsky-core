@@ -226,7 +226,7 @@ func occupyPortWithoutListening(t *testing.T) (int, func()) {
 }
 
 func TestSpawnService_TrustsCallerSuppliedPathWithNoInternalAllowlistCheck(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	untrustedPath := filepath.Join(t.TempDir(), "does-not-exist-and-is-not-allowlisted")
@@ -260,7 +260,7 @@ func TestSpawnServiceRetriesPastStolenPort(t *testing.T) {
 		return FreeLocalPort()
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	spawned, err := SpawnService(ctx, SpawnServiceParams{
@@ -328,7 +328,7 @@ func TestSpawnServiceChildExitedBeforeBindingIsDistinguishedFromTimeout(t *testi
 	bin := buildStubChild(t)
 	t.Setenv("STUBCHILD_EXIT_IMMEDIATELY", "1")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	_, err := SpawnService(ctx, SpawnServiceParams{

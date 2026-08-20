@@ -30,13 +30,6 @@ func TestRunTagCreate_FlagAfterPositional(t *testing.T) {
 	}
 }
 
-func TestRunTagCreate_RejectComposePrefix(t *testing.T) {
-	_ = setupClitest(t)
-	if got := cli.RunTagCreate(context.Background(), []string{"--template", "foo", "compose:p:x"}); got != 2 {
-		t.Errorf("exit %d", got)
-	}
-}
-
 func TestRunTagList(t *testing.T) {
 	srv := setupClitest(t)
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
@@ -106,19 +99,5 @@ func TestRunTagRm_OK(t *testing.T) {
 	}
 	if !strings.Contains(out, "v1 removed") {
 		t.Errorf("tag rm: stdout must confirm the removed tag, got %q", out)
-	}
-}
-
-func TestRunTagMv_RejectComposePrefix(t *testing.T) {
-	_ = setupClitest(t)
-	if got := cli.RunTagMv(context.Background(), []string{"--template", "foo", "compose:p:x"}); got != 2 {
-		t.Errorf("exit %d, want 2 (compose-owned tag must not be movable through manual CLI)", got)
-	}
-}
-
-func TestRunTagRm_RejectComposePrefix(t *testing.T) {
-	_ = setupClitest(t)
-	if got := cli.RunTagRm(context.Background(), []string{"compose:p:x"}); got != 2 {
-		t.Errorf("exit %d, want 2 (compose-owned tag must not be deletable through manual CLI)", got)
 	}
 }

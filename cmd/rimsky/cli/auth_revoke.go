@@ -19,7 +19,7 @@ func RunAuthRevoke(ctx context.Context, args []string) int {
 		force                 bool
 	)
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
-	fs.StringVar(&keyFlag, "key", "", "API key (Bearer token)")
+	RegisterAPIKeyFlag(fs, &keyFlag)
 	fs.BoolVar(&force, "force-leave-anonymous", false, "allow revocation that drops the deployment to zero active keys")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 2

@@ -45,7 +45,7 @@ func (c *Catalog) Filtered(r *http.Request) []Tool {
 		if !ok {
 			continue
 		}
-		if !auth.HasAnyGrant(ident.Permissions, entry.Action) {
+		if !entry.ExemptFromPermission && !auth.HasAnyGrant(ident.Permissions, entry.Action) {
 			continue
 		}
 		schema := c.Schemas[name]

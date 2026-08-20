@@ -277,9 +277,6 @@ func (f *fakeDiagnosticQueue) ReleaseClaimWithDisposition(context.Context, share
 func (f *fakeDiagnosticQueue) ReleaseClaim(context.Context, shared.UUID, string) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) ForceReleaseClaim(context.Context, shared.UUID) error {
-	return nil
-}
 func (f *fakeDiagnosticQueue) GetClaimedBy(context.Context, shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{}, nil
 }

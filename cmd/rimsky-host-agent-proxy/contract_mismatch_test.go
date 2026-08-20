@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"testing"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -45,7 +44,7 @@ func TestExecuteContractMismatchOnSchemaViolation(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./codegen"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 
 	attrs, err := structpb.NewStruct(map[string]any{"other_field": "x"})
@@ -74,7 +73,7 @@ func TestExecuteContractSatisfiedDispatches(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./codegen"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 
 	attrs, err := structpb.NewStruct(map[string]any{"required_field": "present"})
@@ -97,7 +96,7 @@ func TestExecuteNoSchemaSkipsValidation(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./codegen"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 
 	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
@@ -114,7 +113,7 @@ func TestResolveAndSpawnCapturesSpawnAckCapabilities(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./codegen"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("codegen"))
 	defer cancel()
 	_ = collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 

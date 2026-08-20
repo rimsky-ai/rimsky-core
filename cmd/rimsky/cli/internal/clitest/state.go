@@ -35,6 +35,8 @@ type InMemoryState struct {
 
 	pendingMessages map[string]int
 	runningFrames   map[string]int
+	activityScript  map[string][]InstanceActivity
+	activityReads   map[string]int
 }
 
 type storedTemplate struct {
@@ -268,6 +270,50 @@ func (s *InMemoryState) SetInstanceActivity(id string, pendingMessages, runningF
 	}
 	s.pendingMessages[id] = pendingMessages
 	s.runningFrames[id] = runningFrames
+}
+
+type InstanceActivity struct {
+	PendingMessages int
+	RunningFrames   int
+}
+
+func (s *InMemoryState) SetInstanceActivityScript(id string, steps ...InstanceActivity) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activityScript == nil {
+		s.activityScript = map[string][]InstanceActivity{}
+	}
+	s.activityScript[id] = steps
+}
+
+func (s *InMemoryState) InstanceActivityReads(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activityReads[id]
+}
+
+func (s *InMemoryState) TakeInstanceActivityStep(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activityReads == nil {
+		s.activityReads = map[string]int{}
+	}
+	s.activityReads[id]++
+	script := s.activityScript[id]
+	if len(script) == 0 {
+		return
+	}
+	if len(script) > 1 {
+		s.activityScript[id] = script[1:]
+	}
+	if s.pendingMessages == nil {
+		s.pendingMessages = map[string]int{}
+	}
+	if s.runningFrames == nil {
+		s.runningFrames = map[string]int{}
+	}
+	s.pendingMessages[id] = script[0].PendingMessages
+	s.runningFrames[id] = script[0].RunningFrames
 }
 
 func (s *InMemoryState) InstanceActivity(id string) (pendingMessages, runningFrames int) {

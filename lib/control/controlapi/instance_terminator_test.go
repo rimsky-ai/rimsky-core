@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
@@ -475,19 +476,19 @@ func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 		defer wg.Done()
 		term.Run(ctx)
 	}()
-	time.Sleep(20 * time.Millisecond)
+	waitForTerminatorStarted(t, term)
 	cancel()
 
-	doneCh := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(doneCh)
-	}()
-	select {
-	case <-doneCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not exit promptly after context cancel")
-	}
+	wg.Wait()
+}
+
+func waitForTerminatorStarted(t *testing.T, term *InstanceTerminator) {
+	t.Helper()
+	awaited.Until(t, "the terminator's run loop to mark itself started", func() bool {
+		term.mu.Lock()
+		defer term.mu.Unlock()
+		return term.started
+	})
 }
 
 func TestInstanceTerminator_ConcurrentStopDoesNotPanic(t *testing.T) {
@@ -499,15 +500,7 @@ func TestInstanceTerminator_ConcurrentStopDoesNotPanic(t *testing.T) {
 	defer cancel()
 
 	go term.Run(ctx)
-	for {
-		term.mu.Lock()
-		started := term.started
-		term.mu.Unlock()
-		if started {
-			break
-		}
-		time.Sleep(time.Microsecond)
-	}
+	waitForTerminatorStarted(t, term)
 
 	const concurrentStops = 8
 	var wg sync.WaitGroup
@@ -544,22 +537,21 @@ func TestInstanceTerminator_FailureLogCadenceCapsLogSpam(t *testing.T) {
 	require.True(t, shouldLog)
 }
 
-func TestInstanceTerminator_StopBoundedByBudget(t *testing.T) {
+func TestInstanceTerminator_StopReturnsOnTheLoopsExitNotOnItsBudget(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
-	term := NewInstanceTerminator(f.deps, time.Hour)
-	start := time.Now()
-	term.Stop()
-	require.Less(t, time.Since(start), 100*time.Millisecond)
+	NewInstanceTerminator(f.deps, time.Hour).Stop()
 
-	term2 := NewInstanceTerminator(f.deps, 10*time.Millisecond)
+	term := NewInstanceTerminator(f.deps, 10*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
-	go term2.Run(ctx)
-	time.Sleep(20 * time.Millisecond)
+	go term.Run(ctx)
+	waitForTerminatorStarted(t, term)
 	cancel()
-	start = time.Now()
-	term2.Stop()
-	require.Less(t, time.Since(start), 1*time.Second,
-		"Stop must complete promptly when the goroutine is alive and exits cleanly")
+	term.Stop()
+	select {
+	case <-term.done:
+	default:
+		t.Fatal("Stop returned on its budget rather than on the run loop's exit: the done channel is still open")
+	}
 }

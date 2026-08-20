@@ -16,11 +16,10 @@ import (
 )
 
 type Client struct {
-	endpoint      string
-	httpClient    *http.Client
-	userAgent     string
-	apiKey        string
-	composeOrigin bool
+	endpoint   string
+	httpClient *http.Client
+	userAgent  string
+	apiKey     string
 }
 
 func NewClient(endpoint string) *Client {
@@ -32,8 +31,6 @@ func NewClient(endpoint string) *Client {
 }
 
 func (c *Client) SetAPIKey(key string) { c.apiKey = key }
-
-func (c *Client) SetComposeOrigin(v bool) { c.composeOrigin = v }
 
 func (c *Client) SetTimeout(d time.Duration) {
 	c.httpClient.Timeout = d
@@ -74,9 +71,6 @@ func (c *Client) doStatus(req *http.Request, out any) (int, error) {
 	}
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-	if c.composeOrigin {
-		req.Header.Set("X-Rimsky-Compose-Origin", "1")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

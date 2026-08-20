@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
@@ -28,9 +28,28 @@ const ReasonTimeout ShutdownReason = 2
 
 const ReasonSignal ShutdownReason = 3
 
-const childGraceWindow = 5 * time.Second
+// @decision: graceful-shutdown
+const childGraceWindow = serverkit.CLIChildGrace
 
-const roleStackDrainWindow = 5 * time.Second
+// @decision: graceful-shutdown
+const roleStackDrainWindow = serverkit.CLIChildGrace
+
+type SpawnedRegistry struct {
+	mu   sync.Mutex
+	list []*hostagent.SpawnedService
+}
+
+func (r *SpawnedRegistry) Set(services []*hostagent.SpawnedService) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.list = services
+}
+
+func (r *SpawnedRegistry) All() []*hostagent.SpawnedService {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.list
+}
 
 type ShutdownCoordinator struct {
 	Stack    *RoleStack
@@ -154,13 +173,67 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 }
 
 // @decision: graceful-shutdown
-func InstallSecondSignalEscalator(sigCh <-chan os.Signal, done <-chan struct{}, services []*hostagent.SpawnedService, logger *slog.Logger) {
-	var log shared.Logger
-	if logger != nil {
-		log = shared.NewSlogLogger(logger).With("path", "compose run")
+type SignalEscalation struct {
+	sigCh   chan os.Signal
+	spawned *SpawnedRegistry
+	logger  *slog.Logger
+	done    chan struct{}
+	armOnce sync.Once
+	retire  sync.Once
+}
+
+// @decision: graceful-shutdown
+func NewSignalEscalation(spawned *SpawnedRegistry, logger *slog.Logger) (*SignalEscalation, func()) {
+	sigCh, stopNotify := serverkit.NotifyShutdownSignals()
+	e := &SignalEscalation{
+		sigCh:   sigCh,
+		spawned: spawned,
+		logger:  logger,
+		done:    make(chan struct{}),
 	}
-	shared.InstallSecondSignalHardExit(sigCh, done, log, func() {
-		for _, s := range services {
+	return e, func() {
+		e.Retire()
+		stopNotify()
+	}
+}
+
+func (e *SignalEscalation) Signals() chan os.Signal { return e.sigCh }
+
+func (e *SignalEscalation) Arm() {
+	e.armOnce.Do(func() {
+		InstallSecondSignalEscalator(e.sigCh, e.done, e.spawned.All, e.logger)
+	})
+}
+
+func (e *SignalEscalation) Retire() {
+	e.retire.Do(func() { close(e.done) })
+}
+
+// @decision: graceful-shutdown
+func (e *SignalEscalation) ArmOnFirstSignal(logger *slog.Logger, verb string) <-chan struct{} {
+	observed := make(chan struct{})
+	go func() {
+		defer close(observed)
+		select {
+		case <-e.done:
+		case sig := <-e.sigCh:
+			if logger != nil {
+				logger.Info(verb+": signal while draining; a second signal exits immediately", "signal", sig.String())
+			}
+			e.Arm()
+		}
+	}()
+	return observed
+}
+
+// @decision: graceful-shutdown
+func InstallSecondSignalEscalator(sigCh <-chan os.Signal, done <-chan struct{}, services func() []*hostagent.SpawnedService, logger *slog.Logger) {
+	var log *slog.Logger
+	if logger != nil {
+		log = logger.With("path", "compose run")
+	}
+	serverkit.InstallSecondSignalHardExit(sigCh, done, log, func() {
+		for _, s := range services() {
 			if s == nil || s.Cmd == nil || s.Cmd.Process == nil {
 				continue
 			}
@@ -171,6 +244,6 @@ func InstallSecondSignalEscalator(sigCh <-chan os.Signal, done <-chan struct{}, 
 				)
 			}
 		}
-		os.Exit(shared.HardExitCode)
+		os.Exit(serverkit.HardExitCode)
 	})
 }

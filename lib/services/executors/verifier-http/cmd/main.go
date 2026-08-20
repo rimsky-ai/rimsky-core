@@ -7,8 +7,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -17,7 +15,7 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(serverkit.NewJSONLogger())
 	opts, err := verifierhttp.LoadOptsFromEnv()
 	if err != nil {
 		slog.Error("verifier-http config", "error", err.Error())
@@ -38,14 +36,9 @@ func main() {
 	genv1.RegisterExecutorServer(srv, verifierhttp.NewServer(opts))
 	verifierhttp.RegisterObservability(srv)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// @decision: graceful-shutdown
+	ctx, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
+	defer stopSignals()
 	identity.StartMaintain(ctx, "verifier-http")
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		slog.Info("verifier-http stopping")
-		cancel()
-	}()
 	serverkit.RunGRPC(ctx, srv, lis, "verifier-http")
 }

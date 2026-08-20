@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi/mcp"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
@@ -313,22 +312,18 @@ func getMCPStream(t *testing.T, baseURL, sessionID string) {
 		done <- result{status: resp.StatusCode, ctype: resp.Header.Get("Content-Type")}
 		cancel()
 	}()
-	select {
-	case r := <-done:
-		if r.err != nil {
-			t.Fatalf("GET /mcp: %v", r.err)
-		}
-		if r.status == http.StatusMethodNotAllowed {
-			t.Fatalf("GET /mcp returned 405 — no streamable GET handler registered")
-		}
-		if r.status != http.StatusOK {
-			t.Fatalf("GET /mcp status: got %d want 200", r.status)
-		}
-		if !strings.HasPrefix(r.ctype, "text/event-stream") {
-			t.Fatalf("GET /mcp Content-Type: got %q want text/event-stream", r.ctype)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("GET /mcp: response headers did not arrive within 5s (handler must flush 200 immediately)")
+	r := <-done
+	if r.err != nil {
+		t.Fatalf("GET /mcp: %v", r.err)
+	}
+	if r.status == http.StatusMethodNotAllowed {
+		t.Fatalf("GET /mcp returned 405 — no streamable GET handler registered")
+	}
+	if r.status != http.StatusOK {
+		t.Fatalf("GET /mcp status: got %d want 200", r.status)
+	}
+	if !strings.HasPrefix(r.ctype, "text/event-stream") {
+		t.Fatalf("GET /mcp Content-Type: got %q want text/event-stream", r.ctype)
 	}
 }
 
@@ -396,14 +391,15 @@ func serveRPCWithHeaders(t *testing.T, s *mcp.Server, sessionID, body string) (m
 	return resp, w.Header()
 }
 
-func TestCatalogFiltered(t *testing.T) {
+func TestCatalogListsEveryToolTheGrantReachesPlusTheToolsThatConsultNoGrant(t *testing.T) {
 	t.Parallel()
 	reg := &fakeRegistry{
-		tools: []string{"a_read", "a_write", "b_read"},
+		tools: []string{"a_read", "a_write", "b_read", "c_probe"},
 		entries: map[string]mcp.RegistryEntry{
 			"a_read":  {Action: "a:read", Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/a"}}},
 			"a_write": {Action: "a:write", Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/a"}}},
 			"b_read":  {Action: "b:read", Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/b"}}},
+			"c_probe": {Action: "c:probe", Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/c"}}, ExemptFromPermission: true},
 		},
 	}
 	cat := &mcp.Catalog{
@@ -417,7 +413,7 @@ func TestCatalogFiltered(t *testing.T) {
 	for _, tool := range got {
 		names = append(names, tool.Name)
 	}
-	wantSet := map[string]bool{"a_read": true, "b_read": true}
+	wantSet := map[string]bool{"a_read": true, "b_read": true, "c_probe": true}
 	if len(names) != len(wantSet) {
 		t.Fatalf("filtered tools: got %v want %v", names, wantSet)
 	}

@@ -6,13 +6,13 @@ package scenarios
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -133,27 +133,24 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 
 	h.WaitForNodeState(a.ID, cascade.NodeStateFresh)
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "b and c should both dispatch into their holds", func() bool {
 		return countRuns("b") >= 2 && countRuns("c") >= 2
-	}, 30*time.Second, 25*time.Millisecond, "b and c should both dispatch into their holds")
+	})
 
 	assertReceiverNotDispatchEligible := func(midpoint string) {
 		t.Helper()
-		deadline := time.Now().Add(1500 * time.Millisecond)
-		for time.Now().Before(deadline) {
-			var ineligibleRowViolations int
-			h.QueryRowSQL(
-				`SELECT COUNT(*) FROM rimsky_node_runs
-				  WHERE node_id = $1
-				    AND state IN ('pending','stale','running','held','parked')
-				    AND (claimed_by IS NOT NULL OR state <> 'pending')`,
-				[]any{r.ID}, &ineligibleRowViolations)
-			require.Zerof(t, ineligibleRowViolations,
-				"%s: r's run row was claimed or transitioned out of pending while a subscribed upstream was in-flight", midpoint)
-			require.Equalf(t, baselineRuns, countRuns("r"),
-				"%s: r dispatched while a subscribed upstream was in-flight", midpoint)
-			time.Sleep(50 * time.Millisecond)
-		}
+		h.WaitForSchedulerQuiescence()
+		var ineligibleRowViolations int
+		h.QueryRowSQL(
+			`SELECT COUNT(*) FROM rimsky_node_runs
+			  WHERE node_id = $1
+			    AND state IN ('pending','stale','running','held','parked')
+			    AND (claimed_by IS NOT NULL OR state <> 'pending')`,
+			[]any{r.ID}, &ineligibleRowViolations)
+		require.Zerof(t, ineligibleRowViolations,
+			"%s: r's run row was claimed or transitioned out of pending while a subscribed upstream was in-flight", midpoint)
+		require.Equalf(t, baselineRuns, countRuns("r"),
+			"%s: r dispatched while a subscribed upstream was in-flight", midpoint)
 	}
 
 	assertReceiverNotDispatchEligible("midpoint 1 (b and c in-flight)")
@@ -167,9 +164,8 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	h.WaitForNodeState(c.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(r.ID, cascade.NodeStateFresh)
 
-	require.Eventually(t, func() bool { return countRuns("r") == baselineRuns+1 },
-		10*time.Second, 25*time.Millisecond, "r should run exactly once after the last upstream settles")
-	time.Sleep(1 * time.Second)
+	awaited.Until(t, "r should run exactly once after the last upstream settles", func() bool { return countRuns("r") == baselineRuns+1 })
+	h.WaitForSchedulerQuiescence()
 	require.Equal(t, baselineRuns+1, countRuns("r"),
 		"r must run exactly once per frame, not once per settling sender")
 }
@@ -253,22 +249,17 @@ func TestSubscriptionCascade_UnsubscribedNodeStaysIdle(t *testing.T) {
 
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		var state cascade.NodeState
-		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT COALESCE(r.state, 'fresh')
-			   FROM rimsky_nodes n
-			   LEFT JOIN rimsky_node_runs r
-			          ON r.node_id = n.id
-			         AND r.state IN ('pending','stale','running','held','parked')
-			  WHERE n.id = $1`, monitor.ID).Scan(&state)
-		require.NoError(t, err)
-		if state != cascade.NodeStateFresh {
-			t.Fatalf("monitor should remain fresh (no subscription edge to worker); observed state=%s", state)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	var state cascade.NodeState
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT COALESCE(r.state, 'fresh')
+		   FROM rimsky_nodes n
+		   LEFT JOIN rimsky_node_runs r
+		          ON r.node_id = n.id
+		         AND r.state IN ('pending','stale','running','held','parked')
+		  WHERE n.id = $1`, monitor.ID).Scan(&state))
+	require.Equal(t, cascade.NodeStateFresh, state,
+		"monitor should remain fresh (no subscription edge to worker); observed state=%s", state)
 
 	require.Equal(t, monitorEventsBefore, monitorDispatchEvents(),
 		"monitor must gain no dispatch/terminal events from the worker invalidate (no subscription edge)")
@@ -296,8 +287,7 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 
 	h.WaitForNodeState(r.ID, cascade.NodeStateFresh)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "every wait-set row of the instance to be drained (drained_at IS NOT NULL) by frame end", func() bool {
 		var undrained int
 		err := h.Pool.QueryRow(h.Ctx, `
 			SELECT count(*) FROM rimsky_wait_set w
@@ -307,22 +297,8 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 			   AND w.drained_at IS NULL
 		`, iid).Scan(&undrained)
 		require.NoError(t, err)
-		if undrained == 0 {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	var leftover int
-	err := h.Pool.QueryRow(h.Ctx, `
-		SELECT count(*) FROM rimsky_wait_set w
-		 JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
-		 JOIN rimsky_nodes n ON n.id = r.node_id
-		 WHERE n.instance_id = $1
-		   AND w.drained_at IS NULL
-	`, iid).Scan(&leftover)
-	require.NoError(t, err)
-	require.Equal(t, 0, leftover,
-		"every wait-set row should be drained (drained_at IS NOT NULL) by frame end")
+		return undrained == 0
+	})
 }
 
 func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
@@ -348,19 +324,15 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 	d := h.FindNode(iid, "drain")
 	require.NotNil(t, d)
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "self-subscription must re-fire the node after a fresh_changed commit", func() bool {
 		return len(h.Stub.Observed()) >= 2
-	}, 10*time.Second, 25*time.Millisecond,
-		"self-subscription must re-fire the node after a fresh_changed commit")
+	})
 
 	h.Stub.WhenType("drain").Success(map[string]any{"k": 2}, false, "no_change")
 	h.WaitForNodeState(d.ID, cascade.NodeStateFresh)
 
 	settled := len(h.Stub.Observed())
-	settleDeadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(settleDeadline) {
-		require.Equal(t, settled, len(h.Stub.Observed()),
-			"dispatch count must not advance after the changed=false flip — the self-cycle must have quiesced")
-		time.Sleep(150 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	require.Equal(t, settled, len(h.Stub.Observed()),
+		"dispatch count must not advance after the changed=false flip — the self-cycle must have quiesced")
 }

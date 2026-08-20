@@ -3,7 +3,9 @@
 # Build context: the rimsky-core repo root. The bundled services build
 # against the in-tree lib/protocols module via go.work — no module proxy,
 # no published-tag pin.
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
@@ -12,7 +14,7 @@ COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
 COPY lib/services/go.mod lib/services/go.sum ./lib/services/
 RUN cd lib/services && go mod download
 COPY . .
-RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./executors/claude-agent/cmd
+RUN cd lib/services && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/app ./executors/claude-agent/cmd
 
 # The executor spawns the Claude Code CLI as a subprocess. The Go port drops
 # the Node/npm runtime entirely by installing the CLI's native (self-contained)

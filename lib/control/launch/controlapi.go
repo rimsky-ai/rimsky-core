@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/ports"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
@@ -23,7 +24,8 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	log := shared.NewSlogLogger(logger)
 
-	port := 8080
+	// @decision: default-port-allocation
+	port := ports.ControlAPI
 	if s := os.Getenv("RIMSKY_CONTROL_API_PORT"); s != "" {
 		n, err := strconv.Atoi(s)
 		if err != nil {

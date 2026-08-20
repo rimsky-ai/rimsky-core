@@ -5,6 +5,8 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -13,11 +15,18 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// @decision: migrations-append-only-numbered
 type Migrator struct {
-	FS        fs.FS
-	QueryHas  func(ctx context.Context, filename string) (bool, error)
-	Bootstrap func(ctx context.Context) error
-	ApplyOne  func(ctx context.Context, sql string, filename string) error
+	FS           fs.FS
+	QueryApplied func(ctx context.Context, filename string) (applied bool, digest string, err error)
+	Bootstrap    func(ctx context.Context) error
+	ApplyOne     func(ctx context.Context, sql string, filename string, digest string) error
+	RecordDigest func(ctx context.Context, filename string, digest string) error
+}
+
+func MigrationDigest(contents []byte) string {
+	sum := sha256.Sum256(contents)
+	return hex.EncodeToString(sum[:])
 }
 
 func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Logger) error {
@@ -52,16 +61,43 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 	}
 	sort.Strings(files)
 
+	contentsByFile := make(map[string][]byte, len(files))
+	digestByFile := make(map[string]string, len(files))
+	for _, filename := range files {
+		sqlBytes, err := fs.ReadFile(m.FS, filename)
+		if err != nil {
+			return fmt.Errorf("persistence.Migrator: read %s: %w", filename, err)
+		}
+		contentsByFile[filename] = sqlBytes
+		digestByFile[filename] = MigrationDigest(sqlBytes)
+	}
+
 	hasByFile := make(map[string]bool, len(files))
 	var maxApplied string
 	for _, filename := range files {
-		has, err := m.QueryHas(ctx, filename)
+		has, recorded, err := m.QueryApplied(ctx, filename)
 		if err != nil {
 			return fmt.Errorf("persistence.Migrator: check %s: %w", filename, err)
 		}
 		hasByFile[filename] = has
-		if has && filename > maxApplied {
+		if !has {
+			continue
+		}
+		if filename > maxApplied {
 			maxApplied = filename
+		}
+		// @decision: migrations-append-only-numbered
+		if recorded == "" {
+			if m.RecordDigest == nil {
+				continue
+			}
+			if err := m.RecordDigest(ctx, filename, digestByFile[filename]); err != nil {
+				return fmt.Errorf("persistence.Migrator: backfill digest for %s: %w", filename, err)
+			}
+			continue
+		}
+		if recorded != digestByFile[filename] {
+			return fmt.Errorf("persistence.Migrator: %s changed after it was applied (recorded digest %s, current %s); an applied migration is immutable", filename, recorded, digestByFile[filename])
 		}
 	}
 
@@ -74,11 +110,7 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 		if maxApplied != "" && filename < maxApplied {
 			return fmt.Errorf("persistence.Migrator: %s sorts before already-applied %s; migrations are append-only and must sort after every applied file", filename, maxApplied)
 		}
-		sqlBytes, err := fs.ReadFile(m.FS, filename)
-		if err != nil {
-			return fmt.Errorf("persistence.Migrator: read %s: %w", filename, err)
-		}
-		if err := m.ApplyOne(ctx, string(sqlBytes), filename); err != nil {
+		if err := m.ApplyOne(ctx, string(contentsByFile[filename]), filename, digestByFile[filename]); err != nil {
 			return fmt.Errorf("persistence.Migrator: apply %s: %w", filename, err)
 		}
 		if log != nil {

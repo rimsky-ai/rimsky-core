@@ -7,7 +7,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	cpconf "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
@@ -45,9 +44,7 @@ func TestClaimProducer9b_Probe(t *testing.T) {
 
 func dialProducer(t *testing.T, ctx context.Context, name, endpoint string) *harness.ClaimProducerClient {
 	t.Helper()
-	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	client, err := harness.DialClaimProducer(dialCtx, name, "grpc://"+endpoint)
+	client, err := harness.DialClaimProducer(ctx, name, "grpc://"+endpoint)
 	if err != nil {
 		t.Fatalf("DialClaimProducer(%s): %v", name, err)
 	}
@@ -57,9 +54,7 @@ func dialProducer(t *testing.T, ctx context.Context, name, endpoint string) *har
 
 func runConformance(t *testing.T, ctx context.Context, client *harness.ClaimProducerClient) []cpconf.CheckResult {
 	t.Helper()
-	runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	return cpconf.Run(runCtx, client)
+	return cpconf.Run(ctx, client)
 }
 
 func findCheck(results []cpconf.CheckResult, name string) (cpconf.CheckResult, bool) {

@@ -24,6 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -211,9 +212,9 @@ func runDispositionVariant(t *testing.T, disposition string) {
 		"%s recovery row MUST carry prior scratch verbatim: want=%x got=%x",
 		disposition, scratchBytes, gotInline)
 
-	for atomic.LoadInt64(&h.dispatches) < 2 {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, "the recovery dispatch to reach the executor handler", func() bool {
+		return atomic.LoadInt64(&h.dispatches) >= 2
+	})
 	require.True(t, bytes.Equal(h.snapshot(), scratchBytes),
 		"%s recovery dispatch MUST deliver the prior scratch to the real executor handler, not just the row: want=%x got=%x",
 		disposition, scratchBytes, h.snapshot())

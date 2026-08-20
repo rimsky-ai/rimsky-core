@@ -5,12 +5,12 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -56,8 +56,8 @@ func TestAttributeOverridesMatchOverlayFlatTemplateGraphResolution_ResolvesToMai
 	require.Equal(t, "outer", cli["where"],
 		"matcher graph=main MUST fire for flat-Nodes template")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "match-counts should be [1] after dispatch", func() bool {
 		c := attributeOverrideMatchCounts(t, h, iid, 1)
 		return len(c) == 1 && c[0] == 1
-	}, 5*time.Second, 50*time.Millisecond, "match-counts should be [1] after dispatch")
+	})
 }

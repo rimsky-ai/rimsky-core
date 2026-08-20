@@ -5,7 +5,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -80,22 +80,15 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 	downstreamNode := h.FindNode(iid, "downstream")
 	require.NotNil(t, downstreamNode, "downstream node missing")
 
-	deadline := time.Now().Add(60 * time.Second)
-	gotChildren := false
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "three fan-parent child dispatches via SplitScope", func() bool {
 		count := 0
 		for _, o := range h.Stub.Observed() {
 			if o.NodeType == "fan-parent" {
 				count++
 			}
 		}
-		if count >= 3 {
-			gotChildren = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.True(t, gotChildren, "expected three fan-parent child dispatches via SplitScope")
+		return count >= 3
+	})
 
 	var partitionCount int
 	h.QueryRowSQL(`
@@ -106,7 +99,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 	require.Equal(t, 3, partitionCount,
 		"three fanout_partition RunScopes should be created by AcquireSubClaims")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "all three partition children should reach state=fresh after Success terminal", func() bool {
 		var freshRuns int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -118,8 +111,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 			   AND r.node_id = $2
 		`, []any{iid, parentNode.ID}, &freshRuns)
 		return freshRuns >= 3
-	}, 60*time.Second, 100*time.Millisecond,
-		"all three partition children should reach state=fresh after Success terminal")
+	})
 
 	h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh)
 

@@ -5,7 +5,6 @@ package claim_handle_aggregate
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -68,7 +68,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(inheritor.ID, cascade.NodeStateFresh)
 
-	commitCount, abandonCount := waitForAtLeastOneProducerVerbDelivery(sub, "commit")
+	commitCount, abandonCount := waitForAtLeastOneProducerVerbDelivery(t, sub, "commit")
 	require.GreaterOrEqual(t, commitCount, 1,
 		"auto-terminal must fire at least one commit for the held claim (aggregate-completed); "+
 			"the terminal-verb outbox delivers at-least-once, so >1 is a legitimate retry, not a bug")
@@ -94,8 +94,9 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 			"over-commit or duplicate-row regression would show up here")
 }
 
-func waitForAtLeastOneProducerVerbDelivery(sub *stubstore.Store, wantVerb string) (commitCount, abandonCount int) {
-	for {
+func waitForAtLeastOneProducerVerbDelivery(t *testing.T, sub *stubstore.Store, wantVerb string) (commitCount, abandonCount int) {
+	t.Helper()
+	awaited.Until(t, "the stub producer to receive a "+wantVerb+" verb", func() bool {
 		commitCount, abandonCount = 0, 0
 		seenWant := false
 		for _, c := range sub.Calls() {
@@ -109,11 +110,9 @@ func waitForAtLeastOneProducerVerbDelivery(sub *stubstore.Store, wantVerb string
 				seenWant = true
 			}
 		}
-		if seenWant {
-			return commitCount, abandonCount
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return seenWant
+	})
+	return commitCount, abandonCount
 }
 
 func TestAutoTerminalAggregateFailedFiresGiveUp(t *testing.T) {
@@ -169,7 +168,7 @@ func TestAutoTerminalAggregateFailedFiresGiveUp(t *testing.T) {
 	h.WaitForNodeState(inheritor.ID, cascade.NodeStateFailed)
 	h.WaitForNodeState(acquirer.ID, cascade.NodeStateFailed)
 
-	commitCount, abandonCount := waitForAtLeastOneProducerVerbDelivery(sub, "abandon")
+	commitCount, abandonCount := waitForAtLeastOneProducerVerbDelivery(t, sub, "abandon")
 	require.GreaterOrEqual(t, abandonCount, 1,
 		"aggregate-failed must fire at least one Abandon call to the producer (auto-terminal give_up routing); "+
 			"the terminal-verb outbox delivers at-least-once, so >1 is a legitimate retry, not a bug")

@@ -94,24 +94,24 @@ func walkUpwards(
 		}
 		if isSettled(parent.State) && parent.State == result.ParentState {
 			newSig := string(result.ParentSettlingSignalType)
-			if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, current, result.ParentState, &newSig, result.ParentChanged, tx); err != nil {
+			if err := args.NodeRunTree.UpdateOutcome(ctx, current, &newSig, result.ParentChanged, tx); err != nil {
 				return actions, settlements, fmt.Errorf("walkUpwards: correct settled parent %s signal: %w", current, err)
 			}
 			return actions, settlements, nil
 		}
-		if _, err := cascade.NextStateParent(parent.State, cascade.ReasonChildTransitioned); err != nil {
-			if !cascade.IsParentAggregateOK(err) {
-				return actions, settlements, fmt.Errorf("walkUpwards: state-machine rejects parent %s %s→%s: %w",
-					current, parent.State, result.ParentState, err)
-			}
+		// @concept: transition-reason
+		reason, err := cascade.AggregateSettledReason(result.ParentState)
+		if err != nil {
+			return actions, settlements, fmt.Errorf("walkUpwards: parent %s: %w", current, err)
 		}
 		newSig := string(result.ParentSettlingSignalType)
 		var newSigArg *string
 		if newSig != "" {
 			newSigArg = &newSig
 		}
-		if err := args.NodeRunTree.UpdateStateAndOutcome(ctx, current, result.ParentState, newSigArg, result.ParentChanged, tx); err != nil {
-			return actions, settlements, fmt.Errorf("walkUpwards: update parent %s: %w", current, err)
+		if err := args.NodeRunTree.UpdateAggregateState(ctx, current, reason, newSigArg, result.ParentChanged, tx); err != nil {
+			return actions, settlements, fmt.Errorf("walkUpwards: update parent %s %s→%s: %w",
+				current, parent.State, result.ParentState, err)
 		}
 		if result.Action != AggregateActionNone {
 			actions = append(actions, CancelAction{

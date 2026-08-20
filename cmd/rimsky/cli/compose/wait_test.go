@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 type fakeInstanceClient struct {
@@ -19,11 +21,19 @@ type fakeInstanceClient struct {
 	frames map[string][]fakeFrame
 	idx    map[string]int
 	served map[string]int
+	polls  int
+}
+
+func (f *fakeInstanceClient) pollCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.polls
 }
 
 type fakeFrame struct {
-	inst  cli.Instance
-	nodes []cli.Node
+	inst    cli.Instance
+	nodes   []cli.Node
+	frameID string
 }
 
 func newFakeClient() *fakeInstanceClient {
@@ -43,6 +53,7 @@ func (f *fakeInstanceClient) script(id string, frame fakeFrame) {
 func (f *fakeInstanceClient) ListInstanceNodes(ctx context.Context, id string) (*cli.ListInstanceNodesResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.polls++
 	frames, ok := f.frames[id]
 	if !ok || len(frames) == 0 {
 		return &cli.ListInstanceNodesResponse{Nodes: nil}, nil
@@ -72,7 +83,11 @@ func (f *fakeInstanceClient) ListInstanceFrames(ctx context.Context, id, state s
 	if allNodesSettled(frames[i].nodes) {
 		return &cli.ListFramesResponse{}, nil
 	}
-	return &cli.ListFramesResponse{Frames: []cli.FrameItem{{FrameID: "fake-frame", State: "running"}}}, nil
+	frameID := frames[i].frameID
+	if frameID == "" {
+		frameID = "fake-frame"
+	}
+	return &cli.ListFramesResponse{Frames: []cli.FrameItem{{FrameID: frameID, State: "running"}}}, nil
 }
 
 func (f *fakeInstanceClient) ListInstanceMessages(ctx context.Context, id string, q cli.ListMessagesQuery) (*cli.ListMessagesResponse, error) {
@@ -93,7 +108,7 @@ type nopPrinter struct{}
 func (nopPrinter) InstanceStarting(project, name string)                         {}
 func (nopPrinter) NodeRunTerminal(project, name, nodeID, outcome, reason string) {}
 func (nopPrinter) InstanceTerminal(project, name, outcome string, nodeCount int) {}
-func (nopPrinter) FrameTick(project, name string, frameNo int)                   {}
+func (nopPrinter) FrameTick(project, name, frameID string, frameNo int)          {}
 func (nopPrinter) Summary(verb, reason string, instanceCount int)                {}
 func (nopPrinter) Finalize()                                                     {}
 
@@ -104,7 +119,7 @@ func TestWaitForInstancesTerminal_ReturnsOnAllTerminal(t *testing.T) {
 	client.script("b", fakeFrame{inst: cli.Instance{ID: "b"}, nodes: []cli.Node{{ID: "b-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}})
 	client.script("b", fakeFrame{inst: cli.Instance{ID: "b", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "b-n1", RunSummary: &cli.NodeRunSummary{FreshCount: 1}}}})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	keys := map[string]string{"a": "first", "b": "second"}
 	outcomes, err := WaitForInstancesTerminal(ctx, client, []string{"a", "b"}, "proj", keys, nopPrinter{}, 10*time.Millisecond)
@@ -125,9 +140,9 @@ func TestWaitForInstancesTerminal_CallsPrinter(t *testing.T) {
 	client.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{FailedCount: 1}, SettlingSignalType: "boom"}}})
 
 	var buf bytes.Buffer
-	printer := newDefaultPrinter(&buf)
+	printer := newProgressPrinter(&buf, false, false, false)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	outcomes, err := WaitForInstancesTerminal(ctx, client, []string{"a"}, "proj", map[string]string{"a": "alpha"}, printer, 10*time.Millisecond)
 	if err != nil {
@@ -153,31 +168,24 @@ func TestWaitForInstancesTerminal_ContextCancelExits(t *testing.T) {
 	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-	}()
 
 	done := make(chan error, 1)
 	go func() {
 		_, err := WaitForInstancesTerminal(ctx, client, []string{"a"}, "proj", nil, nopPrinter{}, 10*time.Millisecond)
 		done <- err
 	}()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("WaitForInstancesTerminal err = %v, want context.Canceled", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("WaitForInstancesTerminal did not exit on context cancel")
+	awaited.Until(t, "the wait loop to poll the instance at least once, so the cancel lands mid-wait",
+		func() bool { return client.pollCount() > 0 })
+	cancel()
+
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("WaitForInstancesTerminal err = %v, want context.Canceled", err)
 	}
 }
 
 func TestWaitForInstancesTerminal_EmptyRosterReturnsImmediately(t *testing.T) {
 	client := newFakeClient()
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	outcomes, err := WaitForInstancesTerminal(ctx, client, nil, "proj", nil, nopPrinter{}, 10*time.Millisecond)
+	outcomes, err := WaitForInstancesTerminal(context.Background(), client, nil, "proj", nil, nopPrinter{}, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("WaitForInstancesTerminal on empty roster: %v", err)
 	}
@@ -218,7 +226,7 @@ func TestWaitForInstancesTerminal_TransientNodesErrorPreservesOutcome(t *testing
 		errOnce:            errors.New("simulated transient list-nodes error"),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	outcomes, err := WaitForInstancesTerminal(ctx, client, []string{"a"}, "proj", map[string]string{"a": "alpha"}, nopPrinter{}, 10*time.Millisecond)
 	if err != nil {
@@ -267,7 +275,7 @@ func (c *zeroRunNodeClient) TerminateInstance(_ context.Context, id, _ string) (
 func TestWaitForInstancesTerminal_ZeroRunNodeDoesNotBlockSettlement(t *testing.T) {
 	client := &zeroRunNodeClient{}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	outcomes, err := WaitForInstancesTerminal(ctx, client, []string{"a"}, "proj", nil, nopPrinter{}, 10*time.Millisecond)
 	if err != nil {
@@ -370,4 +378,46 @@ func TestBootFailureReason(t *testing.T) {
 
 func contains(haystack, needle string) bool {
 	return bytes.Contains([]byte(haystack), []byte(needle))
+}
+
+// @decision: progress-flags
+// @story: live-progress
+func TestWaitReportsEachNewlyObservedFrameAsATick(t *testing.T) {
+	client := newFakeClient()
+	running := []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{ActiveCount: 1}}}
+	settled := []cli.Node{{ID: "a-n1", RunSummary: &cli.NodeRunSummary{FreshCount: 1}}}
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: running, frameID: "frame-one"})
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: running, frameID: "frame-two"})
+	client.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: settled})
+
+	var verboseBuf, defaultBuf bytes.Buffer
+	keys := map[string]string{"a": "alpha"}
+
+	if _, err := WaitForInstancesTerminal(context.Background(), client, []string{"a"}, "proj", keys,
+		newProgressPrinter(&verboseBuf, false, true, false), time.Millisecond); err != nil {
+		t.Fatalf("WaitForInstancesTerminal: %v", err)
+	}
+
+	out := verboseBuf.String()
+	if !contains(out, "instance proj/alpha frame 1 (frame-one)") {
+		t.Errorf("the first observed frame produced no tick naming its id; output = %q", out)
+	}
+	if !contains(out, "instance proj/alpha frame 2 (frame-two)") {
+		t.Errorf("the second observed frame produced no tick naming its id; output = %q", out)
+	}
+	if got := strings.Count(out, "instance proj/alpha frame "); got != 2 {
+		t.Errorf("two frames were observed but the loop emitted %d ticks; output = %q", got, out)
+	}
+
+	client2 := newFakeClient()
+	client2.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: running, frameID: "frame-one"})
+	client2.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: running, frameID: "frame-two"})
+	client2.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: settled})
+	if _, err := WaitForInstancesTerminal(context.Background(), client2, []string{"a"}, "proj", keys,
+		newProgressPrinter(&defaultBuf, false, false, false), time.Millisecond); err != nil {
+		t.Fatalf("WaitForInstancesTerminal: %v", err)
+	}
+	if contains(defaultBuf.String(), "frame ") {
+		t.Errorf("the default volume reported a frame tick; output = %q", defaultBuf.String())
+	}
 }

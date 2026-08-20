@@ -24,6 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -66,23 +67,23 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	templateHash := h.DeployTemplate(spec)
 	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
 
-	fake.waitFor("OnTemplateRegistered", templateHash, "")
-	fake.waitFor("OnTemplateDeployed", templateHash, "")
+	fake.waitFor(t, "OnTemplateRegistered", templateHash, "")
+	fake.waitFor(t, "OnTemplateDeployed", templateHash, "")
 
 	instanceID := h.CreateInstance(templateHash, "canary-lifecycle-ck", nil)
-	fake.waitFor("OnInstanceCreated", templateHash, instanceID.String())
+	fake.waitFor(t, "OnInstanceCreated", templateHash, instanceID.String())
 
 	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
 	}))
 	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
-	fake.waitFor("OnInstanceTerminated", templateHash, instanceID.String())
+	fake.waitFor(t, "OnInstanceTerminated", templateHash, instanceID.String())
 
 	postAndExpectOK(t, h, "/v1/templates/"+templateHash+"/undeploy")
-	fake.waitFor("OnTemplateUndeployed", templateHash, "")
+	fake.waitFor(t, "OnTemplateUndeployed", templateHash, "")
 
 	deleteAndExpectOK(t, h, "/v1/templates/"+templateHash)
-	fake.waitFor("OnTemplateDeregistered", templateHash, "")
+	fake.waitFor(t, "OnTemplateDeregistered", templateHash, "")
 
 	for _, verb := range []string{
 		"OnTemplateRegistered", "OnTemplateDeployed", "OnTemplateUndeployed",
@@ -132,10 +133,10 @@ func TestCanary_NeverRanInstanceTerminationDoesNotFireOnRunScopeTerminal(t *test
 
 	templateHash := h.DeployTemplate(spec)
 	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
-	fake.waitFor("OnTemplateDeployed", templateHash, "")
+	fake.waitFor(t, "OnTemplateDeployed", templateHash, "")
 
 	instanceID := postInstanceRawExpectCreated(t, h, templateHash, "canary-never-ran-ck")
-	fake.waitFor("OnInstanceCreated", templateHash, instanceID)
+	fake.waitFor(t, "OnInstanceCreated", templateHash, instanceID)
 
 	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		instUUID, err := parseInstanceID(instanceID)
@@ -145,7 +146,7 @@ func TestCanary_NeverRanInstanceTerminationDoesNotFireOnRunScopeTerminal(t *test
 		return h.Persist.Instances().MarkTerminated(ctx, instUUID, tx)
 	}))
 	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID)
-	fake.waitFor("OnInstanceTerminated", templateHash, instanceID)
+	fake.waitFor(t, "OnInstanceTerminated", templateHash, instanceID)
 
 	require.Equalf(t, 0, fake.countFor("OnRunScopeTerminal"),
 		"instance %s was created but never posted a triggering message (instance-create-is-idle: no frame ever "+
@@ -192,7 +193,7 @@ func TestCanary_RanInstanceTerminationFiresOnRunScopeTerminal(t *testing.T) {
 
 	templateHash := h.DeployTemplate(spec)
 	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
-	fake.waitFor("OnTemplateDeployed", templateHash, "")
+	fake.waitFor(t, "OnTemplateDeployed", templateHash, "")
 
 	instanceID := h.CreateInstance(templateHash, "canary-run-scope-terminal-ck", nil)
 	worker := h.FindNode(instanceID, "worker")
@@ -204,7 +205,7 @@ func TestCanary_RanInstanceTerminationFiresOnRunScopeTerminal(t *testing.T) {
 	}))
 	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
 
-	fake.waitFor("OnRunScopeTerminal", "", instanceID.String())
+	fake.waitFor(t, "OnRunScopeTerminal", "", instanceID.String())
 
 	require.GreaterOrEqualf(t, fake.countFor("OnRunScopeTerminal"), 1,
 		"terminating an instance that genuinely ran a dispatch (and so owns a real frame-root run scope) "+
@@ -237,14 +238,14 @@ func newFakeLifecycleServer(t *testing.T) *fakeLifecycleServer {
 	genv1.RegisterLifecycleSubscriberServer(f.grpcSrv, f)
 	genv1.RegisterClaimProducerServer(f.grpcSrv, f)
 	go func() { _ = f.grpcSrv.Serve(lis) }()
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the fake lifecycle-subscriber server to accept connections on "+f.addr, func() bool {
 		conn, dErr := net.DialTimeout("tcp", f.addr, 200*time.Millisecond)
 		if dErr != nil {
 			return false
 		}
 		_ = conn.Close()
 		return true
-	}, 2*time.Second, 25*time.Millisecond)
+	})
 	return f
 }
 
@@ -260,18 +261,18 @@ func (f *fakeLifecycleServer) record(ev lifecycleEvent) {
 	f.events = append(f.events, ev)
 }
 
-func (f *fakeLifecycleServer) waitFor(verb, templateHash, instanceID string) {
-	for {
+func (f *fakeLifecycleServer) waitFor(t *testing.T, verb, templateHash, instanceID string) {
+	t.Helper()
+	awaited.Until(t, "a "+verb+" lifecycle callback for template "+templateHash+" instance "+instanceID, func() bool {
 		f.mu.Lock()
+		defer f.mu.Unlock()
 		for _, ev := range f.events {
 			if ev.verb == verb && ev.templateHash == templateHash && (instanceID == "" || ev.instanceID == instanceID) {
-				f.mu.Unlock()
-				return
+				return true
 			}
 		}
-		f.mu.Unlock()
-		time.Sleep(25 * time.Millisecond)
-	}
+		return false
+	})
 }
 
 func (f *fakeLifecycleServer) countFor(verb string) int {

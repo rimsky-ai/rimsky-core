@@ -26,6 +26,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -86,16 +87,12 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 	require.Equal(t, false, detail["paused"], "fresh instance must report paused=false")
 	require.Nil(t, detail["terminated_at"], "fresh instance must carry no terminated_at")
 
-	idleDeadline := time.Now().Add(1500 * time.Millisecond)
-	var frames, messages []any
-	for time.Now().Before(idleDeadline) {
-		frames = getInstanceFrames(t, h, instanceID)
-		require.Empty(t, frames, "STORY-instance-create-is-idle falsifier (1): frames collection MUST be empty until an operator posts a message; got %d frame(s)", len(frames))
+	h.WaitForSchedulerQuiescence()
+	frames := getInstanceFrames(t, h, instanceID)
+	require.Empty(t, frames, "STORY-instance-create-is-idle falsifier (1): frames collection MUST be empty until an operator posts a message; got %d frame(s)", len(frames))
 
-		messages = getInstanceMessages(t, h, instanceID)
-		require.Empty(t, messages, "STORY-instance-create-is-idle falsifier (2): message ledger MUST be empty until an operator posts a message; got %d message(s)", len(messages))
-		time.Sleep(50 * time.Millisecond)
-	}
+	messages := getInstanceMessages(t, h, instanceID)
+	require.Empty(t, messages, "STORY-instance-create-is-idle falsifier (2): message ledger MUST be empty until an operator posts a message; got %d message(s)", len(messages))
 
 	nodes := getInstanceNodes(t, h, instanceID)
 	require.NotEmpty(t, nodes, "node row materialization is a create-time side effect; node list must NOT be empty")
@@ -121,10 +118,9 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 			nodeType, active, pending, fresh, failed)
 	}
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "lifecycle-subscriber peer must observe OnInstanceCreated for the freshly created instance", func() bool {
 		return fake.countFor("OnInstanceCreated") >= 1
-	}, 5*time.Second, 50*time.Millisecond,
-		"lifecycle-subscriber peer must observe OnInstanceCreated for the freshly created instance")
+	})
 	require.Equal(t, 1, fake.countFor("OnInstanceCreated"),
 		"OnInstanceCreated must fire EXACTLY once for one create; got %d", fake.countFor("OnInstanceCreated"))
 
@@ -244,14 +240,14 @@ func newFakeLifecycleServer(t *testing.T) *fakeLifecycleServer {
 	genv1.RegisterLifecycleSubscriberServer(f.grpcSrv, f)
 	genv1.RegisterClaimProducerServer(f.grpcSrv, f)
 	go func() { _ = f.grpcSrv.Serve(lis) }()
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the fake lifecycle-subscriber server to accept connections on "+f.addr, func() bool {
 		conn, dErr := net.DialTimeout("tcp", f.addr, 200*time.Millisecond)
 		if dErr != nil {
 			return false
 		}
 		_ = conn.Close()
 		return true
-	}, 2*time.Second, 25*time.Millisecond)
+	})
 	return f
 }
 

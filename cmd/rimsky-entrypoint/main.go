@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
 	"syscall"
 	"time"
@@ -17,10 +16,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/internal/bundledwire"
 	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
-
-const shutdownDeadline = 30 * time.Second
 
 type Role string
 
@@ -92,16 +89,11 @@ func shouldMigrate(selected []string) (bool, error) {
 	return len(selected) == 1 && Role(selected[0]).OwnsMigration(), nil
 }
 
-func newLeveledHandler() slog.Handler {
-	level := shared.ParseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))
-	return slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
-}
-
 func main() {
-	slog.SetDefault(slog.New(newLeveledHandler()).With("binary", "entrypoint"))
+	slog.SetDefault(serverkit.NewJSONLogger().With("binary", "entrypoint"))
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	sigCh, stopNotify := serverkit.NotifyShutdownSignals()
+	defer stopNotify()
 
 	args := os.Args[1:]
 	plan, err := newLaunchPlan(args)
@@ -151,7 +143,7 @@ func runMigrateIfOwned(plan LaunchPlan, sigCh <-chan os.Signal) {
 }
 
 func runUnified(sigCh <-chan os.Signal) {
-	base := slog.New(newLeveledHandler())
+	base := serverkit.NewJSONLogger()
 
 	ctx := context.Background()
 
@@ -180,7 +172,7 @@ func runUnified(sigCh <-chan os.Signal) {
 		drained := make(chan struct{})
 		defer close(drained)
 		installHardExitOnSecondSignal(sigCh, drained, nil)
-		stack.Drain(context.Background(), shutdownDeadline)
+		stack.Drain(context.Background(), serverkit.DeployedCoreGrace)
 		closeDriver()
 		os.Exit(code)
 	}
@@ -253,18 +245,18 @@ func shutdownChild(cmd *exec.Cmd, exitCh chan childExit, sigCh <-chan os.Signal)
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-exitCh:
-	case <-time.After(shutdownDeadline):
+	case <-time.After(serverkit.DeployedCoreGrace):
 		_ = cmd.Process.Kill()
 	}
 }
 
 // @decision: graceful-shutdown
 func installHardExitOnSecondSignal(sigCh <-chan os.Signal, drained <-chan struct{}, child *os.Process) {
-	shared.InstallSecondSignalHardExit(sigCh, drained, shared.NewSlogLogger(slog.Default()), func() {
+	serverkit.InstallSecondSignalHardExit(sigCh, drained, slog.Default(), func() {
 		if child != nil {
 			_ = child.Kill()
 		}
-		os.Exit(shared.HardExitCode)
+		os.Exit(serverkit.HardExitCode)
 	})
 }
 

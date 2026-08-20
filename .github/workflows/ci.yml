@@ -29,9 +29,9 @@ jobs:
   # ubuntu-latest ships a running Docker daemon, so the testcontainers-backed
   # scenario/storage tests can spin up Postgres etc. The `services` shard is
   # the only one that additionally needs the locally-built rimsky images that
-  # the lib/services/test/... integration harness consumes via testcontainers
-  # (rimsky:latest, rimsky-all-in-one:latest, rimsky-claim-producer-filesystem:latest);
-  # the other shards skip that image build to keep their critical path short.
+  # the lib/services/test/... integration harness consumes via testcontainers;
+  # it builds them under this run's own tag (see the step below). The other
+  # shards skip that image build to keep their critical path short.
   go:
     runs-on: ubuntu-latest
     env:
@@ -52,24 +52,25 @@ jobs:
           # the module's declared toolchain.
           go-version-file: go.mod
           cache: false
-      - name: Build images the services integration harness consumes
+      - name: Build the images the services suites verify, under this run's tag
         if: matrix.module == 'services'
-        # The lib/services/test/... integration tests (harness, scenarios,
-        # smoke) run unconditionally under `go test ./...` and pull
-        # LOCALLY-BUILT image tags via testcontainers — nothing is fetched
-        # from a registry. `rimsky-all-in-one:latest` (the harness's rimsky
-        # stack, built FROM rimsky:latest so the rimsky image must build
-        # first) and `rimsky-claim-producer-filesystem:latest` (the filesystem-store
-        # peer) must exist locally or those tests fail at container start.
-        # See CLAUDE.md ("Services integration harness consumes locally-built
-        # images"). Build the minimal set the harness needs rather than the
-        # full 15-image `core-images`/`service-images` chain to keep CI lean.
+        # Per-run artifacts: this shard mints one tag, builds every image the
+        # lib/services/test/... suites consume under that tag, and exports it
+        # as RIMSKY_IMAGE_TAG for the test step. The harness resolves images
+        # by that variable alone — no :latest, no fallback — so a suite can
+        # only ever find an image this run built, and a missing one fails
+        # loudly naming the variable and the build command.
+        #
+        # The image set is the whole one, not a hand-picked subset: the
+        # scenarios boot sensors, executors, subscribers, claim producers and
+        # the test-only stubs, and the make targets are the single definition
+        # of how each is built. `core-images` passes the base-image argument
+        # (RIMSKY_BASE) at this run's tag, because `rimsky-all-in-one` builds
+        # FROM the rimsky image and must read the one this run just built.
         run: |
-          docker build -f dockerfiles/Dockerfile.rimsky -t rimsky:latest .
-          docker build -f dockerfiles/Dockerfile.all-in-one --build-arg RIMSKY_BASE=rimsky:latest \
-            -t rimsky-all-in-one:latest .
-          docker build -f lib/services/claim_producers/filesystem/Dockerfile.filesystem \
-            -t rimsky-claim-producer-filesystem:latest .
+          tag="$(.ok-workspaces/bin/run-tag)"
+          echo "RIMSKY_IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+          RIMSKY_IMAGE_TAG="$tag" make core-images service-images test-images
       - name: Test ${{ matrix.module }}
         run: make test-${{ matrix.module }}
 

@@ -8,25 +8,24 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func main() {
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: shared.ParseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))})
-	slogLogger := slog.New(handler)
+	slogLogger := serverkit.NewJSONLogger()
 	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
 		slogLogger = slogLogger.With("binary", name)
 	}
 	slog.SetDefault(slogLogger)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	// @decision: graceful-shutdown
+	ctx, stopSignals := serverkit.ShutdownContext(context.Background(), slogLogger)
+	defer stopSignals()
 
 	if err := run(ctx, slogLogger); err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-migrate: %v\n", err)

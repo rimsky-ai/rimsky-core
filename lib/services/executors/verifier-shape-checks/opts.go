@@ -9,6 +9,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
 )
 
+// @decision: default-port-allocation
+const defaultGRPCPort = 9095
+
 type Opts struct {
 	Host     string
 	Port     int
@@ -16,7 +19,7 @@ type Opts struct {
 }
 
 func LoadOptsFromEnv() (Opts, error) {
-	port, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", 9095)
+	port, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", defaultGRPCPort)
 	if err != nil {
 		return Opts{}, err
 	}

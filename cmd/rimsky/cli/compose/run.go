@@ -26,15 +26,14 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
@@ -61,15 +60,17 @@ func RunComposeRun(ctx context.Context, args []string) int {
 		return code
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := serverkit.NewJSONLogger()
 
 	return runComposeRunCore(ctx, flags, logger)
 }
 
 func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog.Logger) int {
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
+	spawned := &SpawnedRegistry{}
+	// @decision: graceful-shutdown
+	escalation, stopSignals := NewSignalEscalation(spawned, logger)
+	defer stopSignals()
+	sigCh := escalation.Signals()
 	bootCtx, cancelBoot := context.WithCancel(ctx)
 	defer cancelBoot()
 	bootSignalDone := make(chan struct{})
@@ -78,7 +79,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		releaseOnce.Do(func() { close(bootSignalDone) })
 	}
 	defer releaseBootSignalWatcher()
-	go watchBootSignal(sigCh, bootSignalDone, cancelBoot, logger)
+	go watchBootSignal(sigCh, bootSignalDone, cancelBoot, escalation, logger)
 
 	m, err := LoadManifest(flags.manifestPath)
 	if err != nil {
@@ -107,6 +108,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	logger.Info("run dir", "path", runDir)
 
 	services, spawnOverlay, err := spawnServices(bootCtx, flags.services, logger)
+	spawned.Set(services)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: spawn services:", err)
 		reapSpawnedFatal(services, logger)
@@ -176,7 +178,6 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	}
 
 	c := cli.NewClient(stack.Endpoint())
-	c.SetComposeOrigin(true)
 	c.SetTimeout(3 * time.Second)
 
 	state, err := QueryState(bootCtx, c, m.Project)
@@ -251,6 +252,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		stack:        stack,
 		services:     services,
 		sigCh:        sigCh,
+		escalation:   escalation,
 		printer:      printer,
 		instanceIDs:  instanceIDs,
 		keyByID:      keyByID,
@@ -272,6 +274,7 @@ type oneShotWait struct {
 	stack        *RoleStack
 	services     []*hostagent.SpawnedService
 	sigCh        chan os.Signal
+	escalation   *SignalEscalation
 	printer      ProgressPrinter
 	instanceIDs  []string
 	keyByID      map[string]string
@@ -296,12 +299,7 @@ func waitOneShotToTerminal(bootCtx context.Context, w oneShotWait) ShutdownReaso
 		close(waitDone)
 	}()
 
-	escalatorDone := make(chan struct{})
-	defer close(escalatorDone)
-
-	armEscalator := func() {
-		InstallSecondSignalEscalator(w.sigCh, escalatorDone, w.services, w.logger)
-	}
+	armEscalator := w.escalation.Arm
 
 	var timeoutCh <-chan time.Time
 	if w.timeout > 0 {
@@ -311,6 +309,7 @@ func waitOneShotToTerminal(bootCtx context.Context, w oneShotWait) ShutdownReaso
 	}
 	select {
 	case <-waitDone:
+		w.escalation.ArmOnFirstSignal(w.logger, w.verb)
 		terminateInstancesForOneShot(bootCtx, w.client, w.instanceIDs, w.verb, w.logger)
 		switch {
 		case waitErr != nil:
@@ -362,16 +361,11 @@ func extractInstanceIDs(created []CreatedInstance) ([]string, map[string]string)
 }
 
 func bareInstanceName(prefixedKey string) string {
-	const prefix = cli.ReservedTagPrefix
-	if !strings.HasPrefix(prefixedKey, prefix) {
+	idx := strings.IndexByte(prefixedKey, ':')
+	if idx < 0 {
 		return prefixedKey
 	}
-	rest := prefixedKey[len(prefix):]
-	idx := strings.IndexByte(rest, ':')
-	if idx < 0 {
-		return rest
-	}
-	return rest[idx+1:]
+	return prefixedKey[idx+1:]
 }
 
 func spawnServices(
@@ -475,7 +469,7 @@ func parseComposeRunFlags(args []string) (*composeRunFlags, int) {
 	fs.StringVar(&flags.workdir, "workdir", "", "override the artifact root; suppresses walk-up discovery")
 	fs.DurationVar(&flags.timeout, "timeout", 0, "max wall-clock duration; 0 = unbounded")
 	fs.BoolVar(&flags.quiet, "quiet", false, "suppress per-instance progress; emit only a final summary")
-	fs.BoolVar(&flags.verbose, "verbose", false, "include frame ticks and claim events in progress output")
+	fs.BoolVar(&flags.verbose, "verbose", false, "include frame ticks in progress output")
 	fs.BoolVar(&flags.json, "json", false, "emit progress as JSON Lines on stderr")
 	fs.Var(&flags.services, "service", "late-bound service binding: <name>=<path>. Repeatable.")
 
@@ -502,7 +496,8 @@ func parseComposeRunFlags(args []string) (*composeRunFlags, int) {
 
 var envMutex sync.Mutex
 
-const waitDrainTimeout = 5 * time.Second
+// @decision: graceful-shutdown
+const waitDrainTimeout = serverkit.CLIChildGrace
 
 func waitForOrTimeout(waitDone <-chan struct{}, d time.Duration, trigger string) {
 	select {
@@ -529,11 +524,13 @@ func terminateInstancesForOneShot(ctx context.Context, c instanceClient, instanc
 	}
 }
 
-func watchBootSignal(sigCh <-chan os.Signal, done <-chan struct{}, cancel context.CancelFunc, logger *slog.Logger) {
+// @decision: graceful-shutdown
+func watchBootSignal(sigCh <-chan os.Signal, done <-chan struct{}, cancel context.CancelFunc, escalation *SignalEscalation, logger *slog.Logger) {
 	select {
 	case <-done:
 		return
 	case sig := <-sigCh:
+		escalation.Arm()
 		if logger != nil {
 			logger.Info("compose run: signal during boot; cancelling", "signal", sig.String())
 		}

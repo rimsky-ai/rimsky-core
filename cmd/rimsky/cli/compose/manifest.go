@@ -10,9 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 
-	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
@@ -138,9 +136,6 @@ func (m *Manifest) Validate() error {
 		} else {
 			if !tagRe.MatchString(t.Tag) || hashRe.MatchString(t.Tag) {
 				errs = append(errs, fmt.Errorf("templates[%d].tag: %q is not a valid tag identifier", i, t.Tag))
-			}
-			if strings.HasPrefix(t.Tag, cli.ReservedTagPrefix) {
-				errs = append(errs, fmt.Errorf("templates[%d].tag: %q uses reserved prefix %q (added automatically)", i, t.Tag, cli.ReservedTagPrefix))
 			}
 			if prev, ok := tagSeen[t.Tag]; ok {
 				errs = append(errs, fmt.Errorf("templates[%d].tag: duplicate of templates[%d]", i, prev))
@@ -278,12 +273,14 @@ func (i InstanceRef) EffectiveRestart() string {
 	return i.Restart
 }
 
+// @concept: tag
 func (m *Manifest) PrefixedTag(tag string) string {
-	return cli.ReservedTagPrefix + m.Project + ":" + tag
+	return m.Project + ":" + tag
 }
 
+// @concept: rimsky
 func (m *Manifest) PrefixedInstanceKey(name string) string {
-	return cli.ReservedTagPrefix + m.Project + ":" + name
+	return m.Project + ":" + name
 }
 
 func SiblingRimskyYMLPath(manifestPath string) (string, error) {

@@ -115,8 +115,6 @@ type Queue interface {
 	// @concept: node-run
 	StampPriorDispatch(ctx context.Context, nodeRunID shared.UUID, priorNodeRunID shared.UUID, disposition string, tx Tx) error
 
-	ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID) error
-
 	GetClaimedBy(ctx context.Context, nodeRunID shared.UUID) (ClaimOwnership, error)
 
 	GetDispatchNode(ctx context.Context, nodeRunID shared.UUID, tx Tx) (shared.UUID, ClaimOwnership, error)

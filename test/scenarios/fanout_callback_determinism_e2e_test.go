@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -74,15 +74,14 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "single partition RunScope should be created by AcquireSubClaims", func() bool {
 		var n int
 		h.QueryRowSQL(`
 			SELECT COUNT(*) FROM rimsky_run_scopes
 			 WHERE instance_id = $1 AND partition_key <> ''
 		`, []any{iid}, &n)
 		return n == 1
-	}, 30*time.Second, 100*time.Millisecond,
-		"single partition RunScope should be created by AcquireSubClaims")
+	})
 
 	var partitionScopeID shared.UUID
 	h.QueryRowSQL(`
@@ -92,15 +91,14 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	`, []any{iid}, &partitionScopeID)
 
 	var nodeRunID shared.UUID
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "partition-child dispatch row should reach state ∈ {running, held}", func() bool {
 		err := h.Pool.QueryRow(h.Ctx, `
 			SELECT id FROM rimsky_node_runs
 			 WHERE node_id = $1 AND run_scope_id = $2
 			   AND state IN ('running', 'held')
 		`, parentNode.ID, partitionScopeID).Scan(&nodeRunID)
 		return err == nil
-	}, 30*time.Second, 100*time.Millisecond,
-		"partition-child dispatch row should reach state ∈ {running, held}")
+	})
 
 	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 	require.NotEqual(t, mainScopeID, partitionScopeID,
@@ -122,7 +120,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	require.Equal(t, "accepted", firstAck.AckStatus,
 		"first callback should be accepted; got %q", firstAck.AckStatus)
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "partition-child dispatch row should leave {active, held} after first callback", func() bool {
 		var phase string
 		err := h.Pool.QueryRow(h.Ctx, `
 			SELECT state FROM rimsky_node_runs WHERE id = $1
@@ -131,8 +129,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 			return false
 		}
 		return phase != "running" && phase != "held"
-	}, 30*time.Second, 100*time.Millisecond,
-		"partition-child dispatch row should leave {active, held} after first callback")
+	})
 
 	reg := h.Supervisor.CallbackRegistry()
 	require.NotNil(t, reg, "supervisor.CallbackRegistry() must not be nil")
@@ -171,17 +168,19 @@ type callbackAckBody struct {
 
 func postCallbackBody(t *testing.T, url string, body []byte) []byte {
 	t.Helper()
-	for {
+	var out []byte
+	awaited.Until(t, "POST "+url+" to answer 200", func() bool {
 		resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 		if err != nil {
-			time.Sleep(100 * time.Millisecond)
-			continue
+			return false
 		}
 		b, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			return b
+		if resp.StatusCode != http.StatusOK {
+			return false
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		out = b
+		return true
+	})
+	return out
 }

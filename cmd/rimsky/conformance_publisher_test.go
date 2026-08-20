@@ -45,7 +45,6 @@ func TestPublisherConformance_FixtureCron(t *testing.T) {
 		Kind:            "cron",
 		ResolvedConfig:  []byte(`{"cron":"* * * * *"}`),
 		MessageReceiver: receiver,
-		MessageTimeout:  3 * time.Second,
 		SubscriptionID:  "self-test-subscription",
 		InstanceID:      "self-test-instance",
 		MessageType:     "system/conformance",
@@ -132,14 +131,13 @@ type fixtureSub struct {
 	messageType    string
 	resolvedConfig []byte
 	startedAt      time.Time
-	cancel         context.CancelFunc
 }
 
 func newFixturePublisher(rimskyEndpoint string) *fixturePublisher {
 	return &fixturePublisher{
 		rimskyEndpoint: rimskyEndpoint,
 		subs:           map[string]*fixtureSub{},
-		httpClient:     &http.Client{Timeout: 2 * time.Second},
+		httpClient:     &http.Client{},
 	}
 }
 
@@ -154,12 +152,22 @@ func (s *fixturePublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequ
 	if req.GetKind() != "cron" {
 		return nil, fmt.Errorf("fixture publisher: unsupported kind %q", req.GetKind())
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.subs[req.GetPublisherSubscriptionId()]; ok {
+	sub, fresh := s.recordSubscription(req)
+	if !fresh {
 		return &genv1.SubscribeResponse{}, nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	if err := s.push(sub); err != nil {
+		return nil, fmt.Errorf("fixture publisher: push for subscription %q: %w", sub.subscriptionID, err)
+	}
+	return &genv1.SubscribeResponse{}, nil
+}
+
+func (s *fixturePublisher) recordSubscription(req *genv1.SubscribeRequest) (*fixtureSub, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.subs[req.GetPublisherSubscriptionId()]; ok {
+		return existing, false
+	}
 	sub := &fixtureSub{
 		subscriptionID: req.GetPublisherSubscriptionId(),
 		instanceID:     req.GetInstanceId(),
@@ -167,20 +175,15 @@ func (s *fixturePublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequ
 		messageType:    req.GetMessageType(),
 		resolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
 		startedAt:      time.Now(),
-		cancel:         cancel,
 	}
 	s.subs[sub.subscriptionID] = sub
-	go s.tick(ctx, sub)
-	return &genv1.SubscribeResponse{}, nil
+	return sub, true
 }
 
 func (s *fixturePublisher) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sub, ok := s.subs[req.GetPublisherSubscriptionId()]; ok {
-		sub.cancel()
-		delete(s.subs, req.GetPublisherSubscriptionId())
-	}
+	delete(s.subs, req.GetPublisherSubscriptionId())
 	return &genv1.UnsubscribeResponse{}, nil
 }
 
@@ -201,37 +204,37 @@ func (s *fixturePublisher) ListSubscriptions(_ context.Context, _ *emptypb.Empty
 	return &genv1.ListSubscriptionsResponse{Subscriptions: out}, nil
 }
 
-func (s *fixturePublisher) tick(ctx context.Context, sub *fixtureSub) {
-	t := time.NewTicker(200 * time.Millisecond)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			payload, _ := json.Marshal(map[string]any{"observed_at": time.Now().UTC().Format(time.RFC3339)})
-			envelope := map[string]any{
-				"type":                      sub.messageType,
-				"payload":                   json.RawMessage(payload),
-				"sender":                    "fixture-publisher",
-				"publisher_subscription_id": sub.subscriptionID,
-			}
-			raw, _ := json.Marshal(envelope)
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-				s.rimskyEndpoint+"/v1/instances/"+sub.instanceID+"/messages", bytes.NewReader(raw))
-			if err != nil {
-				continue
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Idempotency-Key", fmt.Sprintf("%s+%d", sub.subscriptionID, time.Now().UnixNano()))
-			resp, err := s.httpClient.Do(req)
-			if err != nil {
-				continue
-			}
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-		}
+func (s *fixturePublisher) push(sub *fixtureSub) error {
+	payload, err := json.Marshal(map[string]any{"observed_at": time.Now().UTC().Format(time.RFC3339)})
+	if err != nil {
+		return err
 	}
+	raw, err := json.Marshal(map[string]any{
+		"type":                      sub.messageType,
+		"payload":                   json.RawMessage(payload),
+		"sender":                    "fixture-publisher",
+		"publisher_subscription_id": sub.subscriptionID,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		s.rimskyEndpoint+"/v1/instances/"+sub.instanceID+"/messages", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", sub.subscriptionID+"+1")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("message push returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func startPublisherServer(t *testing.T, srv *fixturePublisher) (endpoint string, teardown func()) {

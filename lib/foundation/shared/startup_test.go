@@ -5,26 +5,11 @@ package shared
 
 import (
 	"errors"
-	"log/slog"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestParseLogLevel(t *testing.T) {
-	cases := map[string]slog.Level{
-		"debug": slog.LevelDebug,
-		"warn":  slog.LevelWarn,
-		"error": slog.LevelError,
-		"info":  slog.LevelInfo,
-		"":      slog.LevelInfo,
-		"bogus": slog.LevelInfo,
-	}
-	for input, want := range cases {
-		require.Equalf(t, want, ParseLogLevel(input), "input %q", input)
-	}
-}
 
 func TestWaitForSignalOrFailureReturnsOnSignal(t *testing.T) {
 	log := NewCapturingLogger()
@@ -38,24 +23,6 @@ func TestWaitForSignalOrFailureReturnsOnSignal(t *testing.T) {
 	records := log.Records()
 	require.Len(t, records, 1)
 	require.Equal(t, "info", records[0].Level)
-}
-
-// @decision: graceful-shutdown
-func TestInstallSecondSignalHardExitFiresOnTheNextSignal(t *testing.T) {
-	log := NewCapturingLogger()
-	sigCh := make(chan os.Signal, 1)
-	drained := make(chan struct{})
-	defer close(drained)
-
-	fired := make(chan struct{})
-	InstallSecondSignalHardExit(sigCh, drained, log, func() { close(fired) })
-
-	sigCh <- os.Interrupt
-	<-fired
-
-	records := log.Records()
-	require.Len(t, records, 1)
-	require.Equal(t, "warn", records[0].Level)
 }
 
 func TestWaitForSignalOrFailureReturnsOnFailure(t *testing.T) {

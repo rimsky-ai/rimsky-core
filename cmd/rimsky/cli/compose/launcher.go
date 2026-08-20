@@ -91,7 +91,11 @@ func (s *RoleStack) Endpoint() string { return s.endpoint }
 func WaitForControlAPIReady(ctx context.Context, endpoint string, deadline time.Duration) error {
 	healthURL := endpoint + "/v1/health"
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	pollCtx, cancel := context.WithTimeout(ctx, deadline)
+	pollCtx := ctx
+	cancel := func() {}
+	if deadline > 0 {
+		pollCtx, cancel = context.WithTimeout(ctx, deadline)
+	}
 	defer cancel()
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()

@@ -147,9 +147,8 @@ func TestExecute_NetworkError_ReturnsTransportErr(t *testing.T) {
 }
 
 func TestExecute_Timeout_ReturnsTimeout(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(500 * time.Millisecond)
-		_, _ = w.Write([]byte(`{"ok":true}`))
+	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
 	}))
 	defer ts.Close()
 
@@ -359,9 +358,7 @@ func TestExecute_HTTPBridge_PostExecuteRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", bridge.URL+"/v1/Execute", bytes.NewReader(body))
+	httpReq, _ := http.NewRequestWithContext(context.Background(), "POST", bridge.URL+"/v1/Execute", bytes.NewReader(body))
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		t.Fatal(err)

@@ -5,12 +5,12 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -96,13 +96,8 @@ func TestSequencedPreservesCascadeRounds(t *testing.T) {
 		return out
 	}
 
-	deadline := time.Now().Add(45 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(bObs()) >= 3 {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
+	awaited.Until(t, "all three sequenced b dispatches to reach the stub", func() bool { return len(bObs()) >= 3 })
+	h.WaitForSchedulerQuiescence()
 	require.Equal(t, 3, len(bObs()),
 		"b must be invoked exactly three times — one per a self-cascade round in which "+
 			"attribute/x/changed fired (a1: default→r1, a2: r1→r2, a3: r2→r3). Sequenced mode "+

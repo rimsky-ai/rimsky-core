@@ -68,11 +68,13 @@ func (e RimskyEndpoint) PollNodeObservability(
 				return obs
 			}
 		}
-		if poll%40 == 0 {
-			t.Logf("harness: still polling node %s/%s for the awaited state (last status=%d, err=%v, run_summary=%+v) — "+
-				"the helper blocks until the state appears; the test guard's no-progress watchdog is the only backstop",
+		if poll == 1 {
+			t.Logf("harness: polling node %s/%s for the awaited state (first observation: status=%d, err=%v, run_summary=%+v) — "+
+				"the helper blocks until the state appears and says so once, so a wait that never ends leaves the test "+
+				"guard's no-progress watchdog free to trip",
 				instanceID, nodeType, status, err, obs.RunSummary)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the awaited state appears
 		time.Sleep(250 * time.Millisecond)
 	}
 }

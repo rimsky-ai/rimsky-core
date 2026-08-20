@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -55,24 +55,17 @@ func TestAcceptance_ClaimScopeEndToEnd(t *testing.T) {
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
 	var region any
-	var sawWorkerDispatch bool
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the worker to be dispatched to the real executor carrying a region attribute", func() bool {
 		for _, obs := range h.Stub.Observed() {
 			if obs.NodeType != "worker" {
 				continue
 			}
-			sawWorkerDispatch = true
 			if v, ok := obs.Attributes["region"]; ok {
 				region = v
 			}
 		}
-		if sawWorkerDispatch && region != nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.True(t, sawWorkerDispatch, "expected the worker to be dispatched to the real executor")
+		return region != nil
+	})
 	require.Equal(t, selectorScopeA, region,
 		"executor must receive region resolved to the live claim's claim_scope (the producer's returned ClaimScope, stringified)")
 

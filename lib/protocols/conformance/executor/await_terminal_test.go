@@ -43,6 +43,16 @@ func parkOutcome(resumeAt time.Time) *genv1.Outcome {
 	}}}
 }
 
+func waitForAckRegistration(t *testing.T, r *CallbackReceiver, ackID string) {
+	t.Helper()
+	pollUntil(t, "AwaitTerminal to register a waiter for ack id "+ackID, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		_, registered := r.wait[ackID]
+		return registered
+	})
+}
+
 func TestAwaitTerminal_SyncSuccessReturnedDirectly(t *testing.T) {
 	out := successOutcome(true, "applied")
 	got, err := AwaitTerminal(context.Background(), out, Env{})
@@ -114,7 +124,7 @@ func TestAwaitTerminal_AsyncFollowsCallbackToSuccess(t *testing.T) {
 	env := Env{Callbacks: r}
 
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		waitForAckRegistration(t, r, ackID)
 		body, _ := json.Marshal(map[string]any{
 			"success": map[string]any{
 				"changed":          true,
@@ -131,8 +141,7 @@ func TestAwaitTerminal_AsyncFollowsCallbackToSuccess(t *testing.T) {
 		_ = resp.Body.Close()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	got, err := AwaitTerminal(ctx, out, env)
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
@@ -165,7 +174,7 @@ func TestAwaitTerminal_UnregistersAckIDAfterDelivery(t *testing.T) {
 	env := Env{Callbacks: r}
 
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		waitForAckRegistration(t, r, ackID)
 		body, _ := json.Marshal(map[string]any{
 			"success": map[string]any{"changed": true},
 		})
@@ -177,8 +186,7 @@ func TestAwaitTerminal_UnregistersAckIDAfterDelivery(t *testing.T) {
 		_ = resp.Body.Close()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	if _, err := AwaitTerminal(ctx, out, env); err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
 	}
@@ -204,7 +212,7 @@ func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 
 	resumeAt := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		waitForAckRegistration(t, r, ackID)
 		body, _ := json.Marshal(map[string]any{
 			"park": map[string]any{
 				"resume_at": resumeAt,
@@ -218,8 +226,7 @@ func TestAwaitTerminal_AsyncFollowsCallbackToPark(t *testing.T) {
 		_ = resp.Body.Close()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	got, err := AwaitTerminal(ctx, out, env)
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
@@ -245,7 +252,7 @@ func TestAwaitTerminal_AsyncFollowsCallbackToError(t *testing.T) {
 	env := Env{Callbacks: r}
 
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		waitForAckRegistration(t, r, ackID)
 		body, _ := json.Marshal(map[string]any{
 			"error": map[string]any{
 				"error_class": "rate_limited",
@@ -260,8 +267,7 @@ func TestAwaitTerminal_AsyncFollowsCallbackToError(t *testing.T) {
 		_ = resp.Body.Close()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	got, err := AwaitTerminal(ctx, out, env)
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
@@ -295,9 +301,7 @@ func TestAwaitTerminal_AsyncPreRegisteredCallbackArrivesEarly(t *testing.T) {
 	out := awaitAsyncOutcome(ackID)
 	env := Env{Callbacks: r}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	got, err := AwaitTerminal(ctx, out, env)
+	got, err := AwaitTerminal(context.Background(), out, env)
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
 	}

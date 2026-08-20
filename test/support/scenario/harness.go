@@ -30,6 +30,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/scheduler"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubexec "github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	stubtest "github.com/rimsky-ai/rimsky-core/test/support/executors/stub/stubtest"
 	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
@@ -78,25 +79,17 @@ type HarnessOpts struct {
 	// @concept: executor
 	ExtraInprocHandlers map[string]executor.InProcessHandler
 
-	Deadline time.Duration
-
 	// @concept: peer-auth
 	PeerAuth string
 }
-
-const defaultHarnessDeadline = 90 * time.Second
 
 // @concept: anonymous-mode
 const defaultHarnessTargetAgent = "scenario-default-agent"
 
 func Start(t testing.TB, opts HarnessOpts) *Harness {
 	t.Helper()
-	deadline := opts.Deadline
-	if deadline <= 0 {
-		deadline = defaultHarnessDeadline
-	}
-	ctx, cancelDeadline := context.WithTimeout(context.Background(), deadline)
-	t.Cleanup(cancelDeadline)
+	ctx, cancelHarness := context.WithCancel(context.Background())
+	t.Cleanup(cancelHarness)
 
 	tT, ok := t.(*testing.T)
 	if !ok {
@@ -597,7 +590,7 @@ func (h *Harness) MintAdminKey(name string) (plaintext, keyID string) {
 	return out.Plaintext, out.ID
 }
 
-// @decision: structural-root-edge-injection-at-registration
+// @decision: structural-root-edges-derived-on-demand
 // @decision: test-harness-create-instance-wakes-roots-after-create
 func (h *Harness) templateHasStructuralRoot(templateHash string) bool {
 	h.T.Helper()
@@ -640,13 +633,15 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 		} else if count > 0 {
 			return
 		}
-		if poll%100 == 0 {
-			h.T.Logf("waitForRootDispatch: still polling instance %s for a root dispatch row (want >0, last count=%d, last err=%v) — "+
-				"blocks until the state appears; the test guard's no-progress watchdog is the only backstop", instanceID, count, err)
+		if poll == 1 {
+			h.T.Logf("waitForRootDispatch: polling instance %s for a root dispatch row (want >0, first observation: count=%d, err=%v) — "+
+				"blocks until the row appears and says so once, so a wait that never ends leaves the test guard's "+
+				"no-progress watchdog free to trip", instanceID, count, err)
 		}
 		if h.Scheduler == nil {
 			h.driveFrameAndEnqueue(instanceID)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when a root dispatch row appears
 		time.Sleep(20 * time.Millisecond)
 	}
 }
@@ -773,6 +768,44 @@ func (h *Harness) nodeReachedState(nodeID shared.UUID, state cascade.NodeState) 
 	return reached, fmt.Sprintf("state=%s settling_signal=%s", latest.State, signal)
 }
 
+const quiescenceTicks = 3
+
+// @decision: polling-audit
+func (h *Harness) WaitForSchedulerQuiescence() {
+	h.T.Helper()
+	if h.Scheduler == nil {
+		h.T.Fatalf("WaitForSchedulerQuiescence: this harness runs no scheduler, so no tick will ever complete")
+	}
+	for {
+		before := h.progressFingerprint()
+		start := h.Scheduler.TicksCompleted()
+		target := start + quiescenceTicks
+		awaited.Until(h.T, fmt.Sprintf("the scheduler to complete %d tick(s) past tick %d", quiescenceTicks, start),
+			func() bool { return h.Scheduler.TicksCompleted() >= target })
+		if h.progressFingerprint() == before {
+			return
+		}
+	}
+}
+
+func (h *Harness) progressFingerprint() string {
+	h.T.Helper()
+	var runs, inFlightRuns, frames, openFrames, undeliveredMessages, events int
+	if err := h.Pool.QueryRow(h.Ctx, `
+		SELECT (SELECT count(*) FROM rimsky_node_runs),
+		       (SELECT count(*) FROM rimsky_node_runs WHERE state IN ('pending','stale','running','held','parked')),
+		       (SELECT count(*) FROM rimsky_frames),
+		       (SELECT count(*) FROM rimsky_frames WHERE ended_at IS NULL),
+		       (SELECT count(*) FROM rimsky_messages WHERE delivered_at IS NULL AND cancelled = FALSE),
+		       (SELECT count(*) FROM rimsky_events)
+	`).Scan(&runs, &inFlightRuns, &frames, &openFrames, &undeliveredMessages, &events); err != nil {
+		h.T.Fatalf("progressFingerprint: read the world's progress counters: %v — two equal read failures would "+
+			"compare equal and read as quiescence", err)
+	}
+	return fmt.Sprintf("runs=%d in_flight=%d frames=%d open_frames=%d undelivered=%d events=%d",
+		runs, inFlightRuns, frames, openFrames, undeliveredMessages, events)
+}
+
 // @decision: testing-scenario-based-e2e
 func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState) {
 	h.T.Helper()
@@ -781,11 +814,12 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState) 
 		if reached {
 			return
 		}
-		if poll%40 == 0 {
-			h.T.Logf("WaitForNodeState: still polling node %s for state=%s (observed: %s) — "+
-				"blocks until the state appears; the test guard's no-progress watchdog is the only backstop",
-				nodeID.String(), state, observed)
+		if poll == 1 {
+			h.T.Logf("WaitForNodeState: polling node %s for state=%s (first observation: %s) — blocks until the "+
+				"state appears and says so once, so a wait that never ends leaves the test guard's no-progress "+
+				"watchdog free to trip", nodeID.String(), state, observed)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the node reaches the awaited state
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -808,11 +842,12 @@ func (h *Harness) WaitForEventCount(nodeID shared.UUID, kind string, want int) {
 		if got >= want {
 			return
 		}
-		if poll%40 == 0 {
-			h.T.Logf("WaitForEventCount: still polling node %s for %d events of kind %q (observed: %d) — "+
-				"blocks until the count appears; the test guard's no-progress watchdog is the only backstop",
-				nodeID.String(), want, kind, got)
+		if poll == 1 {
+			h.T.Logf("WaitForEventCount: polling node %s for %d events of kind %q (first observation: %d) — blocks "+
+				"until the count appears and says so once, so a wait that never ends leaves the test guard's "+
+				"no-progress watchdog free to trip", nodeID.String(), want, kind, got)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the event count is reached
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -839,11 +874,12 @@ func (h *Harness) WaitForDispatchCount(nodeID shared.UUID, want int) {
 		if got >= want {
 			return
 		}
-		if poll%40 == 0 {
-			h.T.Logf("WaitForDispatchCount: still polling node %s for %d dispatches (observed: %d) — "+
-				"blocks until the count appears; the test guard's no-progress watchdog is the only backstop",
-				nodeID.String(), want, got)
+		if poll == 1 {
+			h.T.Logf("WaitForDispatchCount: polling node %s for %d dispatches (first observation: %d) — blocks "+
+				"until the count appears and says so once, so a wait that never ends leaves the test guard's "+
+				"no-progress watchdog free to trip", nodeID.String(), want, got)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the dispatch count is reached
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -860,11 +896,12 @@ func (h *Harness) WaitForLeafRunLineageCount(nodeID shared.UUID, want int) {
 		if count >= want {
 			return
 		}
-		if poll%40 == 0 {
-			h.T.Logf("WaitForLeafRunLineageCount: still polling node %s for %d leaf_run lineage records (observed: %d) — "+
-				"blocks until the count appears; the test guard's no-progress watchdog is the only backstop",
-				nodeID.String(), want, count)
+		if poll == 1 {
+			h.T.Logf("WaitForLeafRunLineageCount: polling node %s for %d leaf_run lineage records (first "+
+				"observation: %d) — blocks until the count appears and says so once, so a wait that never ends "+
+				"leaves the test guard's no-progress watchdog free to trip", nodeID.String(), want, count)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the lineage-record count is reached
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -882,11 +919,12 @@ func (h *Harness) WaitForSettledFrameCount(instanceID shared.UUID, want int) {
 		if err == nil && count >= want {
 			return
 		}
-		if poll%40 == 0 {
-			h.T.Logf("WaitForSettledFrameCount: still polling instance %s for %d settled frames (observed: %d, last err=%v) — "+
-				"blocks until the count appears; the test guard's no-progress watchdog is the only backstop",
-				instanceID.String(), want, count, err)
+		if poll == 1 {
+			h.T.Logf("WaitForSettledFrameCount: polling instance %s for %d settled frames (first observation: "+
+				"%d, err=%v) — blocks until the count appears and says so once, so a wait that never ends leaves "+
+				"the test guard's no-progress watchdog free to trip", instanceID.String(), want, count, err)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the settled-frame count is reached
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -911,11 +949,12 @@ func (h *Harness) WaitForAllRunsTerminal(nodeID shared.UUID) {
 		if err == nil && total > 0 && inFlight == 0 {
 			return
 		}
-		if poll%40 == 0 {
-			h.T.Logf("WaitForAllRunsTerminal: still polling node %s for all runs terminal (total=%d, in_flight=%d, last err=%v) — "+
-				"blocks until the state appears; the test guard's no-progress watchdog is the only backstop",
-				nodeID.String(), total, inFlight, err)
+		if poll == 1 {
+			h.T.Logf("WaitForAllRunsTerminal: polling node %s for all runs terminal (first observation: total=%d, "+
+				"in_flight=%d, err=%v) — blocks until they are and says so once, so a wait that never ends leaves "+
+				"the test guard's no-progress watchdog free to trip", nodeID.String(), total, inFlight, err)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when every run of the node is terminal
 		time.Sleep(50 * time.Millisecond)
 	}
 }

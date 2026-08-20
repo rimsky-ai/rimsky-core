@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -56,9 +55,9 @@ func TestClaudeAgentPerNodeDivergence(t *testing.T) {
 	betaID := resolveWorkerNodeID(t, ep, iid, "worker-beta")
 	gammaID := resolveWorkerNodeID(t, ep, iid, "worker-gamma")
 
-	waitNodeSettledClaudeAgent(t, ep, alphaID, "fresh", 120*time.Second)
-	waitNodeSettledClaudeAgent(t, ep, betaID, "fresh", 120*time.Second)
-	waitNodeSettledClaudeAgent(t, ep, gammaID, "fresh", 120*time.Second)
+	waitNodeSettledClaudeAgent(t, ep, alphaID, "fresh")
+	waitNodeSettledClaudeAgent(t, ep, betaID, "fresh")
+	waitNodeSettledClaudeAgent(t, ep, gammaID, "fresh")
 
 	alphaObs := readPerNodeObservation(t, ep, alphaID)
 	betaObs := readPerNodeObservation(t, ep, betaID)

@@ -20,12 +20,11 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/imagetag"
 )
 
 const rimskyAllInOneImage = "rimsky-all-in-one"
-
-const ctxDemoHealthDeadline = 90 * time.Second
 
 var expectedStepMarkers = []string{
 	"step: clean",
@@ -126,35 +125,28 @@ func bringUpRimskyAllInOne(ctx context.Context, t *testing.T, alias string) stri
 	}
 	baseURL := fmt.Sprintf("http://%s:%s", host, port.Port())
 
-	if err := waitForCtlAPIHealth(ctx, baseURL, ctxDemoHealthDeadline); err != nil {
-		dumpRimskyLogs(t, alias, c)
-		t.Fatalf("[%s] /v1/health did not return 200 within %v: %v", alias, ctxDemoHealthDeadline, err)
-	}
+	waitForCtlAPIHealth(ctx, t, alias, c, baseURL)
 	return baseURL
 }
 
-func waitForCtlAPIHealth(ctx context.Context, baseURL string, deadline time.Duration) error {
-	pollCtx, cancel := context.WithTimeout(ctx, deadline)
-	defer cancel()
-	const interval = 500 * time.Millisecond
-	for {
-		if pollCtx.Err() != nil {
-			return fmt.Errorf("timed out after %v", deadline)
+func waitForCtlAPIHealth(ctx context.Context, t *testing.T, alias string, c testcontainers.Container, baseURL string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if t.Failed() {
+			dumpRimskyLogs(t, alias, c)
 		}
-		req, _ := http.NewRequestWithContext(pollCtx, http.MethodGet, baseURL+"/v1/health", nil)
+	})
+	awaited.Until(t, fmt.Sprintf("[%s] the control API at %s to answer /v1/health with 200", alias, baseURL), func() bool {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/health", nil)
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				return nil
+				return true
 			}
 		}
-		select {
-		case <-pollCtx.Done():
-			return fmt.Errorf("timed out after %v", deadline)
-		case <-time.After(interval):
-		}
-	}
+		return false
+	})
 }
 
 func dumpRimskyLogs(t *testing.T, alias string, c testcontainers.Container) {

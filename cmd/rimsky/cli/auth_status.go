@@ -18,7 +18,7 @@ func RunAuthStatus(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth status", flag.ContinueOnError)
 	var endpointFlag, keyFlag string
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
-	fs.StringVar(&keyFlag, "key", "", "API key (Bearer token)")
+	RegisterAPIKeyFlag(fs, &keyFlag)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}

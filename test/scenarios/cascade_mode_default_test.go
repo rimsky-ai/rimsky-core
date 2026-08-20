@@ -5,13 +5,13 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -98,9 +98,7 @@ func TestCascadeModeDefaultsToMostRecentAndCoalesces(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake", nil, "cascade-mode-default-kick")
 
-	for len(bObs()) < 1 {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, "b's first dispatch to reach the stub", func() bool { return len(bObs()) >= 1 })
 
 	driveARound := func(kick string) {
 		pauseResp := postJSON(t, h.ControlBase+"/v1/instances/"+iid.String()+"/pause", map[string]any{})

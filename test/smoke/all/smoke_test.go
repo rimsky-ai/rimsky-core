@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestUnifiedImage(t *testing.T) {
@@ -55,22 +57,13 @@ func TestUnifiedImage(t *testing.T) {
 	port := parts[len(parts)-1]
 
 	url := fmt.Sprintf("http://localhost:%s/health", port)
-	deadline := time.Now().Add(30 * time.Second)
-	for {
+	awaited.Until(t, "the all-in-one container to answer 200 at "+url, func() bool {
 		resp, err := http.Get(url)
-		if err == nil && resp.StatusCode == 200 {
-			resp.Body.Close()
-			break
-		}
 		if resp != nil {
-			resp.Body.Close()
+			defer resp.Body.Close()
 		}
-		if time.Now().After(deadline) {
-			logsOut, _ := exec.Command("docker", "logs", runID).CombinedOutput()
-			t.Fatalf("/health did not return 200 within deadline\nlast err: %v\nlogs:\n%s", err, logsOut)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+		return err == nil && resp.StatusCode == 200
+	})
 
 	logsOut, err := exec.Command("docker", "logs", runID).CombinedOutput()
 	if err != nil {

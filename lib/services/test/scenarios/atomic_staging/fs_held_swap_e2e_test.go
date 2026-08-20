@@ -5,12 +5,14 @@ package atomicstaging
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const (
@@ -73,7 +75,7 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 
 	committedDst := filepath.Join(producer.HostDir, fsCommittedSubdir, fsCommitFolder)
 	sourceSrc := filepath.Join(producer.HostDir, fsCommitSource, fsCommitFolder)
-	requireEventuallyMoved(t, committedDst, sourceSrc, 30*time.Second)
+	requireEventuallyMoved(t, committedDst, sourceSrc)
 
 	abandonTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-abandon", fsAbandonSelector, "err")
 	abandonInstanceID := ep.CreateInstance(t, abandonTemplateID, "ck-fs-held-swap-abandon", "held-swap")
@@ -83,7 +85,7 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 
 	abandonCommittedDst := filepath.Join(producer.HostDir, fsCommittedSubdir, fsAbandonFolder)
 	abandonSource := filepath.Join(producer.HostDir, fsAbandonSource, fsAbandonFolder)
-	requireNotMovedIntoCommitted(t, abandonCommittedDst, abandonSource, 20*time.Second)
+	requireNotMovedIntoCommitted(t, ep, abandonInstanceID, abandonCommittedDst, abandonSource)
 }
 
 func deployHeldSwapTemplate(t *testing.T, ep harness.RimskyEndpoint, name, selector, verifierExecutor string) string {
@@ -130,43 +132,40 @@ func deployHeldSwapTemplate(t *testing.T, ep harness.RimskyEndpoint, name, selec
 	return ep.DeployTemplate(t, body)
 }
 
-func requireEventuallyMoved(t *testing.T, dst, src string, deadline time.Duration) {
+func requireEventuallyMoved(t *testing.T, dst, src string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("the held-subgraph auto-terminal Commit to run the real pop_and_move os.Rename, "+
+		"putting %q in place and leaving %q gone", dst, src), func() bool {
 		_, dstErr := os.Stat(dst)
 		_, srcErr := os.Stat(src)
-		if dstErr == nil && os.IsNotExist(srcErr) {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	dstExists := pathExists(dst)
-	srcExists := pathExists(src)
-	t.Fatalf("staged folder was not swapped into the committed dir within %v: "+
-		"committed=%q exists=%v, source=%q exists=%v — the real pop_and_move "+
-		"os.Rename did not run through the held-subgraph auto-terminal Commit",
-		deadline, dst, dstExists, src, srcExists)
+		return dstErr == nil && os.IsNotExist(srcErr)
+	})
 }
 
-func requireNotMovedIntoCommitted(t *testing.T, committedDst, src string, settle time.Duration) {
+func requireNotMovedIntoCommitted(t *testing.T, ep harness.RimskyEndpoint, instanceID, committedDst, src string) {
 	t.Helper()
-	deadline := time.Now().Add(settle)
-	for time.Now().Before(deadline) {
-		if pathExists(committedDst) {
-			t.Fatalf("staged folder was moved into the committed dir %q on the abandon path — "+
-				"aggregate-failure must NOT swap staging into production", committedDst)
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
+	waitForClaimGivenUp(t, ep, instanceID, "acquirer")
 	if pathExists(committedDst) {
-		t.Fatalf("staged folder was moved into the committed dir %q on the abandon path", committedDst)
+		t.Fatalf("staged folder was moved into the committed dir %q on the abandon path — "+
+			"aggregate-failure must NOT swap staging into production", committedDst)
 	}
 	if !pathExists(src) {
 		t.Fatalf("staged folder %q is gone from the source dir after Abandon; "+
 			"on_give_up=recycle must leave the folder in place (the abandon drops "+
 			"the staging-commit, it does not delete the staged data)", src)
 	}
+}
+
+func waitForClaimGivenUp(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("node %s/%s to record the claim_resolution.abandon event, the durable record "+
+		"rimsky writes once the producer's Abandon has run", instanceID, nodeType), func() bool {
+		status, obs, _ := ep.GetNodeObservability(t, instanceID, nodeType)
+		if status != http.StatusOK {
+			return false
+		}
+		return obs.HasEventKind("claim_resolution.abandon")
+	})
 }
 
 func pathExists(p string) bool {

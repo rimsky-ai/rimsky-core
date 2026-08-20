@@ -147,8 +147,6 @@ func readSourceFile(inputPath, baseDir string) (string, error) {
 	return string(data), nil
 }
 
-const ReservedTagPrefix = "compose:"
-
 func RunTemplateRegister(ctx context.Context, args []string) int {
 	var tag, source string
 	var warningsAsErrors bool
@@ -164,10 +162,6 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 	rest := fs.Args()
 	if len(rest) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: rimsky template register <file> [--warnings-as-errors]")
-		return 2
-	}
-	if strings.HasPrefix(tag, ReservedTagPrefix) {
-		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q (managed by `compose`)\n", tag, ReservedTagPrefix)
 		return 2
 	}
 	spec, err := ReadSpecFile(rest[0])
@@ -428,7 +422,8 @@ func RunTemplateRm(ctx context.Context, args []string) int {
 	if err := c.DeleteTemplate(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}
-	fmt.Fprintf(os.Stdout, "%s removed\n", rest[0])
+	reportRemoval(os.Stdout, common.Format, removalResult{Ref: rest[0], Removed: true},
+		fmt.Sprintf("%s removed", rest[0]))
 	return 0
 }
 

@@ -25,7 +25,7 @@ Owns: the persisted publisher-subscription row, its per-publisher composite iden
 
 Does NOT own: the publisher's substrate state, the messages sent (those are `concept:message`), or the publisher-side persistence of subscription state (each publisher owns its own state schema; see `concept:sensor`).
 
-Adjacent: `concept:publisher` (the protocol), `concept:sensor` (one class of publisher implementation), `concept:message` (envelopes sent under this subscription's authority), `concept:replica` (a publisher-subscription is per-name, not per-replica).
+Adjacent: `concept:publisher` (the protocol), `concept:sensor` (one class of publisher implementation), `concept:message` (envelopes sent under this subscription's authority). A publisher-subscription is per publisher name, not per process.
 
 ## Invariants
 

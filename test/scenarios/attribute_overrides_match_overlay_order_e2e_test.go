@@ -5,12 +5,12 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -71,8 +71,8 @@ func TestAttributeOverridesMatchOverlayOrder_LaterWins(t *testing.T) {
 	require.Equal(t, "yes", cli["first-only"], "non-conflicting path from first entry must apply")
 	require.Equal(t, "yes", cli["second-only"], "non-conflicting path from second entry must apply")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "match-counts should be [1, 1]", func() bool {
 		c := attributeOverrideMatchCounts(t, h, iid, 2)
 		return len(c) == 2 && c[0] == 1 && c[1] == 1
-	}, 5*time.Second, 50*time.Millisecond, "match-counts should be [1, 1]")
+	})
 }

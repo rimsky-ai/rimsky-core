@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/internal/awaited"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -19,7 +20,7 @@ func TestTrySchedulerTick_ExcludesAcrossLockerInstances(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	lockerA := newAdvisoryLocker(dbPath)
 	lockerB := newAdvisoryLocker(dbPath)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	heldA, releaseA, err := lockerA.TrySchedulerTick(ctx)
@@ -59,7 +60,7 @@ func TestAcquireMigrationLock_BlocksAcrossLockerInstances(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rimsky.db")
 	lockerA := newAdvisoryLocker(dbPath)
 	lockerB := newAdvisoryLocker(dbPath)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	releaseA, err := lockerA.AcquireMigrationLock(ctx)
@@ -78,12 +79,15 @@ func TestAcquireMigrationLock_BlocksAcrossLockerInstances(t *testing.T) {
 		acquired <- rel
 	}()
 
+	awaited.Until(t, "locker B to find the migration lock contended at least twice", func() bool {
+		return lockerB.contendedPolls() >= 2
+	})
 	select {
 	case <-acquired:
 		t.Fatal("locker B acquired the migration lock while locker A still held it — cross-instance exclusion broken")
 	case err := <-errCh:
 		t.Fatalf("locker B AcquireMigrationLock: %v", err)
-	case <-time.After(150 * time.Millisecond):
+	default:
 	}
 
 	if err := releaseA(); err != nil {
@@ -97,8 +101,6 @@ func TestAcquireMigrationLock_BlocksAcrossLockerInstances(t *testing.T) {
 		}
 	case err := <-errCh:
 		t.Fatalf("locker B AcquireMigrationLock after release: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("locker B never acquired the migration lock after locker A released it")
 	}
 }
 
@@ -108,7 +110,7 @@ func TestAcquireMigrationLock_HonorsContextCancel(t *testing.T) {
 	lockerA := newAdvisoryLocker(dbPath)
 	lockerB := newAdvisoryLocker(dbPath)
 
-	acquireCtx, acquireCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	acquireCtx, acquireCancel := context.WithCancel(context.Background())
 	defer acquireCancel()
 	releaseA, err := lockerA.AcquireMigrationLock(acquireCtx)
 	if err != nil {

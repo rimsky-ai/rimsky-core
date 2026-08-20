@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -22,6 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -311,8 +311,8 @@ func deleteBreakpoint(t *testing.T, controlBase string, instanceID, breakpointID
 
 func waitForFirstHit(t *testing.T, h *scenario.Harness, bpID shared.UUID) persistence.BreakpointHitRow {
 	t.Helper()
-	for {
-		var hits []persistence.BreakpointHitRow
+	var hits []persistence.BreakpointHitRow
+	awaited.Until(t, "a hit on breakpoint "+bpID.String(), func() bool {
 		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 			r, err := h.Persist.BreakpointHits().ListSinceForBreakpoint(ctx, bpID, 0, 100, tx)
 			hits = r
@@ -320,11 +320,9 @@ func waitForFirstHit(t *testing.T, h *scenario.Harness, bpID shared.UUID) persis
 		}); err != nil {
 			t.Fatalf("waitForFirstHit: %v", err)
 		}
-		if len(hits) > 0 {
-			return hits[0]
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return len(hits) > 0
+	})
+	return hits[0]
 }
 
 func getLatestRunID(t *testing.T, h *scenario.Harness, nodeID shared.UUID) *shared.UUID {
@@ -406,9 +404,9 @@ func stubWorkerCount(h *scenario.Harness) int {
 }
 
 func waitForStubWorkerCount(h *scenario.Harness, want int) {
-	for stubWorkerCount(h) < want {
-		time.Sleep(20 * time.Millisecond)
-	}
+	awaited.Until(h.T, fmt.Sprintf("%d stub worker dispatch(es)", want), func() bool {
+		return stubWorkerCount(h) >= want
+	})
 }
 
 func mintAnonymousAdminKey(t *testing.T, controlBase string) string {

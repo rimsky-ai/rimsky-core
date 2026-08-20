@@ -78,7 +78,6 @@ func (f *invTestQueue) StampPriorDispatch(_ context.Context, _ shared.UUID, _ sh
 	return nil
 }
 
-func (f *invTestQueue) ForceReleaseClaim(_ context.Context, _ shared.UUID) error { return nil }
 func (f *invTestQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.ClaimOwnership, error) {
 	return persistence.ClaimOwnership{Kind: "not_found"}, nil
 }

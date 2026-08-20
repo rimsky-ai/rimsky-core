@@ -152,10 +152,15 @@ cascade-walk time.
   path (no trailing `*`), field references in `when:` parse-check against the
   resolved payload schema (the per-type payload shape). References to fields
   not in the schema reject at registration.
-- **Schema binding for prefix type-paths:** when `type:` ends in `*`,
-  `payload` is bound as CEL `dyn` (dynamically-typed); no field-name check at
-  registration. Field references that don't resolve on the actual signal
-  evaluate to the spec's safe-navigation default (Eval returns false).
+- **Schema binding for prefix type-paths:** a prefix path resolves to a
+  payload shape when the text before its trailing `*` already names one
+  family, such as the error terminals; field references in `when:` then check
+  against that shape exactly as they do for an exact path. A prefix that stops
+  short of a family — at a top-level kind, or part-way through a name —
+  resolves to no shape, `payload` stays dynamically typed, and registration
+  runs no field-name check over it. Field references that don't resolve on the
+  actual signal evaluate to the spec's safe-navigation default (Eval returns
+  false).
 - **Functions:** CEL's standard library (string, list, map, math, time). No
   domain-specific helpers in this spec.
 
@@ -236,11 +241,13 @@ Adjacent: `concept:node-subscription`, `concept:error-policy`,
   writes attributes but emits no signal at all (see
   `decision:uniform-attributes-delta`). Executors that need to thread state
   across a park-and-resume boundary use scratch (see `concept:parked-state`).
-- **CEL is the filter language; exact-type subscriptions parse-check field
-  references against the resolved payload schema; prefix-type subscriptions
-  bind `payload` as `dyn`.** This keeps tight checking for the common
-  exact-type case while letting prefix subscriptions span heterogeneous
-  payload shapes.
+- **CEL is the filter language, and registration checks field references
+  wherever a payload shape resolves.** An exact type-path resolves to one
+  shape. So does a prefix path whose text before the wildcard already names
+  one family. A misspelled field in a family predicate is therefore refused at
+  registration, rather than compiling and never matching. A prefix that stops
+  short of a family resolves to no shape, and `payload` stays dynamically
+  typed for it.
 - **`transient/park` is a single leaf.** There is no park-reason taxonomy; a
   park's WHY-annotation rides its tags. The await-async-callback outcome is a
   transient (`transient/await_async`), not a park — the node stays in

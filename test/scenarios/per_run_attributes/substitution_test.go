@@ -6,7 +6,6 @@ package per_run_attributes
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -84,19 +84,14 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 
 	h.PostInstanceMessage(iid, "test/wake/upstream", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "downstream to see the fire-2 upstream value", func() bool {
 		_ = h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, downN.ID, h.GetLatestFrameRootRunScopeID(iid), tx)
 			downRow = r
 			return err
 		})
-		if downRow != nil && downRow.Data["upstream_value"] == "fire-2" {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.NotNil(t, downRow)
+		return downRow != nil && downRow.Data["upstream_value"] == "fire-2"
+	})
 	require.Equal(t, "fire-2", downRow.Data["upstream_value"],
 		"downstream should see fire-2 upstream value (this-frame, not stale)")
 }

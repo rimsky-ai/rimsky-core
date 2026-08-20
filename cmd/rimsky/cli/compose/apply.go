@@ -23,9 +23,22 @@ type ApplyOpts struct {
 }
 
 type CreatedInstance struct {
-	Key          string
-	ID           string
-	TemplateHash string
+	Key          string `json:"instance_key"`
+	ID           string `json:"instance_id"`
+	TemplateHash string `json:"template_hash"`
+}
+
+type applyResult struct {
+	Project   string            `json:"project"`
+	Applied   int               `json:"applied"`
+	Instances []CreatedInstance `json:"instances"`
+}
+
+func newApplyResult(project string, applied int, created []CreatedInstance) applyResult {
+	if created == nil {
+		created = []CreatedInstance{}
+	}
+	return applyResult{Project: project, Applied: applied, Instances: created}
 }
 
 func ApplyPlan(ctx context.Context, c *cli.Client, plan *Plan, opts ApplyOpts) ([]CreatedInstance, int, error) {
@@ -74,6 +87,15 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 		resp, err := c.RegisterTemplate(ctx, body)
 		if err != nil {
 			return nil, false, err
+		}
+		if resp.Hash() != step.TemplateHash {
+			return nil, false, fmt.Errorf(
+				"the deployment registered template %s as %s, and this manifest planned every tag, deploy "+
+					"and instance step against %s. The deployment canonicalises kind and send-message sugar "+
+					"against its own kind-alias map before it hashes. A manifest cannot read that map, so a "+
+					"node written with `kind:` takes an identity only the deployment computes. Name the "+
+					"node's `executor:` to give the manifest and the deployment one identity",
+				step.FromPath, resp.Hash(), step.TemplateHash)
 		}
 		logf("register", cli.TruncHash(resp.Hash()), "ok")
 		return nil, true, nil
@@ -253,7 +275,7 @@ func destructive(step Step, undeployHasNonComposeBindings map[string]bool) bool 
 
 func precomputeUndeployBindings(ctx context.Context, c *cli.Client, project string, plan *Plan) map[string]bool {
 	out := map[string]bool{}
-	prefix := cli.ReservedTagPrefix + project + ":"
+	prefix := project + ":"
 	seen := map[string]bool{}
 	for _, step := range plan.Steps {
 		if step.Action != ActionUndeploy {
@@ -367,14 +389,19 @@ func resolveTemplatePaths(m *Manifest, manifestPath string) {
 }
 
 func clientForManifest(flags *composeUpFlags, m *Manifest) (*cli.Client, string, int) {
+	return clientForContext(&flags.common, m.Context)
+}
+
+// @concept: rimsky
+func clientForContext(common *cli.CommonFlags, manifestContext string) (*cli.Client, string, int) {
 	cfgPath, _ := cli.DefaultConfigPath()
-	endpoint, err := cli.ResolveEndpointForCompose(flags.common.Endpoint, os.Getenv("RIMSKY_CONTROL_API_URL"), cfgPath, m.Context)
+	endpoint, err := cli.ResolveEndpointForCompose(common.Endpoint, os.Getenv("RIMSKY_CONTROL_API_URL"), cfgPath, manifestContext)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, "", 2
 	}
 	c := cli.NewClient(endpoint)
-	c.SetComposeOrigin(true)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	return c, endpoint, 0
 }
 
@@ -409,9 +436,18 @@ func runComposeUpWithManifest(ctx context.Context, m *Manifest, c *cli.Client, f
 	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
 		return 2
 	}
-	_, applied, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout})
+	asJSON := flags.common.Format == cli.FormatJSON
+	narration := io.Writer(os.Stdout)
+	if asJSON {
+		narration = os.Stderr
+	}
+	created, applied, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: narration})
 	if err != nil {
 		return reportApplyError(err)
+	}
+	if asJSON {
+		_ = cli.EmitJSON(os.Stdout, newApplyResult(m.Project, applied, created))
+		return 0
 	}
 	if applied == 0 {
 		fmt.Fprintln(os.Stdout, "no changes")

@@ -8,7 +8,6 @@ package breakpoints
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -56,7 +55,7 @@ func TestMultiBreakpointMatch(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 
 	hit2 := waitForHitOnBreakpoint(t, h, bp2)
-	time.Sleep(200 * time.Millisecond)
+	h.WaitForSchedulerQuiescence()
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must remain uncalled while paused at the second breakpoint")
 

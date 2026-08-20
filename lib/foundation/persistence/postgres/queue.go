@@ -236,11 +236,16 @@ func (q *queueImpl) PromoteClaimedToRunning(
 	if tx == nil {
 		return false, errors.New("postgres.PromoteClaimedToRunning: tx required")
 	}
+	// @concept: transition-reason
+	target, err := cascade.NextState(cascade.NodeStateStale, cascade.ReasonDispatchClaimed)
+	if err != nil {
+		return false, fmt.Errorf("postgres.PromoteClaimedToRunning: %w", err)
+	}
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET state = 'running', last_progress_at = NOW()
+		    SET state = $3, last_progress_at = NOW()
 		  WHERE id = $1 AND claimed_by = $2 AND state = 'stale'`,
-		nodeRunID, supervisorID,
+		nodeRunID, supervisorID, string(target),
 	)
 	if err != nil {
 		return false, fmt.Errorf("postgres.PromoteClaimedToRunning: %w", err)
@@ -350,48 +355,88 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.Dispa
 	return out, nil
 }
 
+// @concept: transition-reason
 func (q *queueImpl) ReleaseClaim(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string) error {
-	_, err := q.pool.Exec(ctx,
-		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
-		  WHERE id = $1 AND claimed_by = $2 AND state NOT IN ('fresh', 'failed')`,
-		nodeRunID, expectedClaimedBy,
-	)
-	if err != nil {
-		return fmt.Errorf("postgres.ReleaseClaim: %w", err)
+	if q.tables == nil {
+		return errors.New("postgres.ReleaseClaim: queue not wired with tables")
 	}
-	return nil
-}
-
-func (q *queueImpl) ForceReleaseClaim(ctx context.Context, nodeRunID shared.UUID) error {
-	_, err := q.pool.Exec(ctx,
-		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale'
-		  WHERE id = $1`,
-		nodeRunID,
-	)
-	if err != nil {
-		return fmt.Errorf("postgres.ForceReleaseClaim: %w", err)
-	}
-	return nil
+	return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		current, held, err := q.claimedRunStateForUpdate(ctx, tx, nodeRunID, expectedClaimedBy)
+		if err != nil || !held {
+			return err
+		}
+		target, err := cascade.NextState(current, cascade.ReasonDispatchReleased)
+		if err != nil {
+			return fmt.Errorf("postgres.ReleaseClaim: %s: %w", nodeRunID, err)
+		}
+		cmd, err := q.q(tx).Exec(ctx,
+			`UPDATE rimsky_node_runs
+			    SET claimed_by = NULL, claimed_at = NULL, state = $3
+			  WHERE id = $1 AND claimed_by = $2 AND state = $4`,
+			nodeRunID, expectedClaimedBy, string(target), string(current),
+		)
+		if err != nil {
+			return fmt.Errorf("postgres.ReleaseClaim: %w", err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("postgres.ReleaseClaim: %s: the row held FOR UPDATE in this transaction did not match the release write: %w",
+				nodeRunID, persistence.ErrInternalInvariant)
+		}
+		return nil
+	})
 }
 
 // @concept: node-run
+// @concept: transition-reason
 func (q *queueImpl) ReleaseClaimWithDisposition(ctx context.Context, nodeRunID shared.UUID, expectedClaimedBy string, disposition string) error {
 	if disposition == "" {
 		return errors.New("postgres.ReleaseClaimWithDisposition: disposition required")
 	}
-	_, err := q.pool.Exec(ctx,
-		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, state = 'stale',
-		        prior_dispatch_id = id, prior_dispatch_disposition = $1
-		  WHERE id = $2 AND claimed_by = $3 AND state NOT IN ('fresh', 'failed')`,
-		disposition, nodeRunID, expectedClaimedBy,
-	)
-	if err != nil {
-		return fmt.Errorf("postgres.ReleaseClaimWithDisposition: %w", err)
+	if q.tables == nil {
+		return errors.New("postgres.ReleaseClaimWithDisposition: queue not wired with tables")
 	}
-	return nil
+	return q.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		current, held, err := q.claimedRunStateForUpdate(ctx, tx, nodeRunID, expectedClaimedBy)
+		if err != nil || !held {
+			return err
+		}
+		target, err := cascade.NextState(current, cascade.ReasonDispatchReleased)
+		if err != nil {
+			return fmt.Errorf("postgres.ReleaseClaimWithDisposition: %s: %w", nodeRunID, err)
+		}
+		cmd, err := q.q(tx).Exec(ctx,
+			`UPDATE rimsky_node_runs
+			    SET claimed_by = NULL, claimed_at = NULL, state = $3,
+			        prior_dispatch_id = id, prior_dispatch_disposition = $1
+			  WHERE id = $2 AND claimed_by = $4 AND state = $5`,
+			disposition, nodeRunID, string(target), expectedClaimedBy, string(current),
+		)
+		if err != nil {
+			return fmt.Errorf("postgres.ReleaseClaimWithDisposition: %w", err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return fmt.Errorf("postgres.ReleaseClaimWithDisposition: %s: the row held FOR UPDATE in this transaction did not match the release write: %w",
+				nodeRunID, persistence.ErrInternalInvariant)
+		}
+		return nil
+	})
+}
+
+func (q *queueImpl) claimedRunStateForUpdate(
+	ctx context.Context, tx persistence.Tx, nodeRunID shared.UUID, expectedClaimedBy string,
+) (cascade.NodeState, bool, error) {
+	var state string
+	err := q.q(tx).QueryRow(ctx,
+		`SELECT state FROM rimsky_node_runs WHERE id = $1 AND claimed_by = $2 FOR UPDATE`,
+		nodeRunID, expectedClaimedBy,
+	).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("postgres.claimedRunStateForUpdate: %w", err)
+	}
+	return cascade.NodeState(state), true, nil
 }
 
 // @concept: node-run

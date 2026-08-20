@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/ports"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 )
 
@@ -24,10 +25,11 @@ type Config struct {
 	ReapTimeout       time.Duration
 }
 
+// @decision: default-port-allocation
 func LoadConfig() Config {
 	return Config{
-		GRPCPort:          envInt("RIMSKY_PROXY_GRPC_PORT", 9090),
-		PeerGRPCPort:      envInt("RIMSKY_PROXY_PEER_GRPC_PORT", 9091),
+		GRPCPort:          envInt("RIMSKY_PROXY_GRPC_PORT", ports.HostAgentProxyAgentFacing),
+		PeerGRPCPort:      envInt("RIMSKY_PROXY_PEER_GRPC_PORT", ports.HostAgentProxyPeerFacing),
 		ControlAPIURL:     trimTrailingSlash(os.Getenv("RIMSKY_CONTROL_API_URL")),
 		ControlAPIToken:   os.Getenv("RIMSKY_CONTROL_API_TOKEN"),
 		ControlAPICAPath:  os.Getenv(enroll.EnvControlAPICA),

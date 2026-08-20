@@ -25,20 +25,17 @@ func RunTagCreate(ctx context.Context, args []string) int {
 		return 2
 	}
 	tag := rest[0]
-	if strings.HasPrefix(tag, ReservedTagPrefix) {
-		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q (managed by `compose`)\n", tag, ReservedTagPrefix)
-		return 2
-	}
 	if template == "" {
 		fmt.Fprintln(os.Stderr, "--template is required")
 		return 2
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
-	if _, err := c.CreateTag(ctx, CreateTagRequest{Tag: tag, Template: template}); err != nil {
+	created, err := c.CreateTag(ctx, CreateTagRequest{Tag: tag, Template: template})
+	if err != nil {
 		return reportError(err)
 	}
-	fmt.Fprintf(os.Stdout, "%s → %s\n", tag, template)
+	reportTagBinding(os.Stdout, common.Format, created, tag, template)
 	return 0
 }
 
@@ -142,20 +139,17 @@ func RunTagMv(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: rimsky tag mv <tag> --template <ref>")
 		return 2
 	}
-	if strings.HasPrefix(rest[0], ReservedTagPrefix) {
-		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q (managed by `compose`)\n", rest[0], ReservedTagPrefix)
-		return 2
-	}
 	if template == "" {
 		fmt.Fprintln(os.Stderr, "--template is required")
 		return 2
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
-	if _, err := c.MoveTag(ctx, rest[0], MoveTagRequest{Template: template}); err != nil {
+	moved, err := c.MoveTag(ctx, rest[0], MoveTagRequest{Template: template})
+	if err != nil {
 		return reportError(err)
 	}
-	fmt.Fprintf(os.Stdout, "%s → %s\n", rest[0], template)
+	reportTagBinding(os.Stdout, common.Format, moved, rest[0], template)
 	return 0
 }
 
@@ -169,15 +163,12 @@ func RunTagRm(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: rimsky tag rm <tag>")
 		return 2
 	}
-	if strings.HasPrefix(rest[0], ReservedTagPrefix) {
-		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q (managed by `compose`)\n", rest[0], ReservedTagPrefix)
-		return 2
-	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	if err := c.DeleteTag(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}
-	fmt.Fprintf(os.Stdout, "%s removed\n", rest[0])
+	reportRemoval(os.Stdout, common.Format, removalResult{Ref: rest[0], Removed: true},
+		fmt.Sprintf("%s removed", rest[0]))
 	return 0
 }

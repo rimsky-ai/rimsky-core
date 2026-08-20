@@ -79,6 +79,7 @@ func runContainerWithRetry[T any](
 		slog.Warn("harness: container boot attempt failed",
 			"image", img, "attempt", attempt, "max_attempts", bootMaxAttempts, "error", err.Error())
 		if attempt < bootMaxAttempts {
+			//nolint:testwallclock-pacing backoff between boot attempts; the attempt budget, not elapsed time, ends this loop
 			time.Sleep(time.Duration(attempt) * bootRetryBackoff)
 		}
 	}

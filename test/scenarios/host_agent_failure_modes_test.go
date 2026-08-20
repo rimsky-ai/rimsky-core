@@ -7,11 +7,11 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestHostAgentNotConnected(t *testing.T) {
@@ -64,13 +64,10 @@ func TestHostAgentDisconnectMidDispatch(t *testing.T) {
 
 func waitForProcessRunning(t *testing.T, binaryPath string) {
 	t.Helper()
-	for {
+	awaited.Until(t, "a running process matching "+binaryPath, func() bool {
 		out, err := exec.Command("pgrep", "-f", binaryPath).Output()
-		if err == nil && len(strings.TrimSpace(string(out))) > 0 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return err == nil && len(strings.TrimSpace(string(out))) > 0
+	})
 }
 
 func TestProxyReconnectAfterAgentRestart(t *testing.T) {

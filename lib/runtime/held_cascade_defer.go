@@ -325,7 +325,7 @@ func transitionHolderIfFullyResolved(
 		}
 		return nil, fmt.Errorf("UpdateState: %w", err)
 	}
-	if err := recordRunTreeChanged(ctx, args, holderNodeRunID, newState, &sigType, false, tx); err != nil {
+	if err := recordRunTreeChanged(ctx, args, holderNodeRunID, &sigType, false, tx); err != nil {
 		return nil, fmt.Errorf("transitionHolderIfFullyResolved: %w", err)
 	}
 	holderNode, err := args.Persist.Nodes().Get(ctx, holderRun.NodeID, tx)

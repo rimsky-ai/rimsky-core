@@ -286,6 +286,8 @@ func runConformancePublisher(args []string) int {
 	instanceID := fs.String("instance-id", "", "instance_id passed to Subscribe; required when publisher pushes to /instances/{id}/messages")
 	messageType := fs.String("message-type", "", "message type passed to Subscribe and watched for on the control API (default: "+defaultConformancePublisherMessageType+")")
 	controlAPI := fs.String("control-api", "", "control-API base URL to poll for the publisher's pushed message (e.g. http://localhost:8080); enables the MessagePush check together with --instance-id (overrides $RIMSKY_CONTROL_API_URL)")
+	var apiKeyFlag string
+	cli.RegisterAPIKeyFlag(fs, &apiKeyFlag)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -334,7 +336,8 @@ func runConformancePublisher(args []string) int {
 	if *instanceID != "" && controlAPIURL != "" {
 		receiver := publisher.NewMessageReceiver()
 		opts.MessageReceiver = receiver
-		go pollForConformancePublisherMessage(ctx, controlAPIURL, *instanceID, effectiveMessageType, receiver)
+		apiKey := cli.ResolveAPIKey(apiKeyFlag, os.Getenv("RIMSKY_API_KEY"))
+		go pollForConformancePublisherMessage(ctx, controlAPIURL, apiKey, *instanceID, effectiveMessageType, receiver)
 	}
 
 	results := publisher.Run(ctx, client, opts)
@@ -343,8 +346,10 @@ func runConformancePublisher(args []string) int {
 		func(r publisher.CheckResult) error { return r.Err })
 }
 
-func pollForConformancePublisherMessage(ctx context.Context, controlAPIURL, instanceID, messageType string, receiver *publisher.MessageReceiver) {
+// @concept: rimsky
+func pollForConformancePublisherMessage(ctx context.Context, controlAPIURL, apiKey, instanceID, messageType string, receiver *publisher.MessageReceiver) {
 	c := cli.NewClient(controlAPIURL)
+	c.SetAPIKey(apiKey)
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {

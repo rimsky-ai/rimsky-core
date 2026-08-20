@@ -7,7 +7,6 @@ import (
 	"context"
 	"net/http"
 	"testing"
-	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
@@ -50,7 +49,7 @@ func TestOpenHappyPath(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 
 	resp, err := client.Open(ctx, &genv1.OpenRequest{
@@ -75,7 +74,7 @@ func TestOpenThenCommit(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 
 	if _, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "claim-1", ProducerName: "fs-claims", InstanceId: "inst-1"}); err != nil {
@@ -100,7 +99,7 @@ func TestReleaseSurvivesRetryForIdempotency(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 
 	if _, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "claim-1", ProducerName: "fs-claims", InstanceId: "inst-1"}); err != nil {
@@ -124,7 +123,7 @@ func TestOpenMissingServiceName(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "c", ProducerName: "fs-claims", InstanceId: "inst-1"})
 	if status.Code(err) != codes.FailedPrecondition {
@@ -139,7 +138,7 @@ func TestOpenInstanceNotFound(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	connectFakeAgent(t, ts, "owner-1", "", claimProducerScript())
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 	_, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "c", ProducerName: "fs-claims", InstanceId: "missing"})
 	if got := errorReason(err); got != errClassBindingNotFound {
@@ -151,7 +150,7 @@ func TestOpenTargetRoutingIdentityEmptySurfacesBindingError(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	cacheReadyInstance(ts, "inst-1", "", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 	_, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "c", ProducerName: "fs-claims", InstanceId: "inst-1"})
 	if got := errorReason(err); got != errClassBindingNotFound {
@@ -163,7 +162,7 @@ func TestOpenAgentNotConnected(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 	_, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "c", ProducerName: "fs-claims", InstanceId: "inst-1"})
 	if got := errorReason(err); got != errClassHostAgentNotConnected {
@@ -176,7 +175,7 @@ func TestOpenBindingNotFound(t *testing.T) {
 	connectFakeAgent(t, ts, "owner-1", "", claimProducerScript())
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"other": {Path: "./x"}})
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 	_, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "c", ProducerName: "fs-claims", InstanceId: "inst-1"})
 	if got := errorReason(err); got != errClassBindingNotFound {
@@ -190,7 +189,7 @@ func TestOpenSpawnFailed(t *testing.T) {
 	fa.setSpawnFail(true)
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 	_, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "c", ProducerName: "fs-claims", InstanceId: "inst-1"})
 	if got := errorReason(err); got != errClassSpawnFailed {
@@ -205,7 +204,7 @@ func TestCommitMissingClaimRoute(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	connectFakeAgent(t, ts, "owner-1", "", claimProducerScript())
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
+	ctx, cancel := context.WithCancel(callCtx("fs-claims"))
 	defer cancel()
 	_, err := client.Commit(ctx, &genv1.CommitRequest{ClaimId: "unknown"})
 	if got := errorReason(err); got != errClassBindingNotFound {

@@ -8,7 +8,6 @@ package breakpoints
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -48,7 +47,7 @@ func TestPauseResumeHappyPath(t *testing.T) {
 	hit := waitForHitOnBreakpoint(t, h, bpID)
 	require.NotNil(t, hit.NodeRunID, "hit should carry the node_run_id of the parked dispatch")
 
-	time.Sleep(200 * time.Millisecond)
+	h.WaitForSchedulerQuiescence()
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor should not see the dispatch while paused at the breakpoint")
 

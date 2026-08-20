@@ -6,11 +6,12 @@ package scenarios
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const settlingSignalTypeTerminalSuccess = "terminal/success"
@@ -41,7 +42,7 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 
 	nodeID := resolveWorkerNodeID(t, ep, instanceID, "worker")
 
-	sig := waitForControlSettlingSignalType(t, ep, nodeID, 90*time.Second)
+	sig := waitForControlSettlingSignalType(t, ep, nodeID)
 	if sig != settlingSignalTypeTerminalSuccess {
 		t.Fatalf("GET /nodes/%s settling_signal_type=%q after a stub Success settle, want %q — the stub returns Success, so a non-success settle is a real settle-path defect",
 			nodeID, sig, settlingSignalTypeTerminalSuccess)
@@ -51,30 +52,30 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 func resolveWorkerNodeID(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) string {
 	t.Helper()
 	path := "/v1/instances/" + instanceID + "/nodes"
-	deadline := time.Now().Add(10 * time.Second)
-	for {
+	var nodeID string
+	awaited.Until(t, fmt.Sprintf("node %q to appear under GET %s", nodeType, path), func() bool {
 		status, raw := ep.GetJSON(t, path, "")
-		if status == http.StatusOK {
-			var resp struct {
-				Nodes []struct {
-					ID       string `json:"id"`
-					NodeType string `json:"node_type"`
-				} `json:"nodes"`
-			}
-			if err := json.Unmarshal(raw, &resp); err != nil {
-				t.Fatalf("decode GET %s: %v\nbody: %s", path, err, string(raw))
-			}
-			for _, n := range resp.Nodes {
-				if n.NodeType == nodeType && n.ID != "" {
-					return n.ID
-				}
+		if status != http.StatusOK {
+			return false
+		}
+		var resp struct {
+			Nodes []struct {
+				ID       string `json:"id"`
+				NodeType string `json:"node_type"`
+			} `json:"nodes"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			t.Fatalf("decode GET %s: %v\nbody: %s", path, err, string(raw))
+		}
+		for _, n := range resp.Nodes {
+			if n.NodeType == nodeType && n.ID != "" {
+				nodeID = n.ID
+				return true
 			}
 		}
-		if !time.Now().Before(deadline) {
-			t.Fatalf("node %q not found via GET %s within deadline (last status %d)", nodeType, path, status)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return false
+	})
+	return nodeID
 }
 
 func getNodeSettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, nodeID string) (string, bool) {
@@ -99,16 +100,16 @@ func getNodeSettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, nodeID s
 	return sig, true
 }
 
-func waitForControlSettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, nodeID string, deadline time.Duration) string {
+func waitForControlSettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, nodeID string) string {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		if sig, present := getNodeSettlingSignalType(t, ep, nodeID); present {
-			return sig
+	var signal string
+	awaited.Until(t, fmt.Sprintf("node %s to surface settling_signal_type via GET /v1/nodes/{id}", nodeID), func() bool {
+		sig, present := getNodeSettlingSignalType(t, ep, nodeID)
+		if !present {
+			return false
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %s did not surface settling_signal_type via GET /v1/nodes/{id} within %v",
-		nodeID, deadline)
-	return ""
+		signal = sig
+		return true
+	})
+	return signal
 }

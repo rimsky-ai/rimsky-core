@@ -67,26 +67,32 @@ func RunInStackSuites(ctx context.Context, t testing.TB, ep RimskyEndpoint, suit
 		_ = runner.Terminate(termCtx)
 	})
 
-	exitCode := waitForContainerExit(ctx, t, runner)
+	exitCode := waitForContainerExit(ctx, t, "test-runner", runner)
 	dumpLogsForFailure(t, "test-runner", runner)
 	if exitCode != 0 {
 		t.Fatalf("harness: test-runner exited %d for suites %s", exitCode, strings.Join(suites, ", "))
 	}
 }
 
-func waitForContainerExit(ctx context.Context, t testing.TB, c testcontainers.Container) int {
+func waitForContainerExit(ctx context.Context, t testing.TB, name string, c testcontainers.Container) int {
 	t.Helper()
-	for {
+	for poll := 1; ; poll++ {
 		state, err := c.State(ctx)
 		if err != nil {
-			t.Fatalf("harness: test-runner state: %v", err)
+			t.Fatalf("harness: %s state: %v", name, err)
 		}
 		switch state.Status {
 		case "exited":
 			return state.ExitCode
 		case "dead":
-			t.Fatalf("harness: test-runner container is dead (exit code %d)", state.ExitCode)
+			t.Fatalf("harness: %s container is dead (exit code %d)", name, state.ExitCode)
 		}
+		if poll == 1 {
+			t.Logf("harness: waiting for the %s container to exit (first observation: status=%s) — the "+
+				"helper blocks until it does and says so once, so a run that never ends leaves the test guard's "+
+				"no-progress watchdog free to trip", name, state.Status)
+		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the container has exited
 		time.Sleep(500 * time.Millisecond)
 	}
 }

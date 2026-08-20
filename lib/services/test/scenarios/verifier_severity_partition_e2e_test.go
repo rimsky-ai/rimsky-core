@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 // @story: verifier-shape-checks
@@ -51,7 +51,7 @@ func TestVerifierSeverityPartition(t *testing.T) {
 	)
 	outOfBoundsTID := ep.DeployTemplate(t, outOfBoundsTemplate)
 	outOfBoundsIID := ep.CreateInstance(t, outOfBoundsTID, "ck-severity-out-of-bounds", "severity-partition")
-	requireVerifierFailedWithCheckFailedClass(t, ep, outOfBoundsIID, "verifier", 120*time.Second)
+	requireVerifierFailedWithCheckFailedClass(t, ep, outOfBoundsIID, "verifier")
 }
 
 func buildSeverityPartitionTemplate(name string, rows []map[string]any) map[string]any {
@@ -191,41 +191,44 @@ func assertWarningRecorded(t *testing.T, latest map[string]any, debugBody string
 		"a soft finding\nentries=%v\nlatest_attributes:\n%s", entries, debugBody)
 }
 
-func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
+func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var (
-		lastFresh   int
-		lastFailed  int
-		sawDispatch bool
-		lastBody    string
-	)
-	for time.Now().Before(end) {
+	sawDispatch := false
+	awaited.Until(t, fmt.Sprintf("node %q on instance %s to take a real dispatch from the bundled "+
+		"verifier-shape-checks executor and settle failed", nodeType, instanceID), func() bool {
 		status, obs, raw := ep.GetNodeObservability(t, instanceID, nodeType)
-		if status == http.StatusOK {
-			lastBody = string(raw)
-			lastFresh = obs.RunSummary.FreshCount
-			lastFailed = obs.RunSummary.FailedCount
-			sawDispatch = sawDispatch || obs.HasEventKind("work_started")
-			if sawDispatch && lastFresh > 0 {
-				t.Fatalf("error leg: node %q settled with fresh_count=%d after a real dispatch "+
-					"despite the error-severity numeric_range check failing — the commit "+
-					"was NOT blocked. Falsifier hit: Error doesn't block commit.\n"+
-					"last GET /v1/observability/nodes/%s/%s body:\n%s",
-					nodeType, lastFresh, instanceID, nodeType, lastBody)
-			}
-			if sawDispatch && lastFailed > 0 {
-				requireVerifierCheckFailedErrorClass(t, obs.Events, lastBody)
-				return
-			}
+		if status != http.StatusOK {
+			return false
 		}
-		time.Sleep(250 * time.Millisecond)
+		sawDispatch = sawDispatch || obs.HasEventKind("work_started")
+		if !sawDispatch {
+			return false
+		}
+		if obs.RunSummary.FreshCount > 0 {
+			t.Fatalf("error leg: node %q settled with fresh_count=%d after a real dispatch "+
+				"despite the error-severity numeric_range check failing — the commit "+
+				"was NOT blocked. Falsifier hit: Error doesn't block commit.\n"+
+				"last GET /v1/observability/nodes/%s/%s body:\n%s",
+				nodeType, obs.RunSummary.FreshCount, instanceID, nodeType, string(raw))
+		}
+		if obs.RunSummary.FailedCount == 0 {
+			return false
+		}
+		if !anyEventCarriesAnErrorClass(obs.Events) {
+			return false
+		}
+		requireVerifierCheckFailedErrorClass(t, obs.Events, string(raw))
+		return true
+	})
+}
+
+func anyEventCarriesAnErrorClass(events []harness.NodeEvent) bool {
+	for _, e := range events {
+		if cls, ok := e.Payload["error_class"].(string); ok && cls != "" {
+			return true
+		}
 	}
-	t.Fatalf("error leg: node %q on instance %s did not reach a terminal state within %v "+
-		"(run_summary.fresh_count=%d failed_count=%d, work_started seen=%v) — the cross-stack severity-partition exhibition "+
-		"never got a real dispatch from the bundled verifier-shape-checks executor.\n"+
-		"last GET /v1/observability/nodes/%s/%s body:\n%s",
-		nodeType, instanceID, deadline, lastFresh, lastFailed, sawDispatch, instanceID, nodeType, lastBody)
+	return false
 }
 
 func requireVerifierCheckFailedErrorClass(t *testing.T, events []harness.NodeEvent, debugBody string) {

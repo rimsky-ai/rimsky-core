@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -123,9 +122,8 @@ func TestExecute_StatusMismatchWithUpstreamClass(t *testing.T) {
 }
 
 func TestExecute_TimeoutClassifiesAsTimeout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(200 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
 	}))
 	defer srv.Close()
 	executor := NewServer(loopbackOpts(t, false))

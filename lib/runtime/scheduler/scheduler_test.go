@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
@@ -170,7 +171,8 @@ func TestScheduler_TicksAndStops(t *testing.T) {
 	cfg.TickInterval = 50 * time.Millisecond
 	h := Start(cfg)
 
-	time.Sleep(150 * time.Millisecond)
+	awaited.Until(t, "the scheduler to complete three ticks before the shutdown",
+		func() bool { return h.TicksCompleted() >= 3 })
 
 	require.NoError(t, h.Shutdown(context.Background()))
 }
@@ -292,12 +294,10 @@ func TestScheduler_Start_DefaultsNilClock(t *testing.T) {
 		require.NoError(t, h.Shutdown(context.Background()))
 	}()
 
-	for {
-		if _, err := backend.Read(ctx, handle); errors.Is(err, persistence.ErrBlobNotFound) {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	awaited.Until(t, "the scheduler's orphan sweep to delete the blob", func() bool {
+		_, err := backend.Read(ctx, handle)
+		return errors.Is(err, persistence.ErrBlobNotFound)
+	})
 }
 
 func TestScheduler_OrphanedClaim_Released(t *testing.T) {
@@ -379,12 +379,7 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 		done <- tick(ctx, f.schedConfig(), nil)
 	}()
 
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("tick did not return within 10s while other replica held the lock")
-	}
+	require.NoError(t, <-done)
 
 	var (
 		runState  string

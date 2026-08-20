@@ -7,7 +7,6 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	pgstoreserver "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/server"
@@ -38,9 +37,6 @@ func startPgStore(t *testing.T, dsn string, enableExecutor bool) (grpcAddr strin
 	}()
 	return addr, func() {
 		cancel()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
+		<-done
 	}
 }

@@ -190,6 +190,7 @@ func TestFanOutParallelismSemaphore_ConcurrentAcquireRespectsCap(t *testing.T) {
 				maxConcurrent = current
 			}
 			mu.Unlock()
+			//nolint:testwallclock-pacing holds the slot so overlap is observable; the verdict is an upper bound on the observed concurrency, which more overlap only makes harder
 			time.Sleep(5 * time.Millisecond)
 			mu.Lock()
 			current--

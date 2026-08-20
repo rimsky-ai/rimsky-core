@@ -14,6 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -75,15 +76,13 @@ func TestParkedRunSurvivesMostRecentCascadeRound(t *testing.T) {
 	h.WaitForNodeState(worker.ID, cascade.NodeStateParked)
 
 	var parkedRunID string
-	for parkedRunID == "" {
+	awaited.Until(t, "the worker's parked run row to appear", func() bool {
 		h.QuerySQL(`SELECT id::text FROM rimsky_node_runs WHERE node_id = $1 AND state = 'parked'`,
 			[]any{worker.ID}, func(scan func(...any) error) error {
 				return scan(&parkedRunID)
 			})
-		if parkedRunID == "" {
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
+		return parkedRunID != ""
+	})
 
 	pauseResp := postJSON(t,
 		h.ControlBase+fmt.Sprintf("/v1/instances/%s/pause", iid.String()),
@@ -107,7 +106,7 @@ func TestParkedRunSurvivesMostRecentCascadeRound(t *testing.T) {
 	require.Equal(t, http.StatusOK, resumeResp.status,
 		"resume must succeed so the queued upstream round dispatches; body=%s", string(resumeResp.raw))
 
-	for poll := 1; ; poll++ {
+	awaited.Until(t, "the woken parked run "+parkedRunID+" to settle fresh", func() bool {
 		var (
 			found bool
 			state string
@@ -121,16 +120,8 @@ func TestParkedRunSurvivesMostRecentCascadeRound(t *testing.T) {
 			"the woken parked run %s was deleted: an upstream cascade during a park wakes the parked row "+
 				"and queues a new round beside it; the most-recent mode's coalescing delete must skip the woken "+
 				"row, so the parked unit of work still executes", parkedRunID)
-		if state == string(cascade.NodeStateFresh) {
-			break
-		}
-		if poll%40 == 0 {
-			t.Logf("still polling woken parked run %s for state=fresh (observed: %s) — "+
-				"blocks until the state appears; the test guard's no-progress watchdog is the only backstop",
-				parkedRunID, state)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return state == string(cascade.NodeStateFresh)
+	})
 
 	h.WaitForDispatchCount(worker.ID, 2)
 	h.WaitForAllRunsTerminal(worker.ID)

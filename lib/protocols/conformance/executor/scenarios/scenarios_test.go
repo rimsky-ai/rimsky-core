@@ -96,11 +96,11 @@ func deliverAsyncSuccess(callbackURL, ackID string) {
 			"change_summary":   "stubModeExecutor: async settle",
 		},
 	})
-	postCallbackWithRetry(callbackURL, ackID, body)
+	postCallbackUntilAccepted(callbackURL, ackID, body)
 }
 
-func postCallbackWithRetry(callbackURL, ackID string, body []byte) {
-	for attempt := 0; attempt < 20; attempt++ {
+func postCallbackUntilAccepted(callbackURL, ackID string, body []byte) {
+	for {
 		resp, err := http.Post(callbackURL+"/v1/callback/"+ackID, "application/json", bytes.NewReader(body))
 		if err == nil {
 			_ = resp.Body.Close()
@@ -108,6 +108,7 @@ func postCallbackWithRetry(callbackURL, ackID string, body []byte) {
 				return
 			}
 		}
+		//nolint:testwallclock-outcome inter-attempt cadence; this loop returns only when the receiver accepts the callback
 		time.Sleep(10 * time.Millisecond)
 	}
 }
@@ -129,8 +130,7 @@ func startStubModeExecutor(t *testing.T) string {
 func TestUnaryProtocolScenarios_RunAgainstALiveExecutor(t *testing.T) {
 	addr := startStubModeExecutor(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
@@ -205,8 +205,7 @@ func startTagDroppingExecutor(t *testing.T) string {
 func TestTagsRoundTrip_FailsWhenExecutorDropsDeclaredTag(t *testing.T) {
 	addr := startTagDroppingExecutor(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
@@ -228,8 +227,7 @@ func TestTagsRoundTrip_FailsWhenExecutorDropsDeclaredTag(t *testing.T) {
 func TestTagsRoundTrip_SkipsWhenExecutorDeclaresNoTags(t *testing.T) {
 	addr := startStubModeExecutorNoDeclaredTags(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
@@ -301,8 +299,7 @@ func startExecutor(t *testing.T, srv genv1.ExecutorServer) string {
 func TestScratchParkRoundTrip_FailsWhenExecutorEmitsEmptyScratch(t *testing.T) {
 	addr := startExecutor(t, emptyScratchParkExecutor{})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
@@ -372,8 +369,7 @@ func deliverAsyncPark(callbackURL, ackID string, scratch []byte) {
 func TestScratchParkRoundTrip_PassesThroughAsyncCallbackDecode(t *testing.T) {
 	addr := startExecutor(t, &asyncScratchParkExecutor{})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
@@ -452,8 +448,7 @@ func deliverAsyncSuccessOnce(callbackURL, ackID string) {
 func TestAsyncCallbackSurvivesRestart_FailsWhenExecutorDoesNotRetry(t *testing.T) {
 	addr := startExecutor(t, &singleAttemptAsyncExecutor{})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
@@ -505,8 +500,7 @@ func (resumeAtHonoringParkExecutor) Execute(_ context.Context, req *genv1.Execut
 func TestParkEmission_PassesWhenExecutorEchoesRequestedResumeAt(t *testing.T) {
 	addr := startExecutor(t, resumeAtHonoringParkExecutor{})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
@@ -552,8 +546,7 @@ func (fixedResumeAtParkExecutor) Execute(_ context.Context, req *genv1.ExecuteRe
 func TestParkEmission_FailsWhenExecutorIgnoresRequestedResumeAt(t *testing.T) {
 	addr := startExecutor(t, fixedResumeAtParkExecutor{})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},

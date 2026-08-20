@@ -4,13 +4,14 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -77,23 +78,16 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 	require.NotNil(t, innerMidNode, "inner-mid node missing")
 
 	const retryCount = 2
-	deadline := time.Now().Add(60 * time.Second)
-	var dispatchCount int
-	for time.Now().Before(deadline) {
-		dispatchCount = 0
+	awaited.Until(t, fmt.Sprintf("in-place retry to produce %d inner-mid dispatches (initial + %d retries)",
+		retryCount+1, retryCount), func() bool {
+		dispatchCount := 0
 		for _, o := range h.Stub.Observed() {
 			if o.NodeType == "inner-mid" {
 				dispatchCount++
 			}
 		}
-		if dispatchCount >= retryCount+1 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.GreaterOrEqual(t, dispatchCount, retryCount+1,
-		"in-place retry must produce at least %d inner-mid dispatches (initial + %d retries); got %d",
-		retryCount+1, retryCount, dispatchCount)
+		return dispatchCount >= retryCount+1
+	})
 
 	var distinctScopes, totalRuns int
 	h.QueryRowSQL(`

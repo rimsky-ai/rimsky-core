@@ -79,7 +79,7 @@ func TestSplitServing_SupervisorListenerRequiresClientCert(t *testing.T) {
 	}
 	addr := serveOnEphemeral(t, servers.peer)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	authed, err := grpc.NewClient(addr, grpc.WithTransportCredentials(clientTLS(t, ca, true)))

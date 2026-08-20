@@ -17,6 +17,7 @@ import (
 
 const ConfigEnv = "RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG"
 
+// @decision: default-port-allocation
 const (
 	defaultGRPCPort = 9100
 	defaultHTTPPort = 9110

@@ -81,7 +81,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	if stubPID <= 0 {
 		t.Fatalf("could not locate `spawned service` log envelope for name=stub in stderr:\n%s", stderrStr)
 	}
-	waitProcessGone(stubPID)
+	waitProcessGone(t, stubPID)
 
 	rimskyDir := filepath.Join(work, ".rimsky")
 	if _, statErr := os.Stat(rimskyDir); statErr != nil {

@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestClaudeAgentSessionResume(t *testing.T) {
@@ -55,15 +56,17 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 
 	postWorkerRerunMessage(t, ep, iid, "session-resume-loop")
 
-	waitForWorkerDispatchCount(t, ctx, pgPool, workerNodeID, 3, 180*time.Second)
-	waitForNodeRunsQuiescent(t, ctx, pgPool, workerNodeID, 30*time.Second)
+	waitForWorkerDispatchCount(t, ctx, pgPool, workerNodeID, 3)
+	waitForWorkerDispatchCount(t, ctx, pgPool, subWorkerNodeID, 1)
 
 	dumpWorkerDispatchProvenance(t, ctx, pgPool, workerNodeID)
 
 	if got := countNodeRuns(t, ctx, pgPool, workerNodeID); got != 3 {
-		t.Fatalf("worker node %s has %d total node_run rows after going dispatch-quiescent, want "+
-			"exactly 3 — a broken `when: payload.attributes_delta.fake_cli_turn < 3` subscription "+
-			"filter would enqueue a 4th dispatch even before it settles", workerNodeID, got)
+		t.Fatalf("worker node %s has %d total node_run rows once the sub-worker dispatch settled, want "+
+			"exactly 3 — the sub-worker dispatch is the caller-delegate branch of the same cascade pass "+
+			"that would have enqueued a 4th worker dispatch, so a broken `when: "+
+			"payload.attributes_delta.fake_cli_turn < 3` subscription filter shows up here",
+			workerNodeID, got)
 	}
 
 	dispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, workerNodeID)
@@ -95,7 +98,6 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 			d1.runScopeID, d2.runScopeID, d3.runScopeID)
 	}
 
-	waitForWorkerDispatchCount(t, ctx, pgPool, subWorkerNodeID, 1, 120*time.Second)
 	dumpWorkerDispatchProvenance(t, ctx, pgPool, subWorkerNodeID)
 	dumpWorkerDispatchProvenance(t, ctx, pgPool, callerNodeID)
 
@@ -364,44 +366,11 @@ func countNodeRuns(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID
 	return n
 }
 
-func waitForNodeRunsQuiescent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string, deadline time.Duration) {
+func waitForWorkerDispatchCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string, wantN int) {
 	t.Helper()
-	const stableWindow = 5 * time.Second
-	end := time.Now().Add(deadline)
-	last := countNodeRuns(t, ctx, pool, nodeID)
-	stableSince := time.Now()
-	for time.Now().Before(end) {
-		time.Sleep(500 * time.Millisecond)
-		cur := countNodeRuns(t, ctx, pool, nodeID)
-		if cur != last {
-			last = cur
-			stableSince = time.Now()
-			continue
-		}
-		if time.Since(stableSince) >= stableWindow {
-			return
-		}
-	}
-	dumpWorkerDispatchProvenance(t, ctx, pool, nodeID)
-	t.Fatalf("node %s never went dispatch-quiescent within %v (node_run row count kept changing, last=%d)",
-		nodeID, deadline, last)
-}
-
-func waitForWorkerDispatchCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string, wantN int, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	lastN := 0
-	for time.Now().Before(end) {
-		out := getWorkerDispatchesInOrder(t, ctx, pool, nodeID)
-		lastN = len(out)
-		if lastN >= wantN {
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	dumpWorkerDispatchProvenance(t, ctx, pool, nodeID)
-	t.Fatalf("node %s did not reach %d settled dispatches within %v (last count=%d)",
-		nodeID, wantN, deadline, lastN)
+	awaited.Until(t, fmt.Sprintf("node %s to reach %d settled dispatch(es)", nodeID, wantN), func() bool {
+		return len(getWorkerDispatchesInOrder(t, ctx, pool, nodeID)) >= wantN
+	})
 }
 
 func requireFakeCliTurn(t *testing.T, attrs map[string]any, want int) {

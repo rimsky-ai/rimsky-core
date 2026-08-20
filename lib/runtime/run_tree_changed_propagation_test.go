@@ -98,7 +98,7 @@ func TestApplyTerminalComplete_LeafChangedPersistsAndPropagatesToRunTreeParent(t
 		}, tx); err != nil {
 			return err
 		}
-		if err := tables.NodeRunTree().UpdateStateAndOutcome(ctx, parentRunID, cascade.NodeStateRunning, nil, false, tx); err != nil {
+		if err := tables.Nodes().UpdateState(ctx, parentRunID, cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx); err != nil {
 			return err
 		}
 		if err := tables.RunScopes().Create(ctx, persistence.RunScopeRow{

@@ -17,6 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 type reconcilerFakePublisherClient struct {
@@ -168,9 +169,8 @@ func TestRunPublisherSubscriptionReconcilerLoop_TickRedrivesActiveSubscription(t
 
 	<-client.listCalled
 
-	for len(client.subscribeCalls()) == 0 {
-		time.Sleep(2 * time.Millisecond)
-	}
+	awaited.Until(t, "the tick-driven reconcile to re-issue the dropped subscription",
+		func() bool { return len(client.subscribeCalls()) > 0 })
 	calls := client.subscribeCalls()
 	if len(calls) != 1 || calls[0] != subID {
 		t.Fatalf("tick-driven reconcile: Subscribe calls = %v, want exactly [%v]", calls, subID)

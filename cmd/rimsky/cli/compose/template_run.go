@@ -7,16 +7,14 @@ package compose
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
@@ -54,11 +52,13 @@ func RunTemplateRun(ctx context.Context, args []string) int {
 }
 
 func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.RunFlags) int {
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := serverkit.NewJSONLogger()
 
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
+	spawned := &SpawnedRegistry{}
+	// @decision: graceful-shutdown
+	escalation, stopSignals := NewSignalEscalation(spawned, logger)
+	defer stopSignals()
+	sigCh := escalation.Signals()
 	bootCtx, cancelBoot := context.WithCancel(ctx)
 	defer cancelBoot()
 	bootSignalDone := make(chan struct{})
@@ -67,7 +67,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		releaseOnce.Do(func() { close(bootSignalDone) })
 	}
 	defer releaseBootSignalWatcher()
-	go watchBootSignal(sigCh, bootSignalDone, cancelBoot, logger)
+	go watchBootSignal(sigCh, bootSignalDone, cancelBoot, escalation, logger)
 
 	spec, err := cli.ReadSpecFile(rf.TemplateFile)
 	if err != nil {
@@ -90,6 +90,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 
 	// @decision: late-bound-services-direct-spawn
 	services, spawnOverlay, err := spawnServices(bootCtx, rf.Services, logger)
+	spawned.Set(services)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: spawn services:", err)
 		reapSpawnedFatal(services, logger)
@@ -212,6 +213,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		stack:        stack,
 		services:     services,
 		sigCh:        sigCh,
+		escalation:   escalation,
 		printer:      printer,
 		instanceIDs:  []string{inst.UUID()},
 		keyByID:      map[string]string{inst.UUID(): displayKey},

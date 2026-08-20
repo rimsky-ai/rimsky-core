@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub/stubtest"
 )
@@ -173,15 +174,10 @@ func TestRefreshLoop_HealsUnreachable(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go disc.RefreshLoop(ctx, 50*time.Millisecond, slog.Default())
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the refresh loop to heal executor x back to reachable", func() bool {
 		got, _ = disc.GetExecutor("x")
-		if got.Reachability == ReachabilityReachable {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("RefreshLoop did not heal; final reachability = %s", got.Reachability)
+		return got.Reachability == ReachabilityReachable
+	})
 }
 
 func TestRefreshLoop_SkipsStaticEntries(t *testing.T) {
@@ -247,15 +243,10 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go disc.RefreshLoop(ctx, 50*time.Millisecond, slog.Default())
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the refresh loop to flip executor x to unreachable after its server stopped", func() bool {
 		entry, _ = disc.GetExecutor("x")
-		if entry.Reachability == ReachabilityUnreachable {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("RefreshLoop did not flip to unreachable; final reachability = %s", entry.Reachability)
+		return entry.Reachability == ReachabilityUnreachable
+	})
 }
 
 func TestRunHandshake_ThreadsTLSMode(t *testing.T) {

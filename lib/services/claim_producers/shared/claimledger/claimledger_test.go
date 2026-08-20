@@ -5,7 +5,6 @@ package claimledger
 
 import (
 	"testing"
-	"time"
 )
 
 func TestLedgerOpenAndCommit(t *testing.T) {
@@ -23,8 +22,11 @@ func TestLedgerOpenAndCommit(t *testing.T) {
 	if rec2.State != ClaimStateCommitted {
 		t.Fatalf("state = %s, want COMMITTED", rec2.State)
 	}
-	if rec2.ClosedAt == nil || time.Since(*rec2.ClosedAt) > time.Minute {
-		t.Fatalf("closed_at not set sensibly: %+v", rec2.ClosedAt)
+	if rec2.ClosedAt == nil {
+		t.Fatal("closed_at not stamped on the terminal record")
+	}
+	if rec2.ClosedAt.Before(rec2.OpenedAt) {
+		t.Fatalf("closed_at %s precedes the record's own opened_at %s", rec2.ClosedAt, rec2.OpenedAt)
 	}
 }
 

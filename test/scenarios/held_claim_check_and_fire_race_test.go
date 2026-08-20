@@ -7,7 +7,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -20,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -132,18 +132,16 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	}
 
 	waitForBlockedContender := func(ctx context.Context) {
-		for {
+		awaited.Until(t, "contender B to block on the claim-handle row lock", func() bool {
 			var waiting int
-			if err := h.Pool.QueryRow(ctx,
+			err := h.Pool.QueryRow(ctx,
 				`SELECT count(*) FROM pg_stat_activity
 				  WHERE datname = current_database()
 				    AND wait_event_type = 'Lock'
 				    AND query LIKE '%FROM rimsky_claim_handles WHERE id = $1 FOR UPDATE%'`,
-			).Scan(&waiting); err == nil && waiting > 0 {
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+			).Scan(&waiting)
+			return err == nil && waiting > 0
+		})
 	}
 
 	argsA := baseArgs

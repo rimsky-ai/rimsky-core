@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const webhookPublisherName = "intake"
@@ -72,7 +73,7 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 
 	ep.WaitForSubscriptionsActive(t, instanceID)
 
-	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookPathPrefix, 30*time.Second)
+	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookPathPrefix)
 
 	preCount := publisherMessageCount(t, ep, instanceID)
 	outsideStatus, outsideBody := postWebhook(t, sensor.WebhookBaseURL+"/wh/unrelated",
@@ -82,8 +83,8 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 			"path-prefix filter is declared but unused; any POST is being routed",
 			outsideStatus, string(outsideBody))
 	}
-	requirePublisherMessageCountStable(t, ep, instanceID, preCount, 2*time.Second,
-		"off-prefix-post-must-not-emit")
+	requirePublisherMessageCount(t, ep, instanceID, preCount,
+		"off-prefix-post-must-not-emit — the 404 is definitive, so the count is settled the moment it lands")
 
 	postPath := sensor.WebhookBaseURL + webhookPathPrefix
 
@@ -95,8 +96,8 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 			"accepted anonymous POST is the finding-1947 injection vulnerability",
 			postPath, anonStatus, string(anonBody))
 	}
-	requirePublisherMessageCountStable(t, ep, instanceID, beforeAnon, 2*time.Second,
-		"unsigned-post-must-not-emit")
+	requirePublisherMessageCount(t, ep, instanceID, beforeAnon,
+		"unsigned-post-must-not-emit — the 401 is definitive, so the count is settled the moment it lands")
 
 	inboundBody := map[string]any{
 		"event": "deploy.requested",
@@ -122,7 +123,7 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 			"mount or the signature verification is broken", postPath, status, string(ackBody))
 	}
 
-	requirePublisherMessageCountReaches(t, ep, instanceID, beforePost+1, 5*time.Second, "signed-webhook-post-must-persist-exactly-one-message")
+	requirePublisherMessageCountReaches(t, ep, instanceID, beforePost+1, "signed-webhook-post-must-persist-exactly-one-message")
 
 	persisted := readSinglePublisherMessage(t, ep, instanceID, webhookPublisherName)
 	requirePersistedWebhookPayload(t, persisted, inboundBody, webhookPathPrefix)
@@ -153,7 +154,7 @@ func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
 	instanceID := createSensorWebhookInstance(t, ep, templateID, "ck-sensor-webhook-restart")
 
 	ep.WaitForSubscriptionsActive(t, instanceID)
-	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookRestartPathPrefix, 30*time.Second)
+	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookRestartPathPrefix)
 
 	preRestartPath := sensor.WebhookBaseURL + webhookRestartPathPrefix
 	status, body := postWebhookSignedWithHeaders(t, preRestartPath, []byte(`{"seq":1}`), webhookAuthSecret,
@@ -161,7 +162,7 @@ func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("pre-restart signed POST to %s returned %d (want 200), body=%q", preRestartPath, status, string(body))
 	}
-	requirePublisherMessageCountReaches(t, ep, instanceID, 1, 30*time.Second, "pre-restart-delivery")
+	requirePublisherMessageCountReaches(t, ep, instanceID, 1, "pre-restart-delivery")
 
 	sensor.Stop(ctx)
 	t.Logf("sensor-webhook stopped at %s", time.Now().UTC().Format(time.RFC3339Nano))
@@ -171,7 +172,7 @@ func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
 		"the path and the state DB must rehydrate the idempotency watermark",
 		time.Now().UTC().Format(time.RFC3339Nano))
 
-	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookRestartPathPrefix, 30*time.Second)
+	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookRestartPathPrefix)
 
 	postRestartPath := sensor.WebhookBaseURL + webhookRestartPathPrefix
 	replayStatus, replayBody := postWebhookSignedWithHeaders(t, postRestartPath, []byte(`{"seq":1}`), webhookAuthSecret,
@@ -180,8 +181,9 @@ func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
 		t.Fatalf("post-restart replayed-key POST to %s returned %d (want 200 dedup ack), body=%q",
 			postRestartPath, replayStatus, string(replayBody))
 	}
-	requirePublisherMessageCountStable(t, ep, instanceID, 1, 3*time.Second,
-		"replayed-idempotency-key-must-not-emit-after-restart — the durable watermark must have "+
+	requirePublisherMessageCount(t, ep, instanceID, 1,
+		"replayed-idempotency-key-must-not-emit-after-restart — the sensor acknowledges only once the "+
+			"outcome is definitive, so the dedup ack settles the count; the durable watermark must have "+
 			"rehydrated from the state DB, otherwise the replay would be treated as a fresh delivery")
 
 	freshStatus, freshBody := postWebhookSignedWithHeaders(t, postRestartPath, []byte(`{"seq":2}`), webhookAuthSecret,
@@ -190,7 +192,7 @@ func TestSensorWebhook_RestartRecoversMountAndWatermark(t *testing.T) {
 		t.Fatalf("post-restart fresh-key POST to %s returned %d (want 200), body=%q",
 			postRestartPath, freshStatus, string(freshBody))
 	}
-	requirePublisherMessageCountReaches(t, ep, instanceID, 2, 30*time.Second,
+	requirePublisherMessageCountReaches(t, ep, instanceID, 2,
 		"post-restart-fresh-key-must-deliver — the path binding must be live again, not stuck "+
 			"404ing because the sensor never recovered its mount")
 }
@@ -300,11 +302,10 @@ func postWebhookSignedWithHeaders(t *testing.T, url string, body []byte, secret 
 	return resp.StatusCode, raw
 }
 
-func waitForWebhookSubscriptionActive(t *testing.T, baseURL, pathPrefix string, deadline time.Duration) {
+func waitForWebhookSubscriptionActive(t *testing.T, baseURL, pathPrefix string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastStatus int
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("rimsky's Subscribe handshake to mount %s on sensor-webhook, which then "+
+		"answers an unsigned probe with 401", pathPrefix), func() bool {
 		req, err := http.NewRequest(http.MethodPost, baseURL+pathPrefix,
 			bytes.NewReader([]byte(`{"probe":"subscription-active"}`)))
 		if err != nil {
@@ -312,19 +313,12 @@ func waitForWebhookSubscriptionActive(t *testing.T, baseURL, pathPrefix string, 
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			lastStatus = resp.StatusCode
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusUnauthorized {
-				return
-			}
+		if err != nil {
+			return false
 		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("sensor-webhook subscription did not become active on %s within %v "+
-		"(last status=%d, want 401 once the path is mounted and rejecting unsigned "+
-		"callers) — Subscribe handshake from rimsky did not mount the path",
-		pathPrefix, deadline, lastStatus)
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusUnauthorized
+	})
 }
 
 func readSinglePublisherMessage(t *testing.T, ep harness.RimskyEndpoint, instanceID, wantSender string) map[string]any {

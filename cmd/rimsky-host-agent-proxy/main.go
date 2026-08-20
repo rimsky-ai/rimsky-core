@@ -10,21 +10,18 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func main() {
 	cfg := LoadConfig()
 
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: shared.ParseLogLevel(cfg.LogLevel)})
-	logger := slog.New(handler)
+	logger := serverkit.NewJSONLoggerForLevel(cfg.LogLevel)
 	slog.SetDefault(logger)
 	slog.Info("rimsky-host-agent-proxy starting", "grpc_port", cfg.GRPCPort)
 
@@ -84,12 +81,13 @@ func main() {
 		}()
 	}
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	<-sigs
+	// @decision: graceful-shutdown
+	shutdownCtx, stopSignals := serverkit.ShutdownContext(context.Background(), logger)
+	defer stopSignals()
+	<-shutdownCtx.Done()
 	slog.Info("rimsky-host-agent-proxy shutting down")
-	servers.agent.GracefulStop()
+	serverkit.GracefulStop(servers.agent, serverkit.DeployedCoreGrace)
 	if servers.peer != nil {
-		servers.peer.GracefulStop()
+		serverkit.GracefulStop(servers.peer, serverkit.DeployedCoreGrace)
 	}
 }

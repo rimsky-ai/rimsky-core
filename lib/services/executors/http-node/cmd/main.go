@@ -10,21 +10,21 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	httpnode "github.com/rimsky-ai/rimsky-core/lib/services/executors/http-node"
 )
 
-const grpcShutdownGracePeriod = 10 * time.Second
+// @decision: graceful-shutdown
+const grpcShutdownGracePeriod = serverkit.BundledServiceGrace
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(serverkit.NewJSONLogger())
 	opts, err := httpnode.LoadOptsFromEnv()
 	if err != nil {
 		slog.Error("http-node config", "error", err.Error())
@@ -97,13 +97,14 @@ func main() {
 		}
 	}()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	// @decision: graceful-shutdown
+	shutdownCtx, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
+	defer stopSignals()
+	<-shutdownCtx.Done()
 	slog.Info("http-node stopping")
 	cancelSweep()
 	httpnode.GracefulStopWithDeadline(grpcSrv, grpcShutdownGracePeriod)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), serverkit.BundledServiceGrace)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
 }

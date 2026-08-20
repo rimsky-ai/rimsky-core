@@ -287,7 +287,7 @@ func applyTerminalComplete(
 		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, settlingSignalType, tx); err != nil {
 		return nil, err
 	}
-	if err := recordRunTreeChanged(ctx, args, acq.NodeRunID, cascade.NodeStateFresh, settlingSignalType, t.Changed, tx); err != nil {
+	if err := recordRunTreeChanged(ctx, args, acq.NodeRunID, settlingSignalType, t.Changed, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: %w", err)
 	}
 	// @concept: node-run

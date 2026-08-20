@@ -7,10 +7,10 @@ package scenarios
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -18,6 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -92,24 +93,17 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	receiver := h.FindNode(iid, "receiver")
 	require.NotNil(t, receiver)
 
-	deadline := time.Now().Add(60 * time.Second)
-	var frameCount, receiverRuns int
-	for time.Now().Before(deadline) {
+	var receiverRuns int
+	awaited.Until(t, fmt.Sprintf("%d settled frames and %d receiver runs", N, N), func() bool {
+		var frameCount int
 		h.QueryRowSQL(
 			`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1 AND ended_at IS NOT NULL`,
 			[]any{iid}, &frameCount)
 		h.QueryRowSQL(
 			`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
 			[]any{receiver.ID}, &receiverRuns)
-		if frameCount >= N && receiverRuns >= N {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	require.GreaterOrEqual(t, frameCount, N,
-		"need at least %d settled frames; got %d (cascade did not converge)", N, frameCount)
-	require.GreaterOrEqual(t, receiverRuns, N,
-		"receiver must run %d times; got %d (one-message-per-frame broken)", N, receiverRuns)
+		return frameCount >= N && receiverRuns >= N
+	})
 
 	var totalFrames int
 	h.QueryRowSQL(

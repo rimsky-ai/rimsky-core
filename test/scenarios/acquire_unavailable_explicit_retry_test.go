@@ -6,7 +6,6 @@ package scenarios
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -69,9 +69,8 @@ func TestAcquireUnavailable_ExplicitRetryAction(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	deadline := time.Now().Add(10 * time.Second)
 	var sawFirstOpen, sawRun bool
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "an Open against the empty queue and a node-run row while the silent retries are in flight", func() bool {
 		for _, c := range sub.Calls() {
 			if c.Verb == "open" {
 				sawFirstOpen = true
@@ -90,13 +89,8 @@ func TestAcquireUnavailable_ExplicitRetryAction(t *testing.T) {
 			}
 			return nil
 		}))
-		if sawFirstOpen && sawRun {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.True(t, sawFirstOpen, "stub producer should have seen at least one Open against the empty queue")
-	require.True(t, sawRun, "expected a node run row while silent retries are in flight")
+		return sawFirstOpen && sawRun
+	})
 
 	_, err := sub.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":1}`))
 	require.NoError(t, err, "seed item")

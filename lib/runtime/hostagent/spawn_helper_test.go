@@ -31,7 +31,7 @@ func buildFixture(t *testing.T, name string) string {
 
 func TestSpawnService_HappyPath(t *testing.T) {
 	bin := buildFixture(t, "stub-service")
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	spawned, err := SpawnService(ctx, SpawnServiceParams{
@@ -49,7 +49,7 @@ func TestSpawnService_HappyPath(t *testing.T) {
 		t.Fatal("expected non-zero port")
 	}
 
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", spawned.Port), 2*time.Second)
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", spawned.Port))
 	if err != nil {
 		_ = spawned.Cmd.Process.Kill()
 		<-spawned.Exited
@@ -73,13 +73,7 @@ func TestSpawnService_HappyPath(t *testing.T) {
 	if err := spawned.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("signal sigterm: %v", err)
 	}
-	select {
-	case <-spawned.Exited:
-	case <-time.After(5 * time.Second):
-		_ = spawned.Cmd.Process.Kill()
-		<-spawned.Exited
-		t.Fatal("child did not exit within 5s of SIGTERM")
-	}
+	<-spawned.Exited
 	if spawned.Cmd.ProcessState == nil {
 		t.Fatal("expected ProcessState set after Exited fires")
 	}
@@ -87,7 +81,7 @@ func TestSpawnService_HappyPath(t *testing.T) {
 
 func TestSpawnService_ReadyTimeoutReapsChild(t *testing.T) {
 	bin := buildFixture(t, "stub-no-bind")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	spawned, err := SpawnService(ctx, SpawnServiceParams{
@@ -108,5 +102,32 @@ func TestSpawnService_ReadyTimeoutReapsChild(t *testing.T) {
 
 	if got := err.Error(); !strings.Contains(got, "did not bind port") {
 		t.Fatalf("error = %q, want substring %q", got, "did not bind port")
+	}
+}
+
+func TestSpawnService_ReadyDeadlineIsSpentOnceNotOncePerPortAttempt(t *testing.T) {
+	bin := buildFixture(t, "stub-no-bind")
+	ports := 0
+	portSource := func() (int, error) {
+		ports++
+		return FreeLocalPort()
+	}
+
+	_, err := SpawnService(context.Background(), SpawnServiceParams{
+		BinaryPath:   bin,
+		Env:          os.Environ(),
+		ReadyTimeout: 200 * time.Millisecond,
+		portSource:   portSource,
+	})
+	if err == nil {
+		t.Fatal("SpawnService: expected an error from a child that never binds")
+	}
+	if ports != 1 {
+		t.Fatalf("picked %d port(s) for a child that stayed alive without binding, want 1 — the port retry "+
+			"exists for a collision the child reports by exiting at once, and re-spending the readiness "+
+			"deadline on it multiplies the wait the caller asked for", ports)
+	}
+	if got := err.Error(); !strings.Contains(got, "within 200ms") {
+		t.Fatalf("error = %q, want it to name the readiness deadline the caller asked for", got)
 	}
 }

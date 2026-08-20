@@ -328,7 +328,7 @@ func TestAddressBookResolveCachedHitDoesNotBlockOnOtherNamesDial(t *testing.T) {
 // @story: host-agent-late-bind-all-protocols
 func TestLateBoundProducerResolvesProxyThroughAddressBook(t *testing.T) {
 	f := newAddressBookFixture()
-	f.endpoints["rimsky-host-agent-proxy"] = ProducerEndpoint{Transport: "grpc", Endpoint: "proxy:9090"}
+	f.endpoints["rimsky-host-agent-proxy"] = ProducerEndpoint{Transport: "grpc", Endpoint: "proxy:8090"}
 
 	r := NewRegistry(
 		WithAddressBookResolution(f.lookup, f.dial, 10*time.Second, f.now),

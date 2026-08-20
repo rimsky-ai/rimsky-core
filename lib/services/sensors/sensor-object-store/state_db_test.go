@@ -98,7 +98,7 @@ func TestTouchLastPoll_UpdatesEvenWithoutWatermarkAdvance(t *testing.T) {
 	}
 
 	var lastPollAt time.Time
-	if err := s1.db.QueryRowContext(ctx,
+	if err := s1.db.QueryRow(ctx,
 		`SELECT last_poll_at FROM sensor_object_store_state WHERE publisher_subscription_id = $1`,
 		"sub-touch").Scan(&lastPollAt); err != nil {
 		t.Fatalf("query last_poll_at: %v", err)

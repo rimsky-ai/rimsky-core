@@ -19,7 +19,7 @@ func RunAuthRotate(ctx context.Context, args []string) int {
 		grace                 string
 	)
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
-	fs.StringVar(&keyFlag, "key", "", "API key (Bearer token)")
+	RegisterAPIKeyFlag(fs, &keyFlag)
 	fs.StringVar(&grace, "grace", "24h", "rotation grace duration")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 2

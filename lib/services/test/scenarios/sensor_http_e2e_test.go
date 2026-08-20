@@ -16,11 +16,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const httpPublisherName = "watcher"
@@ -30,7 +30,6 @@ const httpReactorNode = "reactor"
 const httpMessageType = "refresh/reactor"
 
 const httpPollIntervalConfig = "1s"
-const httpPollInterval = 1 * time.Second
 
 func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	t.Parallel()
@@ -77,7 +76,7 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	ep.WaitForSubscriptionsActive(t, instanceID)
 
 	// @story: sensor-http
-	waitForUpstreamPolls(t, &pollHits, 3, 30*time.Second)
+	waitForUpstreamPolls(t, &pollHits, 3)
 	requirePublisherMessageCount(t, ep, instanceID, 0, "body-filter-not-matching")
 
 	// @story: sensor-http
@@ -86,37 +85,28 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	bodyMu.Unlock()
 
 	requirePublisherMessagePersistedHTTP(t, ep, instanceID, httpPublisherName,
-		20*time.Second, "first-match-after-filter-flip")
-	requirePublisherMessageCountStable(t, ep, instanceID, 1,
-		5*httpPollInterval, "exactly-one-after-first-match")
+		"first-match-after-filter-flip")
+	requirePublisherMessageCountStableWhile(t, ep, instanceID, 1,
+		"exactly-one-after-first-match", upstreamPollsAdvanced(&pollHits, 5))
 
 	statePool := connectSensorStatePostgres(ctx, t, statePG.hostDSN)
 	defer statePool.Close()
-	subID, originalLastHash := waitForSensorHttpRowWithHash(t, ctx, statePool, 20*time.Second)
-	t.Logf("sensor-http persisted subscription %s with last_hash=%s before restart",
-		subID, originalLastHash)
 
 	// @story: sensor-http
 	preRestartCount := publisherMessageCount(t, ep, instanceID)
 	sensor.Stop(ctx)
 	preRestartPolls := pollHits.Load()
-	t.Logf("sensor-http stopped; pre-restart message count=%d, upstream polls=%d",
-		preRestartCount, preRestartPolls)
 
-	time.Sleep(2 * httpPollInterval)
-	if got := pollHits.Load(); got > preRestartPolls {
-		t.Fatalf("upstream was polled (%d → %d) while sensor was stopped — the polling "+
-			"is not happening from inside the sensor process", preRestartPolls, got)
-	}
+	subID, originalLastHash := waitForSensorHttpRowWithHash(t, ctx, statePool)
+	t.Logf("sensor-http stopped; it left subscription %s at last_hash=%s, message count=%d, upstream polls=%d",
+		subID, originalLastHash, preRestartCount, preRestartPolls)
 
 	sensor.Restart(ctx)
-	postRestartAt := time.Now().UTC()
-	t.Logf("sensor-http restarted at %s; recovered watermark should suppress re-emit",
-		postRestartAt.Format(time.RFC3339Nano))
+	t.Log("sensor-http restarted; the recovered watermark should suppress a re-emit")
 
-	waitForUpstreamPolls(t, &pollHits, int(preRestartPolls)+3, 30*time.Second)
-	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount,
-		5*httpPollInterval, "watermark-suppressed-re-emit-after-restart")
+	waitForUpstreamPolls(t, &pollHits, int(preRestartPolls)+3)
+	requirePublisherMessageCountStableWhile(t, ep, instanceID, preRestartCount,
+		"watermark-suppressed-re-emit-after-restart", upstreamPollsAdvanced(&pollHits, 5))
 
 	// @story: sensor-http
 	bodyMu.Lock()
@@ -124,69 +114,43 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	bodyMu.Unlock()
 
 	requirePublisherMessageCountReaches(t, ep, instanceID, preRestartCount+1,
-		20*time.Second, "second-match-after-restart")
-	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount+1,
-		5*httpPollInterval, "exactly-one-after-second-match")
+		"second-match-after-restart")
+	requirePublisherMessageCountStableWhile(t, ep, instanceID, preRestartCount+1,
+		"exactly-one-after-second-match", upstreamPollsAdvanced(&pollHits, 5))
 
-	requireSensorHttpHashAdvanced(t, ctx, statePool, subID, originalLastHash, 20*time.Second)
+	requireSensorHttpHashAdvanced(t, ctx, statePool, subID, originalLastHash)
 }
 
-func waitForSensorHttpRowWithHash(t *testing.T, ctx context.Context, pool *pgxpool.Pool, deadline time.Duration) (string, string) {
+func waitForSensorHttpRowWithHash(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (string, string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		var subID, lastHash string
+	var subID, lastHash string
+	awaited.Until(t, "sensor-http to persist a non-empty body-hash watermark in its state DB", func() bool {
 		err := pool.QueryRow(ctx,
 			`SELECT publisher_subscription_id, COALESCE(last_hash, '')
 			   FROM sensor_http_state
 			  LIMIT 1`,
 		).Scan(&subID, &lastHash)
-		if err == nil && lastHash != "" {
-			return subID, lastHash
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("sensor-http never persisted a non-empty last_hash within %v — "+
-		"the emit path is not writing the body-hash watermark through to the durable "+
-		"state DB; the restart-recovery proof is unobservable without it", deadline)
-	return "", ""
+		return err == nil && lastHash != ""
+	})
+	return subID, lastHash
 }
 
-func requireSensorHttpHashAdvanced(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID, original string, deadline time.Duration) {
+func requireSensorHttpHashAdvanced(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID, original string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var last string
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("sensor-http to advance last_hash past %q on subscription %s", original, subID), func() bool {
 		var hash string
 		err := pool.QueryRow(ctx,
 			`SELECT COALESCE(last_hash, '') FROM sensor_http_state WHERE publisher_subscription_id = $1`,
 			subID,
 		).Scan(&hash)
-		if err == nil {
-			last = hash
-			if hash != "" && hash != original {
-				return
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("sensor-http did not advance last_hash past %q within %v (last seen %q) — "+
-		"the durable watermark must move forward on each successful emit, otherwise the "+
-		"next poll on the same body would re-emit silently",
-		original, deadline, last)
+		return err == nil && hash != "" && hash != original
+	})
 }
 
-func waitForUpstreamPolls(t *testing.T, counter *atomic.Int32, min int, deadline time.Duration) {
+func waitForUpstreamPolls(t *testing.T, counter *atomic.Int32, min int) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		if int(counter.Load()) >= min {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatalf("upstream was polled only %d times in %v (wanted >=%d) — the sensor "+
-		"is not honoring its declared poll_interval=%s", counter.Load(), deadline, min, httpPollIntervalConfig)
+	awaited.Until(t, fmt.Sprintf("the sensor to poll the upstream at least %d time(s) at its declared poll_interval=%s",
+		min, httpPollIntervalConfig), func() bool { return int(counter.Load()) >= min })
 }
 
 func publisherMessageCount(t *testing.T, ep harness.RimskyEndpoint, instanceID string) int {
@@ -224,78 +188,79 @@ func requirePublisherMessageCount(t *testing.T, ep harness.RimskyEndpoint, insta
 	}
 }
 
-func requirePublisherMessageCountReaches(t *testing.T, ep harness.RimskyEndpoint, instanceID string, want int, deadline time.Duration, label string) {
+func requirePublisherMessageCountReaches(t *testing.T, ep harness.RimskyEndpoint, instanceID string, want int, label string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var last int
-	for time.Now().Before(end) {
-		last = publisherMessageCount(t, ep, instanceID)
-		if last >= want {
-			if last > want {
-				t.Fatalf("publisher message count for %s overshot: got %d, want %d (%s)",
-					instanceID, last, want, label)
-			}
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("publisher message count for %s never reached %d within %v (last=%d, %s) — "+
-		"the sensor's poll-and-emit path did not fire on the expected body change",
-		instanceID, want, deadline, last, label)
-}
-
-func requirePublisherMessageCountStable(t *testing.T, ep harness.RimskyEndpoint, instanceID string, want int, window time.Duration, label string) {
-	t.Helper()
-	deadline := time.Now().Add(window)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, fmt.Sprintf("the sensor's poll-and-emit path to bring instance %s to %d publisher message(s) (%s)",
+		instanceID, want, label), func() bool {
 		got := publisherMessageCount(t, ep, instanceID)
-		if got != want {
-			t.Fatalf("publisher message count for %s drifted off baseline during stability "+
-				"window: got %d, want %d (%s) — a sensor that ignored the body filter or "+
-				"lost its watermark on restart would surface here",
+		if got > want {
+			t.Fatalf("publisher message count for %s overshot: got %d, want %d (%s)",
 				instanceID, got, want, label)
 		}
-		time.Sleep(200 * time.Millisecond)
+		return got == want
+	})
+}
+
+type sensorProgress struct {
+	description string
+	reached     func() bool
+}
+
+func requirePublisherMessageCountStableWhile(t *testing.T, ep harness.RimskyEndpoint, instanceID string,
+	want int, label string, progress sensorProgress) {
+	t.Helper()
+	awaited.Until(t, fmt.Sprintf("%s while instance %s holds at %d publisher message(s) (%s)",
+		progress.description, instanceID, want, label), func() bool {
+		got := publisherMessageCount(t, ep, instanceID)
+		if got != want {
+			t.Fatalf("publisher message count for %s drifted off baseline while the sensor kept polling: "+
+				"got %d, want %d (%s) — a sensor that ignored the body filter or lost its watermark on "+
+				"restart would surface here", instanceID, got, want, label)
+		}
+		return progress.reached()
+	})
+}
+
+func upstreamPollsAdvanced(counter *atomic.Int32, polls int) sensorProgress {
+	target := int(counter.Load()) + polls
+	return sensorProgress{
+		description: fmt.Sprintf("the sensor to complete %d more upstream poll(s)", polls),
+		reached:     func() bool { return int(counter.Load()) >= target },
 	}
 }
 
-func requirePublisherMessagePersistedHTTP(t *testing.T, ep harness.RimskyEndpoint, instanceID, wantSender string, deadline time.Duration, label string) {
+func requirePublisherMessagePersistedHTTP(t *testing.T, ep harness.RimskyEndpoint, instanceID, wantSender, label string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSeen string
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("the sensor to emit a publisher message into instance %s (%s)", instanceID, label), func() bool {
 		status, raw := ep.GetJSON(t,
 			"/v1/instances/"+instanceID+"/messages?sender_kind=publisher", "")
-		if status == http.StatusOK {
-			var resp struct {
-				Messages []struct {
-					Type       string `json:"type"`
-					Sender     string `json:"sender"`
-					SenderKind string `json:"sender_kind"`
-				} `json:"messages"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				for _, m := range resp.Messages {
-					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s",
-						m.Type, m.Sender, m.SenderKind)
-					if m.SenderKind != "publisher" {
-						continue
-					}
-					if m.Sender != wantSender {
-						t.Fatalf("publisher message persisted with sender=%q, want %q "+
-							"(%s) — rimsky must derive sender from "+
-							"publisher_subscriptions.publisher_name, not the sensor's "+
-							"request body sender", m.Sender, wantSender, label)
-					}
-					return
-				}
-			}
+		if status != http.StatusOK {
+			return false
 		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("no publisher message landed for instance %s within %v (%s); last seen=%q — "+
-		"the real sensor never emitted into rimsky after the matching body change",
-		instanceID, deadline, label, lastSeen)
+		var resp struct {
+			Messages []struct {
+				Type       string `json:"type"`
+				Sender     string `json:"sender"`
+				SenderKind string `json:"sender_kind"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return false
+		}
+		for _, m := range resp.Messages {
+			if m.SenderKind != "publisher" {
+				continue
+			}
+			if m.Sender != wantSender {
+				t.Fatalf("publisher message persisted with sender=%q, want %q "+
+					"(%s) — rimsky must derive sender from "+
+					"publisher_subscriptions.publisher_name, not the sensor's "+
+					"request body sender", m.Sender, wantSender, label)
+			}
+			return true
+		}
+		return false
+	})
 }
 
 func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedURL string) string {

@@ -9,8 +9,8 @@
     "dirPrefix": "../wt-",
     "branchPrefix": "wt/"
   },
-  "srcTag": {
-    "path": "tools/image-src-tag.sh"
+  "runTag": {
+    "path": ".ok-workspaces/bin/run-tag"
   },
   "compose": {
     "projectPrefix": "rimsky-core",

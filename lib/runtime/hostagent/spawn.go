@@ -41,6 +41,8 @@ const maxSpawnPortAttempts = 3
 
 var errChildDidNotBind = errors.New("child did not bind picked port")
 
+var errReadyDeadlineExpired = errors.New("child stayed alive without binding until the readiness deadline expired")
+
 func (a *agent) runSpawn(ctx context.Context, sp *genv1.Spawn) {
 	ack := a.handleSpawn(ctx, sp)
 	a.send(&genv1.ClientFrame{Body: &genv1.ClientFrame_SpawnAck{SpawnAck: ack}})
@@ -78,7 +80,7 @@ func SpawnService(ctx context.Context, params SpawnServiceParams) (*SpawnedServi
 			return spawned, nil
 		}
 		lastErr = err
-		if !errors.Is(err, errChildDidNotBind) {
+		if !errors.Is(err, errChildDidNotBind) || errors.Is(err, errReadyDeadlineExpired) {
 			return nil, err
 		}
 	}
@@ -130,7 +132,8 @@ func spawnOnPickedPort(ctx context.Context, params SpawnServiceParams, pickPort 
 	default:
 		killProcess(cmd)
 		<-exited
-		return nil, fmt.Errorf("child did not bind port %d within %s: %w", port, readyTimeout, errChildDidNotBind)
+		return nil, fmt.Errorf("child did not bind port %d within %s: %w: %w",
+			port, readyTimeout, errChildDidNotBind, errReadyDeadlineExpired)
 	}
 }
 

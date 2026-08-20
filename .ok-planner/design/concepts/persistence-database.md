@@ -33,4 +33,4 @@ Owns: the top-level database container interface, the per-row-type accessor umbr
 - The memory blob backend IS gate-rejected outside the unified single-process role.
 - The raw-client-server-driver isolation rule restricts direct driver use to the client-server-backend adapter, its test helpers, the binary entrypoints, the scenario harness, the bundled services, and the smoke-test harness — graph and control code go through the database interface.
 - The schema is executor-agnostic: no persisted ledger is named for or shaped by a particular executor implementation. Executor state that must survive the runtime's boundaries rides generic surfaces exposed through the protocol (e.g. the per-run scratch payload per `decision:scratch-column`).
-- Pre-v1 migration discipline: filenames are append-only; SQL inside is free to drop+recreate.
+- Migration discipline follows `decision:migrations-append-only-numbered`: filenames are numerically ordered, the runner refuses a file that sorts before an applied one, and it rejects a file whose contents changed after it was applied. The SQL inside a new migration is free to drop and recreate.

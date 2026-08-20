@@ -167,7 +167,7 @@ func applyErrorPolicyWithScratchAndSettleHook(
 			transitioned = true
 		}
 		if transitioned {
-			if err := recordRunTreeChanged(ctx, args, acq.NodeRunID, cascade.NodeStateFresh, &settlingSig, false, tx); err != nil {
+			if err := recordRunTreeChanged(ctx, args, acq.NodeRunID, &settlingSig, false, tx); err != nil {
 				return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 			}
 		}

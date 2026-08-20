@@ -98,10 +98,12 @@ func (e RimskyEndpoint) WaitForExecutorPeerReachable(t testing.TB, name string) 
 			}
 			last = fmt.Sprintf("reachability=%s tls=%s last_error=%s", resp.Peer.Reachability, resp.Peer.TLS, resp.Peer.LastError)
 		}
-		if poll%40 == 0 {
-			t.Logf("harness: still waiting for executor peer %q to become reachable (last observed: %s) — the helper "+
-				"blocks until the capability probe succeeds; the test guard's no-progress watchdog is the only backstop", name, last)
+		if poll == 1 {
+			t.Logf("harness: waiting for executor peer %q to become reachable (first observation: %s) — the helper "+
+				"blocks until the capability probe succeeds and says so once, so a wait that never ends leaves the "+
+				"test guard's no-progress watchdog free to trip", name, last)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when the peer reports reachable
 		time.Sleep(250 * time.Millisecond)
 	}
 }

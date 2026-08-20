@@ -13,7 +13,6 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `audit-artifact` — Operator inspects the durable record of a completed one-shot run.
 - `audit-log-read` — Operator reads auth-relevant action audit.
 - `breakpoint-debugger` — Operator debugs live instance via breakpoints.
-- `bundled-park-resume-recipe` — Operator demonstrates park-then-resume on the bundled stack.
 - `cascade-defers-during-flight` — In-flight node-runs are sealed against upstream cascades; a cascade during flight queues a new run that dispatches after the current one settles.
 - `cascade-send` — Template author declares a message-sender node-type that dispatches a message when its subscriptions fire.
 - `cascade-signal-blind` — Template author wires reactive nodes against any cascade-firing signal type.
@@ -34,7 +33,6 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `client-context` — Operator switches between control-api endpoints.
 - `commit-response-honored` — Claim-producer author's Commit response fields honored.
 - `compose-lifecycle` — Operator drives multi-resource compose manifest.
-- `compose-namespace-guard` — Server enforces reserved compose prefix.
 - `data-processing-author` — Claim-producer author writes typed-data mix-in.
 - `debug-channel` — Operator overrides node state and attribute values when the instance is paused or at a breakpoint hit.
 - `dry-run-mode-floor` — Operator mints attempt-only key.

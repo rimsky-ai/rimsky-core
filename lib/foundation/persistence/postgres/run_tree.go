@@ -175,29 +175,61 @@ func (b *runTreeImpl) ListChildren(ctx context.Context, parentNodeRunID shared.U
 	return out, nil
 }
 
-func (b *runTreeImpl) UpdateStateAndOutcome(
-	ctx context.Context, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool, tx persistence.Tx,
+// @concept: transition-reason
+func (b *runTreeImpl) UpdateAggregateState(
+	ctx context.Context, runID shared.UUID, reason cascade.TransitionReason, settlingSignalType *string, changed bool, tx persistence.Tx,
 ) error {
-	if settlingSignalType == nil {
-		cmd, err := b.q(tx).Exec(ctx,
-			`UPDATE rimsky_node_runs SET state = $2, changed = $3 WHERE id = $1`,
-			runID, string(state), changed)
-		if err != nil {
-			return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
+	var stateScan string
+	if err := b.q(tx).QueryRow(ctx,
+		`SELECT state FROM rimsky_node_runs WHERE id = $1 FOR UPDATE`, runID,
+	).Scan(&stateScan); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("run_tree.UpdateAggregateState: %w", persistence.ErrNotFound)
 		}
-		if cmd.RowsAffected() == 0 {
-			return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", persistence.ErrNotFound)
-		}
-		return nil
+		return fmt.Errorf("run_tree.UpdateAggregateState: %w", err)
+	}
+	target, err := cascade.NextStateParent(cascade.NodeState(stateScan), reason)
+	if err != nil {
+		return fmt.Errorf("run_tree.UpdateAggregateState: %s: %w", runID, err)
+	}
+	var settlingArg any
+	if settlingSignalType != nil {
+		settlingArg = *settlingSignalType
 	}
 	cmd, err := b.q(tx).Exec(ctx,
-		`UPDATE rimsky_node_runs SET state = $2, settling_signal_type = $3, changed = $4 WHERE id = $1`,
-		runID, string(state), *settlingSignalType, changed)
+		`UPDATE rimsky_node_runs
+		    SET state = $2,
+		        settling_signal_type = COALESCE($3::text, settling_signal_type),
+		        changed = $4
+		  WHERE id = $1`,
+		runID, string(target), settlingArg, changed)
 	if err != nil {
-		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
+		return fmt.Errorf("run_tree.UpdateAggregateState: %w", err)
 	}
 	if cmd.RowsAffected() == 0 {
-		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", persistence.ErrNotFound)
+		return fmt.Errorf("run_tree.UpdateAggregateState: %w", persistence.ErrNotFound)
+	}
+	return nil
+}
+
+func (b *runTreeImpl) UpdateOutcome(
+	ctx context.Context, runID shared.UUID, settlingSignalType *string, changed bool, tx persistence.Tx,
+) error {
+	var settlingArg any
+	if settlingSignalType != nil {
+		settlingArg = *settlingSignalType
+	}
+	cmd, err := b.q(tx).Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET settling_signal_type = COALESCE($2::text, settling_signal_type),
+		        changed = $3
+		  WHERE id = $1`,
+		runID, settlingArg, changed)
+	if err != nil {
+		return fmt.Errorf("run_tree.UpdateOutcome: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("run_tree.UpdateOutcome: %w", persistence.ErrNotFound)
 	}
 	return nil
 }

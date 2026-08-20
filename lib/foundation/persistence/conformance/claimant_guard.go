@@ -973,15 +973,15 @@ func testClaimantGuardRunForceOverride(t *testing.T, d persistence.Database) {
 	}
 	assertRunOwnedBy(ctx, t, d, nodeRunID, guardSupA, "ReleaseClaim(empty claimant)")
 
-	if err := q.ForceReleaseClaim(ctx, nodeRunID); err != nil {
-		t.Fatalf("ForceReleaseClaim: %v", err)
+	if err := q.ReleaseClaim(ctx, nodeRunID, guardSupA); err != nil {
+		t.Fatalf("owner ReleaseClaim: %v", err)
 	}
 	owner, err := q.GetClaimedBy(ctx, nodeRunID)
 	if err != nil {
-		t.Fatalf("GetClaimedBy after ForceReleaseClaim: %v", err)
+		t.Fatalf("GetClaimedBy after owner ReleaseClaim: %v", err)
 	}
 	if owner.Kind != persistence.ClaimOwnershipKindUnclaimed {
-		t.Fatalf("ForceReleaseClaim did not release A's row: %s/%s", owner.Kind, owner.SupervisorID)
+		t.Fatalf("owner ReleaseClaim did not release A's row: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

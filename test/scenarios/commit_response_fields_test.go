@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +15,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -73,7 +73,7 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	var versionID, state string
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the plain node's claim-handle row must resolve to state='committed'", func() bool {
 		var count int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -81,8 +81,7 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 			 WHERE holder_node_id = $1 AND state = 'committed'
 		`, []any{n.ID}, &count)
 		return count == 1
-	}, 60*time.Second, 50*time.Millisecond,
-		"the plain node's claim-handle row must resolve to state='committed'")
+	})
 	h.QueryRowSQL(`
 		SELECT COALESCE(version_id, ''), state
 		  FROM rimsky_claim_handles
@@ -152,7 +151,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 	require.NotNil(t, parentNode, "cr-fan-parent node missing")
 	h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh)
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the parent claim-handle row must resolve to state='committed' after the children settle", func() bool {
 		var committedParents int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -163,8 +162,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 			   AND state = 'committed'
 		`, []any{parentNode.ID}, &committedParents)
 		return committedParents == 1
-	}, 90*time.Second, 50*time.Millisecond,
-		"the parent claim-handle row must resolve to state='committed' after the children settle")
+	})
 
 	var committedChildren int
 	h.QueryRowSQL(`

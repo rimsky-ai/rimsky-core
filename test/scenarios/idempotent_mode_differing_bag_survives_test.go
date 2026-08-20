@@ -5,12 +5,12 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -100,9 +100,7 @@ func TestIdempotentModeQueueComparison_DifferingBagSurvives(t *testing.T) {
 		return out
 	}
 
-	for len(bObs()) < 3 {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, "all three b dispatches to reach the stub", func() bool { return len(bObs()) >= 3 })
 	waitForRunCountSettled(h, a.ID, 4)
 	h.WaitForAllRunsTerminal(b.ID)
 

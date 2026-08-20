@@ -181,7 +181,7 @@ func TestEnrollIssuesLeafForLiveTokenAnd401sUnknown(t *testing.T) {
 	st.a.registerBootstrapToken("spawn-42", "live-token", time.Now())
 
 	ctx := context.Background()
-	resp, err := enroll.Enroll(ctx, &http.Client{Timeout: 5 * time.Second}, st.enrollBase, "live-token", "child-label")
+	resp, err := enroll.Enroll(ctx, &http.Client{}, st.enrollBase, "live-token", "child-label")
 	if err != nil {
 		t.Fatalf("enroll with a live bootstrap token must succeed: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestEnrollIssuesLeafForLiveTokenAnd401sUnknown(t *testing.T) {
 		t.Fatalf("issued cert principal = %q (err %v), want spawn-42", principal, err)
 	}
 
-	_, err = enroll.Enroll(ctx, &http.Client{Timeout: 5 * time.Second}, st.enrollBase, "not-a-real-token", "child-label")
+	_, err = enroll.Enroll(ctx, &http.Client{}, st.enrollBase, "not-a-real-token", "child-label")
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("enroll with an unknown token must 401, got err=%v", err)
 	}
@@ -310,8 +310,7 @@ func TestSpawnRetriesPastPlaintextSquatterThenDispatchesOverMTLS(t *testing.T) {
 	env = setEnvVar(env, enroll.EnvAPIKey, token)
 	env = setEnvVar(env, enroll.EnvControlAPIURL, enrollBase)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	spawned, err := SpawnService(ctx, SpawnServiceParams{
 		BinaryPath:   bin,

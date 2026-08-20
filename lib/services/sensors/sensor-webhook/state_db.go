@@ -5,15 +5,17 @@ package main
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// @decision: postgres-pgx-v5
 type stateDB struct {
-	db *sql.DB
+	db *pgxpool.Pool
 }
 
 func openStateDB(ctx context.Context) (*stateDB, error) {
@@ -21,17 +23,17 @@ func openStateDB(ctx context.Context) (*stateDB, error) {
 	if dsn == "" {
 		return nil, nil
 	}
-	db, err := sql.Open("pgx", dsn)
+	db, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open state db: %w", err)
 	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+	if err := db.Ping(ctx); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("ping state db: %w", err)
 	}
 	s := &stateDB{db: db}
 	if err := s.bootstrap(ctx); err != nil {
-		_ = db.Close()
+		db.Close()
 		return nil, fmt.Errorf("bootstrap state db: %w", err)
 	}
 	return s, nil
@@ -45,7 +47,7 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    last_seen_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
 	`
-	_, err := s.db.ExecContext(ctx, schema)
+	_, err := s.db.Exec(ctx, schema)
 	return err
 }
 
@@ -53,14 +55,15 @@ func (s *stateDB) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	s.db.Close()
+	return nil
 }
 
 func (s *stateDB) DeleteSubscription(ctx context.Context, subscriptionID string) error {
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sensor_webhook_state WHERE publisher_subscription_id = $1`, subscriptionID)
+	_, err := s.db.Exec(ctx, `DELETE FROM sensor_webhook_state WHERE publisher_subscription_id = $1`, subscriptionID)
 	return err
 }
 
@@ -68,7 +71,7 @@ func (s *stateDB) UpdateLastIdempotency(ctx context.Context, subscriptionID, key
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.db.Exec(ctx,
 		`INSERT INTO sensor_webhook_state (publisher_subscription_id, last_idempotency_key, last_seen_at)
 		      VALUES ($1, $2, now())
 		 ON CONFLICT (publisher_subscription_id) DO UPDATE SET
@@ -82,14 +85,14 @@ func (s *stateDB) GetLastIdempotency(ctx context.Context, subscriptionID string)
 	if s == nil {
 		return "", nil
 	}
-	row := s.db.QueryRowContext(ctx,
+	row := s.db.QueryRow(ctx,
 		`SELECT COALESCE(last_idempotency_key, '')
 		   FROM sensor_webhook_state
 		  WHERE publisher_subscription_id = $1`,
 		subscriptionID)
 	var key string
 	if err := row.Scan(&key); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", nil
 		}
 		return "", err
@@ -106,7 +109,7 @@ func (s *stateDB) ListWatermarks(ctx context.Context) ([]WatermarkRow, error) {
 	if s == nil {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.db.Query(ctx,
 		`SELECT publisher_subscription_id, COALESCE(last_idempotency_key, '')
 		   FROM sensor_webhook_state`)
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestCascadeSendDemo_RunExitsZero(t *testing.T) {
@@ -35,19 +36,17 @@ func TestCascadeSendDemo_RunExitsZero(t *testing.T) {
 	demoScript := repoExampleSpecPath(t, "test/fixtures/demos/cascade-send-demo.sh")
 	repoExampleSpecPath(t, "test/fixtures/demos/cascade-send-demo-template.yaml")
 
-	stdout, exitCode := runCascadeSendDemoScript(t, ctx, demoScript, ep.BaseURL, 180*time.Second)
+	stdout, exitCode := runCascadeSendDemoScript(t, ctx, demoScript, ep.BaseURL)
 	if exitCode != 0 {
 		t.Fatalf("cascade-send-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
 	}
 
-	requireCascadeSendInstanceSentIterate(t, ep, 60*time.Second)
+	requireCascadeSendInstanceSentIterate(t, ep)
 }
 
-func runCascadeSendDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string, timeout time.Duration) (string, int) {
+func runCascadeSendDemoScript(t *testing.T, ctx context.Context, scriptPath, baseURL string) (string, int) {
 	t.Helper()
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, "/bin/bash", scriptPath)
+	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
 	cmd.Env = append(os.Environ(),
 		"RIMSKY_CONTROL_API_URL="+baseURL,
 	)
@@ -70,25 +69,21 @@ func runCascadeSendDemoScript(t *testing.T, ctx context.Context, scriptPath, bas
 	return combined, exitErr.ExitCode()
 }
 
-func requireCascadeSendInstanceSentIterate(t *testing.T, ep harness.RimskyEndpoint, deadline time.Duration) {
+func requireCascadeSendInstanceSentIterate(t *testing.T, ep harness.RimskyEndpoint) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastBody string
-	for time.Now().Before(end) {
+	awaited.Until(t, "an instance to exhibit a loop/iterate frame with sender_kind=instance, the end-to-end "+
+		"evidence that the cascade-send back-edge fired", func() bool {
 		status, raw := ep.GetJSON(t, "/v1/instances?limit=20", "")
 		if status != http.StatusOK {
-			time.Sleep(250 * time.Millisecond)
-			continue
+			return false
 		}
 		var resp struct {
 			Instances []struct {
 				ID string `json:"id"`
 			} `json:"instances"`
 		}
-		lastBody = string(raw)
 		if err := json.Unmarshal(raw, &resp); err != nil {
-			time.Sleep(250 * time.Millisecond)
-			continue
+			return false
 		}
 		for _, inst := range resp.Instances {
 			fstatus, fraw := ep.GetJSON(t, "/v1/instances/"+inst.ID+"/frames?limit=20", "")
@@ -106,11 +101,10 @@ func requireCascadeSendInstanceSentIterate(t *testing.T, ep harness.RimskyEndpoi
 			}
 			for _, fr := range fresp.Frames {
 				if fr.MessageType == "loop/iterate" && fr.MessageSenderKind == "instance" {
-					return
+					return true
 				}
 			}
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("no instance exhibited a loop/iterate frame with sender_kind=instance within %v — the cascade-send back-edge did not fire end-to-end\nlast /v1/instances body:\n%s", deadline, lastBody)
+		return false
+	})
 }

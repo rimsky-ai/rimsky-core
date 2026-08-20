@@ -184,10 +184,7 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 		_ = h.Shutdown(shutCtx)
 	})
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-	}
+	<-done
 
 	mu.Lock()
 	called := resyncCalled

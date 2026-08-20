@@ -14,7 +14,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -153,12 +153,11 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	require.Empty(t, listed,
 		"after DELETE the breakpoint must no longer surface on /v1/instances/{id}/breakpoints")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "after DELETE the breakpoint-hits ledger surface must be empty — "+
+		"no orphan hit rows referencing the deleted breakpoint", func() bool {
 		rows := listBreakpointHits(t, hitsURL)
 		return len(rows) == 0
-	}, 5*time.Second, 50*time.Millisecond,
-		"after DELETE the breakpoint-hits ledger surface must be empty — "+
-			"no orphan hit rows referencing the deleted breakpoint")
+	})
 
 	require.Nil(t, getHitRow(t, h, hit.ID),
 		"the persisted hit row must be cascade-deleted along with its parent breakpoint")
@@ -212,25 +211,33 @@ func listBreakpointHits(t *testing.T, url string) []map[string]any {
 
 func waitForLatestAttributesTag(t *testing.T, url, wantTag string) string {
 	t.Helper()
-	for {
+	var got string
+	awaited.Until(t, "latest_attributes.tag to read "+wantTag+" at "+url, func() bool {
 		resp, err := http.Get(url)
 		if err != nil {
 			t.Fatalf("waitForLatestAttributesTag: GET %s: %v", url, err)
 		}
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			var body map[string]any
-			if err := json.Unmarshal(raw, &body); err == nil {
-				if bag, ok := body["latest_attributes"].(map[string]any); ok {
-					if v, ok := bag["tag"].(string); ok && v == wantTag {
-						return v
-					}
-				}
-			}
+		if resp.StatusCode != http.StatusOK {
+			return false
 		}
-		time.Sleep(75 * time.Millisecond)
-	}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return false
+		}
+		bag, ok := body["latest_attributes"].(map[string]any)
+		if !ok {
+			return false
+		}
+		v, ok := bag["tag"].(string)
+		if !ok || v != wantTag {
+			return false
+		}
+		got = v
+		return true
+	})
+	return got
 }
 
 var _ shared.UUID

@@ -6,7 +6,6 @@ package scopesconflict
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -104,16 +103,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 			instanceID, contenderObs.RunSummary)
 	}
 
-	deadline := time.Now().Add(30 * time.Second)
-	got := 1
-	for time.Now().Before(deadline) {
-		got = countAcquiredClaimScopeRows(ctx, t, pool, instanceID)
-		if got >= 2 {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if got != 1 {
+	if got := countAcquiredClaimScopeRows(ctx, t, pool, instanceID); got != 1 {
 		t.Fatalf("top-level overlap: want exactly 1 acquired claim_scope row for producer %q "+
 			"(only the durable acquirer; the contender's overlapping non-byte-equal scope held off), "+
 			"got %d — rimsky did not consult the producer's ScopesConflict during acquisition",

@@ -17,11 +17,11 @@ func TestPrecomputeUndeployBindings_SeesInstanceBeyondFirstPage(t *testing.T) {
 	t.Cleanup(srv.Close)
 	srv.ListInstancesDefaultPageSize = 1
 
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:a@1", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "p:a@1", "")
 	srv.State.SetTemplateState(hash, "deployed")
 
 	for i := 0; i < 3; i++ {
-		key := fmt.Sprintf("compose:p:owned-%d", i)
+		key := fmt.Sprintf("p:owned-%d", i)
 		if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {
 			t.Fatalf("CreateInstance: %v", err)
 		}
@@ -44,9 +44,9 @@ func TestPrecomputeUndeployBindings_AllComposeManagedNotDestructive(t *testing.T
 	srv := clitest.NewServer(t)
 	t.Cleanup(srv.Close)
 
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:a@1", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "p:a@1", "")
 	srv.State.SetTemplateState(hash, "deployed")
-	key := "compose:p:owned-0"
+	key := "p:owned-0"
 	if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestPrecomputeUndeployBindings_ListInstancesErrorIsConservativelyDestructiv
 	srv := clitest.NewServer(t)
 	t.Cleanup(srv.Close)
 
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:a@1", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "p:a@1", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	srv.SetFailure("GET", "/v1/instances", clitest.FailureSpec{Status: 500, Body: map[string]any{"error": "boom"}, Times: 1})
 

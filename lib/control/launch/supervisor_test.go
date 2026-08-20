@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/ports"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	"gopkg.in/yaml.v3"
 )
 
 func clearSupervisorAdvertiseEnv(t *testing.T) {
@@ -47,6 +49,59 @@ func TestResolveSupervisorConfig_DefaultsAndClamps(t *testing.T) {
 	}
 }
 
+func intPtr(n int) *int { return &n }
+
+// @decision: default-port-allocation
+func TestResolveSupervisorConfig_CallbackPortDefaultsIntoTheCoreBlockAndZeroStaysEphemeral(t *testing.T) {
+	clearSupervisorAdvertiseEnv(t)
+
+	resolved, err := resolveSupervisorConfig(supervisorYAMLConfig{})
+	if err != nil {
+		t.Fatalf("resolveSupervisorConfig: %v", err)
+	}
+	if resolved.CallbackPort != ports.SupervisorCallback {
+		t.Errorf("CallbackPort with no callback.port = %d, want %d", resolved.CallbackPort, ports.SupervisorCallback)
+	}
+
+	ephemeral, err := resolveSupervisorConfig(supervisorYAMLConfig{
+		Callback: supervisorYAMLCallback{Port: intPtr(0)},
+	})
+	if err != nil {
+		t.Fatalf("resolveSupervisorConfig: %v", err)
+	}
+	if ephemeral.CallbackPort != 0 {
+		t.Errorf("CallbackPort with an explicit callback.port of 0 = %d, want 0 so the operating system assigns one", ephemeral.CallbackPort)
+	}
+}
+
+// @decision: default-port-allocation
+func TestResolveSupervisorConfig_WrittenYAMLDistinguishesAnExplicitZeroFromAnOmittedPort(t *testing.T) {
+	clearSupervisorAdvertiseEnv(t)
+
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{name: "explicit zero stays ephemeral", yaml: "callback:\n  host: 0.0.0.0\n  port: 0\n", want: 0},
+		{name: "omitted key takes the core-block default", yaml: "callback:\n  host: 0.0.0.0\n", want: ports.SupervisorCallback},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg supervisorYAMLConfig
+			if err := yaml.Unmarshal([]byte(tc.yaml), &cfg); err != nil {
+				t.Fatalf("decode %q: %v", tc.yaml, err)
+			}
+			resolved, err := resolveSupervisorConfig(cfg)
+			if err != nil {
+				t.Fatalf("resolveSupervisorConfig: %v", err)
+			}
+			if resolved.CallbackPort != tc.want {
+				t.Errorf("CallbackPort from %q = %d, want %d", tc.yaml, resolved.CallbackPort, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveSupervisorConfig_ExplicitValuesPassThrough(t *testing.T) {
 	clearSupervisorAdvertiseEnv(t)
 	cfg := supervisorYAMLConfig{
@@ -56,7 +111,7 @@ func TestResolveSupervisorConfig_ExplicitValuesPassThrough(t *testing.T) {
 		ClaimPollIntervalMs: 75,
 		Callback: supervisorYAMLCallback{
 			Host: "127.0.0.5",
-			Port: 9999,
+			Port: intPtr(9999),
 		},
 	}
 	resolved, err := resolveSupervisorConfig(cfg)

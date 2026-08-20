@@ -87,26 +87,28 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 
 	priorUpdatedAt := got.UpdatedAt
 	priorData := got.Data
-	time.Sleep(10 * time.Millisecond)
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeAttributes().MergeDelta(ctx, runID, nil, tx)
-	}); err != nil {
-		t.Fatalf("MergeDelta nil-delta touch: %v", err)
-	}
 	var got2 *persistence.NodeAttributesRow
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
-		got2 = r
-		return err
-	}); err != nil {
-		t.Fatalf("Get after nil-delta touch: %v", err)
-	}
-	if got2 == nil {
-		t.Fatalf("Get after nil-delta touch: row missing")
-	}
-	if !got2.UpdatedAt.After(priorUpdatedAt) {
-		t.Fatalf("nil-delta touch: updated_at did not advance (prior=%v current=%v)",
-			priorUpdatedAt, got2.UpdatedAt)
+	for {
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.NodeAttributes().MergeDelta(ctx, runID, nil, tx)
+		}); err != nil {
+			t.Fatalf("MergeDelta nil-delta touch: %v", err)
+		}
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
+			got2 = r
+			return err
+		}); err != nil {
+			t.Fatalf("Get after nil-delta touch: %v", err)
+		}
+		if got2 == nil {
+			t.Fatalf("Get after nil-delta touch: row missing")
+		}
+		if got2.UpdatedAt.After(priorUpdatedAt) {
+			break
+		}
+		//nolint:testwallclock-outcome inter-touch cadence; this loop exits only once a touch has advanced updated_at
+		time.Sleep(time.Millisecond)
 	}
 	if len(got2.Data) != len(priorData) {
 		t.Fatalf("nil-delta touch: data shape changed (prior=%d keys, current=%d keys)",

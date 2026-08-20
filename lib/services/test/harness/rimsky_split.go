@@ -183,7 +183,7 @@ func renderSplitSupervisorYAML(advertiseHost string) string {
 	b.WriteString("claim_poll_interval_ms: 200\n")
 	b.WriteString("callback:\n")
 	b.WriteString("  host: 0.0.0.0\n")
-	b.WriteString("  port: 9100\n")
+	b.WriteString("  port: 8081\n")
 	fmt.Fprintf(&b, "  advertise_host: %s\n", advertiseHost)
 	return b.String()
 }

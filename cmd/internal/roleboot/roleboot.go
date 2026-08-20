@@ -7,31 +7,26 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
-
-const shutdownDeadline = 30 * time.Second
 
 type RoleRunner func(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig) (launch.StopFunc, <-chan error, error)
 
 func Main(run RoleRunner) {
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: shared.ParseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))})
-	logger := slog.New(handler)
+	logger := serverkit.NewJSONLogger()
 	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
 		logger = logger.With("binary", name)
 	}
 	slog.SetDefault(logger)
 	log := shared.NewSlogLogger(logger)
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sigCh, stopNotify := serverkit.NotifyShutdownSignals()
+	defer stopNotify()
 
 	ctx := context.Background()
 	driver, cfg, err := launch.OpenDriverFromEnv(ctx, logger)
@@ -51,9 +46,9 @@ func Main(run RoleRunner) {
 	// @decision: graceful-shutdown
 	drained := make(chan struct{})
 	defer close(drained)
-	shared.InstallSecondSignalHardExit(sigCh, drained, log, func() { os.Exit(shared.HardExitCode) })
+	serverkit.InstallSecondSignalHardExit(sigCh, drained, logger, func() { os.Exit(serverkit.HardExitCode) })
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownDeadline)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), serverkit.DeployedCoreGrace)
 	defer cancel()
 	_ = stop(shutdownCtx)
 	if roleErr != nil {

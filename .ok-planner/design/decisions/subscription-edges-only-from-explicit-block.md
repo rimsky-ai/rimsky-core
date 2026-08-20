@@ -6,7 +6,7 @@ decision: subscription-edges-only-from-explicit-block
 
 ## Choice
 
-The subscription-edge map is fed by the explicit subscribes block plus exactly one runtime injection at template registration: one structural-root edge per structural-root node — a node with no upstream of any kind (no non-self subscribes entries, no upstream attribute substitution refs, no message-body consumption; a self-subscription does not disqualify) — waking on the runtime-implicit empty-type message-receiver node's settlement without forcing upstream refresh. Substitution refs do not contribute edges to the map.
+The subscription-edge map is fed by the explicit subscribes block plus exactly one runtime injection, added when the runtime derives the map: one structural-root edge per structural-root node — a main-graph node with no upstream of any kind (no non-self subscribes entries, no upstream attribute substitution refs, no message-body consumption; a self-subscription does not disqualify) — waking on the runtime-implicit empty-type message-receiver node's settlement without forcing upstream refresh. Substitution refs do not contribute edges to the map.
 
 ## Rationale
 

@@ -4,7 +4,6 @@
 package compose
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -286,15 +285,18 @@ func TestWriteSyntheticSupervisorYAMLWithCallbackPort_PortRoundTrips(t *testing.
 	var probe struct {
 		Callback struct {
 			Host          string `yaml:"host"`
-			Port          int    `yaml:"port"`
+			Port          *int   `yaml:"port"`
 			AdvertiseHost string `yaml:"advertise_host"`
 		} `yaml:"callback"`
 	}
 	if err := yaml.Unmarshal(body, &probe); err != nil {
 		t.Fatalf("yaml round-trip: %v\n%s", err, string(body))
 	}
-	if probe.Callback.Port != wantPort {
-		t.Fatalf("callback.port: got %d, want %d\n%s", probe.Callback.Port, wantPort, string(body))
+	if probe.Callback.Port == nil {
+		t.Fatalf("callback.port is absent from the written supervisor.yml, so the supervisor takes the core-block default instead of an operating-system-assigned port\n%s", string(body))
+	}
+	if *probe.Callback.Port != wantPort {
+		t.Fatalf("callback.port: got %d, want %d\n%s", *probe.Callback.Port, wantPort, string(body))
 	}
 	if probe.Callback.Host != "0.0.0.0" {
 		t.Fatalf("callback.host: got %q, want %q\n%s", probe.Callback.Host, "0.0.0.0", string(body))
@@ -304,26 +306,15 @@ func TestWriteSyntheticSupervisorYAMLWithCallbackPort_PortRoundTrips(t *testing.
 	}
 }
 
-func TestWriteSyntheticSupervisorYAML_MatchesBakedDefault(t *testing.T) {
-	tmp := t.TempDir()
-	runDir, err := EnsureRunDir(tmp, "2026-06-13T10-03-00Z", "demo")
-	if err != nil {
-		t.Fatalf("EnsureRunDir: %v", err)
-	}
-	if err := WriteSyntheticSupervisorYAML(runDir); err != nil {
-		t.Fatalf("WriteSyntheticSupervisorYAML: %v", err)
-	}
-	got, err := os.ReadFile(filepath.Join(runDir, "supervisor.yml"))
-	if err != nil {
-		t.Fatalf("read written supervisor.yml: %v", err)
-	}
+// @decision: launch-config-injection
+func TestSyntheticSupervisorDefaultsMatchTheBakedAllInOneFile(t *testing.T) {
 	baked := filepath.Join(repoRoot(t), "dockerfiles", "all-in-one.supervisor-config.yml")
 	want, err := os.ReadFile(baked)
 	if err != nil {
 		t.Fatalf("read baked supervisor-config file %q: %v", baked, err)
 	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("synthetic supervisor.yml differs from baked %q\n--- got (%d bytes) ---\n%s\n--- want (%d bytes) ---\n%s",
-			baked, len(got), string(got), len(want), string(want))
+	if syntheticSupervisorYAML != string(want) {
+		t.Fatalf("the supervisor defaults the CLI writes differ from the ones baked into %q, so a local run and the all-in-one image would tune the supervisor differently\n--- constant (%d bytes) ---\n%s\n--- baked (%d bytes) ---\n%s",
+			baked, len(syntheticSupervisorYAML), syntheticSupervisorYAML, len(want), string(want))
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -93,10 +94,7 @@ func getFrameDetail(t *testing.T, h *scenario.Harness, instanceID, frameID share
 
 func waitForFrameEnded(t *testing.T, h *scenario.Harness, instanceID, frameID shared.UUID) {
 	t.Helper()
-	for {
-		if getFrameDetail(t, h, instanceID, frameID).EndedAt != nil {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, "frame "+frameID.String()+" to carry an ended_at", func() bool {
+		return getFrameDetail(t, h, instanceID, frameID).EndedAt != nil
+	})
 }

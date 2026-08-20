@@ -5,7 +5,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -134,7 +134,7 @@ func TestSubgraphEntryAlias_ResolvesToCallingNodeAtRuntime(t *testing.T) {
 			"sender identity for the absorbed entry)")
 
 	h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh)
-	for {
+	awaited.Until(t, "the caller node's latest run to settle fresh", func() bool {
 		var callerState string
 		h.QueryRowSQL(`
 			SELECT COALESCE(state, 'fresh')
@@ -143,9 +143,6 @@ func TestSubgraphEntryAlias_ResolvesToCallingNodeAtRuntime(t *testing.T) {
 			 ORDER BY enqueued_at DESC
 			 LIMIT 1
 		`, []any{callerNode.ID}, &callerState)
-		if callerState == string(cascade.NodeStateFresh) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return callerState == string(cascade.NodeStateFresh)
+	})
 }

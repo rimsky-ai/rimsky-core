@@ -60,7 +60,10 @@ type NodeRunTreeTable interface {
 
 	ListChildren(ctx context.Context, parentNodeRunID shared.UUID, tx Tx) ([]NodeRunTreeRow, error)
 
-	UpdateStateAndOutcome(ctx context.Context, runID shared.UUID, state cascade.NodeState, settlingSignalType *string, changed bool, tx Tx) error
+	// @concept: transition-reason
+	UpdateAggregateState(ctx context.Context, runID shared.UUID, reason cascade.TransitionReason, settlingSignalType *string, changed bool, tx Tx) error
+
+	UpdateOutcome(ctx context.Context, runID shared.UUID, settlingSignalType *string, changed bool, tx Tx) error
 
 	UpdateAggregationPolicy(ctx context.Context, runID shared.UUID, policy spec.AggregationPolicy, tx Tx) error
 }

@@ -7,7 +7,7 @@
     { "tag": "@practice:", "file_template": ".ok-plumbline/practices/{slug}.md" }
   ],
   "ignore": [
-    "tools/image-src-tag.sh",
+    ".ok-workspaces/bin/run-tag",
     "lib/protocols/proto/v1/gen/",
     ".ok-planner/history/",
     ".ok-planner/workbench/",

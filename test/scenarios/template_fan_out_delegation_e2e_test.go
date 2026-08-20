@@ -5,7 +5,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,6 +13,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -99,7 +99,8 @@ func TestTemplateFanOutDelegation_PerPartitionSubgraphAggregates(t *testing.T) {
 	exitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, exitNode, "inner-exit node missing")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "supervisor must materialize three sub-claim rows from SplitScope's three sub-scopes even though "+
+		"the fan-out node also delegates", func() bool {
 		var subClaims int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -108,11 +109,11 @@ func TestTemplateFanOutDelegation_PerPartitionSubgraphAggregates(t *testing.T) {
 			   AND holder_node_id = $1
 		`, []any{callerNode.ID}, &subClaims)
 		return subClaims == 3
-	}, 60*time.Second, 50*time.Millisecond,
-		"supervisor must materialize three sub-claim rows from SplitScope's three sub-scopes even though "+
-			"the fan-out node also delegates")
+	})
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "each fan-out partition clone must open its own nested sub-graph RunScope (graph_name='worker') "+
+		"parented under its own partition's RunScope — the delegated sub-graph must run once per "+
+		"partition, not once total", func() bool {
 		var partitionScopes int
 		h.QueryRowSQL(`
 			SELECT COUNT(DISTINCT worker_scope.id)
@@ -123,12 +124,9 @@ func TestTemplateFanOutDelegation_PerPartitionSubgraphAggregates(t *testing.T) {
 			   AND partition_scope.partition_key <> ''
 		`, []any{iid}, &partitionScopes)
 		return partitionScopes == 3
-	}, 60*time.Second, 50*time.Millisecond,
-		"each fan-out partition clone must open its own nested sub-graph RunScope (graph_name='worker') "+
-			"parented under its own partition's RunScope — the delegated sub-graph must run once per "+
-			"partition, not once total")
+	})
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the sub-graph exit must reach terminal success once per partition (three partition clones)", func() bool {
 		var exitRuns int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -139,12 +137,12 @@ func TestTemplateFanOutDelegation_PerPartitionSubgraphAggregates(t *testing.T) {
 			   AND r.state = 'fresh'
 		`, []any{exitNode.ID}, &exitRuns)
 		return exitRuns == 3
-	}, 90*time.Second, 50*time.Millisecond,
-		"the sub-graph exit must reach terminal success once per partition (three partition clones)")
+	})
 
 	h.WaitForNodeState(callerNode.ID, cascade.NodeStateFresh)
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "each partition's fan-out sub-claim must commit once its own delegated sub-graph settles — "+
+		"the claim must not be left dangling 'active' because the caller absorbed a delegate entry", func() bool {
 		var settledClaims int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -154,9 +152,7 @@ func TestTemplateFanOutDelegation_PerPartitionSubgraphAggregates(t *testing.T) {
 			   AND state = 'committed'
 		`, []any{callerNode.ID}, &settledClaims)
 		return settledClaims == 3
-	}, 60*time.Second, 50*time.Millisecond,
-		"each partition's fan-out sub-claim must commit once its own delegated sub-graph settles — "+
-			"the claim must not be left dangling 'active' because the caller absorbed a delegate entry")
+	})
 
 	var parentClaimState string
 	h.QueryRowSQL(`
@@ -172,7 +168,8 @@ func TestTemplateFanOutDelegation_PerPartitionSubgraphAggregates(t *testing.T) {
 	require.Equal(t, "committed", parentClaimState,
 		"the fan-out parent claim must aggregate to committed once every partition's delegated sub-graph settles")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "no claim acquired by the fan-out-and-delegate node may be left dangling 'active' once the "+
+		"instance-visible outcome has settled", func() bool {
 		var dangling int
 		h.QueryRowSQL(`
 			SELECT COUNT(*)
@@ -181,7 +178,5 @@ func TestTemplateFanOutDelegation_PerPartitionSubgraphAggregates(t *testing.T) {
 			   AND state = 'active'
 		`, []any{callerNode.ID}, &dangling)
 		return dangling == 0
-	}, 30*time.Second, 50*time.Millisecond,
-		"no claim acquired by the fan-out-and-delegate node may be left dangling 'active' once the "+
-			"instance-visible outcome has settled")
+	})
 }

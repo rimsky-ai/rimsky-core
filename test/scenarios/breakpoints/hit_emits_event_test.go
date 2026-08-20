@@ -9,15 +9,16 @@ package breakpoints
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -101,13 +102,12 @@ type breakpointHitEvent struct {
 
 func waitForBreakpointHitEvents(t *testing.T, url string, want int) []breakpointHitEvent {
 	t.Helper()
-	for {
-		events := getBreakpointHitEvents(t, url)
-		if len(events) >= want {
-			return events
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	var events []breakpointHitEvent
+	awaited.Until(t, fmt.Sprintf("%d breakpoint-hit event(s) at %s", want, url), func() bool {
+		events = getBreakpointHitEvents(t, url)
+		return len(events) >= want
+	})
+	return events
 }
 
 func getBreakpointHitEvents(t *testing.T, url string) []breakpointHitEvent {

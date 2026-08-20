@@ -5,7 +5,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -85,16 +84,13 @@ func TestHeldGateUpstreamComemberSkip(t *testing.T) {
 
 	h.WaitForNodeState(acquirer.ID, cascade.NodeStateHeld)
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		var n int
-		h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND state NOT IN ('pending')`,
-			[]any{receiver.ID}, &n)
-		require.Zero(t, n,
-			"receiver must not dispatch to completion while its non-subgraph upstream 'side' is still in flight, "+
-				"even though its held co-member 'acquirer' has already settled held")
-		time.Sleep(50 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	var n int
+	h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1 AND state NOT IN ('pending')`,
+		[]any{receiver.ID}, &n)
+	require.Zero(t, n,
+		"receiver must not dispatch to completion while its non-subgraph upstream 'side' is still in flight, "+
+			"even though its held co-member 'acquirer' has already settled held")
 
 	close(sideGate)
 

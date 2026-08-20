@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
@@ -44,9 +44,8 @@ func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
 	_ = resp.Body.Close()
 	require.Less(t, resp.StatusCode, 300, "DELETE /instances should succeed, got %d", resp.StatusCode)
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the agent to reap the spawned child on OnRunScopeTerminal and write its termination log", func() bool {
 		_, statErr := os.Stat(termLog)
 		return statErr == nil
-	}, 30*time.Second, 100*time.Millisecond,
-		"spawned child was not reaped (OnRunScopeTerminal reap never reached the agent)")
+	})
 }

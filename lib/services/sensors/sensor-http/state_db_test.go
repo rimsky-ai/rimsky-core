@@ -221,7 +221,8 @@ func TestAttachStateDB_RestoresLastPollAtSoRestartDoesNotForceImmediateRepoll(t 
 	if restored.LastPollAt.IsZero() {
 		t.Fatal("AttachStateDB left LastPollAt zero after restart — every restored watch would immediately re-poll")
 	}
-	if time.Since(restored.LastPollAt) > time.Minute {
-		t.Fatalf("restored LastPollAt = %v, want close to now (poll happened moments ago)", restored.LastPollAt)
+	if restored.LastPollAt.Before(restored.StartedAt) {
+		t.Fatalf("restored LastPollAt = %v, before the row's own start stamp %v — the restored watch would claim a poll that never happened",
+			restored.LastPollAt, restored.StartedAt)
 	}
 }

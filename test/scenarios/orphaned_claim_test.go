@@ -13,6 +13,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -98,7 +99,7 @@ func TestOrphanedClaimActiveRowsAlwaysHaveHolder(t *testing.T) {
 
 func waitForClaimHandleReaped(t *testing.T, h *scenario.Harness, id uuid.UUID) {
 	t.Helper()
-	for {
+	awaited.Until(t, "claim_handle row "+id.String()+" to be reaped", func() bool {
 		var got *persistence.ClaimHandleRow
 		if err := h.InTx(func(tx persistence.Tx) error {
 			r, err := h.Persist.ClaimHandles().Get(h.Ctx, id, tx)
@@ -107,9 +108,6 @@ func waitForClaimHandleReaped(t *testing.T, h *scenario.Harness, id uuid.UUID) {
 		}); err != nil {
 			t.Fatalf("waitForClaimHandleReaped: probe failed: %v", err)
 		}
-		if got == nil {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return got == nil
+	})
 }

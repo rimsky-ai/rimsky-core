@@ -5,7 +5,6 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -84,23 +83,20 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 
 	waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/")
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		require.Empty(t, h.Stub.Observed(),
-			"executor must not be invoked when the acquirer passes on Unavailable")
-		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-			ri, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, inh.ID, tx)
-			if err != nil {
-				return err
-			}
-			if ri != nil {
-				require.Equal(t, cascade.NodeStateFresh, ri.State,
-					"inheritor should remain fresh — pass should not cascade to it")
-			}
-			return nil
-		}))
-		time.Sleep(50 * time.Millisecond)
-	}
+	h.WaitForSchedulerQuiescence()
+	require.Empty(t, h.Stub.Observed(),
+		"executor must not be invoked when the acquirer passes on Unavailable")
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		ri, err := h.Persist.Nodes().GetLatestRunForNode(h.Ctx, inh.ID, tx)
+		if err != nil {
+			return err
+		}
+		if ri != nil {
+			require.Equal(t, cascade.NodeStateFresh, ri.State,
+				"inheritor should remain fresh — pass should not cascade to it")
+		}
+		return nil
+	}))
 
 	var acqLatest *persistence.NodeRunLatest
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

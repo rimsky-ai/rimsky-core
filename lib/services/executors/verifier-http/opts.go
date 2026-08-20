@@ -10,6 +10,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
+// @decision: default-port-allocation
+const defaultGRPCPort = 9096
+
 type Opts struct {
 	Host     string
 	Port     int
@@ -20,10 +23,11 @@ type Opts struct {
 }
 
 func LoadOptsFromEnv() (Opts, error) {
-	port, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", 9096)
+	port, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", defaultGRPCPort)
 	if err != nil {
 		return Opts{}, err
 	}
+	// @decision: destination-allowlists-default-closed
 	guard, err := egress.NewGuardFromEnv("RIMSKY_EXECUTOR_VERIFIER_HTTP_EGRESS_ALLOWLIST")
 	if err != nil {
 		return Opts{}, err

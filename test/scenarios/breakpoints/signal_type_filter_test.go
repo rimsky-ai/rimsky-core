@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -66,7 +65,7 @@ func TestSignalTypeFilter(t *testing.T) {
 	h.WaitForNodeState(okN.ID, cascade.NodeStateFresh)
 	h.WaitForNodeState(errN.ID, cascade.NodeStateFailed)
 
-	time.Sleep(500 * time.Millisecond)
+	h.WaitForSchedulerQuiescence()
 
 	hits := waitForHitCount(t, h, bpID, 1)
 	require.Len(t, hits, 1,

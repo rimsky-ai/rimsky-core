@@ -15,6 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestStartScheduler_WiresAuthSweepLoop(t *testing.T) {
@@ -71,7 +72,7 @@ func TestStartScheduler_WiresAuthSweepLoop(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = handle.Shutdown(context.Background()) })
 
-	for {
+	awaited.Until(t, "the scheduler's auth sweep to revoke the expired key", func() bool {
 		row, ok, err := d.Tables().APIKeys().GetByID(ctx, keyID, nil)
 		if err != nil {
 			t.Fatalf("poll GetByID: %v", err)
@@ -79,11 +80,8 @@ func TestStartScheduler_WiresAuthSweepLoop(t *testing.T) {
 		if !ok {
 			t.Fatalf("poll GetByID: key disappeared")
 		}
-		if row.RevokedAt != nil {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
+		return row.RevokedAt != nil
+	})
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }

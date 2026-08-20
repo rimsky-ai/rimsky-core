@@ -8,9 +8,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
-	"os/signal"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
 func RunMessagesTail(ctx context.Context, args []string) int {
@@ -46,8 +48,9 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 		id = inst.UUID()
 	}
 
-	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
-	defer cancel()
+	// @decision: graceful-shutdown
+	signalCtx, stopSignals := serverkit.ShutdownContext(ctx, slog.Default())
+	defer stopSignals()
 
 	var lastSeen time.Time
 	seenAtLastSeen := map[string]struct{}{}

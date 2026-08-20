@@ -7,7 +7,6 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -45,7 +44,7 @@ func newAgentTestServerWithVerifier(t *testing.T, verify registerIdentityVerifie
 
 func TestConnectRequiresRegisterFirst(t *testing.T) {
 	_, client := newAgentTestServer(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	stream, err := client.Connect(ctx)
@@ -63,7 +62,7 @@ func TestConnectRequiresRegisterFirst(t *testing.T) {
 
 func TestRegisterAck(t *testing.T) {
 	state, client := newAgentTestServer(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	stream, err := client.Connect(ctx)
@@ -93,7 +92,7 @@ func TestRegisterAck(t *testing.T) {
 
 func TestHeartbeatRoundTrip(t *testing.T) {
 	_, client := newAgentTestServer(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	stream, _ := client.Connect(ctx)
@@ -111,7 +110,7 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 
 func TestDuplicateRegisterDisplacesPrior(t *testing.T) {
 	state, client := newAgentTestServer(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	s1, _ := client.Connect(ctx)
@@ -133,7 +132,7 @@ func TestDuplicateRegisterDisplacesPrior(t *testing.T) {
 
 func TestSpawnAckCorrelation(t *testing.T) {
 	state, client := newAgentTestServer(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	stream, _ := client.Connect(ctx)
@@ -151,19 +150,14 @@ func TestSpawnAckCorrelation(t *testing.T) {
 		Status:  genv1.SpawnAck_SPAWN_STATUS_READY,
 	}}})
 
-	select {
-	case ack := <-ackCh:
-		if ack.GetStatus() != genv1.SpawnAck_SPAWN_STATUS_READY {
-			t.Fatalf("unexpected status: %v", ack.GetStatus())
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("spawn ack not delivered to pending channel")
+	if ack := <-ackCh; ack.GetStatus() != genv1.SpawnAck_SPAWN_STATUS_READY {
+		t.Fatalf("unexpected status: %v", ack.GetStatus())
 	}
 }
 
 func TestStreamCloseDropsAgentAndNotifies(t *testing.T) {
 	state, client := newAgentTestServer(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	stream, _ := client.Connect(ctx)
@@ -176,23 +170,12 @@ func TestStreamCloseDropsAgentAndNotifies(t *testing.T) {
 		t.Fatalf("close send: %v", err)
 	}
 
-	select {
-	case _, open := <-respCh:
-		if open {
-			t.Fatalf("expected dispatch channel to be closed on disconnect")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("dispatch channel not closed on disconnect")
+	if _, open := <-respCh; open {
+		t.Fatalf("expected dispatch channel to be closed on disconnect")
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, ok := state.lookupAgent("key-1"); !ok {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("agent not dropped after stream close")
+	waitFor(t, "the proxy to drop the agent after its stream closed",
+		func() bool { _, ok := state.lookupAgent("key-1"); return !ok })
 }
 
 func mustSend(t *testing.T, stream genv1.HostAgent_ConnectClient, frame *genv1.ClientFrame) {

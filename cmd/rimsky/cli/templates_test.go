@@ -61,14 +61,6 @@ func TestRunTemplateRegister_OK(t *testing.T) {
 	}
 }
 
-func TestRunTemplateRegister_RejectComposePrefix(t *testing.T) {
-	_ = setupClitest(t)
-	specPath := writeSpec(t)
-	if got := cli.RunTemplateRegister(context.Background(), []string{"--tag", "compose:foo:bar", specPath}); got != 2 {
-		t.Errorf("exit %d", got)
-	}
-}
-
 func TestRunTemplateRegister_WarningsAsErrors_QueryParam(t *testing.T) {
 	var seenQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

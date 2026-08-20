@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/awaited"
 )
 
 func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
@@ -64,8 +67,8 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	templateID := postTemplate(t, ep, tplBody)
 	instanceID := postInstance(t, ep, templateID, "openlineage-e2e-1")
 
-	waitNodeTerminal(t, ep, instanceID, "acquire-and-execute", 60*time.Second)
-	waitForLineageRows(t, ep, 1, 30*time.Second)
+	ep.WaitForNodeTerminal(t, instanceID, "acquire-and-execute")
+	waitForLineageRows(t, ep, 1)
 
 	var (
 		mu       sync.Mutex
@@ -179,7 +182,7 @@ func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 		},
 	})
 	instanceID := postInstance(t, ep, templateID, "openlineage-fail-1")
-	waitNodeTerminal(t, ep, instanceID, "acquire-and-execute", 60*time.Second)
+	ep.WaitForNodeTerminal(t, instanceID, "acquire-and-execute")
 
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -251,7 +254,7 @@ func postInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, key strin
 	return resp.InstanceID
 }
 
-func waitForLineageRows(t *testing.T, ep harness.RimskyEndpoint, want int, deadline time.Duration) {
+func waitForLineageRows(t *testing.T, ep harness.RimskyEndpoint, want int) {
 	t.Helper()
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, ep.HostDSN)
@@ -259,58 +262,14 @@ func waitForLineageRows(t *testing.T, ep harness.RimskyEndpoint, want int, deadl
 		t.Fatalf("pgxpool.New: %v", err)
 	}
 	defer pool.Close()
-	end := time.Now().Add(deadline)
-	var n int
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("the subscriber to write %d lineage row(s)", want), func() bool {
+		var n int
 		if err := pool.QueryRow(ctx,
 			`SELECT count(*) FROM rimsky_lineage`).Scan(&n); err != nil {
 			t.Fatalf("count rimsky_lineage: %v", err)
 		}
-		if n >= want {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("rimsky_lineage: want >= %d rows within %v, got %d", want, deadline, n)
-}
-
-func waitNodeTerminal(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastState string
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				RunSummary struct {
-					ActiveCount  int `json:"active_count"`
-					PendingCount int `json:"pending_count"`
-					FreshCount   int `json:"fresh_count"`
-					FailedCount  int `json:"failed_count"`
-				} `json:"run_summary"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				s := resp.RunSummary
-				switch {
-				case s.FailedCount > 0:
-					lastState = "failed"
-				case s.ActiveCount > 0 || s.PendingCount > 0:
-					lastState = "in-flight"
-				case s.FreshCount > 0:
-					lastState = "fresh"
-				default:
-					lastState = "idle"
-				}
-				if lastState == "fresh" || lastState == "failed" {
-					return
-				}
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %q on instance %s did not reach terminal within %v; last state=%q",
-		nodeType, instanceID, deadline, lastState)
+		return n >= want
+	})
 }
 
 func TestLeafRunRecord_WireContract(t *testing.T) {

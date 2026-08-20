@@ -18,6 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func seedInstanceForSubscriptions(t *testing.T, store persistence.Tables) shared.UUID {
@@ -223,22 +224,16 @@ func TestPublisherSubscriptionReconciler_RetriesPastBudgetThenActivates(t *testi
 	}
 	go runtime.RunPublisherSubscriptionReconciler(ctx, deps, 10*time.Millisecond)
 
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the reconciler to retry past the first four failures and activate the subscription", func() bool {
 		row := getSubscriptionRow(t, store, subID)
-		switch row.State {
-		case persistence.PublisherSubscriptionStateActive:
-			if got := flaky.attemptCount(); got <= 4 {
-				t.Fatalf("row active after %d attempts; the first 4 fail, so activation requires ≥5", got)
-			}
-			return
-		case persistence.PublisherSubscriptionStateFailed:
+		if row.State == persistence.PublisherSubscriptionStateFailed {
 			t.Fatalf("retryable Subscribe failure flipped the row to failed (reason %q) — failed is reserved for non-retryable errors", row.FailureReason)
 		}
-		time.Sleep(10 * time.Millisecond)
+		return row.State == persistence.PublisherSubscriptionStateActive
+	})
+	if got := flaky.attemptCount(); got <= 4 {
+		t.Fatalf("row active after %d attempts; the first 4 fail, so activation requires ≥5", got)
 	}
-	t.Fatalf("subscription never reached active; attempts=%d state=%q",
-		flaky.attemptCount(), getSubscriptionRow(t, store, subID).State)
 }
 
 func TestStartControlAPI_StartsSubscriptionReconciler(t *testing.T) {
@@ -268,12 +263,7 @@ func TestStartControlAPI_StartsSubscriptionReconciler(t *testing.T) {
 		_ = h.Shutdown(shutCtx)
 	})
 
-	select {
-	case deps := <-started:
-		if deps.Persist == nil {
-			t.Fatalf("reconciler started without a persistence handle")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("StartControlAPI did not start the publisher-subscription reconciler")
+	if deps := <-started; deps.Persist == nil {
+		t.Fatalf("reconciler started without a persistence handle")
 	}
 }

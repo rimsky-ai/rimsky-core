@@ -3,8 +3,14 @@
 
 package main
 
-import "time"
+import (
+	"os"
+	"os/signal"
+	"syscall"
+)
 
 func main() {
-	time.Sleep(60 * time.Second)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	<-sigs
 }

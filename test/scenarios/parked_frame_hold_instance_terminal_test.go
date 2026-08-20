@@ -14,6 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -52,13 +53,10 @@ func TestParkedFrameHold_InstanceStaysNonTerminalUntilFrameEnds(t *testing.T) {
 	h.WaitForEventCount(worker.ID, "parked_resume_started", 1)
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	for {
+	awaited.Until(t, "the instance's running frame to end after resume", func() bool {
 		framesAfterResume := getJSONMapInst(t, h.ControlBase+"/v1/instances/"+iid.String()+"/frames?state=running")
-		if len(framesAfterResume["frames"].([]any)) == 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return len(framesAfterResume["frames"].([]any)) == 0
+	})
 
 	instAfterFrameEnd := getJSONMapInst(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Nilf(t, instAfterFrameEnd["terminated_at"],

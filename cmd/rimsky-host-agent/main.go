@@ -8,10 +8,8 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
@@ -22,11 +20,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: shared.ParseLogLevel(cfg.LogLevel)})
-	slog.SetDefault(slog.New(handler))
+	logger := serverkit.NewJSONLoggerForLevel(cfg.LogLevel)
+	slog.SetDefault(logger)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	// @decision: graceful-shutdown
+	ctx, stopSignals := serverkit.ShutdownContext(context.Background(), logger)
+	defer stopSignals()
 
 	if err := hostagent.Run(ctx, cfg); err != nil {
 		slog.Error("hostagent.Run", "error", err)

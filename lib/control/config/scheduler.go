@@ -41,6 +41,9 @@ type SchedulerConfig struct {
 
 type SchedulerHandle interface {
 	Shutdown(ctx context.Context) error
+
+	// @decision: polling-audit
+	TicksCompleted() uint64
 }
 
 func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
@@ -146,6 +149,11 @@ type schedulerHandleWithRegistry struct {
 	lifecycleSubs *lifecycle.Registry
 	sweepCancel   context.CancelFunc
 	stopIdentity  func()
+}
+
+// @decision: polling-audit
+func (h schedulerHandleWithRegistry) TicksCompleted() uint64 {
+	return h.inner.TicksCompleted()
 }
 
 func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {

@@ -5,12 +5,12 @@ package scenarios
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -90,20 +90,22 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 	require.Equal(t, "inner", innerCLI["where"],
 		"inner-exit lives in graph=worker; matcher graph=worker MUST fire")
 
-	require.Eventually(t, func() bool {
+	awaited.Until(t, "the two override match-counts to read [1, 1]", func() bool {
 		c := attributeOverrideMatchCounts(t, h, iid, 2)
 		return len(c) == 2 && c[0] == 1 && c[1] == 1
-	}, 10*time.Second, 50*time.Millisecond,
-		"AttributeOverridesMatchCounts mismatch (want [1, 1])")
+	})
 }
 
 func waitForObservedAttrs(h *scenario.Harness, nodeType string) map[string]any {
-	for {
+	var attrs map[string]any
+	awaited.Until(h.T, "a stub dispatch of node type "+nodeType, func() bool {
 		for _, o := range h.Stub.Observed() {
 			if o.NodeType == nodeType {
-				return o.Attributes
+				attrs = o.Attributes
+				return true
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return false
+	})
+	return attrs
 }

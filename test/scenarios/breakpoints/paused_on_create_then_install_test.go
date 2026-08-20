@@ -8,7 +8,6 @@ package breakpoints
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -39,7 +38,7 @@ func TestPausedOnCreateThenInstall(t *testing.T) {
 
 	iid := createInstanceWithPause(t, h, tid, "ck-paused-on-create", map[string]any{})
 
-	time.Sleep(500 * time.Millisecond)
+	h.WaitForSchedulerQuiescence()
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"paused-on-create instance must not be dispatched before resume")
 
@@ -47,7 +46,6 @@ func TestPausedOnCreateThenInstall(t *testing.T) {
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "worker"},
 	})
-	time.Sleep(300 * time.Millisecond)
 	row := getBreakpointRow(t, h, bpID)
 	require.NotNil(t, row)
 

@@ -24,6 +24,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const openLineageSubscriberImage = "rimsky-subscriber-openlineage"
@@ -96,8 +97,8 @@ func TestSubscriberOpenlineage(t *testing.T) {
 	}
 	defer pool.Close()
 
-	waitOLLineageRows(t, ctx, pool, "leaf_run", 1, 60*time.Second)
-	waitOLLineageRows(t, ctx, pool, "claim_terminal", 1, 60*time.Second)
+	waitOLLineageRows(t, ctx, pool, "leaf_run", 1)
+	waitOLLineageRows(t, ctx, pool, "claim_terminal", 1)
 
 	rimskyLeafRunIDs := selectOLLeafRunIDs(t, ctx, pool, instanceID)
 	rimskyClaimScopeHashes := selectOLClaimScopeHashes(t, ctx, pool, instanceID)
@@ -125,7 +126,7 @@ func TestSubscriberOpenlineage(t *testing.T) {
 		receiverHostPort,
 	)
 
-	waitForOLArrivalMatching(t, &mu, &received, 60*time.Second,
+	waitForOLArrivalMatching(t, &mu, &received,
 		"leaf_run → COMPLETE event whose runId is a rimsky node-run UUID",
 		func(a olArrival) bool {
 			if a.ValidateErr != "" {
@@ -140,7 +141,7 @@ func TestSubscriberOpenlineage(t *testing.T) {
 				a.Decoded["eventType"] == "COMPLETE"
 		})
 
-	waitForOLArrivalMatching(t, &mu, &received, 60*time.Second,
+	waitForOLArrivalMatching(t, &mu, &received,
 		"claim_terminal → event with dataset output keyed on rimsky scope_data_hash",
 		func(a olArrival) bool {
 			if a.ValidateErr != "" {
@@ -276,24 +277,18 @@ func startOpenLineageSubscriber(
 	return c
 }
 
-func waitOLLineageRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, kind string, want int, deadline time.Duration) {
+func waitOLLineageRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, kind string, want int) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var n int
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("the writer to produce %d rimsky_lineage row(s) with record_kind=%s for the "+
+		"driven cascade", want, kind), func() bool {
+		var n int
 		if err := pool.QueryRow(ctx,
 			`SELECT count(*) FROM rimsky_lineage WHERE record_kind = $1`, kind,
 		).Scan(&n); err != nil {
 			t.Fatalf("count rimsky_lineage where record_kind=%s: %v", kind, err)
 		}
-		if n >= want {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("rimsky_lineage record_kind=%s: want >= %d rows within %v, got %d — "+
-		"the writer never produced this record_kind for the driven cascade",
-		kind, want, deadline, n)
+		return n >= want
+	})
 }
 
 func selectOLLeafRunIDs(t *testing.T, ctx context.Context, pool *pgxpool.Pool, instanceID string) []string {
@@ -365,42 +360,23 @@ func waitForOLArrivalMatching(
 	t *testing.T,
 	mu *sync.Mutex,
 	received *[]olArrival,
-	deadline time.Duration,
 	label string,
 	pred func(a olArrival) bool,
 ) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("an OpenLineage arrival matching %q; a subscriber that never reaches the "+
+		"receiver, or emits events whose runId or dataset name does not correspond to the rimsky-side "+
+		"records, never produces one", label), func() bool {
 		mu.Lock()
 		snapshot := append([]olArrival{}, (*received)...)
 		mu.Unlock()
 		for _, a := range snapshot {
 			if pred(a) {
-				return
+				return true
 			}
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	t.Fatalf("no OpenLineage arrival matched %q within %v (got %d arrivals); "+
-		"this either means the subscriber never reached the receiver, or it "+
-		"emitted events whose runId/dataset name does not correspond to the "+
-		"rimsky-side records (the falsifier). Arrivals: %s",
-		label, deadline, len(*received), dumpOLArrivals(*received))
-}
-
-func dumpOLArrivals(arrivals []olArrival) string {
-	var b strings.Builder
-	for i, a := range arrivals {
-		et, _ := a.Decoded["eventType"].(string)
-		run, _ := a.Decoded["run"].(map[string]any)
-		runID, _ := run["runId"].(string)
-		fmt.Fprintf(&b, "\n  [%d] path=%s err=%q eventType=%s runId=%s outputs=%v",
-			i, a.Path, a.ValidateErr, et, runID, a.Decoded["outputs"])
-	}
-	return b.String()
+		return false
+	})
 }
 
 func deployOLTemplate(t *testing.T, ep harness.RimskyEndpoint, name string) string {

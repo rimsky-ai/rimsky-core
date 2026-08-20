@@ -67,7 +67,7 @@ func TestStartRoleStack_BootsAndDrains(t *testing.T) {
 	if got := stack.Endpoint(); got != endpoint {
 		t.Errorf("Endpoint() = %q, want %q", got, endpoint)
 	}
-	if err := compose.WaitForControlAPIReady(ctx, stack.Endpoint(), 5*time.Second); err != nil {
+	if err := compose.WaitForControlAPIReady(ctx, stack.Endpoint(), 0); err != nil {
 		stack.Drain(context.Background(), 5*time.Second)
 		t.Fatalf("WaitForControlAPIReady: %v", err)
 	}
@@ -76,11 +76,7 @@ func TestStartRoleStack_BootsAndDrains(t *testing.T) {
 		stack.Drain(context.Background(), 5*time.Second)
 		close(drainDone)
 	}()
-	select {
-	case <-drainDone:
-	case <-time.After(10 * time.Second):
-		t.Fatal("Drain did not return within 10s")
-	}
+	<-drainDone
 	select {
 	case rf := <-stack.FailCh():
 		t.Fatalf("unexpected role failure after clean drain: role=%s err=%v", rf.Role, rf.Err)
@@ -131,7 +127,7 @@ func TestWaitForControlAPIReady_Polls(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := compose.WaitForControlAPIReady(context.Background(), srv.URL, 2*time.Second); err != nil {
+	if err := compose.WaitForControlAPIReady(context.Background(), srv.URL, 0); err != nil {
 		t.Fatalf("WaitForControlAPIReady: %v", err)
 	}
 	if got := hits.Load(); got < flipAt {

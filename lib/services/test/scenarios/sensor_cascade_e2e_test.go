@@ -10,13 +10,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const reactorNodeAlias = "reactor"
+
+const quiescentSensorPolls = 6
 
 const reactorMessageType = "invalidate/reactor"
 const bystanderMessageType = "refresh/reactor"
@@ -26,10 +29,12 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	ctx := context.Background()
 
 	var (
-		bodyMu sync.RWMutex
-		body   = `{"state":"initial"}`
+		bodyMu   sync.RWMutex
+		body     = `{"state":"initial"}`
+		pollHits atomic.Int32
 	)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pollHits.Add(1)
 		bodyMu.RLock()
 		cur := body
 		bodyMu.RUnlock()
@@ -63,8 +68,8 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 
 	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh")
 
-	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
-	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
+	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, &pollHits)
+	waitForDispatchQuiescent(t, ep, instanceID, "bystander", &pollHits)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 	reactorBaseline := workStartedCount(t, ep, instanceID, reactorNodeAlias)
 
@@ -74,12 +79,12 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	bodyMu.Unlock()
 
 	// @story: cascade-signal-blind
-	requireReactorReran(t, ep, instanceID, reactorNodeAlias, reactorBaseline, 120*time.Second)
+	requireReactorReran(t, ep, instanceID, reactorNodeAlias, reactorBaseline)
 
 	// @story: publisher-protocol
 	requirePublisherMessagePersisted(t, ep, instanceID, "watcher")
 
-	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline)
+	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline, &pollHits)
 }
 
 // @story: sensor-http
@@ -88,10 +93,12 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	ctx := context.Background()
 
 	var (
-		bodyMu sync.RWMutex
-		body   = `{"state":"initial"}`
+		bodyMu   sync.RWMutex
+		body     = `{"state":"initial"}`
+		pollHits atomic.Int32
 	)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pollHits.Add(1)
 		bodyMu.RLock()
 		cur := body
 		bodyMu.RUnlock()
@@ -123,8 +130,8 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	ep.WaitForSubscriptionsActive(t, instanceID)
 
 	ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh")
-	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, 60*time.Second)
-	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
+	waitForDispatchQuiescent(t, ep, instanceID, reactorNodeAlias, &pollHits)
+	waitForDispatchQuiescent(t, ep, instanceID, "bystander", &pollHits)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 
 	requireInstanceNotTerminated(t, ep, instanceID)
@@ -139,13 +146,13 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 		bodyMu.Unlock()
 
 		// @story: cascade-signal-blind
-		requireWorkStartedGrew(t, ep, instanceID, reactorNodeAlias, reactorBefore, 120*time.Second,
+		requireWorkStartedGrew(t, ep, instanceID, reactorNodeAlias, reactorBefore,
 			fmt.Sprintf("fire %d/%d", i, fires))
 		ep.WaitForNodeSettledTo(t, instanceID, reactorNodeAlias, "fresh")
 		requireInstanceNotTerminated(t, ep, instanceID)
 	}
 
-	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline)
+	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline, &pollHits)
 }
 
 func requireInstanceNotTerminated(t *testing.T, ep harness.RimskyEndpoint, instanceID string) {
@@ -167,18 +174,12 @@ func requireInstanceNotTerminated(t *testing.T, ep harness.RimskyEndpoint, insta
 	}
 }
 
-func requireWorkStartedGrew(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int, deadline time.Duration, label string) {
+func requireWorkStartedGrew(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int, label string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		if workStartedCount(t, ep, instanceID, nodeType) > baseline {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("reactor node %q did not re-run on %s (work_started stayed at %d) within %v — "+
-		"the durable instance stopped reacting; a reaped instance would explain this",
-		nodeType, label, baseline, deadline)
+	awaited.Until(t, fmt.Sprintf("reactor node %q to re-run on %s, growing work_started past %d — a durable "+
+		"instance that stopped reacting, or was reaped, never gets here", nodeType, label, baseline), func() bool {
+		return workStartedCount(t, ep, instanceID, nodeType) > baseline
+	})
 }
 
 func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedURL string) string {
@@ -296,19 +297,13 @@ func createSensorCascadeInstance(t *testing.T, ep harness.RimskyEndpoint, templa
 	return resp.InstanceID
 }
 
-func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int, deadline time.Duration) {
+func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		if workStartedCount(t, ep, instanceID, nodeType) > baseline {
-			ep.WaitForNodeSettledTo(t, instanceID, nodeType, "fresh")
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("reactor node %q did not re-run after the real external change within %v "+
-		"(work_started count stayed at %d) — the sensor→emit→message-delivery→cascade "+
-		"loop did not fire the downstream node", nodeType, deadline, baseline)
+	awaited.Until(t, fmt.Sprintf("the sensor→emit→message-delivery→cascade loop to re-run reactor node %q, "+
+		"growing work_started past %d", nodeType, baseline), func() bool {
+		return workStartedCount(t, ep, instanceID, nodeType) > baseline
+	})
+	ep.WaitForNodeSettledTo(t, instanceID, nodeType, "fresh")
 }
 
 func workStartedCount(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) int {
@@ -330,72 +325,65 @@ func workStartedCount(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeT
 
 func requirePublisherMessagePersisted(t *testing.T, ep harness.RimskyEndpoint, instanceID, wantSender string) {
 	t.Helper()
-	end := time.Now().Add(60 * time.Second)
-	var lastSeen string
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("the real sensor to emit a message with sender_kind=publisher into instance %s",
+		instanceID), func() bool {
 		status, raw := ep.GetJSON(t,
 			"/v1/instances/"+instanceID+"/messages?sender_kind=publisher", "")
-		if status == http.StatusOK {
-			var resp struct {
-				Messages []struct {
-					Type       string `json:"type"`
-					Sender     string `json:"sender"`
-					SenderKind string `json:"sender_kind"`
-				} `json:"messages"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				for _, m := range resp.Messages {
-					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s", m.Type, m.Sender, m.SenderKind)
-					if m.SenderKind != "publisher" {
-						continue
-					}
-					if m.Sender != wantSender {
-						t.Fatalf("publisher message persisted with sender=%q, want %q "+
-							"(rimsky must derive sender from the publisher-subscription's "+
-							"publisher_name, not the request body's sender)", m.Sender, wantSender)
-					}
-					return
-				}
-			}
+		if status != http.StatusOK {
+			return false
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("no message with sender_kind=publisher persisted for instance %s within deadline; "+
-		"last seen=%q — the real sensor never emitted into rimsky", instanceID, lastSeen)
+		var resp struct {
+			Messages []struct {
+				Type       string `json:"type"`
+				Sender     string `json:"sender"`
+				SenderKind string `json:"sender_kind"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return false
+		}
+		for _, m := range resp.Messages {
+			if m.SenderKind != "publisher" {
+				continue
+			}
+			if m.Sender != wantSender {
+				t.Fatalf("publisher message persisted with sender=%q, want %q "+
+					"(rimsky must derive sender from the publisher-subscription's "+
+					"publisher_name, not the request body's sender)", m.Sender, wantSender)
+			}
+			return true
+		}
+		return false
+	})
 }
 
-func waitForDispatchQuiescent(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
+func waitForDispatchQuiescent(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, polls *atomic.Int32) {
 	t.Helper()
-	const stableWindow = 6 * time.Second
-	end := time.Now().Add(deadline)
 	last := workStartedCount(t, ep, instanceID, nodeType)
-	stableSince := time.Now()
-	for time.Now().Before(end) {
-		time.Sleep(500 * time.Millisecond)
+	target := int(polls.Load()) + quiescentSensorPolls
+	awaited.Until(t, fmt.Sprintf("node %q to hold its work_started count across %d consecutive sensor polls; "+
+		"a perpetually-rerunning node never gets there", nodeType, quiescentSensorPolls), func() bool {
 		cur := workStartedCount(t, ep, instanceID, nodeType)
 		if cur != last {
 			last = cur
-			stableSince = time.Now()
-			continue
+			target = int(polls.Load()) + quiescentSensorPolls
+			return false
 		}
-		if time.Since(stableSince) >= stableWindow {
-			return
-		}
-	}
-	t.Fatalf("node %q never went dispatch-quiescent within %v (work_started kept growing, last=%d) — "+
-		"a perpetually-rerunning node is a defect", nodeType, deadline, last)
+		return int(polls.Load()) >= target
+	})
 }
 
-func requireBystanderDidNotReRun(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int) {
+func requireBystanderDidNotReRun(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int, polls *atomic.Int32) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
+	target := int(polls.Load()) + quiescentSensorPolls
+	awaited.Until(t, fmt.Sprintf("the sensor to complete %d more polls while bystander node %q holds at "+
+		"work_started=%d", quiescentSensorPolls, nodeType, baseline), func() bool {
 		if cur := workStartedCount(t, ep, instanceID, nodeType); cur > baseline {
 			t.Fatalf("bystander node %q re-ran on the sensor fire (work_started grew %d → %d) — "+
 				"its subscription matches `message/refresh/...`, NOT the `invalidate` envelope "+
 				"the sensor emits, so the cascade must not have touched it; a spurious cascade "+
 				"is a bug", nodeType, baseline, cur)
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
+		return int(polls.Load()) >= target
+	})
 }

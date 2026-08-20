@@ -41,7 +41,7 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 	)
 	var addFlags, removeFlags authStringSliceFlag
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
-	fs.StringVar(&keyFlag, "key", "", "API key (Bearer token)")
+	RegisterAPIKeyFlag(fs, &keyFlag)
 	fs.StringVar(&name, "name", "", "name for the new key (required)")
 	fs.StringVar(&roleName, "role", "", "bundled role name (required unless --role-file is set)")
 	fs.StringVar(&rolePath, "role-file", "", "load role from a JSON file instead of bundled")

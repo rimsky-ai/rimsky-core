@@ -11,7 +11,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -24,6 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 )
@@ -94,39 +94,21 @@ func TestHostAgentPerRunScopeIsolation(t *testing.T) {
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker (fan-out) node should exist")
 
-	deadline := time.Now().Add(60 * time.Second)
-	var satisfied bool
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "each fan-out partition to dispatch into its own isolated late-bound child (a distinct pid per partition key)", func() bool {
 		scopeToPartition := fanOutScopePartitions(fx, worker.ID)
 		byPartition := pidsByPartition(t, pidLog, scopeToPartition)
-		if partitionsServedByDistinctChildren(byPartition, partitionKeys) {
-			satisfied = true
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	if !satisfied {
-		scopeToPartition := fanOutScopePartitions(fx, worker.ID)
-		byPartition := pidsByPartition(t, pidLog, scopeToPartition)
-		raw := readPIDLog(t, pidLog)
-		t.Fatalf("each fan-out partition must dispatch into its own isolated late-bound child (a distinct pid per partition key); "+
-			"want keys %v served by disjoint, present pid sets, got pid-by-partition=%v "+
-			"(raw run_scope→pid log=%v — an empty run_scope_id key means the supervisor never threaded it onto ExecuteRequest; "+
-			"scope→partition map=%v)",
-			partitionKeys, byPartition, raw, scopeToPartition)
-	}
+		return partitionsServedByDistinctChildren(byPartition, partitionKeys)
+	})
 
-	settleDeadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(settleDeadline) {
-		scopeToPartition := fanOutScopePartitions(fx, worker.ID)
-		byPartition := pidsByPartition(t, pidLog, scopeToPartition)
-		if !partitionsServedByDistinctChildren(byPartition, partitionKeys) {
-			raw := readPIDLog(t, pidLog)
-			t.Fatalf("a later best-effort fan-out dispatch broke partition isolation after it had "+
-				"initially been satisfied; pid-by-partition=%v (raw run_scope→pid log=%v; scope→partition map=%v)",
-				byPartition, raw, scopeToPartition)
-		}
-		time.Sleep(150 * time.Millisecond)
+	fx.h.WaitForAllRunsTerminal(worker.ID)
+	fx.h.WaitForSchedulerQuiescence()
+	scopeToPartition := fanOutScopePartitions(fx, worker.ID)
+	byPartition := pidsByPartition(t, pidLog, scopeToPartition)
+	if !partitionsServedByDistinctChildren(byPartition, partitionKeys) {
+		raw := readPIDLog(t, pidLog)
+		t.Fatalf("a later best-effort fan-out dispatch broke partition isolation after it had "+
+			"initially been satisfied; pid-by-partition=%v (raw run_scope→pid log=%v; scope→partition map=%v)",
+			byPartition, raw, scopeToPartition)
 	}
 }
 
@@ -250,9 +232,7 @@ func TestHostAgentPerRunScopeReapIsolation(t *testing.T) {
 	})
 	require.NoError(t, err, "OnRunScopeTerminal for the alpha run-scope must succeed")
 
-	for processAlive(t, alphaPID) {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, "the alpha run-scope's child to be reaped", func() bool { return !processAlive(t, alphaPID) })
 
 	require.True(t, processAlive(t, betaPID),
 		"closing the alpha run-scope (%s) reaped the beta sibling's child (pid %s) too; sibling scopes must reap independently", alphaScope, betaPID)

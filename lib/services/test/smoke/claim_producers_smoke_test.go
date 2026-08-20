@@ -10,11 +10,11 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func TestClaimProducersSmoke(t *testing.T) {
@@ -130,18 +130,20 @@ func waitForCommittedDocsClaimFolders(
 	instanceID string, want int,
 ) []string {
 	t.Helper()
-	for {
-		folders := committedDocsClaimFolders(ctx, t, pool, instanceID)
+	var folders []string
+	awaited.Until(t, fmt.Sprintf("%d committed claim_scope row(s) on instance %s", want, instanceID), func() bool {
+		folders = committedDocsClaimFolders(ctx, t, pool, instanceID)
 		if len(folders) >= want {
-			return folders
+			return true
 		}
 		status, obs, _ := ep.GetNodeObservability(t, instanceID, "claim-acquirer")
 		if status == http.StatusOK && obs.RunSummary.FailedCount > 0 {
 			t.Fatalf("waiting for %d committed claim_scope rows (have %d: %v): node claim-acquirer failed; run_summary=%+v",
 				want, len(folders), folders, obs.RunSummary)
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return false
+	})
+	return folders
 }
 
 func smokeDeployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {

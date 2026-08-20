@@ -5,6 +5,8 @@ package conformance
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -41,5 +43,46 @@ func testMigrationIdempotency(t *testing.T, d persistence.Database) {
 	}
 	if d.Tables() == nil {
 		t.Fatalf("Tables() nil after re-migrate")
+	}
+}
+
+// @decision: migrations-append-only-numbered
+func testMigrationRejectsAChangedFile(
+	t *testing.T, d persistence.Database,
+	rawExec func(t *testing.T, d persistence.Database, sql string, args ...any),
+	rawQuery func(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow,
+) {
+	ctx := context.Background()
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("baseline migrate: %v", err)
+	}
+
+	rows := rawQuery(t, d, "SELECT filename FROM rimsky_migrations WHERE digest IS NULL")
+	if len(rows) != 0 {
+		t.Fatalf("every applied migration must record a digest; %d rows have none", len(rows))
+	}
+	rows = rawQuery(t, d, "SELECT filename FROM rimsky_migrations ORDER BY filename")
+	if len(rows) == 0 {
+		t.Fatalf("no applied migrations recorded")
+	}
+	victim := fmt.Sprint(rows[0]["filename"])
+
+	rawExec(t, d, "UPDATE rimsky_migrations SET digest = ? WHERE filename = ?", "a-different-file", victim)
+
+	err := d.Migrate(ctx, shared.SilentLogger{})
+	if err == nil {
+		t.Fatalf("migrate must refuse a file whose contents no longer match what was applied")
+	}
+	if !strings.Contains(err.Error(), victim) {
+		t.Fatalf("the refusal must name the changed file %s; got %v", victim, err)
+	}
+
+	rawExec(t, d, "UPDATE rimsky_migrations SET digest = NULL WHERE filename = ?", victim)
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("a row with no recorded digest must be backfilled, not refused: %v", err)
+	}
+	rows = rawQuery(t, d, "SELECT digest FROM rimsky_migrations WHERE filename = ?", victim)
+	if len(rows) != 1 || rows[0]["digest"] == nil {
+		t.Fatalf("the backfill must record a digest for %s; got %v", victim, rows)
 	}
 }

@@ -108,3 +108,33 @@ func ColorEnabled(w io.Writer, noColorFlag bool) bool {
 	}
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
+
+type removalResult struct {
+	Ref      string `json:"ref"`
+	Instance string `json:"instance,omitempty"`
+	Removed  bool   `json:"removed"`
+}
+
+func reportRemoval(w io.Writer, format Format, removed removalResult, humanLine string) {
+	if format == FormatJSON {
+		_ = EmitJSON(w, removed)
+		return
+	}
+	fmt.Fprintln(w, humanLine)
+}
+
+type resetResult struct {
+	Node  string `json:"node"`
+	Reset bool   `json:"reset"`
+}
+
+func reportTagBinding(w io.Writer, format Format, tag *Tag, name, template string) {
+	if format == FormatJSON {
+		if tag == nil {
+			tag = &Tag{Tag: name, TemplateID: template}
+		}
+		_ = EmitJSON(w, tag)
+		return
+	}
+	fmt.Fprintf(w, "%s → %s\n", name, template)
+}

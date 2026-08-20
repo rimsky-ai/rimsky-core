@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
@@ -175,7 +174,7 @@ func seedTerminalRunWithSignalType(
 
 	sig := signalType
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.NodeRunTree().UpdateStateAndOutcome(ctx, runID, cascade.NodeStateFresh, &sig, false, tx)
+		return h.persist.NodeRunTree().UpdateOutcome(ctx, runID, &sig, false, tx)
 	}))
 	return runID
 }

@@ -56,17 +56,23 @@ type CommonFlags struct {
 
 func RegisterCommonFlags(fs *flag.FlagSet, out *CommonFlags) {
 	fs.StringVar(&out.Endpoint, "endpoint", "", "control-api endpoint URL")
-	fs.StringVar(&out.Key, "key", "", "API key (Bearer token; or set RIMSKY_API_KEY)")
+	RegisterAPIKeyFlag(fs, &out.Key)
 	fs.StringVar(&out.formatRaw, "o", "human", "output format: human|json")
 	fs.StringVar(&out.formatRaw, "output", "human", "output format: human|json")
 	fs.BoolVar(&out.Yes, "yes", false, "confirm destructive operations")
 	fs.BoolVar(&out.NoColor, "no-color", false, "disable ANSI color")
 }
 
+// @concept: rimsky
+func RegisterAPIKeyFlag(fs *flag.FlagSet, out *string) {
+	fs.StringVar(out, "key", "", "API key (Bearer token; or set RIMSKY_API_KEY)")
+}
+
 // @concept: api-key
-func (c *CommonFlags) ResolveAPIKey(envKey string) string {
-	if c.Key != "" {
-		return c.Key
+// @concept: rimsky
+func ResolveAPIKey(flagValue, envKey string) string {
+	if flagValue != "" {
+		return flagValue
 	}
 	if envKey != "" {
 		return envKey
@@ -76,6 +82,10 @@ func (c *CommonFlags) ResolveAPIKey(envKey string) string {
 		return ""
 	}
 	return ResolveAPIKeyFromContext(cfgPath)
+}
+
+func (c *CommonFlags) ResolveAPIKey(envKey string) string {
+	return ResolveAPIKey(c.Key, envKey)
 }
 
 func (c *CommonFlags) ResolveFormat() error {

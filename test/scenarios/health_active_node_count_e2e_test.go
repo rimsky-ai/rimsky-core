@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -57,27 +57,18 @@ func TestHealthCheck_ActiveNodeCountComputedOnDemand(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"success": map[string]any{"attributes_delta": map[string]any{"done": true}, "changed": true},
 	})
-	deadline := time.Now().Add(10 * time.Second)
-	var status int
-	for time.Now().Before(deadline) {
+	awaited.Until(t, "the supervisor's async-callback endpoint to accept the success body", func() bool {
 		resp, err := http.Post(cbURL, "application/json", bytes.NewReader(body))
 		require.NoError(t, err)
-		status = resp.StatusCode
+		status := resp.StatusCode
 		_ = resp.Body.Close()
-		if status == http.StatusOK {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	require.Equal(t, http.StatusOK, status)
+		return status == http.StatusOK
+	})
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
-	for {
-		if activeNodeCountFor(t, h, healthProbeSupervisorID) == 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, "the health probe's active node count to fall back to zero", func() bool {
+		return activeNodeCountFor(t, h, healthProbeSupervisorID) == 0
+	})
 }
 
 func activeNodeCountFor(t *testing.T, h *scenario.Harness, supervisorID string) int {

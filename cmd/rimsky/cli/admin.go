@@ -24,6 +24,10 @@ func RunAdminReset(ctx context.Context, args []string) int {
 	if err := c.ResetNode(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}
+	if common.Format == FormatJSON {
+		_ = EmitJSON(os.Stdout, resetResult{Node: rest[0], Reset: true})
+		return 0
+	}
 	fmt.Fprintf(os.Stdout, "reset %s\n", rest[0])
 	return 0
 }

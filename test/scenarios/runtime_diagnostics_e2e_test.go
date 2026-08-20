@@ -19,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -183,23 +184,20 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"the supervisor's ground-truth claim-holder row keys on the acquirer's node-run; "+
 			"the HTTP surface must reflect this exact holder")
 
-	var inheritorState string
-	for {
+	awaited.Until(t, "the inheritor's run to settle held behind the parked acquirer's held claim", func() bool {
+		var inheritorState string
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT state::text FROM rimsky_node_runs WHERE node_id = $1 ORDER BY enqueued_at DESC LIMIT 1`,
 			uuid.UUID(rcv.ID),
 		).Scan(&inheritorState))
-		if inheritorState == string(cascade.NodeStateHeld) {
-			break
-		}
 		require.Contains(t,
 			[]string{string(cascade.NodeStateStale), string(cascade.NodeStateRunning), string(cascade.NodeStateHeld)},
 			inheritorState,
 			"the inheritor's run settles held behind the parked acquirer's held claim — stale (unclaimed), "+
 				"running (mid-dispatch), and held are its only legal states; a fresh or failed terminal would "+
 				"mean its settlement escaped the wedge")
-		time.Sleep(50 * time.Millisecond)
-	}
+		return inheritorState == string(cascade.NodeStateHeld)
+	})
 
 	var escapedTerminals int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
@@ -217,27 +215,30 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 
 func waitForNodeOnParkedSurface(t *testing.T, h *scenario.Harness, nodeID string) {
 	t.Helper()
-	for {
+	awaited.Until(t, "node "+nodeID+" to appear on the parked-nodes diagnostics surface", func() bool {
 		resp, err := http.Get(h.ControlBase + "/v1/admin/diagnostics/parked-nodes")
-		if err == nil {
-			var body controlapi.ParkedNodesResponse
-			decErr := json.NewDecoder(resp.Body).Decode(&body)
-			resp.Body.Close()
-			if decErr == nil {
-				for _, p := range body.ParkedNodes {
-					if p.NodeID == nodeID {
-						return
-					}
-				}
+		if err != nil {
+			return false
+		}
+		var body controlapi.ParkedNodesResponse
+		decErr := json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		if decErr != nil {
+			return false
+		}
+		for _, p := range body.ParkedNodes {
+			if p.NodeID == nodeID {
+				return true
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return false
+	})
 }
 
 func waitForHeldFrameListingNode(t *testing.T, h *scenario.Harness, nodeID string) {
 	t.Helper()
-	for {
+	awaited.Until(t, "node "+nodeID+" to appear on the held-frames diagnostics surface", func() bool {
+		found := false
 		resp, err := http.Get(h.ControlBase + "/v1/admin/diagnostics/held-frames")
 		if err == nil {
 			var body controlapi.HeldFramesResponse
@@ -247,20 +248,20 @@ func waitForHeldFrameListingNode(t *testing.T, h *scenario.Harness, nodeID strin
 				for _, f := range body.Frames {
 					for _, nid := range f.NodeIDs {
 						if nid == nodeID {
-							return
+							found = true
 						}
 					}
 				}
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return found
+	})
 }
 
 func waitForHeldClaimHandle(t *testing.T, h *scenario.Harness, instanceID shared.UUID) shared.UUID {
 	t.Helper()
-	for {
-		var id shared.UUID
+	var id shared.UUID
+	awaited.Until(t, "a held claim_handle for instance "+instanceID.String(), func() bool {
 		err := h.Pool.QueryRow(h.Ctx,
 			`SELECT lh.id FROM rimsky_claim_handles lh
 			   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
@@ -268,11 +269,9 @@ func waitForHeldClaimHandle(t *testing.T, h *scenario.Harness, instanceID shared
 			  ORDER BY lh.claimed_at DESC LIMIT 1`,
 			uuid.UUID(instanceID),
 		).Scan(&id)
-		if err == nil && id != (shared.UUID{}) {
-			return id
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return err == nil && id != (shared.UUID{})
+	})
+	return id
 }
 
 func waitForWaitSetRow(
@@ -280,13 +279,8 @@ func waitForWaitSetRow(
 	topicKind string,
 ) (frameID, receiverNodeRunID, senderNodeRunID shared.UUID) {
 	t.Helper()
-	for {
-		var (
-			fid shared.UUID
-			rid shared.UUID
-			sid shared.UUID
-			ok  bool
-		)
+	awaited.Until(t, "a wait-set row for the receiver node under topic kind "+topicKind, func() bool {
+		var ok bool
 		h.QuerySQL(`
             SELECT w.frame_id, w.receiver_run_id, w.sender_run_id
               FROM rimsky_wait_set w
@@ -295,15 +289,13 @@ func waitForWaitSetRow(
                AND w.topic_kind = $2
              LIMIT 1
         `, []any{receiverNodeID, topicKind}, func(scan func(...any) error) error {
-			if err := scan(&fid, &rid, &sid); err != nil {
+			if err := scan(&frameID, &receiverNodeRunID, &senderNodeRunID); err != nil {
 				return err
 			}
 			ok = true
 			return nil
 		})
-		if ok {
-			return fid, rid, sid
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return ok
+	})
+	return frameID, receiverNodeRunID, senderNodeRunID
 }

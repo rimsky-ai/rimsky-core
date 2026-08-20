@@ -13,29 +13,25 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func postCallbackBodyRT(t *testing.T, url string, body []byte) {
 	t.Helper()
-	for {
+	awaited.Until(t, "POST "+url+" to answer 200", func() bool {
 		resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 		if err != nil {
-			time.Sleep(100 * time.Millisecond)
-			continue
+			return false
 		}
 		_, _ = io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return resp.StatusCode == http.StatusOK
+	})
 }
 
 func TestErrorPolicyFirst_WinnerCancelsInFlightLosers(t *testing.T) {
@@ -55,18 +51,15 @@ func TestErrorPolicyFirst_WinnerCancelsInFlightLosers(t *testing.T) {
 
 	mainScopeID := h.GetLatestFrameRootRunScopeID(iid)
 
-	for {
+	awaited.Until(t, "all three partition runs to be running", func() bool {
 		var n int
 		h.QueryRowSQL(`
 			SELECT COUNT(*) FROM rimsky_node_runs r
 			JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
 			WHERE rs.instance_id = $1 AND rs.partition_key <> '' AND r.state = 'running'`,
 			[]any{iid}, &n)
-		if n == 3 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return n == 3
+	})
 
 	cbBase := "http://" + h.Supervisor.CallbackAddr()
 	body, _ := json.Marshal(map[string]any{

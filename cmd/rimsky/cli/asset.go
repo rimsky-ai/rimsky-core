@@ -163,7 +163,8 @@ func RunAssetDelete(ctx context.Context, args []string) int {
 	if err := c.DeleteAsset(ctx, id, rest[0]); err != nil {
 		return reportError(err)
 	}
-	fmt.Fprintf(os.Stdout, "deleted asset %s on instance %s\n", rest[0], id)
+	reportRemoval(os.Stdout, common.Format, removalResult{Ref: rest[0], Instance: id, Removed: true},
+		fmt.Sprintf("deleted asset %s on instance %s", rest[0], id))
 	return 0
 }
 

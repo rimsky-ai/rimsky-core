@@ -5,16 +5,18 @@ package main
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// @decision: postgres-pgx-v5
 type stateDB struct {
-	db *sql.DB
+	db *pgxpool.Pool
 }
 
 func openStateDB(ctx context.Context) (*stateDB, error) {
@@ -22,17 +24,17 @@ func openStateDB(ctx context.Context) (*stateDB, error) {
 	if dsn == "" {
 		return nil, nil
 	}
-	db, err := sql.Open("pgx", dsn)
+	db, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open state db: %w", err)
 	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+	if err := db.Ping(ctx); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("ping state db: %w", err)
 	}
 	s := &stateDB{db: db}
 	if err := s.bootstrap(ctx); err != nil {
-		_ = db.Close()
+		db.Close()
 		return nil, fmt.Errorf("bootstrap state db: %w", err)
 	}
 	return s, nil
@@ -50,7 +52,7 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    last_fire_at              TIMESTAMPTZ
 		);
 	`
-	_, err := s.db.ExecContext(ctx, schema)
+	_, err := s.db.Exec(ctx, schema)
 	return err
 }
 
@@ -58,7 +60,8 @@ func (s *stateDB) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	s.db.Close()
+	return nil
 }
 
 func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
@@ -77,7 +80,7 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 		    message_type  = EXCLUDED.message_type,
 		    next_fire_at  = EXCLUDED.next_fire_at
 	`
-	_, err := s.db.ExecContext(ctx, q,
+	_, err := s.db.Exec(ctx, q,
 		w.SubscriptionID, w.InstanceID, w.CronExpr,
 		w.MessageType, w.NextFireAt, w.StartedAt,
 		w.LastFireAt)
@@ -88,7 +91,7 @@ func (s *stateDB) DeleteSubscription(ctx context.Context, subscriptionID string)
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sensor_cron_state WHERE publisher_subscription_id = $1`, subscriptionID)
+	_, err := s.db.Exec(ctx, `DELETE FROM sensor_cron_state WHERE publisher_subscription_id = $1`, subscriptionID)
 	return err
 }
 
@@ -96,7 +99,7 @@ func (s *stateDB) UpdateNextFire(ctx context.Context, subscriptionID string, nex
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.db.Exec(ctx,
 		`UPDATE sensor_cron_state SET next_fire_at = $1, last_fire_at = $2 WHERE publisher_subscription_id = $3`,
 		nextFireAt, lastFireAt, subscriptionID)
 	return err
@@ -116,7 +119,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 	if s == nil {
 		return nil, nil
 	}
-	row := s.db.QueryRowContext(ctx,
+	row := s.db.QueryRow(ctx,
 		`SELECT publisher_subscription_id, instance_id, cron_expr,
 		        message_type, next_fire_at, started_at,
 		        last_fire_at
@@ -127,7 +130,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 	if err := row.Scan(&st.SubscriptionID, &st.InstanceID, &st.CronExpr,
 		&st.MessageType, &st.NextFireAt, &st.StartedAt,
 		&st.LastFireAt); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -139,7 +142,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	if s == nil {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.db.Query(ctx,
 		`SELECT publisher_subscription_id, instance_id, cron_expr,
 		        message_type, next_fire_at, started_at,
 		        last_fire_at

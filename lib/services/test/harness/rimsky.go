@@ -442,7 +442,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 		env[k] = v
 	}
 	rimskyOpts := []testcontainers.ContainerCustomizer{
-		testcontainers.WithExposedPorts("8080/tcp", "9100/tcp"),
+		testcontainers.WithExposedPorts("8080/tcp", "8081/tcp"),
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(rereadableContainerFile(string(yamlBytes), "/etc/rimsky/rimsky.yml", 0o644)),
@@ -483,7 +483,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 	}
 	baseURL := fmt.Sprintf("%s://%s:%s", controlAPIScheme(cb), hostIP, mapped.Port())
 
-	mappedCb, err := rimsky.MappedPort(ctx, "9100")
+	mappedCb, err := rimsky.MappedPort(ctx, "8081")
 	if err != nil {
 		dumpLogsForFailure(t, "rimsky/all", rimsky)
 		t.Fatalf("harness: rimsky callback mapped port: %v", err)
@@ -669,11 +669,13 @@ func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID stri
 		} else {
 			last = fmt.Sprintf("GET /v1/instances/%s returned %d", instanceID, status)
 		}
-		if poll%50 == 0 {
-			t.Logf("harness: still waiting for all subscriptions on instance %s to reach state=active "+
-				"(last observed: %s) — the helper blocks until they do; the test guard's no-progress watchdog is the only backstop",
+		if poll == 1 {
+			t.Logf("harness: waiting for all subscriptions on instance %s to reach state=active "+
+				"(first observation: %s) — the helper blocks until they do and says so once, so a wait that never "+
+				"ends leaves the test guard's no-progress watchdog free to trip",
 				instanceID, last)
 		}
+		//nolint:testwallclock-outcome inter-poll cadence; this loop returns only when every subscription is active
 		time.Sleep(200 * time.Millisecond)
 	}
 }
@@ -699,7 +701,7 @@ func waitForHealth(ctx context.Context, baseURL string) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waitForHealth: %s/v1/health never returned 200 before the caller's context ended (expected: HTTP 200; last observed: %s): %w", baseURL, last, ctx.Err())
-		//nolint:testwallclock inter-poll pacing between health probes, not a verdict input — the loop only exits on success or the caller's context
+		//nolint:testwallclock-outcome inter-poll pacing between health probes; the loop only exits on a healthy response or the caller's context, never on this arm
 		case <-time.After(healthPollInterval):
 		}
 	}

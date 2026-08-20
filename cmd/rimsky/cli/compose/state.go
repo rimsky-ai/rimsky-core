@@ -23,7 +23,7 @@ type ComposeState struct {
 }
 
 func QueryState(ctx context.Context, c *cli.Client, project string) (*ComposeState, error) {
-	prefix := cli.ReservedTagPrefix + project + ":"
+	prefix := project + ":"
 
 	tags, err := pagedListTags(ctx, c)
 	if err != nil {

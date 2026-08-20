@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 const objectStorePublisherName = "watcher"
@@ -32,7 +33,6 @@ const objectStoreMessageType = "object/discovered"
 const objectStoreBucket = "events"
 
 const objectStorePollIntervalConfig = "1s"
-const objectStorePollInterval = 1 * time.Second
 
 func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	t.Parallel()
@@ -58,7 +58,7 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 
 	statePool := connectSensorStatePostgres(ctx, t, statePG.hostDSN)
 	defer statePool.Close()
-	subID := waitForSensorObjectStoreSubscriptionPersisted(t, ctx, statePool, 60*time.Second)
+	subID := waitForSensorObjectStoreSubscriptionPersisted(t, ctx, statePool)
 	t.Logf("sensor-object-store persisted subscription %s", subID)
 
 	objectAName := "001-event.json"
@@ -66,10 +66,9 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	objectAEtag := fnvHexOf(objectABytes)
 	sensor.PutObject(ctx, objectStoreBucket, objectAName, objectABytes)
 
-	requirePublisherMessageCountReaches(t, ep, instanceID, 1,
-		20*time.Second, "first-object-discovered")
-	requirePublisherMessageCountStable(t, ep, instanceID, 1,
-		5*objectStorePollInterval, "exactly-one-after-first-object")
+	requirePublisherMessageCountReaches(t, ep, instanceID, 1, "first-object-discovered")
+	requirePublisherMessageCountStableWhile(t, ep, instanceID, 1, "exactly-one-after-first-object",
+		objectStorePollsAdvanced(t, ctx, statePool, subID, 5))
 
 	requireObjectStoreMessagePayload(t, ep, instanceID, objectStoreObservation{
 		Backend:    "filesystem",
@@ -80,7 +79,7 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 		ETag:       objectAEtag,
 	}, "first-object-payload")
 
-	originalWatermark := waitForSensorObjectStoreWatermark(t, ctx, statePool, subID, 20*time.Second)
+	originalWatermark := waitForSensorObjectStoreWatermark(t, ctx, statePool, subID)
 	if originalWatermark != objectAName {
 		t.Fatalf("sensor-object-store watermark = %q, want %q after first emit — "+
 			"the persisted cursor must equal the most-recently-emitted object name "+
@@ -97,9 +96,10 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 		"when object-A is re-dropped into the fresh container's bucket")
 
 	sensor.PutObject(ctx, objectStoreBucket, objectAName, objectABytes)
-	waitForSensorObjectStorePollSince(t, ctx, statePool, subID, restartedAt, 30*time.Second)
-	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount,
-		5*objectStorePollInterval, "watermark-suppressed-re-emit-after-restart")
+	waitForSensorObjectStorePollSince(t, ctx, statePool, subID, restartedAt)
+	requirePublisherMessageCountStableWhile(t, ep, instanceID, preRestartCount,
+		"watermark-suppressed-re-emit-after-restart",
+		objectStorePollsAdvanced(t, ctx, statePool, subID, 5))
 
 	postRestartWatermark := readSensorObjectStoreWatermark(t, ctx, statePool, subID)
 	if postRestartWatermark != objectAName {
@@ -114,10 +114,10 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	objectBEtag := fnvHexOf(objectBBytes)
 	sensor.PutObject(ctx, objectStoreBucket, objectBName, objectBBytes)
 
-	requirePublisherMessageCountReaches(t, ep, instanceID, preRestartCount+1,
-		20*time.Second, "second-object-after-restart")
-	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount+1,
-		5*objectStorePollInterval, "exactly-one-after-second-object")
+	requirePublisherMessageCountReaches(t, ep, instanceID, preRestartCount+1, "second-object-after-restart")
+	requirePublisherMessageCountStableWhile(t, ep, instanceID, preRestartCount+1,
+		"exactly-one-after-second-object",
+		objectStorePollsAdvanced(t, ctx, statePool, subID, 5))
 
 	requireObjectStoreMessagePayload(t, ep, instanceID, objectStoreObservation{
 		Backend:    "filesystem",
@@ -128,7 +128,7 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 		ETag:       objectBEtag,
 	}, "second-object-payload")
 
-	requireSensorObjectStoreWatermarkAdvanced(t, ctx, statePool, subID, objectAName, objectBName, 20*time.Second)
+	requireSensorObjectStoreWatermarkAdvanced(t, ctx, statePool, subID, objectAName, objectBName)
 }
 
 type objectStoreObservation struct {
@@ -148,131 +148,126 @@ func fnvHexOf(b []byte) string {
 
 func requireObjectStoreMessagePayload(t *testing.T, ep harness.RimskyEndpoint, instanceID string, want objectStoreObservation, label string) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	var lastSeen string
-	for time.Now().Before(deadline) {
+	awaited.Until(t, fmt.Sprintf("a publisher message on instance %s carrying the observed object metadata %+v (%s)",
+		instanceID, want, label), func() bool {
 		status, raw := ep.GetJSON(t,
 			"/v1/instances/"+instanceID+"/messages?sender_kind=publisher", "")
-		if status == http.StatusOK {
-			var resp struct {
-				Messages []struct {
-					Type       string          `json:"type"`
-					Sender     string          `json:"sender"`
-					SenderKind string          `json:"sender_kind"`
-					Payload    json.RawMessage `json:"payload"`
-				} `json:"messages"`
+		if status != http.StatusOK {
+			return false
+		}
+		var resp struct {
+			Messages []struct {
+				Type       string          `json:"type"`
+				Sender     string          `json:"sender"`
+				SenderKind string          `json:"sender_kind"`
+				Payload    json.RawMessage `json:"payload"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return false
+		}
+		for _, m := range resp.Messages {
+			if m.SenderKind != "publisher" {
+				continue
 			}
-			if err := json.Unmarshal(raw, &resp); err == nil {
-				for _, m := range resp.Messages {
-					if m.SenderKind != "publisher" {
-						continue
-					}
-					var got objectStoreObservation
-					var payloadAny map[string]any
-					if err := json.Unmarshal(m.Payload, &payloadAny); err != nil {
-						lastSeen = fmt.Sprintf("decode payload: %v: %s", err, string(m.Payload))
-						continue
-					}
-					if v, ok := payloadAny["backend"].(string); ok {
-						got.Backend = v
-					}
-					if v, ok := payloadAny["bucket"].(string); ok {
-						got.Bucket = v
-					}
-					if v, ok := payloadAny["prefix"].(string); ok {
-						got.Prefix = v
-					}
-					if v, ok := payloadAny["object_name"].(string); ok {
-						got.ObjectName = v
-					}
-					if v, ok := payloadAny["size"].(float64); ok {
-						got.Size = int64(v)
-					}
-					if v, ok := payloadAny["etag"].(string); ok {
-						got.ETag = v
-					}
-					lastSeen = fmt.Sprintf("%+v", got)
-					if got == want {
-						return
-					}
-				}
+			var got objectStoreObservation
+			var payloadAny map[string]any
+			if err := json.Unmarshal(m.Payload, &payloadAny); err != nil {
+				continue
+			}
+			if v, ok := payloadAny["backend"].(string); ok {
+				got.Backend = v
+			}
+			if v, ok := payloadAny["bucket"].(string); ok {
+				got.Bucket = v
+			}
+			if v, ok := payloadAny["prefix"].(string); ok {
+				got.Prefix = v
+			}
+			if v, ok := payloadAny["object_name"].(string); ok {
+				got.ObjectName = v
+			}
+			if v, ok := payloadAny["size"].(float64); ok {
+				got.Size = int64(v)
+			}
+			if v, ok := payloadAny["etag"].(string); ok {
+				got.ETag = v
+			}
+			if got == want {
+				return true
 			}
 		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("no publisher message matched expected metadata %+v for instance %s within "+
-		"20s (last seen %q, %s) — either the emit did not happen, or the payload metadata "+
-		"is canned (the load-bearing falsifier for this story)",
-		want, instanceID, lastSeen, label)
+		return false
+	})
 }
 
-func waitForSensorObjectStorePollSince(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string, since time.Time, deadline time.Duration) {
+func waitForSensorObjectStorePollSince(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string, since time.Time) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var lastSeen sql.NullTime
-	for time.Now().Before(end) {
-		var pollAt sql.NullTime
-		err := pool.QueryRow(ctx,
-			`SELECT last_poll_at FROM sensor_object_store_state WHERE publisher_subscription_id = $1`,
-			subID,
-		).Scan(&pollAt)
-		if err == nil {
-			lastSeen = pollAt
-			if pollAt.Valid && pollAt.Time.After(since) {
-				return
+	awaited.Until(t, fmt.Sprintf("sensor-object-store to record a poll on subscription %s after %s, so the "+
+		"stability check that follows cannot pass before the recovered watch's first poll runs",
+		subID, since.Format(time.RFC3339Nano)), func() bool {
+		pollAt := readSensorObjectStoreLastPollAt(t, ctx, pool, subID)
+		return pollAt.Valid && pollAt.Time.After(since)
+	})
+}
+
+func readSensorObjectStoreLastPollAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string) sql.NullTime {
+	t.Helper()
+	var pollAt sql.NullTime
+	if err := pool.QueryRow(ctx,
+		`SELECT last_poll_at FROM sensor_object_store_state WHERE publisher_subscription_id = $1`,
+		subID,
+	).Scan(&pollAt); err != nil {
+		return sql.NullTime{}
+	}
+	return pollAt
+}
+
+func objectStorePollsAdvanced(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string, polls int) sensorProgress {
+	t.Helper()
+	last := readSensorObjectStoreLastPollAt(t, ctx, pool, subID)
+	advances := 0
+	return sensorProgress{
+		description: fmt.Sprintf("sensor-object-store to record %d more poll(s) on subscription %s", polls, subID),
+		reached: func() bool {
+			cur := readSensorObjectStoreLastPollAt(t, ctx, pool, subID)
+			if cur.Valid && (!last.Valid || cur.Time.After(last.Time)) {
+				advances++
+				last = cur
 			}
-		}
-		time.Sleep(200 * time.Millisecond)
+			return advances >= polls
+		},
 	}
-	t.Fatalf("sensor-object-store never recorded a poll after restart (since %s) within %v "+
-		"(last last_poll_at=%v) — without anchoring on an observed post-restart poll, the "+
-		"stability-window check that follows could start and finish before the recovered "+
-		"watch's first poll ever runs, passing vacuously",
-		since.Format(time.RFC3339Nano), deadline, lastSeen)
 }
 
-func waitForSensorObjectStoreSubscriptionPersisted(t *testing.T, ctx context.Context, pool *pgxpool.Pool, deadline time.Duration) string {
+func waitForSensorObjectStoreSubscriptionPersisted(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		var subID string
-		err := pool.QueryRow(ctx,
+	var subID string
+	awaited.Until(t, "the Subscribe path to write a subscription through to sensor_object_store_state, "+
+		"without which the restart-recovery proof is unobservable", func() bool {
+		return pool.QueryRow(ctx,
 			`SELECT publisher_subscription_id FROM sensor_object_store_state LIMIT 1`,
-		).Scan(&subID)
-		if err == nil {
-			return subID
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("sensor-object-store never persisted a subscription to "+
-		"sensor_object_store_state within %v — the Subscribe path is not writing "+
-		"through to the durable state DB; the restart-recovery proof is unobservable "+
-		"without it", deadline)
-	return ""
+		).Scan(&subID) == nil
+	})
+	return subID
 }
 
-func waitForSensorObjectStoreWatermark(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string, deadline time.Duration) string {
+func waitForSensorObjectStoreWatermark(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string) string {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var last string
-	for time.Now().Before(end) {
+	var watermark string
+	awaited.Until(t, fmt.Sprintf("the emit path to write a non-empty watermark_name for subscription %s "+
+		"through to durable state, without which the restart-recovery proof is unobservable", subID), func() bool {
 		var wm string
-		err := pool.QueryRow(ctx,
+		if err := pool.QueryRow(ctx,
 			`SELECT COALESCE(watermark_name, '') FROM sensor_object_store_state WHERE publisher_subscription_id = $1`,
 			subID,
-		).Scan(&wm)
-		if err == nil {
-			last = wm
-			if wm != "" {
-				return wm
-			}
+		).Scan(&wm); err != nil || wm == "" {
+			return false
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("sensor-object-store never persisted a non-empty watermark_name within %v "+
-		"(last seen %q) — the emit path is not writing the cursor through to durable "+
-		"state; the restart-recovery proof is unobservable without it", deadline, last)
-	return ""
+		watermark = wm
+		return true
+	})
+	return watermark
 }
 
 func readSensorObjectStoreWatermark(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID string) string {
@@ -288,28 +283,18 @@ func readSensorObjectStoreWatermark(t *testing.T, ctx context.Context, pool *pgx
 	return wm
 }
 
-func requireSensorObjectStoreWatermarkAdvanced(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID, previous, expected string, deadline time.Duration) {
+func requireSensorObjectStoreWatermarkAdvanced(t *testing.T, ctx context.Context, pool *pgxpool.Pool, subID, previous, expected string) {
 	t.Helper()
-	end := time.Now().Add(deadline)
-	var last string
-	for time.Now().Before(end) {
+	awaited.Until(t, fmt.Sprintf("sensor-object-store to advance watermark_name on subscription %s from %q to %q, "+
+		"the durable cursor move that keeps the next poll on the same bucket from re-emitting",
+		subID, previous, expected), func() bool {
 		var wm string
 		err := pool.QueryRow(ctx,
 			`SELECT COALESCE(watermark_name, '') FROM sensor_object_store_state WHERE publisher_subscription_id = $1`,
 			subID,
 		).Scan(&wm)
-		if err == nil {
-			last = wm
-			if wm == expected {
-				return
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("sensor-object-store did not advance watermark_name to %q within %v "+
-		"(last seen %q, previous was %q) — the durable cursor must move forward on "+
-		"each successful emit, otherwise the next poll on the same bucket would re-emit "+
-		"silently", expected, deadline, last, previous)
+		return err == nil && wm == expected
+	})
 }
 
 func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {

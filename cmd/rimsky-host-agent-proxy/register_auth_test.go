@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -109,7 +108,7 @@ func TestRegisterUnverifiedKeyIsRejectedAndCannotDisplace(t *testing.T) {
 	srv := authenticatedModeControlAPIStub(t)
 	verify := newControlAPIRegisterIdentityVerifier(srv.Client(), srv.URL)
 	state, client := newAgentTestServerWithVerifier(t, verify)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	legit, err := client.Connect(ctx)

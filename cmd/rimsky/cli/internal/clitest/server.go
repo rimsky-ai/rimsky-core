@@ -27,6 +27,11 @@ type Server struct {
 	failMu   sync.Mutex
 	failNext map[string]*FailureSpec
 
+	authMu       sync.Mutex
+	requiredKey  string
+	seenBearers  []string
+	unauthorized int
+
 	getInstanceHits atomic.Int64
 	listEventsHits  atomic.Int64
 
@@ -50,9 +55,47 @@ func NewServer(t testing.TB) *Server {
 		failNext: map[string]*FailureSpec{},
 	}
 	r := chi.NewRouter()
+	r.Use(srv.requireBearer)
 	srv.registerRoutes(r)
 	srv.Server = httptest.NewServer(r)
 	return srv
+}
+
+func (s *Server) RequireBearer(key string) {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	s.requiredKey = key
+}
+
+func (s *Server) SeenBearers() []string {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	return append([]string(nil), s.seenBearers...)
+}
+
+func (s *Server) UnauthorizedCount() int {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	return s.unauthorized
+}
+
+func (s *Server) requireBearer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		s.authMu.Lock()
+		s.seenBearers = append(s.seenBearers, presented)
+		required := s.requiredKey
+		refused := required != "" && presented != required
+		if refused {
+			s.unauthorized++
+		}
+		s.authMu.Unlock()
+		if refused {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) SetFailure(method, path string, spec FailureSpec) {
@@ -508,6 +551,9 @@ func (s *Server) handleListInstanceMessages(w http.ResponseWriter, r *http.Reque
 	if inst == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "instance not found"})
 		return
+	}
+	if r.URL.Query().Get("pending") == "true" {
+		s.State.TakeInstanceActivityStep(inst.ID)
 	}
 	pendingCount, _ := s.State.InstanceActivity(inst.ID)
 	messages := []map[string]any{}

@@ -4,66 +4,25 @@
 package imagetag
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
-	"sync"
 )
 
 const EnvVar = "RIMSKY_IMAGE_TAG"
 
-const BuildCommand = "make core-images service-images test-images"
+const RunTagScript = ".ok-workspaces/bin/run-tag"
 
-const Script = "tools/image-src-tag.sh"
+const BuildCommand = "RIMSKY_IMAGE_TAG=$(" + RunTagScript + ") make core-images service-images test-images"
 
-var (
-	srcTagOnce  sync.Once
-	srcTagValue string
-	srcTagErr   error
-)
+const UnsetTag = "unset-" + EnvVar
 
 func Ref(repo string) string {
-	if tag := os.Getenv(EnvVar); tag != "" {
-		return repo + ":" + tag
+	tag := os.Getenv(EnvVar)
+	if tag == "" {
+		return repo + ":" + UnsetTag
 	}
-	srcTagOnce.Do(func() {
-		srcTagValue, srcTagErr = deriveSrcTag()
-	})
-	if srcTagErr != nil {
-		panic(fmt.Sprintf("imagetag: cannot derive the source-tree image tag for %q (set %s to override): %v",
-			repo, EnvVar, srcTagErr))
-	}
-	return repo + ":" + srcTagValue
-}
-
-func deriveSrcTag() (string, error) {
-	rootOut, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", commandError(err))
-	}
-	root := strings.TrimSpace(string(rootOut))
-	cmd := exec.Command(filepath.Join(root, Script))
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", Script, commandError(err))
-	}
-	tag := strings.TrimSpace(string(out))
-	if !strings.HasPrefix(tag, "src-") {
-		return "", fmt.Errorf("%s printed %q, want a src-<tree-hash> tag", Script, tag)
-	}
-	return tag, nil
-}
-
-func commandError(err error) error {
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
-	}
-	return err
+	return repo + ":" + tag
 }
 
 func IsMissingLocalImage(img string, err error) bool {
@@ -86,7 +45,15 @@ func IsMissingLocalImage(img string, err error) bool {
 }
 
 func MissingImageError(img string, err error) error {
-	return fmt.Errorf("image %q is not in the local docker daemon — rimsky image tags resolve from the current "+
-		"source tree (or %s when set) and never fall back to :latest; build this tree's images with `%s`: %w",
+	if strings.HasSuffix(img, ":"+UnsetTag) {
+		return fmt.Errorf("%s is unset, so no image tag resolves for %q — every rimsky image a suite consumes is "+
+			"built and verified under one per-run tag, with no fallback and never :latest; mint a tag and build "+
+			"this tree's images under it with `%s`, then export the same tag for the test run (`make test-all` "+
+			"and `make test-in-stack` do both for you): %w",
+			EnvVar, strings.TrimSuffix(img, ":"+UnsetTag), BuildCommand, err)
+	}
+	return fmt.Errorf("image %q is not in the local docker daemon — rimsky images resolve by %s alone, with no "+
+		"fallback and never :latest, so this run's tag names no such image; build this tree's images under a "+
+		"freshly minted tag with `%s` and export the same tag for the test run: %w",
 		img, EnvVar, BuildCommand, err)
 }

@@ -8,7 +8,6 @@ package scenarios
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
@@ -42,12 +41,12 @@ func TestExecutorReadsDispatchContext(t *testing.T) {
 	workerID := resolveWorkerNodeID(t, ep, iid, "worker")
 
 	postWorkerRerunMessage(t, ep, iid, "executor-reads-dispatch-context-1")
-	waitForWorkerDispatchCount(t, ctx, pgPool, workerID, 1, 90*time.Second)
+	waitForWorkerDispatchCount(t, ctx, pgPool, workerID, 1)
 	fresh := getWorkerDispatchesInOrder(t, ctx, pgPool, workerID)[0]
 	requireFreshDispatchContext(t, fresh)
 
 	postWorkerRerunMessage(t, ep, iid, "executor-reads-dispatch-context-2")
-	waitForWorkerDispatchCount(t, ctx, pgPool, workerID, 2, 90*time.Second)
+	waitForWorkerDispatchCount(t, ctx, pgPool, workerID, 2)
 	dispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, workerID)
 	rerun := dispatches[1]
 	requireFreshDispatchContext(t, rerun)

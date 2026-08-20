@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func allLoggedPIDs(t *testing.T, pidLog string) map[string]bool {
@@ -72,7 +72,7 @@ func TestHostAgent_MainRunScopeCloseReapsSpawnOnRealInstanceTermination(t *testi
 
 	terminateAndDeleteInstance(t, fx.h.ControlBase, fx.adminKey, iid.String())
 
-	for processAlive(t, pid) {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, "the late-bound child (pid "+pid+") to be reaped once the instance is deleted", func() bool {
+		return !processAlive(t, pid)
+	})
 }

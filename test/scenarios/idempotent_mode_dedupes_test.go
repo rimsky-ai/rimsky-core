@@ -4,8 +4,8 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -103,9 +104,7 @@ func TestIdempotentModeDedupes_QueueComparison(t *testing.T) {
 		return out
 	}
 
-	for len(bObs()) < 1 {
-		time.Sleep(50 * time.Millisecond)
-	}
+	awaited.Until(t, "b's first dispatch to reach the stub", func() bool { return len(bObs()) >= 1 })
 	waitForRunCountSettled(h, a.ID, 5)
 	h.WaitForAllRunsTerminal(b.ID)
 
@@ -262,16 +261,13 @@ func TestIdempotentModeDedupes_SettledComparison(t *testing.T) {
 }
 
 func waitForRunCountSettled(h *scenario.Harness, nodeID shared.UUID, want int) {
-	for {
+	awaited.Until(h.T, fmt.Sprintf("node %s to hold exactly %d run(s), none in flight", nodeID, want), func() bool {
 		var total, inflight int
 		h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`,
 			[]any{nodeID}, &total)
 		h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1
 			AND state IN ('pending','stale','running','held','parked')`,
 			[]any{nodeID}, &inflight)
-		if total == want && inflight == 0 {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return total == want && inflight == 0
+	})
 }

@@ -23,6 +23,8 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/awaited"
 )
 
 type noopLogger struct{}
@@ -522,16 +524,12 @@ func TestTick_PollsDueWatchesConcurrently_OneSlowWatchDoesNotBlockAnother(t *tes
 		s.mu.Lock()
 		w := s.watches["fast"]
 		s.mu.Unlock()
-		for {
+		awaited.Until(t, "the fast watch to record its first poll", func() bool {
 			s.mu.Lock()
-			polled := !w.LastPollAt.IsZero()
-			s.mu.Unlock()
-			if polled {
-				close(fastPolled)
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
+			defer s.mu.Unlock()
+			return !w.LastPollAt.IsZero()
+		})
+		close(fastPolled)
 	}()
 
 	tickDone := make(chan struct{})

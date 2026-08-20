@@ -48,7 +48,11 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 
 func builtinSchemas() map[string][]byte {
 	obj := []byte(`{"type":"object","additionalProperties":true}`)
+	empty := []byte(`{"type":"object","additionalProperties":false}`)
 	return map[string][]byte{
+		"health_probe":       empty,
+		"auth_whoami":        empty,
+		"peer_auth_ca_root":  empty,
 		"instance_list":      obj,
 		"instance_get":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_create":    []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"}},"required":["template"]}`),
@@ -155,8 +159,9 @@ func (a actionRegistryAdapter) EntryForTool(name string) (mcp.RegistryEntry, boo
 		routes = append(routes, mcp.RegistryRoute{Method: r.Method, Path: r.Path, Tool: r.Tool})
 	}
 	return mcp.RegistryEntry{
-		Action:      e.Action,
-		Routes:      routes,
-		Description: e.Description,
+		Action:               e.Action,
+		Routes:               routes,
+		Description:          e.Description,
+		ExemptFromPermission: e.ResolvedPosture() != PosturePermissioned,
 	}, true
 }

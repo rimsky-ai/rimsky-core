@@ -7,15 +7,14 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 )
 
-const grpcShutdownGracePeriod = 10 * time.Second
+// @decision: graceful-shutdown
+const grpcShutdownGracePeriod = serverkit.BundledServiceGrace
 
 func Serve(opts Opts) error {
 	if !opts.CredentialsConfigured() {
@@ -82,15 +81,16 @@ func Serve(opts Opts) error {
 		}
 	}()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	// @decision: graceful-shutdown
+	shutdownCtx, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
+	defer stopSignals()
+	<-shutdownCtx.Done()
 	slog.Info("claude-agent stopping")
 	cancelSweep()
 	grpcShutdownCtx, cancelGrpcShutdown := context.WithTimeout(context.Background(), grpcShutdownGracePeriod)
 	defer cancelGrpcShutdown()
 	grpcSrv.Shutdown(grpcShutdownCtx)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), serverkit.BundledServiceGrace)
 	defer cancel()
 	return httpBridge.Shutdown(ctx)
 }

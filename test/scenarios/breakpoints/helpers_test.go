@@ -13,12 +13,12 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -101,8 +101,8 @@ func postJSON(t *testing.T, url string, body any) (int, map[string]any) {
 
 func waitForHitOnBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID) persistence.BreakpointHitRow {
 	t.Helper()
-	for {
-		var hits []persistence.BreakpointHitRow
+	var hits []persistence.BreakpointHitRow
+	awaited.Until(t, "a hit on breakpoint "+bpID.String(), func() bool {
 		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 			r, err := h.Persist.BreakpointHits().ListSinceForBreakpoint(ctx, bpID, 0, 100, tx)
 			hits = r
@@ -110,11 +110,9 @@ func waitForHitOnBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID)
 		}); err != nil {
 			t.Fatalf("waitForHitOnBreakpoint: %v", err)
 		}
-		if len(hits) > 0 {
-			return hits[0]
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return len(hits) > 0
+	})
+	return hits[0]
 }
 
 func listHitsForBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID) []persistence.BreakpointHitRow {
@@ -132,13 +130,12 @@ func listHitsForBreakpoint(t *testing.T, h *scenario.Harness, bpID shared.UUID) 
 
 func waitForHitCount(t *testing.T, h *scenario.Harness, bpID shared.UUID, want int) []persistence.BreakpointHitRow {
 	t.Helper()
-	for {
-		hits := listHitsForBreakpoint(t, h, bpID)
-		if len(hits) >= want {
-			return hits
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	var hits []persistence.BreakpointHitRow
+	awaited.Until(t, fmt.Sprintf("%d hit(s) on breakpoint %s", want, bpID), func() bool {
+		hits = listHitsForBreakpoint(t, h, bpID)
+		return len(hits) >= want
+	})
+	return hits
 }
 
 func getBreakpointRow(t *testing.T, h *scenario.Harness, bpID shared.UUID) *persistence.BreakpointRow {
@@ -178,9 +175,9 @@ func stubObservedCount(h *scenario.Harness, nodeType string) int {
 }
 
 func waitForStubObservedCount(h *scenario.Harness, nodeType string, want int) {
-	for stubObservedCount(h, nodeType) < want {
-		time.Sleep(20 * time.Millisecond)
-	}
+	awaited.Until(h.T, fmt.Sprintf("%d stub dispatch(es) of node type %s", want, nodeType), func() bool {
+		return stubObservedCount(h, nodeType) >= want
+	})
 }
 
 // @decision: empty-message-as-root-trigger

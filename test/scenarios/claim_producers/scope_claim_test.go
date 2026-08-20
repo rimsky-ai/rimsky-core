@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -56,7 +57,7 @@ func TestScopeClaimEndToEnd(t *testing.T) {
 	h.WaitForNodeState(n.ID, cascade.NodeStateFresh)
 
 	var openCount, commitCount, abandonCount, deleteCount, releaseCount int
-	for commitCount == 0 {
+	awaited.Until(t, "the stub producer to receive the dispatch's Commit", func() bool {
 		openCount, commitCount, abandonCount, deleteCount, releaseCount = 0, 0, 0, 0, 0
 		for _, c := range sub.Calls() {
 			switch c.Verb {
@@ -72,10 +73,8 @@ func TestScopeClaimEndToEnd(t *testing.T) {
 				releaseCount++
 			}
 		}
-		if commitCount == 0 {
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
+		return commitCount > 0
+	})
 	require.GreaterOrEqual(t, openCount, 1, "the dispatch must Open its claim over the wire "+
 		"(an acquisition transaction that rolls back after Open legally retries with a fresh Open, so the wire count is at-least-once)")
 	require.GreaterOrEqual(t, commitCount, 1,
