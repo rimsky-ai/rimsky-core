@@ -21,7 +21,7 @@ Sprint: `2026-08-18-recommended-intake-drain.md`. The builder marks each build s
 15. done — Finish the completion report.
 16. done — Run `/certify-work` with this sprint's path as its argument.
 17. done — Walk the presentation.
-18. pending — Offer archive-and-commit.
+18. done — Offer archive-and-commit.
 
 ## Work done
 
