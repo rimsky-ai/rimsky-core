@@ -5,7 +5,8 @@ category: conflicting
 artifacts:
   - concept:template
   - story:compose-lifecycle
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-19T21:29:33Z
 ---
 

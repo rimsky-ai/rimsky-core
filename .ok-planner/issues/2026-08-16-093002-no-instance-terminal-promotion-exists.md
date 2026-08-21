@@ -4,7 +4,8 @@ kind: audit
 category: conflicting
 artifacts:
   - decision:termination
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-16T09:30:02Z
 ---
 

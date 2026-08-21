@@ -4,7 +4,7 @@ kind: audit
 category: conflicting
 artifacts:
   - concept:run-scope
-status: verified
+status: retired
 opened: 2026-08-16T09:05:03Z
 ---
 

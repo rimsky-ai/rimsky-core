@@ -1,0 +1,23 @@
+---
+concept: wait-set
+---
+
+# Wait-set
+
+## What it is
+
+The wait-set is a per-frame persisted ledger. Each row records that one cascade-driven pending receiver run is waiting for one sender run on one topic, inside one frame. A cascade walk inserts rows under the per-sender-node accumulation rule (see `concept:cascade`): the row lands on the latest cascade-driven pending run for that receiver, or on a freshly created pending when the latest pending's wait-set already covers the sender's node. When a sender reaches a settled outcome (see `concept:node-run`), the drain marks every matching row drained by stamping a timestamp on it, and the row itself survives.
+
+The gate evaluator, not the dispatcher, decides upstream dependency. The drain triggers the gate evaluator for each affected cascade-driven pending receiver, and the evaluator clears three gates. First, every one of this pending's wait-set rows is drained. Second, no subscribed upstream has an in-flight run in the same frame, except a held upstream that shares subgraph co-membership with the receiver: co-members must not gate each other's dispatch (see `decision:held-as-state-not-phase`). Third, no other run for this pending's own node and run-scope is already past pending — the advanced-sibling check that holds at most one run per node and run-scope past pending, uniformly across every `concept:cascade-mode` value. A node's own in-flight run is exempt from the second gate alone; the third still serializes the node's own rounds unconditionally.
+
+When all three clear, the gate evaluator builds the receiver's resolved attribute bag. Substitution resolves each round-driving sender from the settled run its own wait-set row pins, and every other subscribed sender from that sender's most-recent fresh-settled attribute store — both in the current frame, since sender runs created in earlier frames are invisible here. To that the evaluator adds the receiver's own carry-forward from the predecessor run in the current frame's run-scope (see `concept:attribute`). It persists the bag on the run, applies the per-node cascade-mode rule, and moves the run from pending to stale. The dispatcher then claims stale runs in sequence order, gated by its serialization constraint and by a second check that the run carries no undrained wait-set row. The gate evaluator is the authoritative upstream-dependency gate; the dispatcher's check is defence in depth against a stale row reaching the queue ahead of its own drain.
+
+## Purpose
+
+The wait-set derives dispatch eligibility from cascade history, so a template author declares no dependency list up front. It decouples cascade semantics from eligibility semantics: a cascade walk announces coupling, the gate evaluator settles upstream dependency before a row becomes claimable, and the dispatcher's claim adds only the serialization gate and its defence-in-depth re-check. Insertion is itself gated by the subscriber's predicate, evaluated at walk time against the emitted signal, and the settled-state drain then releases the gate uniformly for every row it finds.
+
+## Boundaries
+
+The wait-set owns its ledger, its three insertion sites, the drain-on-settle rule that stamps a timestamp and never deletes, and the gate evaluator that runs at drain time and carries a pending run through to stale. Two insertion sites key on the receiving run under the accumulation rule (see `concept:cascade`): the subscriber cascade walk, and the force-upstream-refresh pull that walk triggers. The third is sub-graph entry-alias binding at child dispatch, which keys its row on the just-created delegated child's run and stamps that row drained in the same transaction. Several cascade-driven pending runs can coexist for one receiver in one run-scope and frame; each carries its own rows and shares none, so each drains and clears its gates on its own and the gate evaluator moves each to stale independently. Rows live only inside their frame and go when the frame goes (see also `concept:frame`).
+
+Subscription declaration is out (see also `concept:node-subscription`). The cascade walk and its accumulation rule are out (see also `concept:cascade`). Frame lifecycle is out (see also `concept:frame`). The dispatcher's serialization gate and its defence-in-depth drain re-check are out; both live at the dispatcher's claim site. Drained rows remain as the durable record of which senders woke which receiver in this frame — a wake-causality trace carrying no signal payload and no attribute data — and the sender-run identity they pin is what lets each cascade round dispatch against the inputs of its own moment (see `story:sequenced-preserves-cascade-rounds`).

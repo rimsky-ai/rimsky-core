@@ -7,7 +7,8 @@ artifacts:
   - concept:validation
   - story:lifecycle-subscriber-author
   - story:validation-author
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-08T05:02:03Z
 ---
 
@@ -75,6 +76,15 @@ blocks operations rimsky could have completed.
 > "ready?". Building that gate is separate work. What each event blocks differs
 > per event: teardown events block nothing, because whatever would wait is being
 > removed.
+>
+> Ruled live by the owner, 2026-08-21: take option C. This sprint removes the
+> veto only: the six fan-out sites stop rolling a transition back on a
+> subscriber error. This sprint does not build the readiness gate; it is a generic
+> peer-protocol question, not a subscriber-only mechanism, and it goes to the
+> intake as its own issue. The concept narrows so it stops advertising
+> provisioning archetypes the platform cannot yet order against. Subscribers
+> stay unique in one respect: they are the one peer kind notified at instance
+> creation.
 
 ## Where this goes
 

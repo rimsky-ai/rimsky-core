@@ -5,7 +5,8 @@ category: conflicting
 artifacts:
   - story:sequenced-preserves-cascade-rounds
   - concept:cascade-mode
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-16T08:55:50Z
 ---
 

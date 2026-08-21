@@ -4,7 +4,8 @@ kind: audit
 category: conflicting
 artifacts:
   - concept:rimsky-yml
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-16T08:59:33Z
 ---
 

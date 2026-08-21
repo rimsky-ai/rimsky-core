@@ -4,7 +4,7 @@ kind: audit
 category: conflicting
 artifacts:
   - concept:orphan-reaper
-status: verified
+status: retired
 opened: 2026-08-16T08:47:39Z
 ---
 

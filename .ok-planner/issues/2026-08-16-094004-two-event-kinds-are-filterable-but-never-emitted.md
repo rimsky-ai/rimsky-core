@@ -6,7 +6,8 @@ artifacts:
   - concept:event-log
   - decision:event-log-kind-enum
   - decision:event-log-payload-shapes
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-16T09:40:04Z
 ---
 

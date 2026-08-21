@@ -5,7 +5,8 @@ category: inconsistent
 artifacts:
   - concept:observability
   - concept:executor
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-16T09:35:01Z
 ---
 

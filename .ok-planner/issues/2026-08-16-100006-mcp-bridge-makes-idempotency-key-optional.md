@@ -4,7 +4,8 @@ kind: audit
 category: conflicting
 artifacts:
   - decision:idempotency-key-header-universal
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-16T10:00:06Z
 ---
 

@@ -4,7 +4,8 @@ kind: audit
 category: unclear
 artifacts:
   - concept:observability
-status: verified
+status: promoted
+sprint: 2026-08-21-intake-drain-and-concept-repair.md
 opened: 2026-08-16T04:07:09Z
 ---
 

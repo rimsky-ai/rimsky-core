@@ -5,7 +5,7 @@ category: conflicting
 artifacts:
   - concept:rimsky
   - decision:rimsky-run-self-hosts-templates
-status: verified
+status: retired
 opened: 2026-08-19T21:29:32Z
 ---
 
