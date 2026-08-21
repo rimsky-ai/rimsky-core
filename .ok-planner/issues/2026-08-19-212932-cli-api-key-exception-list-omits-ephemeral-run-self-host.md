@@ -27,8 +27,4 @@ The ruling decides where the corpus records a loopback exemption the code alread
 
 ## Ruling
 
-> Recommended ruling (/verify-issues): Restate the compose one-shot exception in `concept:rimsky`'s api-key list as the self-host one-shot machinery, so one clause covers both verbs that boot their own stack and reach it over loopback.
->
-> Rationale: the concept and `decision:rimsky-run-self-hosts-templates` already describe the two verbs as one shared machinery, so the mode-shaped clause states what the corpus elsewhere says rather than adding a parallel fact; a seventh verb entry would fall stale again the next time a verb grows a self-host branch, and restructuring working code to repair one sentence buys nothing the sentence cannot. Flip case: if a future self-host branch ever presents a credential (a self-hosted stack with auth enabled), the mode-shaped clause becomes wrong and per-verb entries become the safer record.
-
-<!-- Owner: this is a recommendation, not your decision. Leave it as-is to accept — the next /plan-sprint carries it, naming the generated/recommended batches at sign-off. Edit the text to redirect, empty the section to discuss live, or delete this note to adopt the ruling as your own. -->
+> Retire: the concept-catalog repair dissolves this issue. Its question is where a closed verb-exception list records a seventh entry. The repair (issue `concept-catalog-carries-non-definitional-content`) removes that list from `concept:rimsky` as the enumeration the rule forbids. The mechanical test that walks every verb owns the exception set's membership, and the exemption already sits there with its justification stated at the site. Ruled live by the owner, 2026-08-20.

@@ -22,8 +22,4 @@ The ruling decides whether a fresh claim under an ended frame should be released
 
 ## Ruling
 
-> Recommended ruling (/verify-issues): Keep the structural cutoff and rewrite the concept to say each sweep guards a different thing. The node-run sweep guards a stalled dispatch. The in-frame sweep guards a claim whose authorizing frame is gone, so the concept states the absence of a timestamp on the second sweep as design.
->
-> Rationale: a frame that has ended has settled its outcome. A claim still held under it is a lease with no owner, not work in flight, and holding it longer only delays the release. Flip case: if a settled frame can legitimately leave a child dispatch running that must finish, for example a fan-out straggler whose result still lands somewhere, the sweep is destroying live work and the second option is right.
-
-<!-- Owner: this is a recommendation, not your decision. Leave it as-is to accept — the next /plan-sprint carries it, naming the generated/recommended batches at sign-off. Edit the text to redirect, empty the section to discuss live, or delete this note to adopt the ruling as your own. -->
+> Retire: the concept-catalog repair dissolves this issue. Its prior ruling was words-only: rewrite the concept's deadline claim. That claim is an Invariants entry, and the repair (issue `concept-catalog-carries-non-definitional-content`) deletes the Invariants sections — a concept holds no prescription. The code owns the cutoff behavior, and no one disputes it. Ruled live by the owner, 2026-08-20.

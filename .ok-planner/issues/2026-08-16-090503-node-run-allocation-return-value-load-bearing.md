@@ -22,8 +22,4 @@ The ruling decides whether the lazy-to-eager rewrite is a property the corpus ke
 
 ## Ruling
 
-> Recommended ruling (/verify-issues): Drop the property. Rewrite the invariant to describe the allocation paths as they are, several and id-returning where a caller needs the id, and keep run-scope's real guarantee, that no allocation lands in a closed scope. Move the list of allocation paths to node-run, which owns the row.
->
-> Rationale: nothing in the tree or the corpus pursues the lazy-to-eager rewrite the rule guards, and correctness depends on the two id-returning paths. A rule that protects a hypothetical against live wiring has it the wrong way round. Flip case: if the storage rewrite is a real roadmap item, take the second option now, while the callers are few.
-
-<!-- Owner: this is a recommendation, not your decision. Leave it as-is to accept — the next /plan-sprint carries it, naming the generated/recommended batches at sign-off. Edit the text to redirect, empty the section to discuss live, or delete this note to adopt the ruling as your own. -->
+> Retire: the concept-catalog repair dissolves this issue. The invariant guards a lazy-to-eager storage rewrite nothing in the tree or the corpus pursues, and the recommended ruling already said drop the property. The repair (issue `concept-catalog-carries-non-definitional-content`) deletes the entry, which completes that resolution. The allocation paths stay as the code has them. Ruled live by the owner, 2026-08-20.
