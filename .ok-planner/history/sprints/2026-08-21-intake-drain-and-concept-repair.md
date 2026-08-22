@@ -1,3 +1,7 @@
+---
+closed: 4a01bda4
+---
+
 # Sprint: intake drain and concept-catalog repair
 
 ## Intent
