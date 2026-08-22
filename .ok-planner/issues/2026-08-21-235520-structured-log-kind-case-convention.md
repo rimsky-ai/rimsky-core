@@ -27,23 +27,4 @@ The ruling decides which channel, if either, the events standard's kind format g
 
 ## Ruling
 
-> Recommended ruling (/verify-issues): ratify the lower-case dotted
-> form as rimsky's structured-log kind convention — a recorded
-> departure beside the event log's — and settle the eight
-> capitalised literals with it (Go-symbol error contexts are not
-> kinds; the three camel-case kinds are renamed into the convention).
->
-> Rationale: the tree is already uniform in the lower form across
-> both channels, both departures then share one recorded rationale,
-> and the sweep option buys only `/events` inventory coverage at the
-> price of a 118-site rename; the standard itself leaves format to
-> the project once the departure is declared. Flip case: if the owner
-> wants `/events` to inventory the structured log — kinds enumerable,
-> orphans and near-duplicates surfaced mechanically — the upper-form
-> sweep with its guard check is the only option that delivers it.
-
-<!-- Owner: this is a recommendation, not your decision. Leave it
-as-is to accept — the next /plan-sprint carries it, naming the
-generated/recommended batches at sign-off. Edit the text to
-redirect, empty the section to discuss live, or delete this note
-to adopt the ruling as your own. -->
+The events standard governs every log that represents code flow for debugging. Rimsky's structured process log is that channel, and its kinds follow the standard's format. The event log is a different system serving a different purpose — a durable product surface with its own ruled convention (`decision:event-log-kind-enum`) — and is not to be confused with the debugging log. Plumbline is respected on its channel; the two systems stay distinct.
