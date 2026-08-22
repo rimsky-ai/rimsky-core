@@ -11,9 +11,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
@@ -31,16 +29,18 @@ func TestHostAgentAnonymousModeMultiAgentIsolation(t *testing.T) {
 	stub := buildBinary(t, "lib/runtime/hostagent/testdata/stubchild")
 	proxyPort := freePort(t)
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
+	proxyPeerPort := freePort(t)
+	proxyPeerAddr := fmt.Sprintf("127.0.0.1:%d", proxyPeerPort)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
 		ExtraExecutors: map[string]executor.Endpoint{
-			proxyExecutorName: {Transport: "grpc", URL: proxyAddr},
+			proxyExecutorName: {Transport: "grpc", URL: proxyPeerAddr},
 		},
 		LateBindServiceProxies: map[string]string{"executor": proxyExecutorName},
 		ExecutorProtocols:      map[string][]string{proxyExecutorName: {"executor", "lifecycle_subscriber"}},
 	})
 
-	startProxyOnPort(t, proxyPort, h.ControlBase, "")
+	proxyCAPath := startProxyOnPort(t, proxyPort, proxyPeerPort, h.ControlBase, "")
 
 	const (
 		agentAlpha = "sparkling-wombat"
@@ -51,21 +51,21 @@ func TestHostAgentAnonymousModeMultiAgentIsolation(t *testing.T) {
 	execLogAlpha := t.TempDir() + "/stub-exec-alpha.log"
 	execLogBeta := t.TempDir() + "/stub-exec-beta.log"
 
-	cancelAlpha, doneAlpha, alphaStatus := startAgent(t, proxyAddr, agentStartOptions{RoutingLabel: agentAlpha})
+	cancelAlpha, doneAlpha, alphaStatus := startAgent(t, proxyAddr, proxyCAPath, agentStartOptions{RoutingLabel: agentAlpha})
 	t.Cleanup(func() {
 		cancelAlpha()
 		<-doneAlpha
 	})
 	waitAgentConnected(t, alphaStatus)
 
-	cancelBeta, doneBeta, betaStatus := startAgent(t, proxyAddr, agentStartOptions{RoutingLabel: agentBeta})
+	cancelBeta, doneBeta, betaStatus := startAgent(t, proxyAddr, proxyCAPath, agentStartOptions{RoutingLabel: agentBeta})
 	t.Cleanup(func() {
 		cancelBeta()
 		<-doneBeta
 	})
 	waitAgentConnected(t, betaStatus)
 
-	assertAnonymousLabelCollisionRejected(t, proxyAddr, agentAlpha, alphaStatus)
+	assertAnonymousLabelCollisionRejected(t, proxyAddr, proxyCAPath, agentAlpha, alphaStatus)
 
 	tid := h.DeployTemplateSpecMap(lateBindTemplateSpec("multi-agent-isolation"), "")
 
@@ -103,7 +103,7 @@ func TestHostAgentAnonymousModeMultiAgentIsolation(t *testing.T) {
 	cancelAlpha()
 	<-doneAlpha
 
-	cancelAlpha2, doneAlpha2, alphaStatus2 := startAgent(t, proxyAddr, agentStartOptions{RoutingLabel: agentAlpha})
+	cancelAlpha2, doneAlpha2, alphaStatus2 := startAgent(t, proxyAddr, proxyCAPath, agentStartOptions{RoutingLabel: agentAlpha})
 	t.Cleanup(func() {
 		cancelAlpha2()
 		<-doneAlpha2
@@ -119,11 +119,9 @@ func TestHostAgentAnonymousModeMultiAgentIsolation(t *testing.T) {
 }
 
 // @story: host-agent-anonymous-mode
-func assertAnonymousLabelCollisionRejected(t *testing.T, proxyAddr, collidingLabel, aliveStatusFile string) {
+func assertAnonymousLabelCollisionRejected(t *testing.T, proxyAddr, proxyCAPath, collidingLabel, aliveStatusFile string) {
 	t.Helper()
-	conn, err := grpc.NewClient(proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
+	conn := dialAgentFacing(t, proxyAddr, proxyCAPath)
 
 	stream, err := genv1.NewHostAgentClient(conn).Connect(context.Background())
 	require.NoError(t, err)

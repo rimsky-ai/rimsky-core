@@ -5,7 +5,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -73,8 +72,8 @@ func TestRunValidationPipeline_ForwardsClaimAndPublisherBytesVerbatim(t *testing
 		"publisher-a": pubV,
 	}}
 
-	claimData := json.RawMessage(`{  "key"  :  "value"  ,  "n": 1  }`)
-	pubConfig := json.RawMessage(`{  "topic"  :  "orders"  ,  "n": 2  }`)
+	claimData := spec.RawJSON(`{  "key"  :  "value"  ,  "n": 1  }`)
+	pubConfig := spec.RawJSON(`{  "topic"  :  "orders"  ,  "n": 2  }`)
 
 	tpl := spec.TemplateSpec{
 		Nodes: []spec.TemplateNodeDef{

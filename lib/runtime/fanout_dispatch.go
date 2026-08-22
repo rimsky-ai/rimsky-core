@@ -166,6 +166,10 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 			cascade.NodeStateHeld, cascade.ReasonFanoutDispatched, nil, tx); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: parent → held: %w", err)
 		}
+		if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+			cascade.NodeStateRunning, cascade.NodeStateHeld, cascade.ReasonFanoutDispatched, tx); err != nil {
+			return fmt.Errorf("dispatchFanOutChildren: state_transition event: %w", err)
+		}
 		if err := args.Queue.RemoveForNode(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: release parent queue claim: %w", err)
 		}

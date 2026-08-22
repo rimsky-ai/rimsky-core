@@ -23,6 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/stubprobe"
 )
 
 // @concept: executor
@@ -109,10 +110,10 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 		return s.executeStub(req), nil
 	}
 	if stubmode.IsParkProbe(ud) && s.stubMode {
-		return s.executeParkProbe(ud, req.GetScratch()), nil
+		return stubprobe.Park(ud, req.GetScratch(), defaultParkProbeScratch), nil
 	}
 	if stubmode.IsCancelProbe(ud) && s.stubMode {
-		return nil, s.executeCancelProbe(ctx, req.GetCallbackUrl())
+		return nil, stubprobe.Cancel(ctx, req.GetCallbackUrl())
 	}
 
 	urlStr, _ := ud["url"].(string)
@@ -130,7 +131,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	}
 
 	expectStatus := defaultExpectStatus()
-	if es, ok := ud["expect_status"].([]any); ok {
+	if es, ok := ud["expect_status"].([]any); ok && len(es) > 0 {
 		parsed := make([]int, 0, len(es))
 		for _, v := range es {
 			f, ok := v.(float64)
@@ -215,47 +216,18 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	}}}, nil
 }
 
-var configAttributeKeys = map[string]struct{}{
-	"url":                          {},
-	"method":                       {},
-	"headers":                      {},
-	"body":                         {},
-	"expect_status":                {},
-	stubmode.ProbeAttribute:        {},
-	"stub_response":                {},
-	stubmode.TagsAttribute:         {},
-	"error_class_field":            {},
-	stubmode.ParkProbeAttribute:    {},
-	stubmode.CancelProbeAttribute:  {},
-	stubmode.ParkResumeAtAttribute: {},
-}
-
+// @decision: expected-attributes-schema-closed
 func buildRequestBody(ud map[string]any) (io.Reader, string, error) {
-	if b, ok := ud["body"]; ok && b != nil {
-		switch bb := b.(type) {
-		case string:
-			return strings.NewReader(bb), "", nil
-		default:
-			jb, err := json.Marshal(bb)
-			if err != nil {
-				return nil, "", fmt.Errorf("body not JSON-serialisable: %w", err)
-			}
-			return bytes.NewReader(jb), "application/json", nil
-		}
-	}
-	inputs := map[string]any{}
-	for k, v := range ud {
-		if _, isConfig := configAttributeKeys[k]; isConfig {
-			continue
-		}
-		inputs[k] = v
-	}
-	if len(inputs) == 0 {
+	b, ok := ud["body"]
+	if !ok || b == nil {
 		return nil, "", nil
 	}
-	jb, err := json.Marshal(inputs)
+	if s, isString := b.(string); isString {
+		return strings.NewReader(s), "", nil
+	}
+	jb, err := json.Marshal(b)
 	if err != nil {
-		return nil, "", fmt.Errorf("attributes not JSON-serialisable: %w", err)
+		return nil, "", fmt.Errorf("body not JSON-serialisable: %w", err)
 	}
 	return bytes.NewReader(jb), "application/json", nil
 }
@@ -284,7 +256,7 @@ func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, er
 func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 	ud := req.GetAttributes().AsMap()
 	delta := stubmode.ResponseDelta()
-	if sr, ok := ud["stub_response"]; ok {
+	if sr, ok := ud[stubmode.ResponseOverrideAttribute]; ok {
 		m, ok := sr.(map[string]any)
 		if !ok {
 			return execoutcome.Errored("http/attribute_invalid", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
@@ -318,49 +290,7 @@ func stubTags(ud map[string]any) []string {
 	return tags
 }
 
-var cancelProbeHTTPClient = &http.Client{Timeout: 5 * time.Second}
-
-func postCancelProbeSignal(callbackURL, ackID string) {
-	if callbackURL == "" {
-		return
-	}
-	req, err := http.NewRequest(http.MethodPost, callbackURL+"/v1/callback/"+ackID,
-		strings.NewReader(`{"success":{"changed":false}}`))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := cancelProbeHTTPClient.Do(req)
-	if err != nil {
-		return
-	}
-	_ = resp.Body.Close()
-}
-
-func (s *Server) executeCancelProbe(ctx context.Context, callbackURL string) error {
-	postCancelProbeSignal(callbackURL, stubmode.CancelObservedAck)
-	<-ctx.Done()
-	postCancelProbeSignal(callbackURL, stubmode.CancelAcknowledgedAck)
-	return ctx.Err()
-}
-
 const defaultParkProbeScratch = "http-node-stub-park-scratch"
-
-func (s *Server) executeParkProbe(ud map[string]any, incomingScratch []byte) *genv1.Outcome {
-	park := &genv1.Park{
-		ResumeAt: timestamppb.New(time.Now().Add(30 * time.Second)),
-		Scratch:  incomingScratch,
-	}
-	if len(park.Scratch) == 0 {
-		park.Scratch = []byte(defaultParkProbeScratch)
-	}
-	if raw, _ := ud[stubmode.ParkResumeAtAttribute].(string); raw != "" {
-		if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-			park.ResumeAt = timestamppb.New(t)
-		}
-	}
-	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}
-}
 
 func classifyTransportErr(err error) string {
 	if err == nil {

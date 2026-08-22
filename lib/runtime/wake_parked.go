@@ -137,6 +137,10 @@ func resumeParkedRunInTx(
 		cascade.NodeStateStale, transitionReasonForWake(reason), nil, tx); err != nil {
 		return false, err
 	}
+	if err := AppendStateTransitionEvent(ctx, persist, nodeID, instanceID,
+		cascade.NodeStateParked, cascade.NodeStateStale, transitionReasonForWake(reason), tx); err != nil {
+		return false, err
+	}
 	if err := persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &nodeID, InstanceID: &instanceID,
 		Kind: events.KindParkedResumeStarted(),

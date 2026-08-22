@@ -577,6 +577,41 @@ func (s *nodesImpl) HasAdvancedSiblingInScope(
 
 // @concept: cascade
 // @concept: run-scope
+// @concept: cascade-mode
+// @concept: wait-set
+// @story: sequenced-preserves-cascade-rounds
+func (s *nodesImpl) HasEarlierQueuedRoundFromSameSender(
+	ctx context.Context, receiverNodeRunID foundationshared.UUID, tx persistence.Tx,
+) (bool, error) {
+	var exists bool
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT EXISTS (
+		   SELECT 1
+		     FROM rimsky_node_runs receiver
+		     JOIN rimsky_node_runs earlier
+		       ON earlier.node_id = receiver.node_id
+		      AND earlier.run_scope_id = receiver.run_scope_id
+		      AND earlier.sequence < receiver.sequence
+		      AND earlier.creation_reason = 'cascade'
+		      AND earlier.state IN ('pending','stale')
+		     JOIN rimsky_wait_set earlier_wait ON earlier_wait.receiver_run_id = earlier.id
+		     JOIN rimsky_node_runs earlier_sender ON earlier_sender.id = earlier_wait.sender_run_id
+		    WHERE receiver.id = ?
+		      AND earlier_sender.node_id IN (
+		            SELECT sender.node_id
+		              FROM rimsky_wait_set wait
+		              JOIN rimsky_node_runs sender ON sender.id = wait.sender_run_id
+		             WHERE wait.receiver_run_id = ?
+		          )
+		 )`,
+		receiverNodeRunID.String(), receiverNodeRunID.String(),
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("HasEarlierQueuedRoundFromSameSender: %w", err)
+	}
+	return exists, nil
+}
+
 func (s *nodesImpl) ListPendingSiblingRunsInScope(
 	ctx context.Context, senderNodeRunID foundationshared.UUID, tx persistence.Tx,
 ) ([]foundationshared.UUID, error) {

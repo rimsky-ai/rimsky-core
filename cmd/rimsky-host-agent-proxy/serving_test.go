@@ -126,19 +126,30 @@ func TestSplitServing_AgentListenerCarriesOnlyHostAgent(t *testing.T) {
 	}
 }
 
-func TestSingleServing_PeerAuthNoneKeepsOneServer(t *testing.T) {
+// @decision: host-agent-proxy-tls
+// @concept: host-agent-proxy
+func TestSplitServing_HoldsWithPeerAuthOff(t *testing.T) {
 	identity, err := peerauth.Load(context.Background(), peerauth.Config{Mode: enroll.PeerAuthNone}, nil, time.Now)
 	if err != nil {
 		t.Fatalf("peerauth.Load: %v", err)
 	}
 	servers := buildProxyServers(Config{}, newProxyState(), identity, &http.Client{}, nil)
-	if servers.peer != nil {
-		t.Fatal("peer-auth none must keep the single-listener shape")
+	if servers.peer == nil {
+		t.Fatal("the peer-facing listener stands in every posture, so a plaintext peer keeps a port of its own")
 	}
 	agentServices := servers.agent.GetServiceInfo()
-	for _, want := range []string{"rimsky.v1.HostAgent", "rimsky.v1.Executor", "rimsky.v1.ClaimProducer"} {
-		if _, ok := agentServices[want]; !ok {
-			t.Fatalf("single-listener shape must serve %s; got %v", want, serviceNames(agentServices))
+	for name := range agentServices {
+		if name != "rimsky.v1.HostAgent" {
+			t.Fatalf("the agent listener carries only HostAgent, whatever the peer-auth posture; found %q", name)
+		}
+	}
+	if _, ok := agentServices["rimsky.v1.HostAgent"]; !ok {
+		t.Fatalf("agent listener must serve HostAgent; got %v", serviceNames(agentServices))
+	}
+	peerServices := servers.peer.GetServiceInfo()
+	for _, want := range []string{"rimsky.v1.Executor", "rimsky.v1.ClaimProducer", "rimsky.v1.LifecycleSubscriber"} {
+		if _, ok := peerServices[want]; !ok {
+			t.Fatalf("peer-facing listener must serve %s; got %v", want, serviceNames(peerServices))
 		}
 	}
 }

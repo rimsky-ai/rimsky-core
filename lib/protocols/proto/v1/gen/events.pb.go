@@ -734,9 +734,6 @@ func (*Event_InstanceTerminated) isEvent_Payload() {}
 type MessageSentPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
-	SourceNodeId  string                 `protobuf:"bytes,2,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
-	TargetNodeId  string                 `protobuf:"bytes,3,opt,name=target_node_id,json=targetNodeId,proto3" json:"target_node_id,omitempty"`
-	Params        *structpb.Struct       `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -778,33 +775,11 @@ func (x *MessageSentPayload) GetType() string {
 	return ""
 }
 
-func (x *MessageSentPayload) GetSourceNodeId() string {
-	if x != nil {
-		return x.SourceNodeId
-	}
-	return ""
-}
-
-func (x *MessageSentPayload) GetTargetNodeId() string {
-	if x != nil {
-		return x.TargetNodeId
-	}
-	return ""
-}
-
-func (x *MessageSentPayload) GetParams() *structpb.Struct {
-	if x != nil {
-		return x.Params
-	}
-	return nil
-}
-
 type MessageReceivedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	SourceNodeId  string                 `protobuf:"bytes,2,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
 	TargetNodeId  string                 `protobuf:"bytes,3,opt,name=target_node_id,json=targetNodeId,proto3" json:"target_node_id,omitempty"`
-	Params        *structpb.Struct       `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -858,13 +833,6 @@ func (x *MessageReceivedPayload) GetTargetNodeId() string {
 		return x.TargetNodeId
 	}
 	return ""
-}
-
-func (x *MessageReceivedPayload) GetParams() *structpb.Struct {
-	if x != nil {
-		return x.Params
-	}
-	return nil
 }
 
 type StateTransitionPayload struct {
@@ -4304,17 +4272,13 @@ const file_events_proto_rawDesc = "" +
 	"\x13instance_terminated\x18E \x01(\v2$.rimsky.v1.InstanceTerminatedPayloadH\x00R\x12instanceTerminated\x128\n" +
 	"\vpayload_raw\x18\x1e \x01(\v2\x17.google.protobuf.StructR\n" +
 	"payloadRawB\t\n" +
-	"\apayloadJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b\x1a\x10\x1bJ\x04\b\x1b\x10\x1cJ\x04\b\x1c\x10\x1dJ\x04\b\x1d\x10\x1eJ\x04\b-\x10.R\x06commitR\x13quality_rule_failedR\x0eheartbeat_lostR\x0eschedule_firedR\x13pure_cascade_commitR\x18schedule_dispatch_failedR\x1cattributes_validation_failed\"\xa5\x01\n" +
+	"\apayloadJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b\x1a\x10\x1bJ\x04\b\x1b\x10\x1cJ\x04\b\x1c\x10\x1dJ\x04\b\x1d\x10\x1eJ\x04\b-\x10.R\x06commitR\x13quality_rule_failedR\x0eheartbeat_lostR\x0eschedule_firedR\x13pure_cascade_commitR\x18schedule_dispatch_failedR\x1cattributes_validation_failed\"b\n" +
 	"\x12MessageSentPayload\x12\x12\n" +
-	"\x04type\x18\x01 \x01(\tR\x04type\x12$\n" +
-	"\x0esource_node_id\x18\x02 \x01(\tR\fsourceNodeId\x12$\n" +
-	"\x0etarget_node_id\x18\x03 \x01(\tR\ftargetNodeId\x12/\n" +
-	"\x06params\x18\x04 \x01(\v2\x17.google.protobuf.StructR\x06params\"\xa9\x01\n" +
+	"\x04type\x18\x01 \x01(\tR\x04typeJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\x04\x10\x05R\x0esource_node_idR\x0etarget_node_idR\x06params\"\x86\x01\n" +
 	"\x16MessageReceivedPayload\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12$\n" +
 	"\x0esource_node_id\x18\x02 \x01(\tR\fsourceNodeId\x12$\n" +
-	"\x0etarget_node_id\x18\x03 \x01(\tR\ftargetNodeId\x12/\n" +
-	"\x06params\x18\x04 \x01(\v2\x17.google.protobuf.StructR\x06params\"T\n" +
+	"\x0etarget_node_id\x18\x03 \x01(\tR\ftargetNodeIdJ\x04\b\x04\x10\x05R\x06params\"T\n" +
 	"\x16StateTransitionPayload\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\tR\x02to\x12\x16\n" +
@@ -4767,33 +4731,31 @@ var file_events_proto_depIdxs = []int32{
 	40, // 26: rimsky.v1.Event.parked_resume_started:type_name -> rimsky.v1.ParkedResumeStartedPayload
 	42, // 27: rimsky.v1.Event.instance_terminated:type_name -> rimsky.v1.InstanceTerminatedPayload
 	53, // 28: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
-	53, // 29: rimsky.v1.MessageSentPayload.params:type_name -> google.protobuf.Struct
-	53, // 30: rimsky.v1.MessageReceivedPayload.params:type_name -> google.protobuf.Struct
-	53, // 31: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
-	52, // 32: rimsky.v1.OrphanedClaimReleasedPayload.last_progress_at:type_name -> google.protobuf.Timestamp
-	53, // 33: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
-	52, // 34: rimsky.v1.LockOrphanReapedPayload.expires_at:type_name -> google.protobuf.Timestamp
-	52, // 35: rimsky.v1.LockOrphanReapedPayload.claimed_at:type_name -> google.protobuf.Timestamp
-	53, // 36: rimsky.v1.AuthAccessAttemptedPayload.request_params:type_name -> google.protobuf.Struct
-	53, // 37: rimsky.v1.AuthAccessDeniedPayload.request_params:type_name -> google.protobuf.Struct
-	53, // 38: rimsky.v1.AuthKeyCreatedPayload.permissions:type_name -> google.protobuf.Struct
-	52, // 39: rimsky.v1.AuthKeyCreatedPayload.expires_at:type_name -> google.protobuf.Timestamp
-	52, // 40: rimsky.v1.AuthKeyRotatedPayload.revoke_at:type_name -> google.protobuf.Timestamp
-	54, // 41: rimsky.v1.DebugOverrideAppliedPayload.attribute_value:type_name -> google.protobuf.Value
-	53, // 42: rimsky.v1.TerminalSuccessSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
-	53, // 43: rimsky.v1.TerminalErrorSignalPayload.error_payload:type_name -> google.protobuf.Struct
-	53, // 44: rimsky.v1.TerminalErrorSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
-	52, // 45: rimsky.v1.TransientParkSignalPayload.resume_at:type_name -> google.protobuf.Timestamp
-	53, // 46: rimsky.v1.TransientRetrySignalPayload.error_payload:type_name -> google.protobuf.Struct
-	53, // 47: rimsky.v1.TransientInfraSignalPayload.details:type_name -> google.protobuf.Struct
-	53, // 48: rimsky.v1.TransientReleaseAndRequeueSignalPayload.error_payload:type_name -> google.protobuf.Struct
-	54, // 49: rimsky.v1.AttributeChangedSignalPayload.value:type_name -> google.protobuf.Value
-	54, // 50: rimsky.v1.AttributeChangedSignalPayload.old_value:type_name -> google.protobuf.Value
-	51, // [51:51] is the sub-list for method output_type
-	51, // [51:51] is the sub-list for method input_type
-	51, // [51:51] is the sub-list for extension type_name
-	51, // [51:51] is the sub-list for extension extendee
-	0,  // [0:51] is the sub-list for field type_name
+	53, // 29: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
+	52, // 30: rimsky.v1.OrphanedClaimReleasedPayload.last_progress_at:type_name -> google.protobuf.Timestamp
+	53, // 31: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
+	52, // 32: rimsky.v1.LockOrphanReapedPayload.expires_at:type_name -> google.protobuf.Timestamp
+	52, // 33: rimsky.v1.LockOrphanReapedPayload.claimed_at:type_name -> google.protobuf.Timestamp
+	53, // 34: rimsky.v1.AuthAccessAttemptedPayload.request_params:type_name -> google.protobuf.Struct
+	53, // 35: rimsky.v1.AuthAccessDeniedPayload.request_params:type_name -> google.protobuf.Struct
+	53, // 36: rimsky.v1.AuthKeyCreatedPayload.permissions:type_name -> google.protobuf.Struct
+	52, // 37: rimsky.v1.AuthKeyCreatedPayload.expires_at:type_name -> google.protobuf.Timestamp
+	52, // 38: rimsky.v1.AuthKeyRotatedPayload.revoke_at:type_name -> google.protobuf.Timestamp
+	54, // 39: rimsky.v1.DebugOverrideAppliedPayload.attribute_value:type_name -> google.protobuf.Value
+	53, // 40: rimsky.v1.TerminalSuccessSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
+	53, // 41: rimsky.v1.TerminalErrorSignalPayload.error_payload:type_name -> google.protobuf.Struct
+	53, // 42: rimsky.v1.TerminalErrorSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
+	52, // 43: rimsky.v1.TransientParkSignalPayload.resume_at:type_name -> google.protobuf.Timestamp
+	53, // 44: rimsky.v1.TransientRetrySignalPayload.error_payload:type_name -> google.protobuf.Struct
+	53, // 45: rimsky.v1.TransientInfraSignalPayload.details:type_name -> google.protobuf.Struct
+	53, // 46: rimsky.v1.TransientReleaseAndRequeueSignalPayload.error_payload:type_name -> google.protobuf.Struct
+	54, // 47: rimsky.v1.AttributeChangedSignalPayload.value:type_name -> google.protobuf.Value
+	54, // 48: rimsky.v1.AttributeChangedSignalPayload.old_value:type_name -> google.protobuf.Value
+	49, // [49:49] is the sub-list for method output_type
+	49, // [49:49] is the sub-list for method input_type
+	49, // [49:49] is the sub-list for extension type_name
+	49, // [49:49] is the sub-list for extension extendee
+	0,  // [0:49] is the sub-list for field type_name
 }
 
 func init() { file_events_proto_init() }

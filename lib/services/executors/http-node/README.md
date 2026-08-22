@@ -16,34 +16,34 @@ The executor exposes two transports simultaneously, both backed by the same
   `/v1/Execute` and receive a single protojson-encoded `Outcome` in the
   response body.
 
-## Userdata schema
+## Attribute schema
+
+The executor advertises its expected-attributes schema over the
+observability protocol. The schema declares every attribute the executor
+reads and admits no other, so template registration rejects a node whose
+attribute block names anything else.
 
 ```
 {
   "url": "https://api.example.com/v1/things",
   "method": "POST",                              // optional; default GET
   "headers": { "Authorization": "Bearer ..." },  // optional
-  "body": { "fixed": "payload" },                // optional override; if set, takes precedence over `attributes`
+  "body": { "fixed": "payload" },                // optional; the upstream request body
   "expect_status": [200, 202],                   // optional; default 2xx
   "error_class_field": "code",                   // optional; per-request override of RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD
-  "stub_response": { "id": "abc" },              // optional; used only in stub mode (must be a JSON object)
-  "stub_tags": ["t1"]                            // optional; used only in stub mode
+  "stub_probe": true,                            // optional; used only in stub mode
+  "stub": true                                   // read-only; the stub-mode success marker
 }
 ```
 
-`url` is required. All other fields are optional. Userdata is opaque to
-rimsky — only this executor inspects it.
+`url` is required in practice: a dispatch without it settles as
+`http/attribute_invalid`.
 
 ## Request body
 
-By default the per-run `attributes` map (populated by rimsky at dispatch and
-delivered in `ExecuteRequest.attributes`), minus the fixed set of transport
-config keys in `configAttributeKeys` (`url`, `method`, `headers`, `body`,
-`expect_status`, `stub_probe`, `stub_response`, `stub_tags`,
-`error_class_field`), is JSON-serialised and sent as the upstream request
-body with `Content-Type: application/json`. `attributes.body` is an explicit
-override useful for fixture tests; when set it wins and the non-config
-attributes are not appended. With neither set, no body is sent.
+`attributes.body` is the upstream request body. A string is sent as
+written; any other value is JSON-serialised and sent with
+`Content-Type: application/json`. With no `body`, no body is sent.
 
 ## Response → attributes_delta
 

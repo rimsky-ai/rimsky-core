@@ -6,19 +6,12 @@ concept: claim-lifetime
 
 ## What it is
 
-A per-claim property selecting subgraph or durable lifetime. Governs auto-terminal behavior:
+Claim lifetime is a per-claim property with two values. It decides how long a claim's handle lives after the claim settles. A subgraph claim, the default, settles when the subgraph holding it finishes; rimsky keeps its handle for a trailing window and then reaps it. A durable claim settles the same way. When a durable claim settles as successful, rimsky exempts its handle from that reaping: the handle stays until an operator releases it, or until someone deletes the instance that created it. Terminating an instance abandons the claims that instance still holds, and leaves a durable claim that already settled as successful in place (see `concept:claim-handle`, `concept:auto-terminal`).
 
-- **subgraph** (default) — auto-terminal fires Commit (all-success) or Abandon (any-failed) at holding-subgraph completion; the claim handle row is **promoted** to a committed (or abandoned) state and preserved for forensics. The retention sweep reaps the row after the configured trailing window elapses.
-- **durable** — auto-terminal still fires Commit (or Abandon); on success, the claim handle row is promoted to a committed state and is **exempt from the retention sweep** (asset surface). The handle is available for future dispatches to co-hold and for asset-presentation queries. Instance termination alone abandons the instance's still-active in-flight claims but does not release committed-durable rows; release requires explicit operator action (the asset-delete endpoint) or instance deletion (permitted only once the instance is terminal), which releases every committed-durable claim handle of the instance, held or not; Release goes through the absence-guarded resolved-row delete path (no promotion → already non-active when Release fires).
+## Purpose
+
+A durable lifetime lets a claim's result outlive the run that produced it. A later dispatch can co-hold the same claim (see `concept:claim-co-holdership`). Where the producer handles typed data, the settled claim is what the asset surface presents and what a version query reads (see `concept:asset`, `concept:data-processing`). A subgraph lifetime serves the ordinary case, where a claim exists only to guard a resource while a subgraph runs.
 
 ## Boundaries
 
-Owns: the per-claim lifetime selector surfaced in the template, the lifetime field on the claim-handle ledger, the auto-terminal skip rule for non-active rows (so committed-durable rows survive past promotion), the retention sweep's exemption for committed-durable rows, the orphan-claim reaper's skip rule for non-active rows. Does NOT own: the asset presentation surface (see `concept:asset`), the DataProcessing protocol (see `concept:data-processing`). Adjacent: `concept:claim`, `concept:claim-handle`, `concept:asset`, `concept:auto-terminal`.
-
-## Invariants
-
-- `lifetime: durable` requires the claim's producer advertise data-processing capability for the claim to qualify as an asset. A `durable` claim against a non-DataProcessing producer is still durable (the row persists), just not surfaced as an asset.
-- Held-durable claim handles persist across instance dispatches. Auto-terminal commit on a `lifetime: durable` claim promotes the row to a committed state; the retention sweep skips committed-durable rows so they live until explicit Release.
-- The orphan-claim reaper skips all non-active rows; the expiry timestamp is meaningful only for active rows.
-- The recursive parent-claim resolver treats any non-active child (committed-durable, committed-subgraph, abandoned) the same as a resolved-and-released child: it doesn't block the parent's auto-terminal.
-- Conflict detection includes committed-durable rows (the producer still occupies the scope until Release); committed-subgraph rows do NOT participate (Commit already ended the producer's occupation of the scope).
+Claim lifetime owns the per-claim choice between the two lifetimes, and what that choice implies for how long the handle survives its settlement. It does not own the handle row itself, which belongs to `claim-handle`; the firing of a claim's terminal verb, which belongs to `auto-terminal`; the surface that presents a settled durable claim, which belongs to `asset`; or the typed-data protocol behind that surface, which belongs to `data-processing`. See also: `claim`, `claim-handle`, `asset`, `auto-terminal`, `data-processing`.

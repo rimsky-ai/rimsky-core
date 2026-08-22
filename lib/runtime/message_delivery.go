@@ -27,6 +27,7 @@ type EnqueueMessageDeps interface {
 	Instances() persistence.InstanceTable
 	Templates() persistence.TemplateTable
 	Messages() persistence.MessageTable
+	Events() persistence.EventTable
 }
 
 const (
@@ -37,6 +38,25 @@ const (
 
 // @concept: message-schema
 func EnqueueMessage(ctx context.Context, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest, tx persistence.Tx) error {
+	return enqueueMessage(ctx, deps, req, nil, tx)
+}
+
+// @concept: message
+// @concept: cascade
+func EnqueueMessageFromNode(
+	ctx context.Context, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest,
+	senderNodeID shared.UUID, tx persistence.Tx,
+) error {
+	if senderNodeID == (shared.UUID{}) {
+		return errors.New("EnqueueMessageFromNode: sender node_id required")
+	}
+	return enqueueMessage(ctx, deps, req, &senderNodeID, tx)
+}
+
+func enqueueMessage(
+	ctx context.Context, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest,
+	senderNodeID *shared.UUID, tx persistence.Tx,
+) error {
 	if req.ID == (shared.UUID{}) {
 		return errors.New("EnqueueMessage: id required")
 	}
@@ -52,6 +72,9 @@ func EnqueueMessage(ctx context.Context, deps EnqueueMessageDeps, req persistenc
 	case SenderKindOperator, SenderKindPublisher, SenderKindInstance:
 	default:
 		return fmt.Errorf("EnqueueMessage: unknown sender_kind %q (want operator|publisher|instance)", req.SenderKind)
+	}
+	if req.SenderKind == SenderKindInstance && req.SenderSubject != "" {
+		return fmt.Errorf("EnqueueMessage: an instance send carries no sender_subject, got %q", req.SenderSubject)
 	}
 	if err := validateMessagePayloadIsObjectShaped(req.Payload); err != nil {
 		return &node.MessageBodySchemaViolation{Type: req.Type, Err: err}
@@ -79,7 +102,32 @@ func EnqueueMessage(ctx context.Context, deps EnqueueMessageDeps, req persistenc
 			return fmt.Errorf("EnqueueMessage: coalesce prior pending: %w", err)
 		}
 	}
-	return deps.Messages().Insert(ctx, req, tx)
+	if err := deps.Messages().Insert(ctx, req, tx); err != nil {
+		return err
+	}
+	return emitMessageSent(ctx, deps, req, senderNodeID, tx)
+}
+
+// @concept: message
+// @concept: event-log
+// @decision: event-log-kind-enum
+func emitMessageSent(
+	ctx context.Context, deps EnqueueMessageDeps, req persistence.EnqueueMessageRequest,
+	senderNodeID *shared.UUID, tx persistence.Tx,
+) error {
+	if deps.Events() == nil {
+		return nil
+	}
+	instanceID := req.InstanceID
+	if err := deps.Events().Append(ctx, persistence.EventAppendInput{
+		InstanceID: &instanceID,
+		NodeID:     senderNodeID,
+		Kind:       events.KindMessageSent(),
+		Payload:    eventpayload.New(&genv1.MessageSentPayload{Type: req.Type}),
+	}, tx); err != nil {
+		return fmt.Errorf("EnqueueMessage: append message_sent event: %w", err)
+	}
+	return nil
 }
 
 type DeliveredMessages struct {

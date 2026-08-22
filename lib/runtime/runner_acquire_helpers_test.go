@@ -808,6 +808,9 @@ func (f *fakeNodesDeps) DeletePriorCascadeStales(_ context.Context, _, _ shared.
 func (f *fakeNodesDeps) HasLaterCascadePending(_ context.Context, _, _ shared.UUID, _ int64, _ persistence.Tx) (bool, error) {
 	return false, nil
 }
+func (f *fakeNodesDeps) HasEarlierQueuedRoundFromSameSender(_ context.Context, _ shared.UUID, _ persistence.Tx) (bool, error) {
+	return false, nil
+}
 func (f *fakeNodesDeps) ListPendingRunsInScopeForNodes(_ context.Context, _ shared.UUID, _ []shared.UUID, _ persistence.Tx) ([]shared.UUID, error) {
 	return nil, nil
 }

@@ -8,26 +8,20 @@ aliases:
 
 ## What it is
 
-A single YAML file at a well-known default path read by every runtime process plus the migrate step. Declares the persistence, named-locks, and per-protocol service blocks needed by every runtime process. Each service entry has an optional protocol-membership list declaring which rimsky protocols the binary speaks. A single config loader parses it.
+The unified configuration file is the single configuration file rimsky reads (see `decision:config-format-yaml`). Every runtime process reads it, and so does the migration step, from a well-known default location. It declares the persistence a deployment uses, its named locks, and a block per peer-service protocol naming the services that speak it; each service entry carries a protocol-membership list saying which rimsky protocols that service speaks. Tuning that belongs to one runtime role lives under that role's own section of the same file, and no process has a configuration file of its own (see `decision:launch-config-injection`). One loader parses it.
 
 ## Purpose
 
-The producer list and executor list are needed by every service-orchestrating process. A single file eliminates drift. The unified entrypoint distinguishes only the process role; everything else is in the YAML.
+The unified configuration file keeps every service-orchestrating process reading the same declarations, so the producer list and the executor list cannot drift between them. The entrypoint then distinguishes only which role a process runs; everything else comes from the file.
 
 ## Boundaries
 
-Owns: the file shape, validations at startup (write-semantics-allowed subset, blob backend gating), a per-protocol late-bind-proxy mapping (protocol → the proxy service that fronts late-bound services for that protocol), the loader. Does NOT own: service protocol shapes (those are the protocol concepts' territory), per-feature defaults (live in code). Adjacent: `claim-producer`, `executor`, `lifecycle-subscriber`, `service`, `blob-backend`, `persistence-database`, `write-semantics`, `host-agent-proxy`, `peer-auth`.
+The unified configuration file owns its own shape, the validations it applies when a process loads it, the per-protocol mapping from a protocol to the proxy that fronts late-bound services for it, and the loader. Its claim-producer block is the canonical surface for declaring a claim-producer service.
 
-## Invariants
+It does not own the shape of any protocol a declared service speaks, which belongs to that protocol's own concept, nor a feature's defaults, which live in code. It does not own how a late-bound name resolves at dispatch, which belongs to `concept:host-agent-proxy`, or which posture a deployment holds toward its peers, which belongs to `concept:peer-auth`.
 
-- Single file consumed by every runtime process; no per-process config files.
-- The claim-producer registry is the canonical surface for declaring claim-producer services.
-- Each declared producer must enumerate the write-semantics it is allowed to use.
-- An operator-declared producer's allowed write-semantics MUST be a subset of the producer's advertised set (validated at startup).
-- All DSN config goes through the YAML.
-- Each service entry declares its protocol membership via an explicit protocol-membership list.
-- **Service entries are connection-level and universal.** An entry carries only the fields every service shares — endpoint, transport, TLS, protocol membership, observability address. No service-schema-specific configuration rides in the YAML, and entry names are opaque to the platform: no code path interprets an entry differently because it names a particular service implementation. Bundled handlers read their own namespaced environment configuration in every mode (see `decision:env-var-convention-across-modes`).
-- **No API-key ledger state in the YAML.** The ledger's data — principals, keys, active-status — is the sole source of truth for auth state, never mirrored or overridden by YAML (see `concept:anonymous-mode`). Transport-level peer-auth posture is a separate concern and IS a legal YAML key; see `concept:peer-auth`.
-- **Env-reference expansion is strict.** The loader expands env references in the YAML at load time; unset referenced variables are a load-time hard error rather than an empty-string substitution. The specific reference syntax and the single-implementation commitment (root loader, sibling-block re-reads, and service opts loaders share one implementation) live in `decision:config-yaml-loading-policy`.
-- **Strict YAML decoding.** Loaders decode strictly: any unknown key — typo, guess, stale example, retired key — fails at load with the offending key named. No per-retired-key compat shim (retired stuff is purely removed per `decision:pre-v1-pure-removal-for-retired-surfaces`). The specific parser API used lives in `decision:config-yaml-loading-policy`.
-- Late-bound service names resolve at dispatch via the proxy named for the relevant protocol in the per-protocol late-bind-proxy mapping; an empty mapping leaves late-bind resolution inert. See `concept:host-agent-proxy`.
+see also: `claim-producer`, `executor`, `lifecycle-subscriber`, `service`, `blob-backend`, `persistence-database`, `write-semantics`, `host-agent-proxy`, `peer-auth`
+
+## Aliases
+
+- unified config

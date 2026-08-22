@@ -18,13 +18,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-func blobBackendName(bb persistence.BlobBackend) string {
-	if bb == nil {
-		return "<none>"
-	}
-	return bb.Name()
-}
-
 func (s *nodeAttributesImpl) GetByRun(ctx context.Context, runID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT node_run_id, node_id, data, updated_at, value_handle, value_handle_backend
@@ -81,19 +74,19 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row scann
 	}
 
 	if handle.Valid && handle.String != "" {
-		if bb == nil || !handleBkend.Valid || handleBkend.String != bb.Name() {
-			rowBackend := "<none>"
-			if handleBkend.Valid {
-				rowBackend = handleBkend.String
-			}
-			return nil, fmt.Errorf("node_attributes.%s: row has value_handle %q on backend %q, but active blob backend is %q",
-				op, handle.String, rowBackend, blobBackendName(bb))
+		rowBackend := ""
+		if handleBkend.Valid {
+			rowBackend = handleBkend.String
+		}
+		// @decision: blob-backend-mismatch-read-refused
+		if err := persistence.CheckBlobBackendMatches("node_attributes."+op, bb, handle.String, rowBackend); err != nil {
+			return nil, err
 		}
 		bytes, err := bb.Read(ctx, persistence.Handle(handle.String))
 		if err != nil {
 			if errors.Is(err, persistence.ErrBlobNotFound) {
 				slog.Error("node_attributes.spilled_value_missing",
-					"op", op, "node_run_id", runID.String(), "handle", handle.String, "backend", handleBkend.String)
+					"op", op, "node_run_id", runID.String(), "handle", handle.String, "backend", rowBackend)
 				out.Data = map[string]any{}
 				return &out, nil
 			}

@@ -81,6 +81,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 	startOut, startErr, startCode := runCmdWithEnv(t, binPath,
 		[]string{"agent", "start",
 			"--proxy", fx.proxyAddr,
+			"--tls-ca", fx.proxyCAPath,
 			"--state-dir", stateDir,
 			"--api-key", fx.adminKey,
 		}, startEnv)

@@ -181,6 +181,17 @@ func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf 
 		return reportError(err)
 	}
 
+	// @decision: compose-driver-sends-empty-message-after-create
+	// @story: one-shot-to-terminal
+	hasRoot, rerr := TemplateHasStructuralRoot(ctx, c, hash)
+	if rerr != nil {
+		return reportError(rerr)
+	}
+	if !hasRoot && !rf.Keep {
+		fmt.Fprintln(os.Stderr, "rimsky run:", NoStructuralRootError(hash))
+		return 2
+	}
+
 	if len(bindings) > 0 {
 		if startErr := ensureAgentRunning(); startErr != nil {
 			fmt.Fprintf(os.Stderr, "rimsky run: could not start host-agent: %v\n", startErr)
@@ -209,10 +220,6 @@ func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf 
 	}
 
 	// @decision: compose-driver-sends-empty-message-after-create
-	hasRoot, rerr := TemplateHasStructuralRoot(ctx, c, hash)
-	if rerr != nil {
-		return reportError(rerr)
-	}
 	if hasRoot {
 		if _, werr := c.CreateInstanceMessage(ctx, inst.UUID(), "run-wake-"+inst.UUID(),
 			CreateInstanceMessageRequest{}); werr != nil {
@@ -314,15 +321,17 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 	if timeout > 0 {
 		deadline = time.Now().Add(timeout)
 	}
+	// @decision: termination
+	// @story: one-shot-to-terminal
 	for {
-		inst, err := c.GetInstance(signalCtx, instanceID)
+		quiescent, _, err := InstanceQuiescence(signalCtx, c, instanceID)
 		if err != nil {
 			if signalCtx.Err() != nil {
 				return ExitInterrupt
 			}
 			return reportError(err)
 		}
-		if inst.TerminatedAt != nil {
+		if quiescent {
 			break
 		}
 		if !deadline.IsZero() && time.Now().After(deadline) {
@@ -334,6 +343,12 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 			return ExitInterrupt
 		case <-time.After(pollInterval):
 		}
+	}
+	if _, err := c.TerminateInstance(signalCtx, instanceID, "one_shot_workflow_complete"); err != nil {
+		if signalCtx.Err() != nil {
+			return ExitInterrupt
+		}
+		return reportError(err)
 	}
 	outcome := ExitAllSuccess
 	if nodes, err := c.ListInstanceNodes(signalCtx, instanceID); err != nil {

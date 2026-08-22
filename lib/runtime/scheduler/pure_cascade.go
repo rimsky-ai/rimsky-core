@@ -74,6 +74,10 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		if err := sb.Nodes().UpdateState(ctx, n.NodeRunID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx); err != nil {
 			return err
 		}
+		if err := runtime.AppendStateTransitionEvent(ctx, sb, n.NodeID, n.InstanceID,
+			cascade.NodeStateStale, cascade.NodeStateFresh, cascade.ReasonPureCascade, tx); err != nil {
+			return err
+		}
 		if err := args.Queue.ForceRemoveForNode(ctx, n.NodeID, n.RunScopeID, tx); err != nil {
 			return err
 		}
@@ -83,16 +87,6 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 			"node_id", n.NodeID.String(), "error", err.Error())
 		return err
 	}
-	runtime.EmitLeafRunLineage(ctx, runArgs, runtime.LeafRunEmitInput{
-		InstanceID:         n.InstanceID,
-		FrameID:            n.FrameID,
-		NodeRunID:          n.NodeRunID,
-		NodeID:             n.NodeID,
-		State:              string(cascade.NodeStateFresh),
-		SettlingSignalType: pureCascadeSig,
-		TerminalKind:       "pure_cascade",
-		NodeAlias:          n.NodeType,
-	})
 	if _, err := runtime.PropagateIfChildAfterTerminal(ctx, runArgs, n.NodeRunID); err != nil {
 		log.Warn("ProcessPureCascade: run-tree propagation failed",
 			"node_id", n.NodeID.String(), "error", err.Error())

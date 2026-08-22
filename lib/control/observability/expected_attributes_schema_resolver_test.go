@@ -90,6 +90,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		}
 	})
 
+	// @decision: expected-attributes-schema-closed
 	t.Run("registration: undeclared property rejected under closed schema", func(t *testing.T) {
 		spec := validSpec("string")
 		props := spec.Nodes[0].Attributes.Schema["properties"].(map[string]any)
@@ -98,7 +99,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		if res.Ok() {
 			t.Fatal("undeclared property passed registration under a closed advertised schema")
 		}
-		if !anyErrorContains(res.Errors, "additionalProperties: false") {
+		if !anyErrorContains(res.Errors, "admits no other") {
 			t.Fatalf("registration error did not name the closed-schema violation: %+v", res.Errors)
 		}
 	})

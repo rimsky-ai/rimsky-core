@@ -49,31 +49,9 @@ func TestInsertEvent_HappyPathPersistsRow(t *testing.T) {
 		KeyName: "test-key",
 	})
 
-	rows := eventsByKind(t, h, auth.EventKeyCreated)
+	rows := eventsByKind(t, h, auth.EventKeyCreated.String())
 	require.Len(t, rows, 1)
 	require.Equal(t, "test-key", rows[0].Payload.Map()["key_name"])
-}
-
-func TestInsertEvent_UnknownKindLogsParseErrorAndDoesNotPersist(t *testing.T) {
-	t.Parallel()
-	s, h, cleanup := newAuditTestState(t)
-	defer cleanup()
-	h.logger.Clear()
-
-	s.insertEvent("totally_made_up_kind", auth.KeyCreatedProto(auth.KeyCreatedPayload{KeyName: "x"}))
-
-	require.Empty(t, eventsByKind(t, h, "totally_made_up_kind"))
-	requireLoggedError(t, h, "audit.kind-parse")
-}
-
-func requireLoggedError(t *testing.T, h *harness, msg string) {
-	t.Helper()
-	for _, rec := range h.logger.Records() {
-		if rec.Level == "error" && rec.Msg == msg {
-			return
-		}
-	}
-	t.Fatalf("expected an error-level log record %q, got none in %+v", msg, h.logger.Records())
 }
 
 func TestEmitAttempted_ExecutedComputation(t *testing.T) {
@@ -100,7 +78,7 @@ func TestEmitAttempted_ExecutedComputation(t *testing.T) {
 			ident := auth.Identity{KeyName: "k-" + tc.name, Kind: auth.IdentityAPIKey}
 			s.emitAttempted(req, s.Clock.Now(), ident, "instance:create", "rest", nil, false, tc.status, tc.mode, tc.isWrite)
 
-			rows := eventsByKind(t, h, auth.EventAccessAttempted)
+			rows := eventsByKind(t, h, auth.EventAccessAttempted.String())
 			var found *persistence.EventRow
 			for i := range rows {
 				if rows[i].Payload.Map()["key_name"] == ident.KeyName {
@@ -121,7 +99,7 @@ func TestEmitDenied_OptionalIdentityAndActionFields(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/instances", nil)
 	s.emitDenied(req, s.Clock.Now(), auth.Identity{}, "", "rest", nil, false, http.StatusUnauthorized, auth.DenialNoToken, nil)
 
-	rows := eventsByKind(t, h, auth.EventAccessDenied)
+	rows := eventsByKind(t, h, auth.EventAccessDenied.String())
 	var anonRow *persistence.EventRow
 	for i := range rows {
 		if rows[i].Payload.Map()["denial_reason"] == string(auth.DenialNoToken) && rows[i].Payload.Map()["key_name"] == nil {
@@ -137,7 +115,7 @@ func TestEmitDenied_OptionalIdentityAndActionFields(t *testing.T) {
 	mode := auth.ModeExecute
 	s.emitDenied(req, s.Clock.Now(), ident, "instance:create", "rest", nil, false, http.StatusForbidden, auth.DenialPermissionDenied, &mode)
 
-	rows = eventsByKind(t, h, auth.EventAccessDenied)
+	rows = eventsByKind(t, h, auth.EventAccessDenied.String())
 	var namedRow *persistence.EventRow
 	for i := range rows {
 		if rows[i].Payload.Map()["key_name"] == "named-key" {

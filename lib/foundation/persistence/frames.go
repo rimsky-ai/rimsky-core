@@ -49,9 +49,10 @@ type FrameEndResult struct {
 
 type FrameRowWithMessage struct {
 	FrameRow
-	MessageType       string `json:"message_type"`
-	MessageSender     string `json:"message_sender"`
-	MessageSenderKind string `json:"message_sender_kind"`
+	MessageType          string `json:"message_type"`
+	MessageSender        string `json:"message_sender"`
+	MessageSenderKind    string `json:"message_sender_kind"`
+	MessageSenderSubject string `json:"message_sender_subject"`
 }
 
 type FrameListFilter struct {

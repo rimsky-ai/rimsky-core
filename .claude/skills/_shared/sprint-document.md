@@ -56,7 +56,8 @@ relays, then one cold certification.
    dependency, and order the groups so nothing is built on something
    not yet there. Before building, write the staged list as the
    opening section of the completion report (step 9): `## Stages`,
-   one line per stage, each marked pending. Seed the closing stages
+   one line per stage naming the work items it groups, each marked
+   pending. Seed the closing stages
    now — finish the completion report, run `/certify-work` with this
    sprint's path as its argument, walk the presentation, offer
    archive-and-commit. The builder marks each build stage done as it
@@ -74,7 +75,7 @@ relays, then one cold certification.
    task notifications, and holds the reviewer's ledger. It opens the
    completion report with the staged list before the build and marks
    the closing stages after the team retires; during the build it
-   edits nothing. Every dispatch names its model.
+   edits no file a worker owns. Every dispatch names its model.
    - **The builder** (`opus`), dispatched once with this sprint's
      path and the report's path, fed one stage per message. It
      writes the code, applies the stage's corpus deltas, tests what
@@ -84,25 +85,34 @@ relays, then one cold certification.
    - **The standing reviewer** (`opus`), dispatched once under the
      standing-reviewer brief in the certification core
      (`_shared/certification-core.md` under `.claude/skills/`), fed
-     each landed stage's paths. It reads the increment under the
-     certification gate's code-review brief plus the read-only
-     per-stage producers each present family's ceremony contribution
-     names under **Standing producers**, keeps a ledger of open
-     findings, and replies with the ledger. It reports each claimed
+     each landed stage's paths and the work items it lands. It reads
+     the increment under the certification gate's code-review brief
+     — findings reach anywhere in the tree the increment breaks —
+     and the gate's alignment questions scoped to the stage's own
+     items and deltas, plus the read-only per-stage producers each
+     present family's ceremony contribution names under **Standing
+     producers**, keeps a ledger of open findings, and replies with
+     the ledger. It reports each claimed
      fork outside the ledger, in every reply until the completion
      report carries it. It edits nothing and runs no suite.
    - **The relay.** The session runs the relay protocol stated with
      that brief in the certification core: the message it sends the
      reviewer as each stage lands, the lines and claimed forks it
      relays back to the builder, the fix-only rounds it runs after the
-     final stage, and the bound on those rounds.
-   - **Retirement.** Retire a worker only at a stage boundary, once
-     its measured context (`subagent_tokens`) passes a threshold held
-     below the harness's compaction window (~300k tokens on a
-     1M-token window). A replacement builder reads this sprint and
-     the report and continues at the next stage; a replacement
-     reviewer receives the open ledger and the open claimed forks the
-     session holds.
+     final stage, and the bound on those rounds. On every relay the
+     session writes the reviewer's open ledger and the open claimed
+     forks to `<sprint-name>-ledger.md` beside the completion report,
+     so the state it holds survives it. A replacement session and a
+     replacement reviewer read that file from disk.
+   - **Retirement.** Retire a worker only at a stage boundary,
+     inside the band the worker-pool rule sets: roughly 300k to 500k
+     tokens of measured context (`subagent_tokens`) on a 1M-token
+     window, scaled on a smaller window. At each boundary the session
+     projects what the next stage costs and hands it over only when
+     the worker will still retire inside the band. A replacement
+     builder reads this sprint and the report and continues at the
+     next stage; a replacement reviewer reads the open ledger and the
+     open claimed forks from the ledger file.
    - **Without messaging.** Where the harness offers no cross-agent
      messaging, one session runs the same shape in bounded batches.
      The session orchestrates here too. Per batch it dispatches a
@@ -204,12 +214,13 @@ relays, then one cold certification.
 the work. The run offers both at the end of the presentation and
 does neither on its own. Until the owner answers, this file stays at
 its `sprints/` path. On yes, the run moves this file, its completion
-report, its delta sidecar, and the issue files it resolved to
-`history/`, commits the work, then stamps the archived sprint with
-the closing commit — `closed: <sha>` in the frontmatter, one small
-follow-on commit. The next planning ceremony reads that stamp to
-detect work done out of band. "Finish the sprint" and "follow the
-boilerplate" are not a yes; both ask for the presentation.
+report, its ledger file, its delta sidecar, and the issue files it
+resolved to `history/`, commits the work, then stamps the archived
+sprint with the closing commit — `closed: <sha>` in the frontmatter,
+one small follow-on commit. The next planning ceremony reads that
+stamp to detect work done out of band. "Finish the sprint" and
+"follow the boilerplate" are not a yes; both ask for the
+presentation.
 
 ## Completion contract
 
@@ -238,11 +249,13 @@ follow completion; a pending archive-and-commit offer is evidence
 the goal is met. Where this sprint file sits is no term of the rule:
 `sprints/` and `.ok-planner/history/sprints/` satisfy it alike, and
 a sprint already archived with a `closed:` stamp is terminal — stop
-checking. A missing completion report means not done. A run parked
+checking. A missing completion report means not done. The ledger file
+is no term of the contract: it is the relay's working state, and
+whether it exists decides nothing. A run parked
 at the review-fix loop's cycle cap awaiting the owner's direction
 has not met the goal: a legal in-flight state, not done, not failed,
 and never grounds for the run to take either cap step itself.
 Nothing else counts either way.
 ```
 
-<!-- Materialized by ok-planner v18.8.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-planner v19.0.0 — suite-owned; overwritten on converge; do not hand-edit. -->

@@ -3,8 +3,6 @@
 
 package spec
 
-import "encoding/json"
-
 // @concept: graph
 type GraphSpec struct {
 	Name  string            `yaml:"name" json:"name"`
@@ -36,8 +34,8 @@ const (
 )
 
 type PublisherSpec struct {
-	Name        string          `yaml:"name" json:"name"`
-	Kind        string          `yaml:"kind" json:"kind"`
-	Config      json.RawMessage `yaml:"config" json:"config"`
-	MessageType string          `yaml:"message_type,omitempty" json:"message_type,omitempty"`
+	Name        string  `yaml:"name" json:"name"`
+	Kind        string  `yaml:"kind" json:"kind"`
+	Config      RawJSON `yaml:"config" json:"config"`
+	MessageType string  `yaml:"message_type,omitempty" json:"message_type,omitempty"`
 }

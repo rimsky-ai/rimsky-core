@@ -37,6 +37,10 @@ SELECT message_id, created_at
  WHERE instance_id = ? AND sender_kind = ? AND sender = ? AND sender_subject = ? AND idempotency_key = ?`
 
 func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, row persistence.MessageIdempotencyRow, tx persistence.Tx) (persistence.MessageIdempotencyRow, bool, error) {
+	// @decision: message-sender-kind-discriminator
+	if err := row.ValidateSenderKind(); err != nil {
+		return persistence.MessageIdempotencyRow{}, false, err
+	}
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = time.Now().UTC()
 	}

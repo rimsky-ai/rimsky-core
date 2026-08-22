@@ -48,7 +48,6 @@ Bare nouns like `Open`, `claimed_by`, or `rimsky_node_events` could be Go method
 | `env:` | `` `env:RIMSKY_CONFIG` `` |
 | `concept:` | `` `concept:claim-handle` `` |
 | `issue:` (issue-queue id) | `` `issue:endpoint-env-var-collision` `` |
-| `invariant:` | `` `invariant:4` `` or `` `invariant:4-claimant-guarded-release` `` |
 | `spec:` / `sketch:` | `` `spec:2026-05-11-design-log-convergence` `` |
 | `cmd:` | `` `cmd:make build-all` `` |
 

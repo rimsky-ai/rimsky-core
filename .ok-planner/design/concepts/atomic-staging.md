@@ -6,22 +6,14 @@ concept: atomic-staging
 
 ## What it is
 
-Producer-side stage-then-swap pattern: writers stage data into a side area; on `Commit` the producer atomically swaps the staging into the canonical view; on `Abandon` the staging is dropped. This is the producer-side discipline that realizes `concept:write-semantics`'s staged-asynchronous mode: readers see the pre-stage snapshot until a swap commits. Composes naturally with subgraph-lifetime claims + co-holding verifier nodes + aggregation:
+Atomic staging is the producer-side stage-then-swap discipline behind a held claim. Writers stage their data into a side area. When the claim commits, the producer swaps the staging into the canonical view in one step. When the claim abandons, the producer drops the staging and leaves the canonical view untouched. It realizes the staged-asynchronous mode of `concept:write-semantics`: a reader sees the pre-stage snapshot until a swap lands. It composes with a subgraph-lifetime claim, co-holding verifier nodes, and aggregation — the claim's auto-terminal decides commit or abandon from the aggregate of its holders, and a verifier node that co-holds the staging claim contributes its own terminal to that aggregate.
 
-- Subgraph-lifetime claim's auto-terminal triggers `Commit` (atomic swap) on all-success, `Abandon` (drop staging) on any-failure.
-- Verifier nodes co-hold the staging claim via `holds:`; their terminals contribute to the parent's aggregation.
+## Purpose
+
+Atomic staging lets a group of nodes write a dataset together and expose it to readers as one change. A reader never observes a half-written canonical view: it reads the previous snapshot until the swap lands, and the swap is the moment the new data becomes visible. A failure anywhere in the writing group leaves the canonical view exactly as it was.
 
 ## Boundaries
 
-Owns: the producer-side discipline, the documented pattern, the per-substrate atomicity caveats. Does NOT own: rimsky-side mechanics (those are subgraph-lifetime + co-holdership + aggregation, each their own concept), the specific substrate (producer-internal; rimsky doesn't interpret it). Adjacent: `concept:claim-producer`, `concept:claim-lifetime`, `concept:claim-co-holdership`, `concept:auto-terminal`, `concept:write-semantics`.
+Atomic staging owns the producer-side discipline. Whether a given substrate can perform the swap in one step is the producer's concern, not rimsky's. Atomic staging does not own the rimsky-side mechanics: the subgraph-lifetime claim, co-holdership, and aggregation are each their own concept. It does not own the substrate, which belongs to the producer and which rimsky does not interpret.
 
-## Invariants
-
-- Release of a claim whose staging was never committed is equivalent to Abandon: the staging is dropped and the canonical view is untouched.
-- The canonical view must be an atomically-replaceable unit: internal dependents (objects inside the canonical depending on other objects inside it) are carried into staging, but an object outside the canonical that depends on objects inside it would be destroyed by the swap rather than replaced. A write-intent open against a canonical with such an external dependent fails fast at open with a declared error — before any staging is created — and the swap re-checks as a backstop against a dependent appearing mid-flight, surfacing the producer's swap-failure error class. Read-intent opens are unaffected.
-- A transactional-store substrate swaps atomically via its transaction.
-- A metadata-pointer-flip substrate swaps atomically if the pointer write itself is atomic.
-- A rename-within-a-single-volume substrate swaps atomically within that volume.
-- A copy-then-delete-across-volumes substrate swaps within a window, not strictly atomically.
-- A manifest-pointer-flip substrate swaps atomically if the manifest write itself is atomic.
-- An append-log substrate is incoherent for the stage-then-swap pattern; atomic staging does not apply to it.
+see also: `claim-producer`, `claim-lifetime`, `claim-co-holdership`, `auto-terminal`, `write-semantics`

@@ -449,3 +449,59 @@ func readData(t *testing.T, store persistence.Tables, runID uuid.UUID) map[strin
 	}
 	return out.Data
 }
+
+// @concept: blob-backend
+// @decision: blob-backend-mismatch-read-refused
+func TestSnapshotBagCarryForwardRefusesAMismatchedBackend(t *testing.T) {
+	t.Setenv(persistence.ProcessRoleEnv, "unified")
+	d := openSQLite(t)
+	ctx := context.Background()
+	rawDB, ok := sqlitedrv.DBFromDatabaseForTest(d)
+	if !ok {
+		t.Fatal("DBFromDatabaseForTest: not a sqlite database")
+	}
+
+	mem := persistence.NewMemoryBackend()
+	d.SetBlobBackend(mem, 256, time.Hour)
+
+	store := d.Tables()
+	attrs := store.NodeAttributes()
+	nodeID, priorRunID := seedFixtureNodeAndRun(t, rawDB)
+	scopeID := runScopeOf(t, rawDB, priorRunID)
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return attrs.Upsert(ctx, priorRunID, nodeID, map[string]any{"big": strings.Repeat("z", 500)}, tx)
+	}); err != nil {
+		t.Fatalf("Upsert prior spilled: %v", err)
+	}
+	if _, err := rawDB.ExecContext(ctx,
+		`UPDATE rimsky_node_attributes
+		    SET data                 = ?,
+		        value_handle_backend = ?
+		  WHERE node_run_id = ?`,
+		`{"inline_survivor":"yes"}`, "other-backend", priorRunID.String(),
+	); err != nil {
+		t.Fatalf("seed backend mismatch: %v", err)
+	}
+
+	newRunID := seedSecondRun(t, rawDB, nodeID, priorRunID, scopeID, 2)
+	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return attrs.SnapshotBagForNewRun(ctx, newRunID, nodeID, scopeID, tx)
+	})
+	if err == nil {
+		t.Fatal("carry-forward over a handle on another backend must error, not fall back to the inline column")
+	}
+	if !strings.Contains(err.Error(), "other-backend") || !strings.Contains(err.Error(), mem.Name()) {
+		t.Fatalf("the refusal must name the row's backend and the active one, got: %v", err)
+	}
+
+	var rows int
+	if err := rawDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM rimsky_node_attributes WHERE node_run_id = ?`, newRunID.String(),
+	).Scan(&rows); err != nil {
+		t.Fatalf("count new run's attribute rows: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("a refused carry-forward must deliver no bag to the new run; found %d row(s)", rows)
+	}
+}

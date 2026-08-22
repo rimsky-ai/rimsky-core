@@ -5,7 +5,6 @@ package scenario
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"testing"
 
@@ -35,7 +34,7 @@ func AliasedClaimRef(producerName, selector string, intent claimproducer.Intent,
 }
 
 // @concept: inertness
-func ClaimRefWithData(producerName, selector string, data json.RawMessage) node.NodeClaimProducerRef {
+func ClaimRefWithData(producerName, selector string, data []byte) node.NodeClaimProducerRef {
 	return node.NodeClaimProducerRef{Name: producerName, Selector: selector, Intent: "rw", Data: data}
 }
 

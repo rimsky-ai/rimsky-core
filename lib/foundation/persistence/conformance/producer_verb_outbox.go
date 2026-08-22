@@ -37,20 +37,23 @@ func TestProducerVerbOutbox(t *testing.T, d persistence.Database) {
 	instanceID := shared.UUID(uuid.New())
 	parentID := shared.UUID(uuid.New())
 
-	enqueue := func(claim shared.UUID, producer string, verb persistence.ProducerVerb) {
+	pendingLineage := []byte(`{"claim_handle_id":"` + claim1.String() + `","outcome":"committed"}`)
+
+	enqueue := func(claim shared.UUID, producer string, verb persistence.ProducerVerb, pending []byte) {
 		t.Helper()
 		if err := outbox.Enqueue(ctx, persistence.ProducerVerbOutboxInsertInput{
-			ClaimHandleID:       claim,
-			ProducerName:        producer,
-			Verb:                verb,
-			ClaimScopeData:      []byte(`"scope-` + claim.String() + `"`),
-			Address:             []byte(`"addr"`),
-			LeaseToken:          "lease-" + claim.String(),
-			SupervisorID:        "sup-conf",
-			InstanceID:          &instanceID,
-			ParentClaimHandleID: &parentID,
-			NextAttemptAt:       base,
-			EnqueuedAt:          base,
+			ClaimHandleID:        claim,
+			ProducerName:         producer,
+			Verb:                 verb,
+			ClaimScopeData:       []byte(`"scope-` + claim.String() + `"`),
+			Address:              []byte(`"addr"`),
+			LeaseToken:           "lease-" + claim.String(),
+			SupervisorID:         "sup-conf",
+			InstanceID:           &instanceID,
+			ParentClaimHandleID:  &parentID,
+			NextAttemptAt:        base,
+			EnqueuedAt:           base,
+			PendingLineageRecord: pending,
 		}, nil); err != nil {
 			t.Fatalf("Enqueue: %v", err)
 		}
@@ -72,9 +75,9 @@ func TestProducerVerbOutbox(t *testing.T, d persistence.Database) {
 	}
 
 	t.Run("EnqueueOrdersBySeqAndRoundTripsFields", func(t *testing.T) {
-		enqueue(claim1, producerA, persistence.ProducerVerbCommit)
-		enqueue(claim2, producerA, persistence.ProducerVerbAbandon)
-		enqueue(claim3, producerB, persistence.ProducerVerbRelease)
+		enqueue(claim1, producerA, persistence.ProducerVerbCommit, pendingLineage)
+		enqueue(claim2, producerA, persistence.ProducerVerbAbandon, nil)
+		enqueue(claim3, producerB, persistence.ProducerVerbRelease, nil)
 		rows := listMine()
 		if len(rows) != 3 {
 			t.Fatalf("want 3 rows, got %d", len(rows))
@@ -107,10 +110,17 @@ func TestProducerVerbOutbox(t *testing.T, d persistence.Database) {
 		if r.AttemptCount != 0 || r.LastError != "" {
 			t.Fatalf("fresh row must have zero attempts and empty last_error: %+v", r)
 		}
+		// @decision: promotion-lineage-record-after-commit
+		if !bytes.Equal(r.PendingLineageRecord, pendingLineage) {
+			t.Fatalf("pending_lineage_record round-trip: got %q, want %q", r.PendingLineageRecord, pendingLineage)
+		}
+		if len(rows[1].PendingLineageRecord) != 0 {
+			t.Fatalf("a row enqueued with no staged lineage record must read back empty: %q", rows[1].PendingLineageRecord)
+		}
 	})
 
 	t.Run("EnqueueIsIdempotentPerClaimAndVerb", func(t *testing.T) {
-		enqueue(claim1, producerA, persistence.ProducerVerbCommit)
+		enqueue(claim1, producerA, persistence.ProducerVerbCommit, pendingLineage)
 		if got := len(listMine()); got != 3 {
 			t.Fatalf("duplicate (claim, verb) must not create a new row: got %d rows", got)
 		}

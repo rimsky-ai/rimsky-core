@@ -6,7 +6,6 @@ package sensor
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 	"sync"
@@ -148,7 +147,7 @@ func TestLifecycleStartStop_RealSubscriptionLifecycle(t *testing.T) {
 		Publishers: []node.PublisherSpec{{
 			Name:        "pub-cron",
 			Kind:        "cron",
-			Config:      json.RawMessage(`{"schedule":"{{params.cron_schedule}}"}`),
+			Config:      spec.RawJSON(`{"schedule":"{{params.cron_schedule}}"}`),
 			MessageType: "sensor/tick",
 		}},
 		Nodes: []node.TemplateNodeDef{
@@ -205,7 +204,7 @@ func TestLifecycleStartStop_UnknownPublisherFailsClosed(t *testing.T) {
 		Publishers: []node.PublisherSpec{{
 			Name:        "not-registered-anywhere",
 			Kind:        "cron",
-			Config:      json.RawMessage(`{"schedule":"* * * * *"}`),
+			Config:      spec.RawJSON(`{"schedule":"* * * * *"}`),
 			MessageType: "sensor/tick",
 		}},
 		Nodes: []node.TemplateNodeDef{

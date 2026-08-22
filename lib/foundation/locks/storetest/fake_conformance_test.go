@@ -68,8 +68,9 @@ func TestFakeConformanceFullCapabilities(t *testing.T) {
 		subs := make([]claimproducer.SubClaimScopeDescriptor, 0, len(probe.List))
 		for _, el := range probe.List {
 			subs = append(subs, claimproducer.SubClaimScopeDescriptor{
-				PartitionKey: el.Key,
-				Payload:      el.Payload,
+				PartitionKey:   el.Key,
+				Payload:        el.Payload,
+				ClaimScopeData: []byte(`{"partition":"` + el.Key + `"}`),
 			})
 		}
 		return claimproducer.SplitClaimScopeResponse{SubClaimScopes: subs}, nil
@@ -89,6 +90,7 @@ func TestFakeConformanceFullCapabilities(t *testing.T) {
 		"SplitScopeListShapePreservesPartitionKey": false,
 		"SplitScopeListShapePreservesPayload":      false,
 		"SplitScopeListShapeAddressFieldEmpty":     false,
+		"SplitScopeSubScopesDisjoint":              false,
 		"ScopesConflict":                           false,
 		"Serialization9b":                          false,
 	}

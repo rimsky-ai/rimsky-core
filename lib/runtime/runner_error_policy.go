@@ -70,6 +70,9 @@ func applyErrorPolicyWithScratchAndSettleHook(
 	}
 	sig := errorPolicySignal(errorClass, payload, attributesDel, tags, resolved.Kind, resolved.NewState.RetryCounter, maxRetries, resolved.DelayMs)
 	decision := policyDecision{Kind: resolved.Kind, DelayMs: resolved.DelayMs, Signal: sig}
+	if err := emitErrorPolicyApplied(ctx, args, acq, errorClass, string(resolved.Kind), int64(resolved.DelayMs), payload, tx); err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+	}
 
 	if decision.IsRetry() {
 		if err := emitSignalInTxOnce(ctx, args, acq.NodeID, acq.NodeType, acq.NodeRunID, acq.InstanceID, acq.FrameID, sig, tx); err != nil {
@@ -158,10 +161,18 @@ func applyErrorPolicyWithScratchAndSettleHook(
 				cascade.NodeStateFresh, cascade.ReasonHandlerPass, &settlingSig, tx); err != nil {
 				return nil, err
 			}
+			if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+				cascade.NodeStateRunning, cascade.NodeStateFresh, cascade.ReasonHandlerPass, tx); err != nil {
+				return nil, err
+			}
 			transitioned = true
 		case cascade.NodeStateStale:
 			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 				cascade.NodeStateFresh, cascade.ReasonAcquirePass, &settlingSig, tx); err != nil {
+				return nil, err
+			}
+			if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+				cascade.NodeStateStale, cascade.NodeStateFresh, cascade.ReasonAcquirePass, tx); err != nil {
 				return nil, err
 			}
 			transitioned = true
@@ -174,6 +185,10 @@ func applyErrorPolicyWithScratchAndSettleHook(
 	} else if giveUpInFlight {
 		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
+			return nil, err
+		}
+		if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+			curState, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, tx); err != nil {
 			return nil, err
 		}
 		finalState = cascade.NodeStateFailed
@@ -196,21 +211,19 @@ func applyErrorPolicyWithScratchAndSettleHook(
 		if !transitioned {
 			return
 		}
-		terminalKind := "handler_pass"
-		errClass := ""
+		terminalKind := LeafRunTerminalKindComplete
 		if finalState == cascade.NodeStateFailed {
-			terminalKind = "errored"
-			errClass = errorClass
+			terminalKind = LeafRunTerminalKindErrored
 		}
 		scope := resolveAcqScope(ctx, args, acq, nil)
-		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		emitLeafRunLineageForAcq(ctx, args, acq, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
 			NodeRunID:          nodeRunID,
 			NodeID:             acq.NodeID,
 			State:              string(finalState),
 			SettlingSignalType: settlingSig,
-			ErrorClass:         errClass,
+			ErrorClass:         errorClass,
 			TerminalKind:       terminalKind,
 			NodeAlias:          acq.NodeType,
 			ExecutorName:       acq.Executor,
@@ -240,6 +253,10 @@ func applyErrorPolicyGiveUpHeld(
 		cascade.NodeStateHeld, cascade.ReasonHandlerHeld, &settlingSig, tx); err != nil {
 		return nil, err
 	}
+	if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+		cascade.NodeStateRunning, cascade.NodeStateHeld, cascade.ReasonHandlerHeld, tx); err != nil {
+		return nil, err
+	}
 	if err := args.Queue.RemoveForNode(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicyGiveUpHeld: remove for node: %w", err)
 	}
@@ -266,13 +283,13 @@ func applyErrorPolicyGiveUpHeld(
 	post := func(ctx context.Context) {
 		fanoutRecalculate(ctx, args, acq)
 		scope := resolveAcqScope(ctx, args, acq, nil)
-		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		emitLeafRunLineageForAcq(ctx, args, acq, LeafRunEmitInput{
 			InstanceID:       acq.InstanceID,
 			FrameID:          acq.FrameID,
 			NodeRunID:        nodeRunID,
 			NodeID:           acq.NodeID,
 			State:            string(cascade.NodeStateHeld),
-			TerminalKind:     "errored",
+			TerminalKind:     LeafRunTerminalKindErrored,
 			ErrorClass:       errorClass,
 			NodeAlias:        acq.NodeType,
 			ExecutorName:     acq.Executor,
@@ -385,6 +402,10 @@ func applyInfraGiveUp(
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
 			return nil, err
 		}
+		if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+			run.State, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, tx); err != nil {
+			return nil, err
+		}
 		transitioned = true
 	}
 	sig := signalpkg.BuildTerminalErrorSignal(errorClass, payload, retriesSoFar, retriesSoFar, nil, nil)
@@ -407,7 +428,7 @@ func applyInfraGiveUp(
 	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		scope := resolveAcqScope(ctx, args, acq, nil)
-		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		emitLeafRunLineageForAcq(ctx, args, acq, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
 			NodeRunID:          nodeRunID,
@@ -415,7 +436,7 @@ func applyInfraGiveUp(
 			State:              string(cascade.NodeStateFailed),
 			SettlingSignalType: settlingSig,
 			ErrorClass:         errorClass,
-			TerminalKind:       "errored",
+			TerminalKind:       LeafRunTerminalKindErrored,
 			NodeAlias:          acq.NodeType,
 			ExecutorName:       acq.Executor,
 			TemplateHash:       acq.TemplateHash,

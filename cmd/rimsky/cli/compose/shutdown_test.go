@@ -21,6 +21,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func buildSigtermIgnorer(t *testing.T) string {
@@ -232,9 +233,9 @@ func TestInstallSecondSignalEscalator_HardExitsAndKillsChildren(t *testing.T) {
 	if convErr != nil {
 		t.Fatalf("parse child pid %q: %v", childPID, convErr)
 	}
-	if processStillAlive(pid) {
-		t.Fatalf("child pid %d should have been SIGKILLed by the second-signal escalator", pid)
-	}
+	awaited.Until(t,
+		fmt.Sprintf("child pid %d to die under the second-signal escalator's SIGKILL", pid),
+		func() bool { return !processStillAlive(pid) })
 }
 
 func TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime(t *testing.T) {

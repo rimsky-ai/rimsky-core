@@ -63,17 +63,19 @@ func readAgentPIDFileFromHome(t *testing.T, home string) (int, bool) {
 func TestCLIRunService_AutoStartsAgentAndSpawnsHoldsReapsBoundBinary(t *testing.T) {
 	proxyPort := freePort(t)
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
+	proxyPeerPort := freePort(t)
+	proxyPeerAddr := fmt.Sprintf("127.0.0.1:%d", proxyPeerPort)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
 		ExtraExecutors: map[string]executor.Endpoint{
-			proxyExecutorName: {Transport: "grpc", URL: proxyAddr},
+			proxyExecutorName: {Transport: "grpc", URL: proxyPeerAddr},
 		},
 		LateBindServiceProxies: map[string]string{"executor": proxyExecutorName},
 		ExecutorProtocols:      map[string][]string{proxyExecutorName: {"executor", "lifecycle_subscriber"}},
 	})
 
 	adminKey, _ := h.MintAdminKey("cli-autostart-admin")
-	startProxyOnPort(t, proxyPort, h.ControlBase, adminKey)
+	proxyCAPath := startProxyOnPort(t, proxyPort, proxyPeerPort, h.ControlBase, adminKey)
 
 	stubBinary := buildBinary(t, "lib/runtime/hostagent/testdata/stubchild")
 	rimskyBinary := buildBinary(t, "cmd/rimsky")
@@ -90,6 +92,8 @@ func TestCLIRunService_AutoStartsAgentAndSpawnsHoldsReapsBoundBinary(t *testing.
 		"HOME="+homeDir,
 		"RIMSKY_API_KEY="+adminKey,
 		"RIMSKY_HOST_AGENT_PROXY_URL="+proxyAddr,
+		// @decision: host-agent-proxy-tls
+		"RIMSKY_AGENT_TLS_CA="+proxyCAPath,
 	)
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "`rimsky run --service` failed: %v\noutput:\n%s", err, out)

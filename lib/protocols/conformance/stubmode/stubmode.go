@@ -41,6 +41,10 @@
 //   - A request whose attributes carry "park_resume_at" (an RFC 3339
 //     timestamp string) asks a stub-mode executor to echo that instant
 //     back as the Park outcome's resume_at.
+//   - A request whose attributes carry "stub_response" (a JSON object)
+//     asks a stub-mode executor to answer with that object as the
+//     settling Success outcome's attributes_delta, in place of the
+//     default one.
 //   - A request whose attributes carry "stub_tags" (an array of
 //     strings) asks a stub-mode executor to echo those tags back on the
 //     settling Success outcome. The probe is gated on the executor's
@@ -63,6 +67,8 @@ const (
 
 	ParkResumeAtAttribute = "park_resume_at"
 	TagsAttribute         = "stub_tags"
+
+	ResponseOverrideAttribute = "stub_response"
 
 	MalformedShapeAttribute = "_invalid"
 

@@ -10,6 +10,8 @@ import (
 	"fmt"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
+
+	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 )
 
 type MessageBodySchemaViolation struct {
@@ -28,7 +30,7 @@ func ValidateMessageBody(spec *TemplateSpec, messageType string, payload json.Ra
 	if spec == nil {
 		return nil
 	}
-	var schema json.RawMessage
+	var schema []byte
 	found := false
 	for _, m := range spec.Messages {
 		if m.Type == messageType {
@@ -56,8 +58,9 @@ func ValidateMessageBody(spec *TemplateSpec, messageType string, payload json.Ra
 	if err := json.Unmarshal(body, &normalized); err != nil {
 		return &MessageBodySchemaViolation{Type: messageType, Err: fmt.Errorf("payload is not valid JSON: %w", err)}
 	}
+	// @concept: inertness
 	if err := compiled.Validate(normalized); err != nil {
-		return &MessageBodySchemaViolation{Type: messageType, Err: err}
+		return &MessageBodySchemaViolation{Type: messageType, Err: attributes.ValueFreeValidationError(err)}
 	}
 	return nil
 }

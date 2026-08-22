@@ -78,6 +78,6 @@ func TestEveryListeningBundledServiceResolvesItsPortThroughTheSharedPrecedence(t
 		t.Fatalf("no listening bundled service binaries found under %s: the check inspected nothing", servicesRoot)
 	}
 	t.Logf("checked %d listening service binaries: %s", len(listening), strings.Join(listening, ", "))
-	t.Logf("%d bundled service binaries serve no port and are outside the invariant's population: %s",
+	t.Logf("%d bundled service binaries serve no port and are outside this check's population: %s",
 		len(portless), strings.Join(portless, ", "))
 }

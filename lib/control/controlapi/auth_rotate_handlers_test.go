@@ -123,7 +123,7 @@ func TestAuthRotateKey_RecordsActorProvenance(t *testing.T) {
 			row.CreatedByKeyID, adminID)
 	}
 
-	auditStatus, auditBody := h.httpPostAsGet(t, "/v1/audit?kind="+auth.EventKeyRotated, adminKey)
+	auditStatus, auditBody := h.httpPostAsGet(t, "/v1/audit?kind="+auth.EventKeyRotated.String(), adminKey)
 	if auditStatus != http.StatusOK {
 		t.Fatalf("audit list: status=%d body=%v", auditStatus, auditBody)
 	}

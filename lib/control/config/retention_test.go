@@ -30,6 +30,10 @@ persistence:
 	if r.MessageIdempotenciesTrailing != defaultRetentionMessageIdempotenciesTrailing {
 		t.Fatalf("MessageIdempotenciesTrailing = %s, want default %s", r.MessageIdempotenciesTrailing, defaultRetentionMessageIdempotenciesTrailing)
 	}
+	if r.LifecycleOutboxTrailing != 0 {
+		t.Fatalf("LifecycleOutboxTrailing = %s, want 0: rimsky owes every lifecycle event at least once, so it "+
+			"drops an undelivered one only when the operator names a window", r.LifecycleOutboxTrailing)
+	}
 }
 
 func TestRetentionExplicitValuesHonored(t *testing.T) {
@@ -43,6 +47,7 @@ retention:
   lineage_trailing: 1h
   claim_handles_trailing: 0s
   message_idempotencies_trailing: 48h
+  lifecycle_outbox_trailing: 72h
 `)
 	r := cfg.Retention
 	if r.RecentFramesKept != 5 {
@@ -56,6 +61,10 @@ retention:
 	}
 	if r.MessageIdempotenciesTrailing != 48*time.Hour {
 		t.Fatalf("MessageIdempotenciesTrailing = %s, want 48h", r.MessageIdempotenciesTrailing)
+	}
+	if r.LifecycleOutboxTrailing != 72*time.Hour {
+		t.Fatalf("LifecycleOutboxTrailing = %s, want 72h: an operator who names a window bounds the outbox",
+			r.LifecycleOutboxTrailing)
 	}
 }
 
@@ -75,5 +84,24 @@ retention:
 	}
 	if _, err := LoadRimskyConfigYAML(path); err == nil {
 		t.Fatalf("expected a validation error for negative lineage_trailing, got nil")
+	}
+}
+
+// @decision: lifecycle-subscriber-at-least-once-delivery
+func TestRetentionNegativeLifecycleOutboxTrailingRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rimsky.yml")
+	body := `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+retention:
+  lifecycle_outbox_trailing: -1h
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := LoadRimskyConfigYAML(path); err == nil {
+		t.Fatal("expected a validation error for a negative lifecycle_outbox_trailing, got nil")
 	}
 }

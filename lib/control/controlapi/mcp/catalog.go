@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
@@ -30,6 +29,8 @@ type Catalog struct {
 	Schemas map[string][]byte
 
 	ResolveIdentity func(context.Context) (auth.Identity, bool)
+
+	IdempotencyKeyRequired map[string]bool
 
 	WithProtocolSkin func(ctx context.Context, skin string) context.Context
 }
@@ -127,10 +128,8 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	if hasBody {
 		inner.Header.Set("Content-Type", "application/json")
 	}
-	if route.Method == http.MethodPost || route.Method == http.MethodPut {
-		if idempotencyKey == "" {
-			idempotencyKey = "mcp-" + uuid.NewString()
-		}
+	// @decision: idempotency-key-header-universal
+	if idempotencyKey != "" && (route.Method == http.MethodPost || route.Method == http.MethodPut) {
 		inner.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 	if c.WithProtocolSkin != nil {
@@ -147,7 +146,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		return map[string]any{
 			"status":  resp.StatusCode,
 			"error":   true,
-			"body":    rawOrString(bs),
+			"body":    c.errorBody(name, idempotencyKey, resp.StatusCode, bs),
 			"isError": true,
 		}, true, nil
 	}
@@ -155,6 +154,18 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 }
 
 const idempotencyKeyArgName = "idempotency_key"
+
+const idempotencyHeaderRequiredBody = "Idempotency-Key header is required"
+
+// @decision: idempotency-key-header-universal
+// @decision: mcp-http-parity
+func (c *Catalog) errorBody(name, idempotencyKey string, status int, bs []byte) any {
+	if !c.IdempotencyKeyRequired[name] || idempotencyKey != "" ||
+		status != http.StatusBadRequest || !strings.Contains(string(bs), idempotencyHeaderRequiredBody) {
+		return rawOrString(bs)
+	}
+	return "argument " + idempotencyKeyArgName + " is required for tool " + name
+}
 
 func extractIdempotencyKey(args map[string]json.RawMessage) string {
 	raw, ok := args[idempotencyKeyArgName]

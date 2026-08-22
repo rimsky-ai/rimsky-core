@@ -24,7 +24,11 @@ func TestSequencedPreservesCascadeRounds(t *testing.T) {
 		Success(map[string]any{"counter": 1, "x": "r1"}, true, "a-r1").
 		Then().Success(map[string]any{"counter": 2, "x": "r2"}, true, "a-r2").
 		Then().Success(map[string]any{"counter": 3, "x": "r3"}, true, "a-r3")
-	h.Stub.WhenType("b").Success(map[string]any{}, true, "b")
+	releaseFirstB := make(chan struct{})
+	h.Stub.WhenType("b").
+		Success(map[string]any{}, true, "b-1").HoldUntil(releaseFirstB).
+		Then().Success(map[string]any{}, true, "b-2").
+		Then().Success(map[string]any{}, true, "b-3")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "sequenced-preserves-cascade-rounds", Version: "1",
@@ -95,6 +99,22 @@ func TestSequencedPreservesCascadeRounds(t *testing.T) {
 		}
 		return out
 	}
+	bRunCount := func() int {
+		var n int
+		h.QuerySQL(`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1`,
+			[]any{b.ID}, func(scan func(...any) error) error {
+				return scan(&n)
+			})
+		return n
+	}
+
+	awaited.Until(t, "b's first dispatch to reach the executor and hold", func() bool {
+		return h.Stub.Holding() >= 1
+	})
+	awaited.Until(t, "a's later rounds to queue two more b-runs behind the held dispatch", func() bool {
+		return bRunCount() >= 3
+	})
+	close(releaseFirstB)
 
 	awaited.Until(t, "all three sequenced b dispatches to reach the stub", func() bool { return len(bObs()) >= 3 })
 	h.WaitForSchedulerQuiescence()
@@ -108,10 +128,10 @@ func TestSequencedPreservesCascadeRounds(t *testing.T) {
 	expected := []string{"r1", "r2", "r3"}
 	for i, obs := range allB {
 		require.Equal(t, expected[i], obs.Attributes["snapshot_x"],
-			"sequenced mode preserves per-round bag content: each queued b-run resolves "+
-				"its substituted bag from the specific a-run that drove its cascade round, "+
-				"pinned via the wait-set sender_run_id at enqueue time (b#1←a-r1, b#2←a-r2, "+
-				"b#3←a-r3), dispatched in sequence order. No two dispatches may see the same "+
-				"bag. got %v at dispatch #%d", obs.Attributes["snapshot_x"], i+1)
+			"the executor sees a sequenced receiver's rounds in arrival order even when they "+
+				"contest one dispatch: b's first dispatch held at the executor while a's later "+
+				"rounds queued two more b-runs behind it, and each b-run resolves its bag from "+
+				"the a-run that drove its round (b#1←a-r1, b#2←a-r2, b#3←a-r3). "+
+				"got %v at dispatch #%d", obs.Attributes["snapshot_x"], i+1)
 	}
 }

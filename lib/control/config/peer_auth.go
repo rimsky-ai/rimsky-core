@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
@@ -23,7 +24,7 @@ func ensureDeploymentCA(ctx context.Context, tables persistence.Tables, clock sh
 		return nil, fmt.Errorf("deployment CA: %w", err)
 	}
 	if ok {
-		return loadDeploymentCA(existing, aesKey)
+		return loadDeploymentCA(existing, aesKey, clock.Now())
 	}
 	ca, err := pki.GenerateCA(clock.Now())
 	if err != nil {
@@ -46,15 +47,15 @@ func ensureDeploymentCA(ctx context.Context, tables persistence.Tables, clock sh
 	if err != nil {
 		return nil, fmt.Errorf("deployment CA: %w", err)
 	}
-	return loadDeploymentCA(winner, aesKey)
+	return loadDeploymentCA(winner, aesKey, clock.Now())
 }
 
-func loadDeploymentCA(row persistence.DeploymentCA, aesKey []byte) (*pki.CA, error) {
+func loadDeploymentCA(row persistence.DeploymentCA, aesKey []byte, now time.Time) (*pki.CA, error) {
 	keyDER, err := pki.DecryptCAKey(row.CAKeyEncrypted, aesKey)
 	if err != nil {
 		return nil, fmt.Errorf("deployment CA: %w", err)
 	}
-	ca, err := pki.LoadCA(row.CACertPEM, keyDER)
+	ca, err := pki.LoadCA(row.CACertPEM, keyDER, now)
 	if err != nil {
 		return nil, fmt.Errorf("deployment CA: %w", err)
 	}

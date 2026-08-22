@@ -115,6 +115,9 @@ func emitLockAcquired(
 	}, tx); err != nil {
 		return fmt.Errorf("emitLockAcquired: %w", err)
 	}
+	if sp, ok := lk.Spec.(claimproducer.ClaimSpec); ok {
+		return emitClaimAcquired(ctx, args, acq, lk, sp, tx)
+	}
 	return nil
 }
 

@@ -37,6 +37,7 @@ type harness struct {
 	persist   persistence.Tables
 	producers *locks.Registry
 	logger    *shared.CapturingLogger
+	deps      AppDeps
 }
 
 func newAppHarness(t *testing.T, configure func(*AppDeps)) (*harness, func()) {
@@ -85,7 +86,7 @@ func newAppHarness(t *testing.T, configure func(*AppDeps)) (*harness, func()) {
 	app := NewApp(deps)
 	srv := httptest.NewServer(app)
 
-	h := &harness{srv: srv, driver: d, persist: d.Tables(), producers: reg, logger: capLog}
+	h := &harness{srv: srv, driver: d, persist: d.Tables(), producers: reg, logger: capLog, deps: deps}
 	return h, func() {
 		srv.Close()
 	}

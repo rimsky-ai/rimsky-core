@@ -596,7 +596,7 @@ func TestAuditContent_AccessAttemptedKindEmitted(t *testing.T) {
 	ctx := context.Background()
 	var found int
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessAttempted}}, persistence.ListPagination{Limit: 100}, tx)
+		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessAttempted.String()}}, persistence.ListPagination{Limit: 100}, tx)
 		if err != nil {
 			return err
 		}
@@ -631,7 +631,7 @@ func TestAuditContent_AccessDeniedRevoked(t *testing.T) {
 	ctx := context.Background()
 	var foundRevoked bool
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessDenied}}, persistence.ListPagination{Limit: 100}, tx)
+		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessDenied.String()}}, persistence.ListPagination{Limit: 100}, tx)
 		if err != nil {
 			return err
 		}
@@ -682,7 +682,7 @@ func TestAuditContent_AccessDeniedNonBearer(t *testing.T) {
 	ctx := context.Background()
 	var foundInvalid bool
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessDenied}}, persistence.ListPagination{Limit: 100}, tx)
+		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessDenied.String()}}, persistence.ListPagination{Limit: 100}, tx)
 		if err != nil {
 			return err
 		}
@@ -922,7 +922,7 @@ func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
 	ctx := context.Background()
 	var foundMCPCreate bool
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessAttempted}}, persistence.ListPagination{Limit: 200}, tx)
+		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessAttempted.String()}}, persistence.ListPagination{Limit: 200}, tx)
 		if err != nil {
 			return err
 		}

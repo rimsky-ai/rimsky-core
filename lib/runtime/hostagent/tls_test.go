@@ -95,7 +95,7 @@ func TestAgentTLSDialTrustsPinnedCAAndCarriesKey(t *testing.T) {
 	}
 	addr, proxy := startTLSProxy(t, ca)
 
-	cfg := Config{TLSEnabled: true, TLSCAPath: writeCAFile(t, ca)}
+	cfg := Config{TLSCAPath: writeCAFile(t, ca)}
 	creds, err := agentTransportCredentials(cfg)
 	if err != nil {
 		t.Fatalf("agentTransportCredentials: %v", err)
@@ -140,7 +140,7 @@ func TestAgentTLSDialRejectsWrongCAPin(t *testing.T) {
 	}
 	addr, _ := startTLSProxy(t, serverCA)
 
-	cfg := Config{TLSEnabled: true, TLSCAPath: writeCAFile(t, impostorCA)}
+	cfg := Config{TLSCAPath: writeCAFile(t, impostorCA)}
 	creds, err := agentTransportCredentials(cfg)
 	if err != nil {
 		t.Fatalf("agentTransportCredentials: %v", err)
@@ -165,18 +165,31 @@ func TestAgentTLSDialRejectsWrongCAPin(t *testing.T) {
 	}
 }
 
-func TestAgentTransportCredentialsInsecureByDefault(t *testing.T) {
+// @decision: host-agent-proxy-tls
+func TestAgentTransportCredentialsDialTLSByDefault(t *testing.T) {
 	creds, err := agentTransportCredentials(Config{})
 	if err != nil {
 		t.Fatalf("default creds: %v", err)
 	}
-	if creds.Info().SecurityProtocol != "insecure" {
-		t.Fatalf("default transport must be insecure (opt-in TLS), got %q", creds.Info().SecurityProtocol)
+	if creds.Info().SecurityProtocol != "tls" {
+		t.Fatalf("the dial to the proxy must default to TLS, got %q", creds.Info().SecurityProtocol)
 	}
 }
 
-func TestAgentTransportCredentialsRequiresCAWhenTLSOn(t *testing.T) {
-	if _, err := agentTransportCredentials(Config{TLSEnabled: true}); err == nil {
-		t.Fatal("TLS enabled without a CA root must fail closed")
+// @decision: host-agent-proxy-tls
+func TestAgentTransportCredentialsPlaintextOnlyBehindTheInsecureSwitch(t *testing.T) {
+	creds, err := agentTransportCredentials(Config{Insecure: true})
+	if err != nil {
+		t.Fatalf("insecure creds: %v", err)
+	}
+	if creds.Info().SecurityProtocol != "insecure" {
+		t.Fatalf("the insecure switch must drop the dial to plaintext, got %q", creds.Info().SecurityProtocol)
+	}
+}
+
+// @decision: host-agent-proxy-tls
+func TestAgentTransportCredentialsRejectAnUnreadableCARoot(t *testing.T) {
+	if _, err := agentTransportCredentials(Config{TLSCAPath: filepath.Join(t.TempDir(), "absent.pem")}); err == nil {
+		t.Fatal("a CA root the agent cannot read must fail closed rather than fall back to system roots")
 	}
 }

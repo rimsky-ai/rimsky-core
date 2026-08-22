@@ -35,8 +35,8 @@ graphs:
               system_prompt: {type: string, default: "session continuity"}
               user_prompt:   {type: string, default: "..."}
               cli:           {type: object, default: {}}
-              turn:          {type: integer}
-              recall:        {type: string}
+              turn:          {type: integer, readOnly: true}
+              recall:        {type: string, readOnly: true}
 
       - type: caller
         delegate: child
@@ -74,8 +74,8 @@ graphs:
               system_prompt: {type: string, default: "session continuity"}
               user_prompt:   {type: string, default: "..."}
               cli:           {type: object, default: {}}
-              turn:          {type: integer}
-              recall:        {type: string}
+              turn:          {type: integer, readOnly: true}
+              recall:        {type: string, readOnly: true}
 ```
 
 ## Drive it

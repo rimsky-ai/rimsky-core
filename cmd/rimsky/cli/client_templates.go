@@ -67,10 +67,12 @@ type ValidationFinding struct {
 	Msg  string `json:"msg"`
 }
 
+// @decision: template-identity-deployment-canonical
 type ValidateResult struct {
 	Ok                 bool                `json:"ok"`
 	ValidationErrors   []ValidationFinding `json:"validation_errors"`
 	ValidationWarnings []ValidationFinding `json:"validation_warnings"`
+	TemplateHash       string              `json:"template_hash"`
 }
 
 func (c *Client) ValidateTemplate(ctx context.Context, body RegisterTemplateRequest, warningsAsErrors bool) (*ValidateResult, error) {

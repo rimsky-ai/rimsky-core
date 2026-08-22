@@ -6,6 +6,7 @@ package compose
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
@@ -19,7 +20,7 @@ func TestWriteSyntheticRimskyYAML_PathsCorrect(t *testing.T) {
 		t.Fatalf("EnsureRunDir: %v", err)
 	}
 	m := &Manifest{Project: "demo"}
-	if err := WriteSyntheticRimskyYAML(runDir, m, nil, nil); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, m, nil, nil, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
 	cfg, err := config.LoadRimskyConfigYAML(filepath.Join(runDir, "rimsky.yml"))
@@ -54,7 +55,7 @@ func TestWriteSyntheticRimskyYAML_MergedExecutors(t *testing.T) {
 	merged := map[string]ManifestExecutorEntry{
 		"foo": {Transport: "grpc", Endpoint: "127.0.0.1:9091"},
 	}
-	if err := WriteSyntheticRimskyYAML(runDir, &Manifest{Project: "demo"}, merged, nil); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, &Manifest{Project: "demo"}, merged, nil, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
 	cfg, err := config.LoadRimskyConfigYAML(filepath.Join(runDir, "rimsky.yml"))
@@ -85,7 +86,7 @@ func TestWriteSyntheticRimskyYAML_ManifestExecutorsFoldedAsBase(t *testing.T) {
 			"manifest-foo": {Transport: "grpc", Endpoint: "127.0.0.1:9101"},
 		},
 	}
-	if err := WriteSyntheticRimskyYAML(runDir, m, nil, nil); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, m, nil, nil, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
 	cfg, err := config.LoadRimskyConfigYAML(filepath.Join(runDir, "rimsky.yml"))
@@ -116,7 +117,7 @@ func TestWriteSyntheticRimskyYAML_SpawnOverlayOverridesManifest(t *testing.T) {
 	overlay := map[string]ManifestExecutorEntry{
 		"foo": {Transport: "grpc", Endpoint: "127.0.0.1:2222"},
 	}
-	if err := WriteSyntheticRimskyYAML(runDir, m, overlay, nil); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, m, overlay, nil, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
 	cfg, err := config.LoadRimskyConfigYAML(filepath.Join(runDir, "rimsky.yml"))
@@ -148,7 +149,7 @@ func TestWriteSyntheticRimskyYAML_ExecutorProtocolsRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	if err := WriteSyntheticRimskyYAML(runDir, m, nil, nil); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, m, nil, nil, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
 	cfg, err := config.LoadRimskyConfigYAML(filepath.Join(runDir, "rimsky.yml"))
@@ -179,7 +180,7 @@ func TestWriteSyntheticRimskyYAML_ClaimProducersFromManifest(t *testing.T) {
 			},
 		},
 	}
-	if err := WriteSyntheticRimskyYAML(runDir, m, nil, nil); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, m, nil, nil, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
 	cfg, err := config.LoadRimskyConfigYAML(filepath.Join(runDir, "rimsky.yml"))
@@ -232,7 +233,7 @@ named_locks:
 		t.Fatalf("named_locks[resource-a] missing or wrong limit: %#v", siblings.NamedLocks)
 	}
 
-	if err := WriteSyntheticRimskyYAML(runDir, &Manifest{Project: "demo"}, nil, siblings); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, &Manifest{Project: "demo"}, nil, siblings, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
 	cfg, err := config.LoadRimskyConfigYAML(filepath.Join(runDir, "rimsky.yml"))
@@ -268,53 +269,83 @@ func TestLoadSiblingBlocks_EmptyPathNoOp(t *testing.T) {
 	}
 }
 
-func TestWriteSyntheticSupervisorYAMLWithCallbackPort_PortRoundTrips(t *testing.T) {
+// @concept: rimsky-yml
+// @decision: launch-config-injection
+func TestWriteSyntheticRimskyYAML_CarriesTheSupervisorSectionWithTheCallbackPort(t *testing.T) {
 	tmp := t.TempDir()
 	runDir, err := EnsureRunDir(tmp, "2026-06-13T10-07-00Z", "demo")
 	if err != nil {
 		t.Fatalf("EnsureRunDir: %v", err)
 	}
 	const wantPort = 0
-	if err := WriteSyntheticSupervisorYAMLWithCallbackPort(runDir, wantPort); err != nil {
-		t.Fatalf("WriteSyntheticSupervisorYAMLWithCallbackPort: %v", err)
+	if err := WriteSyntheticRimskyYAML(runDir, &Manifest{Project: "demo"}, nil, nil, wantPort); err != nil {
+		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(runDir, "supervisor.yml"))
+	body, err := os.ReadFile(filepath.Join(runDir, "rimsky.yml"))
 	if err != nil {
-		t.Fatalf("read written supervisor.yml: %v", err)
+		t.Fatalf("read written rimsky.yml: %v", err)
+	}
+	if strings.Contains(string(body), "supervisor.yml") {
+		t.Fatalf("the run directory must carry one configuration file\n%s", string(body))
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "supervisor.yml")); !os.IsNotExist(err) {
+		t.Fatalf("the run wrote a second configuration file at supervisor.yml")
 	}
 	var probe struct {
-		Callback struct {
-			Host          string `yaml:"host"`
-			Port          *int   `yaml:"port"`
-			AdvertiseHost string `yaml:"advertise_host"`
-		} `yaml:"callback"`
+		Supervisor struct {
+			Concurrency         int `yaml:"concurrency"`
+			ClaimPollIntervalMs int `yaml:"claim_poll_interval_ms"`
+			Callback            struct {
+				Host          string `yaml:"host"`
+				Port          *int   `yaml:"port"`
+				AdvertiseHost string `yaml:"advertise_host"`
+			} `yaml:"callback"`
+		} `yaml:"supervisor"`
 	}
 	if err := yaml.Unmarshal(body, &probe); err != nil {
 		t.Fatalf("yaml round-trip: %v\n%s", err, string(body))
 	}
-	if probe.Callback.Port == nil {
-		t.Fatalf("callback.port is absent from the written supervisor.yml, so the supervisor takes the core-block default instead of an operating-system-assigned port\n%s", string(body))
+	if probe.Supervisor.Callback.Port == nil {
+		t.Fatalf("supervisor.callback.port is absent, so the supervisor takes the core-block default instead of an operating-system-assigned port\n%s", string(body))
 	}
-	if *probe.Callback.Port != wantPort {
-		t.Fatalf("callback.port: got %d, want %d\n%s", *probe.Callback.Port, wantPort, string(body))
+	if *probe.Supervisor.Callback.Port != wantPort {
+		t.Fatalf("supervisor.callback.port: got %d, want %d\n%s", *probe.Supervisor.Callback.Port, wantPort, string(body))
 	}
-	if probe.Callback.Host != "0.0.0.0" {
-		t.Fatalf("callback.host: got %q, want %q\n%s", probe.Callback.Host, "0.0.0.0", string(body))
+	if probe.Supervisor.Callback.Host != syntheticSupervisorCallbackHost {
+		t.Fatalf("supervisor.callback.host: got %q, want %q\n%s", probe.Supervisor.Callback.Host, syntheticSupervisorCallbackHost, string(body))
 	}
-	if probe.Callback.AdvertiseHost != "127.0.0.1" {
-		t.Fatalf("callback.advertise_host: got %q, want %q\n%s", probe.Callback.AdvertiseHost, "127.0.0.1", string(body))
+	if probe.Supervisor.Callback.AdvertiseHost != syntheticSupervisorCallbackAdvertiseHost {
+		t.Fatalf("supervisor.callback.advertise_host: got %q, want %q\n%s", probe.Supervisor.Callback.AdvertiseHost, syntheticSupervisorCallbackAdvertiseHost, string(body))
+	}
+	if probe.Supervisor.Concurrency != syntheticSupervisorConcurrency {
+		t.Fatalf("supervisor.concurrency: got %d, want %d\n%s", probe.Supervisor.Concurrency, syntheticSupervisorConcurrency, string(body))
+	}
+	if probe.Supervisor.ClaimPollIntervalMs != syntheticSupervisorClaimPollIntervalMs {
+		t.Fatalf("supervisor.claim_poll_interval_ms: got %d, want %d\n%s", probe.Supervisor.ClaimPollIntervalMs, syntheticSupervisorClaimPollIntervalMs, string(body))
 	}
 }
 
 // @decision: launch-config-injection
 func TestSyntheticSupervisorDefaultsMatchTheBakedAllInOneFile(t *testing.T) {
-	baked := filepath.Join(repoRoot(t), "dockerfiles", "all-in-one.supervisor-config.yml")
-	want, err := os.ReadFile(baked)
+	baked := filepath.Join(repoRoot(t), "dockerfiles", "all-in-one.rimsky.yml")
+	cfg, err := config.LoadRimskyConfigYAML(baked)
 	if err != nil {
-		t.Fatalf("read baked supervisor-config file %q: %v", baked, err)
+		t.Fatalf("load baked all-in-one config %q: %v", baked, err)
 	}
-	if syntheticSupervisorYAML != string(want) {
-		t.Fatalf("the supervisor defaults the CLI writes differ from the ones baked into %q, so a local run and the all-in-one image would tune the supervisor differently\n--- constant (%d bytes) ---\n%s\n--- baked (%d bytes) ---\n%s",
-			baked, len(syntheticSupervisorYAML), syntheticSupervisorYAML, len(want), string(want))
+	if cfg.Supervisor.Concurrency != syntheticSupervisorConcurrency {
+		t.Fatalf("supervisor.concurrency: baked %d, CLI %d — a local run and the all-in-one image would tune the supervisor differently",
+			cfg.Supervisor.Concurrency, syntheticSupervisorConcurrency)
+	}
+	if cfg.Supervisor.ClaimPollIntervalMs != syntheticSupervisorClaimPollIntervalMs {
+		t.Fatalf("supervisor.claim_poll_interval_ms: baked %d, CLI %d",
+			cfg.Supervisor.ClaimPollIntervalMs, syntheticSupervisorClaimPollIntervalMs)
+	}
+	if cfg.Supervisor.Callback.Host != syntheticSupervisorCallbackHost {
+		t.Fatalf("supervisor.callback.host: baked %q, CLI %q",
+			cfg.Supervisor.Callback.Host, syntheticSupervisorCallbackHost)
+	}
+	if cfg.Supervisor.Callback.AdvertiseHost != syntheticSupervisorCallbackAdvertiseHost {
+		t.Fatalf("supervisor.callback.advertise_host: baked %q, CLI %q",
+			cfg.Supervisor.Callback.AdvertiseHost, syntheticSupervisorCallbackAdvertiseHost)
 	}
 }

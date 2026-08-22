@@ -27,6 +27,9 @@ type RetentionConfig struct {
 
 	// @concept: message
 	MessageIdempotenciesTrailing time.Duration
+
+	// @concept: lifecycle-subscriber
+	LifecycleOutboxTrailing time.Duration
 }
 
 func SweepLineageRetention(

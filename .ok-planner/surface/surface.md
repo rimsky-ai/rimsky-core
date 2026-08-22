@@ -26,6 +26,12 @@ Every RPC declared under `lib/protocols/proto/v1` is public. Third parties imple
 
 Every route the control API serves under `/v1` is public. The supervisor's callback routes are public, because an external executor must call them to report an outcome. The `sensor-webhook` ingress is public, because external systems post to it.
 
+A bundled service's HTTP listeners split by what they carry. The protocol bridge, the lifecycle bridge, and the observability bridge are public: each carries the same contract as a gRPC protocol the rule above calls public, in another encoding, and a service author is told to expect them. A bundled service's admin listener and the claude-agent executor's internal MCP server are internal: they serve the service itself.
+
+## Metrics
+
+The metrics endpoint each core role can serve is public, and the metric names and labels it serves are surface: the environment variables that place the listener are public, and an operator who graphs the endpoint is a consumer.
+
 ## MCP tools
 
 Every tool the control API's MCP catalog lists is public. An agent discovers the catalog and invokes the tools its grant permits, so every listed tool is a contract rimsky owes that agent.

@@ -17,6 +17,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
+
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -257,6 +259,9 @@ func testTemplateErrorPolicyReleaseAndRequeue(t *testing.T) {
 	require.NotNil(t, worker)
 
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+	awaited.Until(t, "the requeued dispatch's Commit to reach the claim producer", func() bool {
+		return countCalls(sub.Calls(), "commit") >= 1
+	})
 
 	calls := sub.Calls()
 	require.Equal(t, 2, countCalls(calls, "open"),

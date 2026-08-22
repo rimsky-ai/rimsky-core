@@ -13,16 +13,17 @@ import (
 )
 
 type MessageItem struct {
-	ID          string          `json:"id"`
-	InstanceID  string          `json:"instance_id"`
-	Type        string          `json:"type"`
-	Sender      string          `json:"sender"`
-	SenderKind  string          `json:"sender_kind"`
-	Payload     json.RawMessage `json:"payload,omitempty"`
-	ReceivedAt  time.Time       `json:"received_at"`
-	DeliveredAt *time.Time      `json:"delivered_at,omitempty"`
-	FrameID     string          `json:"frame_id,omitempty"`
-	Cancelled   bool            `json:"cancelled,omitempty"`
+	ID            string          `json:"id"`
+	InstanceID    string          `json:"instance_id"`
+	Type          string          `json:"type"`
+	Sender        string          `json:"sender"`
+	SenderKind    string          `json:"sender_kind"`
+	SenderSubject string          `json:"sender_subject"`
+	Payload       json.RawMessage `json:"payload,omitempty"`
+	ReceivedAt    time.Time       `json:"received_at"`
+	DeliveredAt   *time.Time      `json:"delivered_at,omitempty"`
+	FrameID       string          `json:"frame_id,omitempty"`
+	Cancelled     bool            `json:"cancelled,omitempty"`
 }
 
 type ListMessagesQuery struct {

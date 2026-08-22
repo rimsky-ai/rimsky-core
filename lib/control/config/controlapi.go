@@ -64,16 +64,16 @@ type ControlAPIHandle interface {
 }
 
 type controlAPIHandle struct {
-	srv             *http.Server
-	addr            string
-	serveErr        chan error
-	registry        *locks.Registry
-	lifecycleReg    *lifecycle.Registry
-	terminator      *controlapi.InstanceTerminator
-	cancelLoops     context.CancelFunc
-	cancelDiscovery context.CancelFunc
-	peerClosers     []func()
-	wg              sync.WaitGroup
+	srv                 *http.Server
+	addr                string
+	serveErr            chan error
+	registry            *locks.Registry
+	lifecycleReg        *lifecycle.Registry
+	lifecycleReconciler *controlapi.LifecycleReconciler
+	cancelLoops         context.CancelFunc
+	cancelDiscovery     context.CancelFunc
+	peerClosers         []func()
+	wg                  sync.WaitGroup
 }
 
 func (h *controlAPIHandle) goWG(f func()) {
@@ -95,8 +95,8 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	if h.cancelDiscovery != nil {
 		h.cancelDiscovery()
 	}
-	if h.terminator != nil {
-		h.terminator.Stop()
+	if h.lifecycleReconciler != nil {
+		h.lifecycleReconciler.Stop()
 	}
 	h.wg.Wait()
 	if h.registry != nil {
@@ -312,19 +312,19 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		srv.TLSConfig = tlsCfg
 		listener = tls.NewListener(listener, tlsCfg)
 	}
-	terminator := controlapi.NewInstanceTerminator(deps, 0)
+	lifecycleReconciler := controlapi.NewLifecycleReconciler(deps, 0)
 	loopCtx, cancelLoops := context.WithCancel(context.Background())
 	closersWithIdentity := append([]func(){stopIdentity}, peerClosers...)
 	h := &controlAPIHandle{
-		srv:             srv,
-		addr:            listener.Addr().String(),
-		serveErr:        make(chan error, 1),
-		registry:        registry,
-		lifecycleReg:    lifecycleReg,
-		terminator:      terminator,
-		cancelLoops:     cancelLoops,
-		cancelDiscovery: cancelDiscovery,
-		peerClosers:     closersWithIdentity,
+		srv:                 srv,
+		addr:                listener.Addr().String(),
+		serveErr:            make(chan error, 1),
+		registry:            registry,
+		lifecycleReg:        lifecycleReg,
+		lifecycleReconciler: lifecycleReconciler,
+		cancelLoops:         cancelLoops,
+		cancelDiscovery:     cancelDiscovery,
+		peerClosers:         closersWithIdentity,
 	}
 	h.goWG(func() { disc.RefreshLoop(discoveryCtx, cfg.ObservabilityRefreshInterval, obsLogger) })
 	h.goWG(func() {
@@ -336,7 +336,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			h.serveErr <- err
 		}
 	})
-	h.goWG(func() { terminator.Run(loopCtx) })
+	h.goWG(func() { lifecycleReconciler.Run(loopCtx) })
 	h.goWG(func() { controlapi.WatchAnonymousMode(loopCtx, authState, controlapi.DefaultBannerInterval) })
 	resyncLog := cfg.Logger
 	if resyncLog == nil {

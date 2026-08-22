@@ -8,6 +8,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -47,8 +48,9 @@ func producerVerbForOutcome(o TerminalOutcome) (persistence.ProducerVerb, error)
 	return "", fmt.Errorf("producerVerbForOutcome: unknown outcome %v", o)
 }
 
+// @decision: promotion-lineage-record-after-commit
 func enqueueProducerVerb(
-	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
+	ctx context.Context, args RunArgs, td TerminalDecision, pendingLineage []byte, tx persistence.Tx,
 ) error {
 	outbox := ProducerVerbOutboxOf(args)
 	if outbox == nil {
@@ -72,17 +74,18 @@ func enqueueProducerVerb(
 	}
 	now := args.Clock.Now()
 	if err := outbox.Enqueue(ctx, persistence.ProducerVerbOutboxInsertInput{
-		ClaimHandleID:       td.ClaimHandleID,
-		ProducerName:        producerName,
-		Verb:                verb,
-		ClaimScopeData:      td.Scope,
-		Address:             td.Address,
-		LeaseToken:          td.LeaseToken,
-		SupervisorID:        td.SupervisorID,
-		InstanceID:          instanceID,
-		ParentClaimHandleID: td.ParentClaimHandleID,
-		NextAttemptAt:       now,
-		EnqueuedAt:          now,
+		ClaimHandleID:        td.ClaimHandleID,
+		ProducerName:         producerName,
+		Verb:                 verb,
+		ClaimScopeData:       td.Scope,
+		Address:              td.Address,
+		LeaseToken:           td.LeaseToken,
+		SupervisorID:         td.SupervisorID,
+		InstanceID:           instanceID,
+		ParentClaimHandleID:  td.ParentClaimHandleID,
+		NextAttemptAt:        now,
+		EnqueuedAt:           now,
+		PendingLineageRecord: pendingLineage,
 	}, tx); err != nil {
 		return fmt.Errorf("enqueueProducerVerb(%s, %s): %w", producerName, verb, err)
 	}
@@ -164,7 +167,7 @@ func (d *ProducerVerbDispatcher) Run(ctx context.Context) {
 			return
 		}
 		if _, err := d.DispatchOnce(ctx); err != nil && d.Logger != nil {
-			d.Logger.Warn("producer verb outbox: dispatch pass failed", "error", err.Error())
+			d.Logger.Warn("producer_verb_outbox.dispatch_pass_failed", "error", err.Error())
 		}
 		interval := d.PollInterval
 		if interval <= 0 {
@@ -229,15 +232,18 @@ func (d *ProducerVerbDispatcher) DispatchOnce(ctx context.Context) (int, error) 
 			blocked[key] = true
 			continue
 		}
-		if err := d.deliverRow(ctx, row); err != nil {
+		if err := d.deliverRowAndClear(ctx, row); err != nil {
 			blocked[key] = true
 			backoff := producerVerbBackoff(row.AttemptCount+1, d.BaseBackoff, d.MaxBackoff)
 			if rerr := d.Outbox.RecordAttempt(ctx, row.Seq, now.Add(backoff), err.Error(), nil); rerr != nil && d.Logger != nil {
-				d.Logger.Warn("producer verb outbox: RecordAttempt failed",
-					"seq", row.Seq, "producer", row.ProducerName, "error", rerr.Error())
+				d.Logger.Warn("producer_verb_outbox.record_attempt_failed",
+					"seq", row.Seq,
+					"producer", row.ProducerName,
+					"error", rerr.Error(),
+					"consequence", "the row keeps its previous next-attempt time, so the next pass retries it earlier than the backoff asks")
 			}
 			if d.Logger != nil {
-				d.Logger.Warn("producer verb outbox: delivery failed; retrying with backoff",
+				d.Logger.Warn("producer_verb_outbox.delivery_retry_scheduled",
 					"seq", row.Seq,
 					"producer", row.ProducerName,
 					"verb", string(row.Verb),
@@ -248,15 +254,13 @@ func (d *ProducerVerbDispatcher) DispatchOnce(ctx context.Context) (int, error) 
 			}
 			continue
 		}
-		if err := d.Outbox.Delete(ctx, row.Seq, nil); err != nil {
-			return delivered, fmt.Errorf("ProducerVerbDispatcher: Delete(seq=%d): %w", row.Seq, err)
-		}
 		delivered++
 	}
 	return delivered, nil
 }
 
-func (d *ProducerVerbDispatcher) deliverRow(ctx context.Context, row persistence.ProducerVerbOutboxRow) error {
+// @decision: promotion-lineage-record-after-commit
+func (d *ProducerVerbDispatcher) deliverRowAndClear(ctx context.Context, row persistence.ProducerVerbOutboxRow) error {
 	instanceID := ""
 	if row.InstanceID != nil {
 		instanceID = row.InstanceID.String()
@@ -272,12 +276,20 @@ func (d *ProducerVerbDispatcher) deliverRow(ctx context.Context, row persistence
 	if d.Tables != nil {
 		args.ClaimHandles = d.Tables.ClaimHandles()
 	}
-	return deliverProducerVerb(ctx, args, producer, row, nil)
+	clear := func(ctx context.Context, tx persistence.Tx) error {
+		if err := d.Outbox.Delete(ctx, row.Seq, tx); err != nil {
+			return fmt.Errorf("Delete(seq=%d): %w", row.Seq, err)
+		}
+		return nil
+	}
+	return deliverProducerVerb(ctx, args, producer, row, nil, clear)
 }
+
+type outboxRowFinalizeFn func(ctx context.Context, tx persistence.Tx) error
 
 func deliverProducerVerb(
 	ctx context.Context, args RunArgs, producer claimproducer.ClaimProducer,
-	row persistence.ProducerVerbOutboxRow, tx persistence.Tx,
+	row persistence.ProducerVerbOutboxRow, tx persistence.Tx, finalize outboxRowFinalizeFn,
 ) error {
 	ctx = peer.WithServiceName(ctx, row.ProducerName)
 	claimID := claimproducer.ClaimID(row.ClaimHandleID.String())
@@ -287,25 +299,66 @@ func deliverProducerVerb(
 		if err != nil {
 			return err
 		}
-		applyDeferredCommitResult(ctx, args, row, res, tx)
-		return nil
+		return applyDeferredCommitResult(ctx, args, row, res, tx, finalize)
 	case persistence.ProducerVerbAbandon:
-		return producer.Abandon(ctx, claimID, row.ClaimScopeData, row.Address, row.LeaseToken)
+		if err := producer.Abandon(ctx, claimID, row.ClaimScopeData, row.Address, row.LeaseToken); err != nil {
+			return err
+		}
+		return runOutboxFinalize(ctx, args, tx, finalize)
 	case persistence.ProducerVerbRelease:
-		return producer.Release(ctx, claimID, row.ClaimScopeData, row.Address, row.LeaseToken)
+		if err := producer.Release(ctx, claimID, row.ClaimScopeData, row.Address, row.LeaseToken); err != nil {
+			return err
+		}
+		return runOutboxFinalize(ctx, args, tx, finalize)
 	}
 	return fmt.Errorf("unknown producer verb %q (seq=%d)", string(row.Verb), row.Seq)
 }
 
+func runOutboxFinalize(ctx context.Context, args RunArgs, tx persistence.Tx, finalize outboxRowFinalizeFn) error {
+	if finalize == nil {
+		return nil
+	}
+	if tx != nil {
+		return finalize(ctx, tx)
+	}
+	if args.Persist == nil {
+		return finalize(ctx, nil)
+	}
+	return args.Persist.Transaction(ctx, finalize)
+}
+
+// @decision: promotion-lineage-record-after-commit
+func writePendingClaimTerminalLineage(
+	ctx context.Context, args RunArgs, row persistence.ProducerVerbOutboxRow, versionID string, tx persistence.Tx,
+) error {
+	var rec ClaimTerminalRecord
+	if err := json.Unmarshal(row.PendingLineageRecord, &rec); err != nil {
+		return fmt.Errorf("decode staged lineage record: %w", err)
+	}
+	rec.VersionID = versionID
+	instanceID := shared.UUID{}
+	if row.InstanceID != nil {
+		instanceID = *row.InstanceID
+	}
+	clock := args.Clock
+	if clock == nil {
+		clock = shared.SystemClock{}
+	}
+	return WriteClaimTerminalLineage(ctx, args.Persist.Lineage(), instanceID, rec.FrameID, clock.Now(), rec, tx)
+}
+
 // @decision: wire-commit-response-fields
 func applyDeferredCommitResult(
-	ctx context.Context, args RunArgs, row persistence.ProducerVerbOutboxRow, res claimproducer.CommitResult, tx persistence.Tx,
-) {
+	ctx context.Context, args RunArgs, row persistence.ProducerVerbOutboxRow,
+	res claimproducer.CommitResult, tx persistence.Tx, finalize outboxRowFinalizeFn,
+) error {
 	needsVersion := res.VersionID != "" && args.ClaimHandles != nil
 	needsMetadata := row.ParentClaimHandleID != nil && len(res.ProducerMetadata) > 0 &&
 		args.ClaimHandles != nil && args.Persist != nil
-	if !needsVersion && !needsMetadata {
-		return
+	// @decision: promotion-lineage-record-after-commit
+	needsLineage := len(row.PendingLineageRecord) > 0 && args.Persist != nil && args.Persist.Lineage() != nil
+	if !needsVersion && !needsMetadata && !needsLineage {
+		return runOutboxFinalize(ctx, args, tx, finalize)
 	}
 	apply := func(ctx context.Context, tx persistence.Tx) error {
 		if needsVersion {
@@ -313,23 +366,20 @@ func applyDeferredCommitResult(
 				return fmt.Errorf("SetVersionID: %w", err)
 			}
 		}
-		if !needsMetadata {
+		if needsLineage {
+			if err := writePendingClaimTerminalLineage(ctx, args, row, res.VersionID, tx); err != nil {
+				return err
+			}
+		}
+		if needsMetadata {
+			if err := applyChildCommitMetadata(ctx, args, row, res, tx); err != nil {
+				return err
+			}
+		}
+		if finalize == nil {
 			return nil
 		}
-		parent, err := args.ClaimHandles.Get(ctx, *row.ParentClaimHandleID, tx)
-		if err != nil {
-			return fmt.Errorf("load parent claim handle: %w", err)
-		}
-		if parent == nil {
-			return nil
-		}
-		// @concept: fan-out
-		return recordChildCommitMetadata(ctx, args, FanoutChildSettlementInput{
-			ParentClaimHandleID:   *row.ParentClaimHandleID,
-			ChildClaimHandleID:    row.ClaimHandleID,
-			ChildOutcome:          OutcomeCommit,
-			ChildProducerMetadata: res.ProducerMetadata,
-		}, parent, tx)
+		return finalize(ctx, tx)
 	}
 	var err error
 	if tx != nil {
@@ -337,12 +387,30 @@ func applyDeferredCommitResult(
 	} else if args.Persist != nil {
 		err = args.Persist.Transaction(ctx, apply)
 	}
-	if err != nil && args.Logger != nil {
-		args.Logger.Warn("producer verb outbox: applying deferred Commit result failed",
-			"claim_handle_id", row.ClaimHandleID.String(),
-			"producer", row.ProducerName,
-			"error", err.Error())
+	if err == nil {
+		return nil
 	}
+	return fmt.Errorf("applying deferred Commit result for claim_handle %s: %w", row.ClaimHandleID, err)
+}
+
+// @concept: fan-out
+func applyChildCommitMetadata(
+	ctx context.Context, args RunArgs, row persistence.ProducerVerbOutboxRow,
+	res claimproducer.CommitResult, tx persistence.Tx,
+) error {
+	parent, err := args.ClaimHandles.Get(ctx, *row.ParentClaimHandleID, tx)
+	if err != nil {
+		return fmt.Errorf("load parent claim handle: %w", err)
+	}
+	if parent == nil {
+		return nil
+	}
+	return recordChildCommitMetadata(ctx, args, FanoutChildSettlementInput{
+		ParentClaimHandleID:   *row.ParentClaimHandleID,
+		ChildClaimHandleID:    row.ClaimHandleID,
+		ChildOutcome:          OutcomeCommit,
+		ChildProducerMetadata: res.ProducerMetadata,
+	}, parent, tx)
 }
 
 // @concept: claim-scope
@@ -372,12 +440,15 @@ func producerVerbOutboxBarrier(
 		if !conflicts {
 			continue
 		}
-		if err := deliverProducerVerb(ctx, args, producer, row, tx); err != nil {
+		clear := func(ctx context.Context, tx persistence.Tx) error {
+			if err := outbox.Delete(ctx, row.Seq, tx); err != nil {
+				return fmt.Errorf("Delete(seq=%d): %w", row.Seq, err)
+			}
+			return nil
+		}
+		if err := deliverProducerVerb(ctx, args, producer, row, tx, clear); err != nil {
 			return fmt.Errorf("outbox barrier: undelivered terminal %s (seq=%d) for producer %q blocks open: %w",
 				string(row.Verb), row.Seq, producerName, err)
-		}
-		if err := outbox.Delete(ctx, row.Seq, tx); err != nil {
-			return fmt.Errorf("outbox barrier: Delete(seq=%d): %w", row.Seq, err)
 		}
 	}
 	return nil

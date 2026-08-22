@@ -45,7 +45,7 @@ func lastDeniedRow(t *testing.T, tables persistence.Tables) map[string]any {
 	err := tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		var lerr error
 		res, lerr = tables.Events().List(ctx, persistence.EventListFilter{
-			KindIn: []string{auth.EventAccessDenied},
+			KindIn: []string{auth.EventAccessDenied.String()},
 		}, persistence.ListPagination{Limit: 1}, tx)
 		return lerr
 	})
@@ -58,6 +58,8 @@ func lastDeniedRow(t *testing.T, tables persistence.Tables) map[string]any {
 	return res.Events[0].Payload.Map()
 }
 
+// @concept: event-log
+// @concept: permission
 func TestGate_PermissionDeniedRowCarriesRequestedMode(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -102,6 +104,8 @@ func TestGate_PermissionDeniedRowCarriesRequestedMode(t *testing.T) {
 	}
 }
 
+// @concept: event-log
+// @concept: permission
 func TestGate_IdentityDenialRowCarriesNoMode(t *testing.T) {
 	h := newAuthTestHarness(t)
 

@@ -4,78 +4,77 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 
 ## Concepts
 
-- `advisory-lock` — Four advisory-lock primitives on the persistence-layer advisory-locker interface: scheduler-tick, migration, per-name (in-tx), and per-scope (in-tx).
-- `anonymous-mode` (aliases: implicit anonymous mode) — A data-derived deployment state in which the API-key ledger has zero active rows.
-- `api-key` (aliases: bearer token) — A high-entropy, rimsky-issued credential carried by control-api clients as `Authorization: Bearer <key>`.
-- `asset` — An asset is a documented compound, not a new primitive: a claim against a data-processing-capable producer with a durable lifetime.
-- `atomic-staging` — Producer-side stage-then-swap pattern: writers stage data into a side area; on `Commit` the producer atomically swaps the staging into the canonical view; on `Abandon` the staging is dropped.
-- `attribute` — Attributes are the typed inputs, outputs, and configuration of a node, declared by a schema in the template's attributes block.
-- `auto-terminal` (aliases: held-claim resolution) — The mechanism that fires the producer's Commit or Abandon verb exactly once at the end of a held claim's holding-subgraph.
-- `blob-backend` — The blob-backend interface is the abstraction that backs spilled byte streams from two surfaces: attribute values and scratch.
-- `breakpoint` — A breakpoint is a runtime-installed pause-point on a live `concept:instance`, identified by UUID and bound to a `(matcher, checkpoint, signal_type?, mode, overflow_policy, ttl_seconds?)` tuple.
-- `cancel-siblings` — The proactive sibling cancellation intrinsic to the `strict` aggregation policy: when one sub-claim resolves to Abandon under a parent whose policy is strict, the runtime unconditionally walks the parent's other in-flight sub-claims and force-Abandons each via recursive claim-handle terminal-resolution calls.
-- `cascade` (aliases: reactive-cascade) — Cascade is the engine that turns one node-state transition into the set of downstream node-state transitions.
-- `cascade-graph` (aliases: operator dashboard backplane) — The operator-dashboard HTTP-route backplane exposed by the control API: a read-only family of endpoints giving operators visibility into rimsky's own persisted runtime state and discovered peer status.
-- `cascade-mode` — Per-node setting governing how the cascade walker treats re-cascades targeting a receiver whose latest pending/settled run exists; selects among `most-recent`, `sequenced`, `idempotent-queue`, and `idempotent-settled`.
-- `child-execution` — Child execution is the umbrella term for the two distinct mechanisms — fan-out and sub-graph delegation — by which a parent node-run dispatches child execution contexts, settled by their own carry or aggregate settle primitive respectively.
-- `claim` — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
-- `claim-co-holdership` — Multiple node-runs holding the same claim handle via the `holds:` template directive.
-- `claim-handle` — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
-- `claim-lifetime` — Per-claim property in the `claims:` block: `lifetime: subgraph | durable` (default `subgraph`).
-- `claim-producer` (aliases: claim-store) — A claim producer is an out-of-process service that implements the gRPC claim-producer protocol — 4 verbs (open / commit / abandon / release) plus the capabilities startup handshake.
-- `claim-scope` — ClaimScope is the opaque byte stream a claim producer's open verb returns to identify "what was acquired."
-- `claim-tree` — The tree-shaped relationship across claim handle rows, formed by the nullable self-referential parent pointer.
-- `conformance` — A per-protocol conformance subcommand family on the CLI — one subcommand per protocol — over a shared conformance library in the protocols module (one sub-package per protocol).
-- `control-api` — The operator interface exposed by the control-api binary.
-- `data-processing` — Optional mix-in protocol on a claim producer.
-- `delegation` — Delegation is an invocation pattern over `concept:child-execution`: a node carrying `delegate: <graph-name>` instead of `executor:` dispatches the named sub-graph as exactly one child execution under the carry settlement mode, with the entry absorbed.
-- `discovery-cache` (aliases: capabilities cache) — An in-memory per-service capabilities cache populated by the observability handshake at startup.
-- `dry-run` — A request mode — preview-without-commit — that asks "what would happen if I did this?" without applying it.
-- `error-policy` (aliases: error-types policy chain) — The template-level `error_types:` block maps per-`error_class` strings to one of four runtime actions: `pass`, `give_up`, `retry`, `release_and_requeue`.
-- `event-log` (aliases: audit log) — Rimsky's internal append-only audit-log ledger.
-- `executor` — An executor implements the gRPC executor's unary Execute method plus an optional executor-observability protocol.
-- `fan-out` — Fan-out is an invocation pattern over `concept:child-execution`: a node-level decision to partition a held claim into sub-claims and dispatch one child execution per partition under the aggregate settlement mode, with an author-chosen aggregation policy from the four-value family `strict | threshold | best_effort | first`.
+- `advisory-lock` — An advisory lock is a named exclusion one rimsky process takes so that no other process enters the same section of work at the same time.
+- `anonymous-mode` — Anonymous mode is a deployment state rimsky derives from its own data: the api-key ledger holds no active key.
+- `api-key` (aliases: bearer token) — An api-key is a credential rimsky issues and a control-api client presents as a bearer token.
+- `asset` — An asset is a committed claim, held against a producer that advertises the data-processing capability, whose lifetime is durable.
+- `atomic-staging` — Atomic staging is the producer-side stage-then-swap discipline behind a held claim.
+- `attribute` — Attributes are the typed inputs, outputs, and configuration of a node, declared by a schema the template carries for that node.
+- `auto-terminal` (aliases: held-claim resolution) — Auto-terminal fires a producer's terminal disposition — commit or abandon — exactly once at the end of a held claim's holding subgraph.
+- `blob-backend` — A blob backend is the store that holds a byte stream rimsky has spilled out of the row that would otherwise carry it.
+- `breakpoint` — A breakpoint is a pause-point an operator installs on a live instance while that instance runs.
+- `cancel-siblings` — Cancel siblings is the proactive cancellation a strict aggregation policy always performs.
+- `cascade-graph` (aliases: operator dashboard backplane) — Cascade graph is the read-only side of the control API: the routes that show an operator rimsky's persisted runtime state and its peers' status.
+- `cascade-mode` — A cascade mode is a per-node setting that governs how a re-cascade is treated when the receiver already has a round queued or recently settled.
+- `cascade` (aliases: reactive-cascade) — Cascade is the engine that turns one node's state transition into the set of downstream node-state transitions.
+- `child-execution` — Child execution is the umbrella term for the two mechanisms by which a parent node-run dispatches work into child execution contexts.
+- `claim-co-holdership` — Co-holdership is several node-runs holding one claim.
+- `claim-handle` — A claim handle is the row in rimsky's own ledger that represents one acquired claim, or one acquisition of a named lock.
+- `claim-lifetime` — Claim lifetime is a per-claim property with two values.
+- `claim-producer` — A claim producer is an implementation of the claim-producer protocol.
+- `claim-scope` — A claim scope is the opaque byte stream that says what a claim acquired.
+- `claim-tree` — A claim tree is the tree-shaped relationship across claim handles.
+- `claim` — A claim is a node's request to hold a producer-managed resource while the node runs.
+- `conformance` — Conformance is a runnable battery of checks that proves an independently written service matches one of rimsky's peer protocols.
+- `control-api` — The control API is the operator-facing interface of a rimsky deployment, served by the control-api role.
+- `data-processing` — Data processing is an optional mix-in protocol a claim producer may implement alongside the claim-producer protocol.
+- `delegation` — Delegation is an invocation pattern in which a node names a sub-graph instead of an executor and dispatches that sub-graph as one child execution context.
+- `discovery-cache` — The discovery cache is an in-memory record of what each peer service declares about itself, held by the process that checks those declarations.
+- `dry-run` — Dry-run is a request mode — preview without commit — that asks what a write would do without doing it.
+- `error-policy` — An error policy is a template-level routing surface that maps each error class to one runtime action, drawn from a closed action vocabulary.
+- `event-log` (aliases: audit log) — The event log is rimsky's own append-only ledger of what happened.
+- `executor` — An executor is the party that performs a node's work.
+- `fan-out` — Fan-out clones the calling node N times.
 - `frame` (aliases: cascade-frame) — A frame is one cascade resolution.
-- `graph` — A graph is rimsky's unit of node connectivity.
-- `host-agent` — A long-running daemon on a user's dev machine. Dials the host-agent-proxy to serve dev-machine spawn / dispatch / reap requests and relay child callbacks.
-- `host-agent-proxy` — A rimsky-stack `concept:service` implementing the multi-protocol composition pattern (per `concept:service` invariants: distinct handler types per protocol, separately registered on one server).
-- `inertness` (aliases: inert bytes) — A uniform discipline applied across two overlapping lists.
-- `instance` — An instance is one live deployment of a template, identified by a rimsky-generated UUID.
-- `lifecycle-subscriber` — A service that implements the gRPC lifecycle-subscriber protocol — seven event callbacks: template registered, deployed, undeployed, and deregistered, plus instance created and terminated, plus run-scope terminal (carrying the run-scope id and a terminal reason).
-- `lineage` — A persisted projection of computational + data-promotion records.
-- `lineage-record` — An append-only record in the lineage projection (see `concept:lineage`).
-- `message` — A typed envelope whose arrival at an instance opens a frame.
-- `message-sender-node` — A message-sender-node is a node-type whose dispatch mode is "build a message envelope from the node's attributes and insert it into the message ledger."
-- `message-schema` — A message-schema is the template-level registry of accepted message types for instances of that template.
-- `module-layout` (aliases: workspace-layout) — The Go workspace ties four modules into one build.
-- `named-lock` — A named lock is a producer-independent capacity-counter primitive.
+- `graph` — A graph is rimsky's unit of node connectivity: a named set of nodes and the edges among them, declared by a template.
+- `host-agent-proxy` — The host agent proxy is a rimsky-stack service that stands between a deployment and a developer's machine.
+- `host-agent` — The host agent is a long-running daemon on a developer's machine.
+- `inertness` — Inertness is the discipline under which rimsky neither inspects nor interprets a carrier stream's bytes outside a narrow set of sanctioned read sites.
+- `instance` — An instance is one live deployment of a template.
+- `lifecycle-subscriber` — A lifecycle subscriber is a peer service to which rimsky delivers control-plane and instance-lifecycle transitions.
+- `lineage-record` — A lineage record is one append-only entry in the lineage projection.
+- `lineage` — Lineage is a persisted projection of data lineage: what each run's output depended on, and what each claim handle resolved to.
+- `message-schema` — A message-schema is a template's registry of the message types instances of that template accept.
+- `message-sender-node` — A message-sender-node is a node kind whose dispatch builds a message envelope from the node's own attributes and inserts it into the message ledger.
+- `message` — A message is a typed envelope whose arrival at an instance enqueues it on that instance's message queue.
+- `module-layout` — The module layout is the shape of rimsky's source tree: one Go workspace tying four modules into one build.
+- `named-lock` — A named lock is a capacity counter that no producer owns.
+- `node-run` — A node-run is the record of one execution of one node inside one frame.
+- `node-subscription` (aliases: subscription) — A node-subscription is the receiver-side reactive declaration a node makes in a template.
 - `node` (aliases: graph-node) — A node is one declarative unit of work in a template's graph.
-- `node-run` — The node-run row is the parent row for one execution of one node within a frame.
-- `node-subscription` (aliases: subscription) — A node-subscription declares `type:` (a canonical signal type-path, exact or trailing-`*` prefix per `concept:signal`) plus an optional `when:` CEL predicate over the signal payload, plus the required cascade-shape boolean `force_upstream_refresh`.
-- `observability` — The service-facing optional observability protocols and the startup handshake that probes them.
-- `orphan-reaper` — A periodic sweep that hard-deletes stale rows from the node-run ledger and the claim-handle ledger.
-- `parked-state` (aliases: park, parked node) — `parked` is the fifth legal node state, entered from `running` when the executor emits a park outcome.
-- `peer-auth` (aliases: internal-service-auth, mtls, peer_auth) — The posture governing authentication across rimsky's four trust boundaries, and the optional deployment-level mutual-TLS mechanism (`peer_auth: none|mtls`, default off) that authenticates the internal service↔service boundary via a per-deployment CA and enrollment-by-api-key.
-- `permission` (aliases: grant, action) — The per-key authorization grant attached to a `concept:api-key`.
-- `persistence-database` (aliases: persistence-driver) — The top-level database interface is the umbrella over the rimsky persistence layer.
+- `observability` — Observability is the pair of optional service protocols a peer service may implement, together with the startup handshake that probes them.
+- `orphan-reaper` — The orphan reaper is a family of sweeps that reclaim orphaned work.
+- `parked-state` (aliases: park, parked node) — Parked is one of the seven states a node-run passes through, entered when the executor ends its dispatch with a park outcome.
+- `peer-auth` (aliases: internal-service-auth, mtls, peer_auth) — Peer authentication is the posture rimsky holds across its four trust boundaries, and the mutual-certificate mechanism that authenticates one of them.
+- `permission` (aliases: grant, action) — A permission is the authorization grant one api-key carries.
+- `persistence-database` (aliases: persistence-driver) — The persistence database is the umbrella over rimsky's whole persistence layer, and the runtime handle a process opens once and holds for its lifetime.
+- `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the binding between rimsky and one publisher for one instance and one message type.
 - `publisher` — A publisher is a peer service that publishes messages into rimsky.
-- `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, type) triple.
-- `rimsky` (aliases: rimsky-cli) — Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack.
-- `rimsky-yml` (aliases: unified config) — A single YAML file at a well-known default path read by every runtime process plus the migrate step.
-- `role-template` (aliases: bundled role) — A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time.
-- `run-scope` — RunScope is the first-class execution context for one graph instantiation (root / sub-graph / fanout_partition).
-- `sensor` — A sensor is a class of `concept:publisher` implementation that observes external state.
-- `service` — A rimsky-orchestrated implementation of one or more of rimsky's service protocols, running either as an out-of-process binary or as an in-process handler within the rimsky all-in-one process.
-- `service-address-book` — The shared, persisted catalog of the deployment's declared dispatch peers — executor names and claim-producer store names, each mapped to its endpoint.
-- `signal` — A signal is the unified emission shape for any transition that affects a node-run.
-- `sub-graph` — A sub-graph is a graph with declared `entry:` and `exit:` nodes; invocable from another node via `delegate: <graph-name>`.
-- `supervisor` — One of the three rimsky runtime binaries.
-- `tag` (aliases: template-tag) — A tag is a movable string alias pointing at a `template_hash`.
-- `template` (aliases: canonical-spec) — A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, frame-resolution policy, handler declarations, quality rules.
-- `terminal-resolution` (aliases: executor-terminal-spine) — The end-to-end spine that takes a single executor Outcome off the wire and converges it onto exactly four decisions: (1) what canonical signal type-path to emit (and the verdict's `tags` set as the discriminator that subscribers CEL-filter against), (2) what to do with the node-run row (delete vs retry-enqueue), (3) what producer verb (`Commit` / `Abandon` / nothing) to fire on every acquired claim, (4) when to delete the persisted claim-handle rows claimant-guarded.
-- `terminal-tag` — A terminal tag is a string member of the `tags` set carried on a settling terminal verdict (Success / Error / Park).
-- `transition-reason` — The transition reason is the closed vocabulary of named values carried on every write of a node-run's state column.
-- `validation` — Cross-cutting service protocol.
-- `wait-set` — The wait-set is a per-frame persisted ledger that records "cascade-driven pending receiver R is waiting for sender S in frame F" keyed by frame, receiver run, sender run, and topic kind.
-- `write-semantics` — A per-claim enum (`sync | staged_async | blocking_async | read_only`) that determines how the coexistence matrix treats concurrent claims on byte-equal claim scope (per `concept:claim-scope`).
-
+- `rimsky-yml` (aliases: unified config) — The unified configuration file is the single configuration file rimsky reads.
+- `rimsky` (aliases: rimsky-cli) — The rimsky CLI is the operator-facing command-line tool: a thin client over the control API for operating a deployed rimsky stack.
+- `role-template` (aliases: bundled role) — A role template is a named bundle of permissions.
+- `run-scope` — A RunScope is the execution context for one graph instantiation inside a single frame.
+- `sensor` — A sensor is a class of publisher implementation that observes state outside rimsky.
+- `service-address-book` — The service address book is the deployment's shared, persisted catalog of its declared dispatch peers and the endpoints that answer them.
+- `service` — A service is a rimsky-orchestrated implementation of one or more of rimsky's service protocols.
+- `signal` — A signal is the one emission shape for any transition that affects a node-run.
+- `sub-graph` — A sub-graph is a graph with a declared entry node and a declared exit node, which another node invokes by delegating to it.
+- `supervisor` — The supervisor is one of rimsky's three runtime roles: the one that does the work.
+- `tag` (aliases: template-tag) — A tag is a movable name that points at one template's content hash.
+- `template` (aliases: canonical-spec) — A template is the static artifact a consumer registers with rimsky: one workflow's node, attribute, claim, subscription, and message declarations.
+- `terminal-resolution` (aliases: executor-terminal-spine) — Terminal resolution is the spine that takes one executor outcome off the wire and converges it onto exactly four decisions.
+- `terminal-tag` — A terminal tag is one string in the tag set an executor attaches to a settling verdict.
+- `transition-reason` — The transition reason is the closed vocabulary carried on every node-state transition: named values, each carrying a kind discriminator.
+- `validation` — Validation is a cross-cutting service protocol through which a service tells rimsky whether a registration is acceptable in that service's own domain.
+- `wait-set` — The wait-set is a per-frame persisted ledger recording that one cascade-driven pending receiver run waits for one sender run on one topic.
+- `write-semantics` — Write semantics is a per-claim value from a closed family that tells the coexistence matrix how to treat two concurrent claims on byte-equal claim scope.

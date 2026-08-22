@@ -27,11 +27,8 @@ func buildProxyServers(
 	verifyIdentity := newControlAPIRegisterIdentityVerifier(controlAPIClient, cfg.ControlAPIURL)
 	genv1.RegisterHostAgentServer(agentSrv, newAgentServer(state, verifyIdentity))
 
-	if !identity.Enabled() {
-		registerPeerProtocols(agentSrv, state, cfg, controlAPIClient)
-		return &proxyServers{agent: agentSrv}
-	}
-
+	// @decision: host-agent-proxy-tls
+	// @concept: peer-auth
 	peerSrv := grpc.NewServer(identity.GRPCServerOptions()...)
 	registerPeerProtocols(peerSrv, state, cfg, controlAPIClient)
 	return &proxyServers{agent: agentSrv, peer: peerSrv}

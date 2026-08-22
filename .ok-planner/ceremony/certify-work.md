@@ -36,7 +36,7 @@ The ceremony dispatches it; this family adds one check: the reviewer opens every
 
 ## Standing producers
 
-What the sprint's standing reviewer runs over each landed stage during the build, beside the certification code-review brief, per `{{STANDING-REVIEWER-PROMPT}}` in `.claude/skills/_shared/certification-core.md`. Read-only; hits are ledger findings the builder fixes in its own context. The terminal gate re-runs its own producers cold and reads none of this.
+What the sprint's standing reviewer runs over each landed stage during the build, beside the certification code-review brief and the stage-scoped alignment questions, per `{{STANDING-REVIEWER-PROMPT}}` in `.claude/skills/_shared/certification-core.md`. Read-only; hits are ledger findings the builder fixes in its own context. The terminal gate re-runs its own producers cold and reads none of this.
 
 **Annotation integrity** — over the stage's paths, `rg -n '@(concept|story|decision):\s*\S+'`; every (kind, slug) pair resolves to a live artifact under `.ok-planner/design/`, and a slug the sprint's deltas introduce resolves once the delta has been applied. A dangling or misspelt slug is a finding.
 
@@ -54,11 +54,11 @@ Write the composed presentation into the sprint's completion report — the file
 
 ## Close-out
 
-With a sprint in scope and everything certified clean, the standing offer this family contributes: **archive the sprint** — move it to `.ok-planner/history/sprints/`, together with its completion report, its delta sidecar folder where it has one, and every issue file under `.ok-planner/issues/` whose frontmatter `sprint:` names it (promoted receipts, moving to `.ok-planner/history/issues/`) — and **commit the work**. Both are owner acts, performed only on the owner's word. The sprint stays at its `sprints/` path until then; where the file sits is no term of the completion contract's goal rule. An uncertified sprint gets no offer. On the yes, after the archive commit lands, stamp the archived sprint with `closed: <sha of the archive commit>` in YAML frontmatter, one small follow-on commit.
+With a sprint in scope and everything certified clean, the standing offer this family contributes: **archive the sprint** — move it to `.ok-planner/history/sprints/`, together with its completion report, its ledger file (`<sprint-name>-ledger.md`) where it has one, its delta sidecar folder where it has one, and every issue file under `.ok-planner/issues/` whose frontmatter `sprint:` names it (promoted receipts, moving to `.ok-planner/history/issues/`) — and **commit the work**. Both are owner acts, performed only on the owner's word. The sprint stays at its `sprints/` path until then; where the file sits is no term of the completion contract's goal rule. An uncertified sprint gets no offer. On the yes, after the archive commit lands, stamp the archived sprint with `closed: <sha of the archive commit>` in YAML frontmatter, one small follow-on commit.
 
 ## Boundaries
 
 - Does not audit. It writes nothing under `.ok-planner/audits/` or `.ok-planner/experiments/`, reads no determination, runs or repairs no experiment, and forms no finding about whether an artifact is still supported.
 - Does not widen scope mid-run. A finding outside the change's footprint that the change neither caused nor depends on is not this gate's finding; a human files it to the intake where it matters.
 
-<!-- Materialized by ok-planner v18.8.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-planner v19.0.0 — suite-owned; overwritten on converge; do not hand-edit. -->

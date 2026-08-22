@@ -10,6 +10,7 @@ type Tables interface {
 	TemplateTags() TemplateTagTable
 	Instances() InstanceTable
 	LifecycleIdempotency() LifecycleIdempotencyTable
+	LifecycleOutbox() LifecycleOutboxTable
 	Nodes() NodeTable
 	ClaimHandles() ClaimHandleTable
 	NodeAttributes() NodeAttributeTable

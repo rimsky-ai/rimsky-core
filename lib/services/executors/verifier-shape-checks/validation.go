@@ -49,9 +49,9 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 	errors := make([]*genv1.ValidationFinding, 0)
 	warnings := make([]*genv1.ValidationFinding, 0)
 
-	var attrs map[string]any
+	var declaredSchema map[string]any
 	if len(exec.GetAttributesSchema()) > 0 {
-		if err := json.Unmarshal(exec.GetAttributesSchema(), &attrs); err != nil {
+		if err := json.Unmarshal(exec.GetAttributesSchema(), &declaredSchema); err != nil {
 			errors = append(errors, &genv1.ValidationFinding{
 				Class:   "invalid_attribute",
 				Message: fmt.Sprintf("attributes_schema is not valid JSON: %v", err),
@@ -61,7 +61,7 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 		}
 	}
 
-	props, _ := attrs["properties"].(map[string]any)
+	props, _ := declaredSchema["properties"].(map[string]any)
 	checksProp, _ := props["checks"].(map[string]any)
 	_, hasSource := checksProp["source"].(string)
 	rawChecks, hasDefault := checksProp["default"].([]any)

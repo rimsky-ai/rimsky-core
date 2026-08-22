@@ -44,6 +44,10 @@ func applyTerminalPark(
 		cascade.NodeStateParked, cascade.ReasonHandlerPark, &parkSigType, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
+	if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+		cascade.NodeStateRunning, cascade.NodeStateParked, cascade.ReasonHandlerPark, tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalPark: %w", err)
+	}
 	// @concept: signal
 	parkSig := parkTerminalSignal(args, t)
 	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
@@ -54,14 +58,14 @@ func applyTerminalPark(
 	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		scope := resolveAcqScope(ctx, args, acq, nil)
-		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		emitLeafRunLineageForAcq(ctx, args, acq, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
 			NodeRunID:          nodeRunID,
 			NodeID:             acq.NodeID,
 			State:              string(cascade.NodeStateParked),
 			SettlingSignalType: parkSigType,
-			TerminalKind:       "park",
+			TerminalKind:       LeafRunTerminalKindPark,
 			NodeAlias:          acq.NodeType,
 			ExecutorName:       acq.Executor,
 			TemplateHash:       acq.TemplateHash,

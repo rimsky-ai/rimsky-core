@@ -229,15 +229,10 @@ func loadScratchIntoAcquisition(
 		out.Scratch = inline
 		return nil
 	}
-	if args.Blob == nil {
-		return fmt.Errorf(
-			"loadScratch: dispatch %s carries scratch spilled to blob backend %q but no blob backend is configured",
-			cand.NodeRunID, handleBackend)
-	}
-	if args.Blob.Name() != handleBackend {
-		return fmt.Errorf(
-			"loadScratch: dispatch %s carries scratch spilled to blob backend %q but the configured backend is %q",
-			cand.NodeRunID, handleBackend, args.Blob.Name())
+	// @decision: blob-backend-mismatch-read-refused
+	if err := persistence.CheckBlobBackendMatches(
+		fmt.Sprintf("loadScratch: dispatch %s", cand.NodeRunID), args.Blob, handle, handleBackend); err != nil {
+		return err
 	}
 	b, berr := args.Blob.Read(ctx, persistence.Handle(handle))
 	if berr != nil {

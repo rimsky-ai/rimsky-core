@@ -61,6 +61,10 @@ func forceFailRunInstanceKilled(
 		}
 		return nil, err
 	}
+	if err := AppendStateTransitionEvent(ctx, args.Persist, run.NodeID, instanceID,
+		current.State, cascade.NodeStateFailed, cascade.ReasonInstanceKilled, tx); err != nil {
+		return nil, err
+	}
 	var nodeType string
 	nodeRow, err := args.Persist.Nodes().Get(ctx, run.NodeID, tx)
 	if err != nil {

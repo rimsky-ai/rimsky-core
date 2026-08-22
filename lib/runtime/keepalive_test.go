@@ -32,6 +32,7 @@ func (stubTables) Instances() persistence.InstanceTable                    { ret
 func (stubTables) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
 	return nil
 }
+func (stubTables) LifecycleOutbox() persistence.LifecycleOutboxTable         { return nil }
 func (stubTables) Nodes() persistence.NodeTable                              { return nil }
 func (stubTables) ClaimHandles() persistence.ClaimHandleTable                { return nil }
 func (stubTables) NodeAttributes() persistence.NodeAttributeTable            { return nil }

@@ -44,13 +44,6 @@ func blobWriteIsTransactional(bb persistence.BlobBackend) bool {
 	return ok
 }
 
-func blobBackendName(bb persistence.BlobBackend) string {
-	if bb == nil {
-		return "<none>"
-	}
-	return bb.Name()
-}
-
 func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row pgx.Row, op string, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
 	var (
 		out         persistence.NodeAttributesRow
@@ -67,19 +60,19 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row pgx.R
 	}
 	out.UpdatedAt = when
 	if handle != nil && *handle != "" {
-		if bb == nil || handleBkend == nil || *handleBkend != bb.Name() {
-			rowBackend := "<none>"
-			if handleBkend != nil {
-				rowBackend = *handleBkend
-			}
-			return nil, fmt.Errorf("node_attributes.%s: row has value_handle %q on backend %q, but active blob backend is %q",
-				op, *handle, rowBackend, blobBackendName(bb))
+		rowBackend := ""
+		if handleBkend != nil {
+			rowBackend = *handleBkend
+		}
+		// @decision: blob-backend-mismatch-read-refused
+		if err := persistence.CheckBlobBackendMatches("node_attributes."+op, bb, *handle, rowBackend); err != nil {
+			return nil, err
 		}
 		bytes, err := persistence.ReadBlob(ctx, bb, persistence.Handle(*handle), tx)
 		if err != nil {
 			if errors.Is(err, persistence.ErrBlobNotFound) {
 				slog.Error("node_attributes.spilled_value_missing",
-					"op", op, "node_run_id", out.NodeRunID.String(), "handle", *handle, "backend", *handleBkend)
+					"op", op, "node_run_id", out.NodeRunID.String(), "handle", *handle, "backend", rowBackend)
 				out.Data = map[string]any{}
 				return &out, nil
 			}

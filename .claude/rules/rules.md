@@ -21,8 +21,8 @@ Run **every** check that could be affected by the change. This is mandatory, not
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.
 
 ### Update documentation
-1. **Citation tags** (`@concept:`, `@story:`, `@decision:`) — if you rename or move the design artifact a tag resolves to, update the citing call sites in the same change so `citation_resolution` stays green.
-2. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new blessed invariant, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.
+1. **Citation tags** (`@concept:`, `@story:`, `@decision:`, `@subject:`, `@practice:`) — if you rename or move the artifact a tag resolves to, update the citing call sites in the same change so `citation_resolution` stays green.
+2. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new safety property, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.
 3. **Dead code** — remove anything the change has rendered unreachable.
 
 ## Fix Every Bug You Find
@@ -70,4 +70,4 @@ Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `l
 - Save project-specific notes to project-local paths (e.g. `./CLAUDE.md`), not external memory.
 - When writing analysis or design documents, cross-check the written output against your findings before finishing — don't omit sections discussed verbally.
 - Design proposals go in `.ok-planner/sketches/` with a YYYY-MM-DD prefix (via `/sketch`); design questions go into the issue intake (`.ok-planner/issues/`, one file per question) to be resolved via `/plan-sprint`; ad-hoc working documents live in `.ok-planner/workbench/` with a YYYY-MM-DD prefix.
-- When writing prose to a human in an interactive session — status updates, review findings, items surfaced into notes files — use the citation grammar in `.claude/rules/citation-grammar.md` to make artifact kinds explicit (code, tables, protos, concepts, invariants, etc.). The grammar applies to live agent ↔ user prose only; it is **not** a convention for source code, repo docs, or commit messages.
+- When writing prose to a human in an interactive session — status updates, review findings, items surfaced into notes files — use the citation grammar in `.claude/rules/citation-grammar.md` to make artifact kinds explicit (code, tables, protos, concepts, decisions, etc.). The grammar applies to live agent ↔ user prose only; it is **not** a convention for source code, repo docs, or commit messages.

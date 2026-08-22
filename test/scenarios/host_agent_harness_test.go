@@ -15,10 +15,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
@@ -32,6 +35,8 @@ const lateBindServiceName = "codegen"
 type hostAgentFixture struct {
 	h                     *scenario.Harness
 	proxyAddr             string
+	proxyPeerAddr         string
+	proxyCAPath           string
 	stubBinary            string
 	adminKey              string
 	targetRoutingIdentity string
@@ -94,7 +99,8 @@ type agentStartOptions struct {
 	RoutingLabel string
 }
 
-func startAgent(t *testing.T, proxyAddr string, opts agentStartOptions) (context.CancelFunc, chan struct{}, string) {
+// @decision: host-agent-proxy-tls
+func startAgent(t *testing.T, proxyAddr, proxyCAPath string, opts agentStartOptions) (context.CancelFunc, chan struct{}, string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -104,6 +110,7 @@ func startAgent(t *testing.T, proxyAddr string, opts agentStartOptions) (context
 	}
 	cfg.ProxyURL = proxyAddr
 	cfg.APIKey = opts.APIKey
+	cfg.TLSCAPath = proxyCAPath
 	cfg.AgentLabel = "scenario-agent"
 	cfg.RoutingLabel = opts.RoutingLabel
 	cfg.IdentityFile = filepath.Join(t.TempDir(), "identity.json")
@@ -139,6 +146,8 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 
 	proxyPort := freePort(t)
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
+	proxyPeerPort := freePort(t)
+	proxyPeerAddr := fmt.Sprintf("127.0.0.1:%d", proxyPeerPort)
 
 	execProtocols := []string{"executor", "lifecycle_subscriber"}
 	if opts.blindProxy {
@@ -146,7 +155,7 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 	}
 	h := scenario.Start(t, scenario.HarnessOpts{
 		ExtraExecutors: map[string]executor.Endpoint{
-			proxyExecutorName: {Transport: "grpc", URL: proxyAddr},
+			proxyExecutorName: {Transport: "grpc", URL: proxyPeerAddr},
 		},
 		LateBindServiceProxies: map[string]string{"executor": proxyExecutorName},
 		ExecutorProtocols:      map[string][]string{proxyExecutorName: execProtocols},
@@ -165,22 +174,25 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 	if opts.blindProxy {
 		controlURL, controlToken = "", ""
 	}
-	startProxyOnPort(t, proxyPort, controlURL, controlToken)
+	proxyCAPath := startProxyOnPort(t, proxyPort, proxyPeerPort, controlURL, controlToken)
 
 	stub := buildBinary(t, "lib/runtime/hostagent/testdata/stubchild")
 
 	fx := &hostAgentFixture{
-		h:          h,
-		proxyAddr:  proxyAddr,
-		stubBinary: stub,
-		adminKey:   adminKey,
+		h:             h,
+		proxyAddr:     proxyAddr,
+		proxyPeerAddr: proxyPeerAddr,
+		proxyCAPath:   proxyCAPath,
+		stubBinary:    stub,
+		adminKey:      adminKey,
 	}
 	if opts.anonymous {
 		fx.targetRoutingIdentity = routingLabel
 	}
 	if opts.withAgent {
 		var statusFile string
-		fx.cancelAgent, fx.agentDone, statusFile = startAgent(t, proxyAddr, agentStartOptions{APIKey: agentAPIKey, RoutingLabel: routingLabel})
+		fx.cancelAgent, fx.agentDone, statusFile = startAgent(t, proxyAddr, proxyCAPath,
+			agentStartOptions{APIKey: agentAPIKey, RoutingLabel: routingLabel})
 		t.Cleanup(func() {
 			fx.cancelAgent()
 			<-fx.agentDone
@@ -192,15 +204,21 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 	return fx
 }
 
-func startProxyOnPort(t *testing.T, port int, controlBase, adminKey string) {
+// @decision: host-agent-proxy-tls
+// @concept: host-agent-proxy
+func startProxyOnPort(t *testing.T, agentPort, peerPort int, controlBase, adminKey string) string {
 	t.Helper()
 	bin := buildBinary(t, "cmd/rimsky-host-agent-proxy")
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	addr := fmt.Sprintf("127.0.0.1:%d", agentPort)
+	peerAddr := fmt.Sprintf("127.0.0.1:%d", peerPort)
+	caPath := filepath.Join(t.TempDir(), "proxy-ca.pem")
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("RIMSKY_PROXY_GRPC_PORT=%d", port),
+		fmt.Sprintf("RIMSKY_PROXY_GRPC_PORT=%d", agentPort),
+		fmt.Sprintf("RIMSKY_PROXY_PEER_GRPC_PORT=%d", peerPort),
 		"RIMSKY_CONTROL_API_URL="+controlBase,
 		"RIMSKY_CONTROL_API_TOKEN="+adminKey,
+		"RIMSKY_PROXY_LOCAL_CA_FILE="+caPath,
 		"RIMSKY_LOG_LEVEL=warn",
 	)
 	cmd.Stdout = os.Stderr
@@ -218,6 +236,12 @@ func startProxyOnPort(t *testing.T, port int, controlBase, adminKey string) {
 		}
 	})
 	waitDialable(t, addr)
+	waitDialable(t, peerAddr)
+	awaited.Until(t, "the proxy to publish its agent-facing CA root at "+caPath, func() bool {
+		_, err := os.Stat(caPath)
+		return err == nil
+	})
+	return caPath
 }
 
 func lateBindTemplateSpec(name string) map[string]any {
@@ -307,4 +331,15 @@ func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared
 		return false
 	})
 	return found
+}
+
+// @decision: host-agent-proxy-tls
+func dialAgentFacing(t *testing.T, proxyAddr, caPath string) *grpc.ClientConn {
+	t.Helper()
+	pool, err := enroll.CAPoolFromFile(caPath)
+	require.NoError(t, err, "read the CA root the proxy published")
+	conn, err := grpc.NewClient(proxyAddr, grpc.WithTransportCredentials(credentials.NewTLS(enroll.PinnedTLSConfig(pool))))
+	require.NoError(t, err, "dial the proxy's agent-facing listener")
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
 }

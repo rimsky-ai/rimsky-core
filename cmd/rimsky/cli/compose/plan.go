@@ -108,8 +108,9 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 
 	resolved := map[string]string{}
 	specBodies := map[string]node.TemplateSpec{}
+	// @decision: template-identity-deployment-canonical
 	for _, t := range m.Templates {
-		hash, spec, err := ResolveTemplate(t.Path)
+		hash, spec, err := ResolveTemplateThroughDeployment(ctx, c, t.Path)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", t.Path, err)
 		}

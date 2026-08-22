@@ -177,19 +177,7 @@ func (ft *frameTicker) observe(instanceID string, running []cli.FrameItem) []obs
 // @story: one-shot-to-terminal
 // @concept: frame
 func instanceIsIdle(ctx context.Context, client instanceClient, id string) (bool, []cli.FrameItem, error) {
-	frames, err := client.ListInstanceFrames(ctx, id, "running")
-	if err != nil {
-		return false, nil, err
-	}
-	if len(frames.Frames) > 0 {
-		return false, frames.Frames, nil
-	}
-	pending := true
-	messages, err := client.ListInstanceMessages(ctx, id, cli.ListMessagesQuery{Pending: &pending})
-	if err != nil {
-		return false, nil, err
-	}
-	return len(messages.Messages) == 0, nil, nil
+	return cli.InstanceQuiescence(ctx, client, id)
 }
 
 // @concept: node-run

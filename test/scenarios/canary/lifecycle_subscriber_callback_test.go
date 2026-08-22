@@ -13,14 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -28,6 +25,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
+// @concept: lifecycle-subscriber
 func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	t.Parallel()
 
@@ -47,8 +45,6 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 			},
 		},
 	})
-
-	ctx := context.Background()
 
 	spec := node.TemplateSpec{
 		Name:    "canary-lifecycle-subscriber",
@@ -73,11 +69,9 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	instanceID := h.CreateInstance(templateHash, "canary-lifecycle-ck", nil)
 	fake.waitFor(t, "OnInstanceCreated", templateHash, instanceID.String())
 
-	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
-	}))
-	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
+	postAndExpectOK(t, h, "/v1/instances/"+instanceID.String()+"/terminate")
 	fake.waitFor(t, "OnInstanceTerminated", templateHash, instanceID.String())
+	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
 
 	postAndExpectOK(t, h, "/v1/templates/"+templateHash+"/undeploy")
 	fake.waitFor(t, "OnTemplateUndeployed", templateHash, "")
@@ -95,6 +89,7 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 }
 
 // @story: instance-create-is-idle
+// @concept: lifecycle-subscriber
 func TestCanary_NeverRanInstanceTerminationDoesNotFireOnRunScopeTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -114,8 +109,6 @@ func TestCanary_NeverRanInstanceTerminationDoesNotFireOnRunScopeTerminal(t *test
 			},
 		},
 	})
-
-	ctx := context.Background()
 
 	spec := node.TemplateSpec{
 		Name:    "canary-never-ran-instance",
@@ -138,15 +131,9 @@ func TestCanary_NeverRanInstanceTerminationDoesNotFireOnRunScopeTerminal(t *test
 	instanceID := postInstanceRawExpectCreated(t, h, templateHash, "canary-never-ran-ck")
 	fake.waitFor(t, "OnInstanceCreated", templateHash, instanceID)
 
-	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		instUUID, err := parseInstanceID(instanceID)
-		if err != nil {
-			return err
-		}
-		return h.Persist.Instances().MarkTerminated(ctx, instUUID, tx)
-	}))
-	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID)
+	postAndExpectOK(t, h, "/v1/instances/"+instanceID+"/terminate")
 	fake.waitFor(t, "OnInstanceTerminated", templateHash, instanceID)
+	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID)
 
 	require.Equalf(t, 0, fake.countFor("OnRunScopeTerminal"),
 		"instance %s was created but never posted a triggering message (instance-create-is-idle: no frame ever "+
@@ -175,8 +162,6 @@ func TestCanary_RanInstanceTerminationFiresOnRunScopeTerminal(t *testing.T) {
 	})
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "canary-run-scope-terminal")
 
-	ctx := context.Background()
-
 	spec := node.TemplateSpec{
 		Name:    "canary-run-scope-terminal",
 		Version: "v1",
@@ -200,12 +185,10 @@ func TestCanary_RanInstanceTerminationFiresOnRunScopeTerminal(t *testing.T) {
 	require.NotNil(t, worker, "worker missing")
 	h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
-	}))
-	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
+	postAndExpectOK(t, h, "/v1/instances/"+instanceID.String()+"/terminate")
 
 	fake.waitFor(t, "OnRunScopeTerminal", "", instanceID.String())
+	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
 
 	require.GreaterOrEqualf(t, fake.countFor("OnRunScopeTerminal"), 1,
 		"terminating an instance that genuinely ran a dispatch (and so owns a real frame-root run scope) "+
@@ -401,12 +384,4 @@ func postInstanceRawExpectCreated(t *testing.T, h *scenario.Harness, templateHas
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 	require.NotEmpty(t, out.InstanceID)
 	return out.InstanceID
-}
-
-func parseInstanceID(id string) (shared.UUID, error) {
-	u, err := uuid.Parse(id)
-	if err != nil {
-		return shared.UUID{}, err
-	}
-	return shared.UUID(u), nil
 }

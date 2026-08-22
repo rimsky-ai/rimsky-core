@@ -45,6 +45,7 @@ func TestBuiltinSchemas_MessageSendDescriptorAdvertisesTypeNoRetiredKindOrTarget
 		s, _ := r.(string)
 		requiredStrs = append(requiredStrs, s)
 	}
-	require.ElementsMatch(t, []string{"id", "type"}, requiredStrs,
-		"message_send descriptor's required set must be exactly [id, type]")
+	// @decision: idempotency-key-header-universal
+	require.ElementsMatch(t, []string{"id", "type", "idempotency_key"}, requiredStrs,
+		"message_send descriptor's required set must be exactly [id, type, idempotency_key]")
 }

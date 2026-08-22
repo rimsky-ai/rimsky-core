@@ -81,12 +81,15 @@ func evaluateOneGate(
 	if err != nil {
 		return fmt.Errorf("get cascade mode: %w", err)
 	}
-	drop, err := applyCascadeModeRule(ctx, args, row, resolved, mode, tx)
+	drop, hold, err := applyCascadeModeRule(ctx, args, row, resolved, mode, tx)
 	if err != nil {
 		return fmt.Errorf("mode rule: %w", err)
 	}
 	if drop {
 		return args.Persist.Nodes().DropPendingRun(ctx, row.NodeRunID, tx)
+	}
+	if hold {
+		return nil
 	}
 	advancedSibling, err := args.Persist.Nodes().HasAdvancedSiblingInScope(ctx, row.NodeID, row.RunScopeID, row.NodeRunID, tx)
 	if err != nil {
@@ -101,7 +104,28 @@ func evaluateOneGate(
 	if err := args.Persist.NodeAttributes().SetDispatchInputBag(ctx, row.NodeRunID, row.NodeID, resolved, tx); err != nil {
 		return fmt.Errorf("persist dispatch bag: %w", err)
 	}
-	return args.Persist.Nodes().TransitionPendingToStale(ctx, row.NodeRunID, args.Clock.Now(), tx)
+	if err := args.Persist.Nodes().TransitionPendingToStale(ctx, row.NodeRunID, args.Clock.Now(), tx); err != nil {
+		return fmt.Errorf("gate cleared: pending->stale: %w", err)
+	}
+	return appendGateClearedTransition(ctx, args, row, tx)
+}
+
+// @concept: event-log
+// @concept: transition-reason
+// @decision: event-log-kind-enum
+func appendGateClearedTransition(
+	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, tx persistence.Tx,
+) error {
+	nodeRow, err := args.Persist.Nodes().Get(ctx, row.NodeID, tx)
+	if err != nil {
+		return fmt.Errorf("gate cleared transition event: load node: %w", err)
+	}
+	if nodeRow == nil {
+		return fmt.Errorf("gate cleared transition event: %w: node %s of run %s",
+			errNodeRowMissingForRun, row.NodeID, row.NodeRunID)
+	}
+	return AppendStateTransitionEvent(ctx, args.Persist, row.NodeID, nodeRow.InstanceID,
+		cascade.NodeStatePending, cascade.NodeStateStale, cascade.ReasonGateCleared, tx)
 }
 
 // @concept: attribute
@@ -152,6 +176,10 @@ func routeSubstitutionFailureAtGate(
 	}
 	if err := args.Persist.Nodes().TransitionPendingToStale(ctx, row.NodeRunID, args.Clock.Now(), tx); err != nil {
 		return fmt.Errorf("route substitution failure: pending->stale: %w", err)
+	}
+	if err := AppendStateTransitionEvent(ctx, args.Persist, row.NodeID, receiverNode.InstanceID,
+		cascade.NodeStatePending, cascade.NodeStateStale, cascade.ReasonGateCleared, tx); err != nil {
+		return fmt.Errorf("route substitution failure: append state transition: %w", err)
 	}
 	acq := &acquisition{
 		NodeRunID:  row.NodeRunID,
@@ -343,31 +371,38 @@ func loadReceiverCarryForward(
 // @decision: mode-default-most-recent
 func applyCascadeModeRule(
 	ctx context.Context, args RunArgs, row *persistence.NodeRunForGate, bag map[string]any, mode spec.CascadeMode, tx persistence.Tx,
-) (drop bool, err error) {
+) (drop bool, hold bool, err error) {
 	switch mode {
 	case spec.CascadeModeMostRecent, "":
 		// @concept: parked-state
 		if !row.ResumedFromPark {
 			hasLater, herr := args.Persist.Nodes().HasLaterCascadePending(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx)
 			if herr != nil {
-				return false, fmt.Errorf("most-recent: has later: %w", herr)
+				return false, false, fmt.Errorf("most-recent: has later: %w", herr)
 			}
 			if hasLater {
-				return true, nil
+				return true, false, nil
 			}
 		}
 		if _, derr := args.Persist.Nodes().DeletePriorCascadeStales(ctx, row.NodeID, row.RunScopeID, row.Sequence, tx); derr != nil {
-			return false, fmt.Errorf("most-recent: delete prior: %w", derr)
+			return false, false, fmt.Errorf("most-recent: delete prior: %w", derr)
 		}
-		return false, nil
+		return false, false, nil
 	case spec.CascadeModeSequenced:
-		return false, nil
+		// @story: sequenced-preserves-cascade-rounds
+		earlier, eerr := args.Persist.Nodes().HasEarlierQueuedRoundFromSameSender(ctx, row.NodeRunID, tx)
+		if eerr != nil {
+			return false, false, fmt.Errorf("sequenced: earlier round probe: %w", eerr)
+		}
+		return false, earlier, nil
 	case spec.CascadeModeIdempotentQueue:
-		return modeDropIfPriorEqual(ctx, args, row, bag, false, tx)
+		dropIt, derr := modeDropIfPriorEqual(ctx, args, row, bag, false, tx)
+		return dropIt, false, derr
 	case spec.CascadeModeIdempotentSettled:
-		return modeDropIfPriorEqual(ctx, args, row, bag, true, tx)
+		dropIt, derr := modeDropIfPriorEqual(ctx, args, row, bag, true, tx)
+		return dropIt, false, derr
 	}
-	return false, fmt.Errorf("applyCascadeModeRule: unknown mode %q", mode)
+	return false, false, fmt.Errorf("applyCascadeModeRule: unknown mode %q", mode)
 }
 
 // @concept: cascade

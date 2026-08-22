@@ -163,7 +163,7 @@ func (h *mcpParityHarness) attemptedRowForAction(t *testing.T, action string) ma
 	err := h.db.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		var lerr error
 		res, lerr = h.db.Tables().Events().List(ctx, persistence.EventListFilter{
-			KindIn: []string{auth.EventAccessAttempted},
+			KindIn: []string{auth.EventAccessAttempted.String()},
 		}, persistence.ListPagination{Limit: 10}, tx)
 		return lerr
 	})

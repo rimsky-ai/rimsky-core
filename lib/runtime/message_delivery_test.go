@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,11 +122,13 @@ type enqueueDepsStub struct {
 	inst persistence.InstanceTable
 	tpls persistence.TemplateTable
 	msgs persistence.MessageTable
+	evts persistence.EventTable
 }
 
 func (d *enqueueDepsStub) Instances() persistence.InstanceTable { return d.inst }
 func (d *enqueueDepsStub) Templates() persistence.TemplateTable { return d.tpls }
 func (d *enqueueDepsStub) Messages() persistence.MessageTable   { return d.msgs }
+func (d *enqueueDepsStub) Events() persistence.EventTable       { return d.evts }
 
 type nilTemplatesTable struct{}
 
@@ -266,6 +269,28 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	bad.SenderKind = "bogus"
 	if err := EnqueueMessage(ctx, deps, bad, nil); err == nil {
 		t.Fatal("EnqueueMessage(bogus sender_kind): expected error")
+	}
+
+	// @decision: message-sender-kind-discriminator
+	instanceSend := good
+	instanceSend.ID = shared.UUID(uuid.New())
+	instanceSend.SenderKind = SenderKindInstance
+	instanceSend.SenderSubject = "sub-1234"
+	err := EnqueueMessage(ctx, deps, instanceSend, nil)
+	if err == nil {
+		t.Fatal("EnqueueMessage(instance send carrying a sender_subject): expected error")
+	}
+	if !strings.Contains(err.Error(), "sub-1234") {
+		t.Fatalf("the refusal must name the subject it rejected, got: %v", err)
+	}
+	if _, persisted := m.rows[instanceSend.ID]; persisted {
+		t.Fatal("a refused instance send must persist no message row")
+	}
+
+	instanceSend.ID = shared.UUID(uuid.New())
+	instanceSend.SenderSubject = ""
+	if err := EnqueueMessage(ctx, deps, instanceSend, nil); err != nil {
+		t.Fatalf("EnqueueMessage(instance send with no sender_subject): %v", err)
 	}
 }
 
@@ -487,5 +512,73 @@ func TestDeliverTriggeringMessage_DeliveredMatchesTrigger(t *testing.T) {
 	if delivered[0].ID != msgID {
 		t.Fatalf("ListDeliveredForFrame row id = %s; want the delivered message id %s — substitution and frame-origin audit must read the same envelope",
 			delivered[0].ID, msgID)
+	}
+}
+
+// @concept: event-log
+// @concept: message
+func TestEnqueueMessage_TheLedgerRowNamesTheNodeThatSentTheMessage(t *testing.T) {
+	ctx := context.Background()
+	nodeID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+
+	recorder := &recordingEventTable{}
+	deps := &enqueueDepsStub{inst: &nilInstancesTable{}, tpls: &nilTemplatesTable{}, msgs: newFakeMessages(), evts: recorder}
+
+	cascadeSend := persistence.EnqueueMessageRequest{
+		ID: shared.UUID(uuid.New()), InstanceID: instanceID,
+		Type: "recheck", Sender: "instance:" + instanceID.String(), SenderKind: SenderKindInstance,
+	}
+	if err := EnqueueMessageFromNode(ctx, deps, cascadeSend, nodeID, nil); err != nil {
+		t.Fatalf("EnqueueMessageFromNode: %v", err)
+	}
+	if len(recorder.appended) != 1 {
+		t.Fatalf("one send appends one message_sent row, got %d", len(recorder.appended))
+	}
+	got := recorder.appended[0]
+	if got.NodeID == nil || *got.NodeID != nodeID {
+		t.Fatalf("node_id = %v, want the sending node %s. A reader filters the feed by node id, and the row "+
+			"carries the node the sending work belongs to", got.NodeID, nodeID)
+	}
+	if got.InstanceID == nil || *got.InstanceID != instanceID {
+		t.Fatalf("instance_id = %v, want %s", got.InstanceID, instanceID)
+	}
+}
+
+// @concept: event-log
+// @concept: message
+func TestEnqueueMessage_AnOperatorSendNamesNoNode(t *testing.T) {
+	ctx := context.Background()
+	recorder := &recordingEventTable{}
+	deps := &enqueueDepsStub{inst: &nilInstancesTable{}, tpls: &nilTemplatesTable{}, msgs: newFakeMessages(), evts: recorder}
+
+	operatorSend := persistence.EnqueueMessageRequest{
+		ID: shared.UUID(uuid.New()), InstanceID: shared.UUID(uuid.New()),
+		Type: "invalidate", Sender: "op-A", SenderKind: SenderKindOperator,
+	}
+	if err := EnqueueMessage(ctx, deps, operatorSend, nil); err != nil {
+		t.Fatalf("EnqueueMessage: %v", err)
+	}
+	if len(recorder.appended) != 1 {
+		t.Fatalf("one send appends one message_sent row, got %d", len(recorder.appended))
+	}
+	if node := recorder.appended[0].NodeID; node != nil {
+		t.Fatalf("node_id = %s, want none. No node inside the instance raised an operator send", node)
+	}
+}
+
+// @concept: message
+func TestEnqueueMessageFromNode_RefusesAnAbsentSendingNode(t *testing.T) {
+	deps := &enqueueDepsStub{inst: &nilInstancesTable{}, tpls: &nilTemplatesTable{}, msgs: newFakeMessages()}
+	req := persistence.EnqueueMessageRequest{
+		ID: shared.UUID(uuid.New()), InstanceID: shared.UUID(uuid.New()),
+		Type: "recheck", Sender: "instance:x", SenderKind: SenderKindInstance,
+	}
+	err := EnqueueMessageFromNode(context.Background(), deps, req, shared.UUID{}, nil)
+	if err == nil {
+		t.Fatal("a send from a node must name the node, so an absent one is refused")
+	}
+	if !strings.Contains(err.Error(), "node_id required") {
+		t.Fatalf("error = %q, want it to name the missing node id", err)
 	}
 }

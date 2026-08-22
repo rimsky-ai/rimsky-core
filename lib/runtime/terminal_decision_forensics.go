@@ -5,10 +5,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -24,62 +26,100 @@ func outcomeVerbName(o TerminalOutcome) string {
 	return "Unknown"
 }
 
-func emitTerminalForensics(
-	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
-) {
-	if args.Persist == nil || args.Clock == nil {
-		return
-	}
-	if (td.LineageHint == ClaimLineageHint{}) {
-		return
-	}
-	lineageParentClaimHandleID := td.ParentClaimHandleID
+// @concept: data-processing
+// @decision: promotion-lineage-record-after-commit
+func claimTerminalLineageWaitsForCommit(td TerminalDecision) bool {
+	return td.Outcome == OutcomeCommit && len(td.CandidateHandle) > 0
+}
+
+func lineageParentOf(td TerminalDecision) *shared.UUID {
 	if td.LineageParentClaimHandleID != nil {
-		lineageParentClaimHandleID = td.LineageParentClaimHandleID
+		return td.LineageParentClaimHandleID
 	}
-	outcome := terminalOutcomeKey(td)
-	now := args.Clock.Now()
-	var subIDs []string
-	if args.ClaimHandles != nil {
-		children, cerr := args.ClaimHandles.ListChildClaimHandles(ctx, td.ClaimHandleID, tx)
-		if cerr != nil {
-			if args.Logger != nil {
-				args.Logger.Warn("ResolveClaimHandleTerminal: ListChildClaimHandles failed",
-					"claim_handle_id", td.ClaimHandleID.String(),
-					"error", cerr.Error())
-			}
-		} else {
-			subIDs = make([]string, 0, len(children))
-			for _, c := range children {
-				subIDs = append(subIDs, c.ID.String())
-			}
+	return td.ParentClaimHandleID
+}
+
+func subClaimHandleIDsFor(
+	ctx context.Context, args RunArgs, claimHandleID shared.UUID, tx persistence.Tx,
+) []string {
+	if args.ClaimHandles == nil {
+		return nil
+	}
+	children, err := args.ClaimHandles.ListChildClaimHandles(ctx, claimHandleID, tx)
+	if err != nil {
+		if args.Logger != nil {
+			args.Logger.Warn("ResolveClaimHandleTerminal: ListChildClaimHandles failed",
+				"claim_handle_id", claimHandleID.String(),
+				"error", err.Error())
 		}
+		return nil
 	}
+	out := make([]string, 0, len(children))
+	for _, c := range children {
+		out = append(out, c.ID.String())
+	}
+	return out
+}
+
+// @concept: lineage-record
+func claimTerminalRecordFor(
+	ctx context.Context, args RunArgs, td TerminalDecision, observedAt time.Time, tx persistence.Tx,
+) ClaimTerminalRecord {
 	rec := ClaimTerminalRecord{
 		ClaimHandleID:           td.ClaimHandleID,
 		NodeRunID:               td.LineageHint.NodeRunID,
 		OpenLineageRunRef:       td.LineageHint.NodeRunID.String(),
 		NodeID:                  td.LineageHint.NodeID,
 		FrameID:                 td.LineageHint.FrameID,
-		ParentClaimHandleID:     lineageParentClaimHandleID,
-		SubClaimHandleIDs:       subIDs,
-		CommittedAt:             now.UTC().Format(time.RFC3339Nano),
+		ParentClaimHandleID:     lineageParentOf(td),
+		SubClaimHandleIDs:       subClaimHandleIDsFor(ctx, args, td.ClaimHandleID, tx),
+		CommittedAt:             observedAt.UTC().Format(time.RFC3339Nano),
 		ProducerName:            td.LineageHint.ProducerName,
 		ClaimScopeDataHash:      HashBytes(td.Scope),
 		VersionID:               td.LineageHint.VersionID,
-		Outcome:                 outcome,
+		Outcome:                 terminalOutcomeKey(td),
 		TerminatingSupervisorID: td.SupervisorID,
 	}
 	switch td.Outcome {
 	case OutcomeAbandonSiblingCancel, OutcomeAbandonDescendantCancel:
 		rec.Cause = td.Outcome.CauseString()
 	}
+	return rec
+}
+
+// @decision: promotion-lineage-record-after-commit
+func emitTerminalForensics(
+	ctx context.Context, args RunArgs, td TerminalDecision, tx persistence.Tx,
+) []byte {
+	if args.Persist == nil || args.Clock == nil {
+		return nil
+	}
+	if (td.LineageHint == ClaimLineageHint{}) {
+		return nil
+	}
+	now := args.Clock.Now()
+	rec := claimTerminalRecordFor(ctx, args, td, now, tx)
+	var pending []byte
 	if lt := args.Persist.Lineage(); lt != nil {
-		if err := WriteClaimTerminalLineage(ctx, lt, td.LineageHint.InstanceID, td.LineageHint.FrameID, now, rec, tx); err != nil && args.Logger != nil {
-			args.Logger.Warn("ResolveClaimHandleTerminal: lineage write failed",
-				"claim_handle_id", td.ClaimHandleID.String(),
-				"outcome", outcome,
-				"error", err.Error())
+		if claimTerminalLineageWaitsForCommit(td) && ProducerVerbOutboxOf(args) != nil {
+			marshalled, err := json.Marshal(rec)
+			if err != nil {
+				if args.Logger != nil {
+					args.Logger.Warn("ResolveClaimHandleTerminal: staging the promotion's lineage record failed; rimsky writes it at settlement without a version",
+						"claim_handle_id", td.ClaimHandleID.String(),
+						"error", err.Error())
+				}
+			} else {
+				pending = marshalled
+			}
+		}
+		if pending == nil {
+			if err := WriteClaimTerminalLineage(ctx, lt, td.LineageHint.InstanceID, td.LineageHint.FrameID, now, rec, tx); err != nil && args.Logger != nil {
+				args.Logger.Warn("ResolveClaimHandleTerminal: lineage write failed",
+					"claim_handle_id", td.ClaimHandleID.String(),
+					"outcome", rec.Outcome,
+					"error", err.Error())
+			}
 		}
 	}
 	kind := events.KindClaimResolutionCommit()
@@ -91,8 +131,8 @@ func emitTerminalForensics(
 		ClaimScopeDataHash: rec.ClaimScopeDataHash,
 		VersionId:          rec.VersionID,
 	}
-	if lineageParentClaimHandleID != nil {
-		s := lineageParentClaimHandleID.String()
+	if parent := lineageParentOf(td); parent != nil {
+		s := parent.String()
 		payload.ParentClaimHandleId = &s
 	}
 	if td.Outcome.IsAbandon() {
@@ -112,6 +152,7 @@ func emitTerminalForensics(
 			"kind", kind.String(),
 			"error", err.Error())
 	}
+	return pending
 }
 
 func terminalOutcomeKey(td TerminalDecision) string {

@@ -22,6 +22,23 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
+// @decision: lineage-records-computation-only
+const (
+	LeafRunTerminalKindComplete     = "complete"
+	LeafRunTerminalKindErrored      = "errored"
+	LeafRunTerminalKindPark         = "park"
+	LeafRunTerminalKindSubgraphCall = "subgraph_call"
+)
+
+func leafRunTerminalKindIsClosed(kind string) bool {
+	switch kind {
+	case LeafRunTerminalKindComplete, LeafRunTerminalKindErrored,
+		LeafRunTerminalKindPark, LeafRunTerminalKindSubgraphCall:
+		return true
+	}
+	return false
+}
+
 type LeafRunHeldClaim struct {
 	ClaimHandleID      string `json:"claim_handle_id"`
 	Role               string `json:"role"`
@@ -87,6 +104,12 @@ func WriteLeafRunLineage(
 	}
 	if rec.SettlingSignalType == "" {
 		return fmt.Errorf("WriteLeafRunLineage: settling_signal_type required")
+	}
+	// @decision: lineage-records-computation-only
+	if !leafRunTerminalKindIsClosed(rec.TerminalKind) {
+		return fmt.Errorf("WriteLeafRunLineage: terminal_kind %q is outside the closed family (%s | %s | %s | %s)",
+			rec.TerminalKind, LeafRunTerminalKindComplete, LeafRunTerminalKindErrored,
+			LeafRunTerminalKindPark, LeafRunTerminalKindSubgraphCall)
 	}
 	payload, err := json.Marshal(rec)
 	if err != nil {
@@ -251,6 +274,14 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 				"error", err.Error())
 		}
 	}
+}
+
+// @decision: lineage-records-computation-only
+func emitLeafRunLineageForAcq(ctx context.Context, args RunArgs, acq *acquisition, in LeafRunEmitInput) {
+	if !acq.invokedExecutor() {
+		return
+	}
+	EmitLeafRunLineage(ctx, args, in)
 }
 
 func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {

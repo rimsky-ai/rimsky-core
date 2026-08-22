@@ -111,16 +111,16 @@ message Event {
 
 message MessageSentPayload {
   string type = 1;
-  string source_node_id = 2;
-  string target_node_id = 3;
-  google.protobuf.Struct params = 4;
+  reserved 2, 3, 4;
+  reserved "source_node_id", "target_node_id", "params";
 }
 
 message MessageReceivedPayload {
   string type = 1;
   string source_node_id = 2;
   string target_node_id = 3;
-  google.protobuf.Struct params = 4;
+  reserved 4;
+  reserved "params";
 }
 
 message StateTransitionPayload {

@@ -89,6 +89,7 @@ func (d *fakeEnqueueDeps) Instances() persistence.InstanceTable {
 }
 func (d *fakeEnqueueDeps) Templates() persistence.TemplateTable { return &fakeTemplatesForEnqueue{} }
 func (d *fakeEnqueueDeps) Messages() persistence.MessageTable   { return d.msgs }
+func (d *fakeEnqueueDeps) Events() persistence.EventTable       { return nil }
 
 func (f *fakeMessages) Insert(_ context.Context, req persistence.EnqueueMessageRequest, _ persistence.Tx) error {
 	f.rows[req.ID] = &persistence.MessageRow{

@@ -401,8 +401,6 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		var fanOutErr error
-		var fanOutDetails map[string]error
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
 				ID:     hash,
@@ -417,29 +415,18 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 					return err
 				}
 			}
-			_, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateRegistered, hash, spec, TemplatePayload{Spec: canonBytes}, tx)
-			if ferr != nil {
-				fanOutErr = ferr
-				fanOutDetails = perStore
-				return ferr
-			}
-			return nil
+			return StageTemplateLifecycleEvent(ctx, deps, EventTemplateRegistered, hash, spec, TemplatePayload{Spec: canonBytes}, tx)
 		})
 		if errors.Is(err, errTagMoveForbidden) {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": errTagMoveForbidden.Error()})
 			return
 		}
 		if err != nil {
-			if fanOutErr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "template lifecycle fan-out failed",
-					"details": fanOutDetails,
-				})
-				return
-			}
 			writeError(w, err)
 			return
 		}
+		deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleIdempotencyScopeTemplate, hash,
+			"template_hash", hash, "event", EventTemplateRegistered.String())
 		tags := tagsForTemplate(req.Context(), deps, hash)
 		writeJSON(w, http.StatusCreated, templateRegisterResponse{
 			TemplateID:         hash,
@@ -533,10 +520,12 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		warningsAsErrors := req.URL.Query().Get("warnings_as_errors") == "true"
 		ok := len(validationErrors) == 0 && (!warningsAsErrors || len(validationWarnings) == 0)
 
+		// @decision: template-identity-deployment-canonical
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":                  ok,
 			"validation_errors":   validationErrors,
 			"validation_warnings": validationWarnings,
+			"template_hash":       hash,
 		})
 	}
 }
@@ -741,15 +730,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 		}) {
 			return
 		}
-		var fanOutErr error
-		var fanOutDetails map[string]error
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			_, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}, tx)
-			if ferr != nil {
-				fanOutErr = ferr
-				fanOutDetails = perStore
-				return ferr
-			}
 			if isTag {
 				if _, err := deps.Persist.TemplateTags().Delete(ctx, idOrTag, tx); err != nil {
 					return err
@@ -765,19 +746,17 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 					}
 				}
 			}
-			return deps.Persist.Templates().DeleteByHash(ctx, hash, tx)
+			if err := deps.Persist.Templates().DeleteByHash(ctx, hash, tx); err != nil {
+				return err
+			}
+			return StageTemplateLifecycleEvent(ctx, deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}, tx)
 		})
 		if err != nil {
-			if fanOutErr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "template lifecycle fan-out failed",
-					"details": fanOutDetails,
-				})
-				return
-			}
 			writeError(w, err)
 			return
 		}
+		deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleIdempotencyScopeTemplate, hash,
+			"template_hash", hash, "event", EventTemplateDeregistered.String())
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 	}
 }
@@ -796,10 +775,8 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 
 		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		var (
-			outState      string
-			noOp          bool
-			fanOutErr     error
-			fanOutDetails map[string]error
+			outState string
+			noOp     bool
 		)
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
@@ -830,17 +807,11 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			for _, t := range tagRows {
 				tags = append(tags, t.Tag)
 			}
-			_, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec, TemplatePayload{Tags: tags}, tx)
-			if ferr != nil {
-				fanOutErr = ferr
-				fanOutDetails = perStore
-				return ferr
-			}
 			if err := deps.Persist.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, tx); err != nil {
 				return err
 			}
 			outState = "deployed"
-			return nil
+			return StageTemplateLifecycleEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec, TemplatePayload{Tags: tags}, tx)
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_deployed", map[string]any{
@@ -849,13 +820,6 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			if fanOutErr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "template lifecycle fan-out failed",
-					"details": fanOutDetails,
-				})
-				return
-			}
 			if errors.Is(err, shared.ErrTemplateNotFound) {
 				notFoundResp(w, shared.ErrTemplateNotFound.Error())
 				return
@@ -866,6 +830,10 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			}
 			writeError(w, err)
 			return
+		}
+		if !noOp {
+			deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleIdempotencyScopeTemplate, hash,
+				"template_hash", hash, "event", EventTemplateDeployed.String())
 		}
 		resp := map[string]any{"state": outState}
 		if noOp {
@@ -889,11 +857,9 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 
 		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		var (
-			outState      string
-			noOp          bool
-			activeCount   int
-			fanOutErr     error
-			fanOutDetails map[string]error
+			outState    string
+			noOp        bool
+			activeCount int
 		)
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
@@ -926,16 +892,11 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 			if isDryRun {
 				return errDryRunOK
 			}
-			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateUndeployed, hash, row.Spec, TemplatePayload{}, tx); ferr != nil {
-				fanOutErr = ferr
-				fanOutDetails = perStore
-				return ferr
-			}
 			if err := deps.Persist.Templates().UpdateState(ctx, hash, persistence.TemplateStateUndeployed, tx); err != nil {
 				return err
 			}
 			outState = "undeployed"
-			return nil
+			return StageTemplateLifecycleEvent(ctx, deps, EventTemplateUndeployed, hash, row.Spec, TemplatePayload{}, tx)
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_undeployed", map[string]any{
@@ -944,13 +905,6 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			if fanOutErr != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "template lifecycle fan-out failed",
-					"details": fanOutDetails,
-				})
-				return
-			}
 			if errors.Is(err, shared.ErrTemplateNotFound) {
 				notFoundResp(w, shared.ErrTemplateNotFound.Error())
 				return
@@ -965,6 +919,10 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 			}
 			writeError(w, err)
 			return
+		}
+		if !noOp {
+			deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleIdempotencyScopeTemplate, hash,
+				"template_hash", hash, "event", EventTemplateUndeployed.String())
 		}
 		resp := map[string]any{"state": outState}
 		if noOp {

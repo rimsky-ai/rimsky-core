@@ -6,14 +6,13 @@ package launch
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/ports"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
-	"gopkg.in/yaml.v3"
 )
 
 func clearSupervisorAdvertiseEnv(t *testing.T) {
@@ -24,7 +23,7 @@ func clearSupervisorAdvertiseEnv(t *testing.T) {
 
 func TestResolveSupervisorConfig_DefaultsAndClamps(t *testing.T) {
 	clearSupervisorAdvertiseEnv(t)
-	resolved, err := resolveSupervisorConfig(supervisorYAMLConfig{})
+	resolved, err := resolveSupervisorConfig(config.SupervisorSection{})
 	if err != nil {
 		t.Fatalf("resolveSupervisorConfig: %v", err)
 	}
@@ -55,7 +54,7 @@ func intPtr(n int) *int { return &n }
 func TestResolveSupervisorConfig_CallbackPortDefaultsIntoTheCoreBlockAndZeroStaysEphemeral(t *testing.T) {
 	clearSupervisorAdvertiseEnv(t)
 
-	resolved, err := resolveSupervisorConfig(supervisorYAMLConfig{})
+	resolved, err := resolveSupervisorConfig(config.SupervisorSection{})
 	if err != nil {
 		t.Fatalf("resolveSupervisorConfig: %v", err)
 	}
@@ -63,8 +62,8 @@ func TestResolveSupervisorConfig_CallbackPortDefaultsIntoTheCoreBlockAndZeroStay
 		t.Errorf("CallbackPort with no callback.port = %d, want %d", resolved.CallbackPort, ports.SupervisorCallback)
 	}
 
-	ephemeral, err := resolveSupervisorConfig(supervisorYAMLConfig{
-		Callback: supervisorYAMLCallback{Port: intPtr(0)},
+	ephemeral, err := resolveSupervisorConfig(config.SupervisorSection{
+		Callback: config.SupervisorCallbackSection{Port: intPtr(0)},
 	})
 	if err != nil {
 		t.Fatalf("resolveSupervisorConfig: %v", err)
@@ -74,42 +73,14 @@ func TestResolveSupervisorConfig_CallbackPortDefaultsIntoTheCoreBlockAndZeroStay
 	}
 }
 
-// @decision: default-port-allocation
-func TestResolveSupervisorConfig_WrittenYAMLDistinguishesAnExplicitZeroFromAnOmittedPort(t *testing.T) {
-	clearSupervisorAdvertiseEnv(t)
-
-	for _, tc := range []struct {
-		name string
-		yaml string
-		want int
-	}{
-		{name: "explicit zero stays ephemeral", yaml: "callback:\n  host: 0.0.0.0\n  port: 0\n", want: 0},
-		{name: "omitted key takes the core-block default", yaml: "callback:\n  host: 0.0.0.0\n", want: ports.SupervisorCallback},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var cfg supervisorYAMLConfig
-			if err := yaml.Unmarshal([]byte(tc.yaml), &cfg); err != nil {
-				t.Fatalf("decode %q: %v", tc.yaml, err)
-			}
-			resolved, err := resolveSupervisorConfig(cfg)
-			if err != nil {
-				t.Fatalf("resolveSupervisorConfig: %v", err)
-			}
-			if resolved.CallbackPort != tc.want {
-				t.Errorf("CallbackPort from %q = %d, want %d", tc.yaml, resolved.CallbackPort, tc.want)
-			}
-		})
-	}
-}
-
 func TestResolveSupervisorConfig_ExplicitValuesPassThrough(t *testing.T) {
 	clearSupervisorAdvertiseEnv(t)
-	cfg := supervisorYAMLConfig{
+	cfg := config.SupervisorSection{
 		SupervisorID:        "sup-explicit",
 		Concurrency:         8,
 		LivenessIntervalMs:  200,
 		ClaimPollIntervalMs: 75,
-		Callback: supervisorYAMLCallback{
+		Callback: config.SupervisorCallbackSection{
 			Host: "127.0.0.5",
 			Port: intPtr(9999),
 		},
@@ -137,7 +108,7 @@ func TestResolveSupervisorConfig_ExplicitValuesPassThrough(t *testing.T) {
 
 func TestResolveSupervisorConfig_BelowFloorValuesAreClamped(t *testing.T) {
 	clearSupervisorAdvertiseEnv(t)
-	cfg := supervisorYAMLConfig{
+	cfg := config.SupervisorSection{
 		Concurrency:         0,
 		LivenessIntervalMs:  99,
 		ClaimPollIntervalMs: 49,
@@ -161,8 +132,8 @@ func TestResolveSupervisorConfig_AdvertiseHostPrecedence(t *testing.T) {
 	t.Run("env wins over yaml", func(t *testing.T) {
 		clearSupervisorAdvertiseEnv(t)
 		t.Setenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST", "env-host")
-		resolved, err := resolveSupervisorConfig(supervisorYAMLConfig{
-			Callback: supervisorYAMLCallback{AdvertiseHost: "yaml-host"},
+		resolved, err := resolveSupervisorConfig(config.SupervisorSection{
+			Callback: config.SupervisorCallbackSection{AdvertiseHost: "yaml-host"},
 		})
 		if err != nil {
 			t.Fatalf("resolveSupervisorConfig: %v", err)
@@ -174,8 +145,8 @@ func TestResolveSupervisorConfig_AdvertiseHostPrecedence(t *testing.T) {
 
 	t.Run("yaml used when env unset", func(t *testing.T) {
 		clearSupervisorAdvertiseEnv(t)
-		resolved, err := resolveSupervisorConfig(supervisorYAMLConfig{
-			Callback: supervisorYAMLCallback{AdvertiseHost: "yaml-host"},
+		resolved, err := resolveSupervisorConfig(config.SupervisorSection{
+			Callback: config.SupervisorCallbackSection{AdvertiseHost: "yaml-host"},
 		})
 		if err != nil {
 			t.Fatalf("resolveSupervisorConfig: %v", err)
@@ -187,7 +158,7 @@ func TestResolveSupervisorConfig_AdvertiseHostPrecedence(t *testing.T) {
 
 	t.Run("unset when neither is set", func(t *testing.T) {
 		clearSupervisorAdvertiseEnv(t)
-		resolved, err := resolveSupervisorConfig(supervisorYAMLConfig{})
+		resolved, err := resolveSupervisorConfig(config.SupervisorSection{})
 		if err != nil {
 			t.Fatalf("resolveSupervisorConfig: %v", err)
 		}
@@ -201,8 +172,8 @@ func TestResolveSupervisorConfig_AdvertisePortPrecedence(t *testing.T) {
 	t.Run("env wins over yaml", func(t *testing.T) {
 		clearSupervisorAdvertiseEnv(t)
 		t.Setenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT", "7001")
-		resolved, err := resolveSupervisorConfig(supervisorYAMLConfig{
-			Callback: supervisorYAMLCallback{AdvertisePort: 8001},
+		resolved, err := resolveSupervisorConfig(config.SupervisorSection{
+			Callback: config.SupervisorCallbackSection{AdvertisePort: 8001},
 		})
 		if err != nil {
 			t.Fatalf("resolveSupervisorConfig: %v", err)
@@ -214,8 +185,8 @@ func TestResolveSupervisorConfig_AdvertisePortPrecedence(t *testing.T) {
 
 	t.Run("yaml used when env unset", func(t *testing.T) {
 		clearSupervisorAdvertiseEnv(t)
-		resolved, err := resolveSupervisorConfig(supervisorYAMLConfig{
-			Callback: supervisorYAMLCallback{AdvertisePort: 8001},
+		resolved, err := resolveSupervisorConfig(config.SupervisorSection{
+			Callback: config.SupervisorCallbackSection{AdvertisePort: 8001},
 		})
 		if err != nil {
 			t.Fatalf("resolveSupervisorConfig: %v", err)
@@ -228,7 +199,7 @@ func TestResolveSupervisorConfig_AdvertisePortPrecedence(t *testing.T) {
 	t.Run("non-numeric env port is an error", func(t *testing.T) {
 		clearSupervisorAdvertiseEnv(t)
 		t.Setenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT", "not-a-port")
-		_, err := resolveSupervisorConfig(supervisorYAMLConfig{})
+		_, err := resolveSupervisorConfig(config.SupervisorSection{})
 		if err == nil {
 			t.Fatal("resolveSupervisorConfig: want error for non-numeric advertise port")
 		}
@@ -236,43 +207,6 @@ func TestResolveSupervisorConfig_AdvertisePortPrecedence(t *testing.T) {
 			t.Errorf("error %q does not name the offending value", err.Error())
 		}
 	})
-}
-
-func TestLoadSupervisorYAML_ExpandsEnvVars(t *testing.T) {
-	t.Setenv("SUPERVISOR_TEST_HOST", "expanded-host.example")
-	dir := t.TempDir()
-	path := filepath.Join(dir, "supervisor.yml")
-	contents := "supervisor_id: sup-1\ncallback:\n  advertise_host: ${SUPERVISOR_TEST_HOST}\n"
-	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, err := loadSupervisorYAML(path)
-	if err != nil {
-		t.Fatalf("loadSupervisorYAML: %v", err)
-	}
-	if cfg.Callback.AdvertiseHost != "expanded-host.example" {
-		t.Errorf("Callback.AdvertiseHost = %q, want expanded-host.example (env expansion)", cfg.Callback.AdvertiseHost)
-	}
-}
-
-func TestLoadSupervisorYAML_MissingFile(t *testing.T) {
-	_, err := loadSupervisorYAML(filepath.Join(t.TempDir(), "does-not-exist.yml"))
-	if err == nil {
-		t.Fatal("loadSupervisorYAML: want error for a missing file")
-	}
-}
-
-func TestLoadSupervisorYAML_MalformedYAML(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "supervisor.yml")
-	if err := os.WriteFile(path, []byte("concurrency: [this is not an int\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	_, err := loadSupervisorYAML(path)
-	if err == nil {
-		t.Fatal("loadSupervisorYAML: want error for malformed YAML")
-	}
 }
 
 func TestMergeBundledExecutorAliases_ConfiguredWinsOverBundled(t *testing.T) {

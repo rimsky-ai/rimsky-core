@@ -30,6 +30,10 @@ ON CONFLICT (instance_id, sender_kind, sender, sender_subject, idempotency_key) 
 RETURNING message_id, created_at, (xmax = 0) AS inserted`
 
 func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, row persistence.MessageIdempotencyRow, tx persistence.Tx) (persistence.MessageIdempotencyRow, bool, error) {
+	// @decision: message-sender-kind-discriminator
+	if err := row.ValidateSenderKind(); err != nil {
+		return persistence.MessageIdempotencyRow{}, false, err
+	}
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = time.Now().UTC()
 	}

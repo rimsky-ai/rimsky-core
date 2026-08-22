@@ -15,7 +15,6 @@
 | `RIMSKY_AGENT_REGISTER_ACK_TIMEOUT_SEC` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_ROUTING_LABEL` | `lib/runtime/hostagent/spawn.go` |
 | `RIMSKY_AGENT_STATUS_FILE` | `lib/runtime/hostagent/config.go` |
-| `RIMSKY_AGENT_TLS` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_AGENT_TLS_CA` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT` | `lib/protocols/peerauth/config.go` |
 | `RIMSKY_API_KEY` | `cmd/rimsky/cli/admin.go` |
@@ -48,9 +47,10 @@
 | `RIMSKY_EXECUTOR_STUB_MODE` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` | `lib/services/executors/claude-agent/opts.go` |
 | `RIMSKY_EXECUTOR_VERIFIER_HTTP_EGRESS_ALLOWLIST` | `lib/services/executors/verifier-http/opts.go` |
+| `RIMSKY_HOST_AGENT_INSECURE` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_HOST_AGENT_PROXY_URL` | `lib/runtime/hostagent/config.go` |
 | `RIMSKY_LOG_BINARY` | `cmd/internal/roleboot/roleboot.go` |
-| `RIMSKY_LOG_LEVEL` | `cmd/internal/roleboot/roleboot.go` |
+| `RIMSKY_LOG_LEVEL` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_METRICS_HOST` | `lib/control/launch/scheduler.go` |
 | `RIMSKY_METRICS_PORT` | `lib/control/launch/scheduler.go` |
 | `RIMSKY_METRICS_PORT_CONTROL_API` | `lib/control/launch/scheduler.go` |
@@ -68,6 +68,7 @@
 | `RIMSKY_PEER_AUTH` | `lib/protocols/enroll/mode.go` |
 | `RIMSKY_PROCESS_ROLE` | `cmd/rimsky/cli/compose/run.go` |
 | `RIMSKY_PROXY_GRPC_PORT` | `cmd/rimsky-host-agent-proxy/config.go` |
+| `RIMSKY_PROXY_LOCAL_CA_FILE` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_PROXY_PEER_GRPC_PORT` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_PROXY_TLS_CERT` | `cmd/rimsky-host-agent-proxy/config.go` |
 | `RIMSKY_PROXY_TLS_KEY` | `cmd/rimsky-host-agent-proxy/config.go` |
@@ -91,4 +92,3 @@
 | `RIMSKY_SENSOR_WEBHOOK_STATE_DSN` | `lib/services/sensors/sensor-webhook/state_db.go` |
 | `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST` | `lib/control/launch/supervisor.go` |
 | `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT` | `lib/control/launch/supervisor.go` |
-| `RIMSKY_SUPERVISOR_CONFIG` | `cmd/rimsky/cli/compose/run.go` |

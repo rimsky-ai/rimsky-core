@@ -292,7 +292,54 @@ func checkSplitScope(ctx context.Context, c claimproducer.ClaimProducer, caps cl
 		results = append(results, CheckResult{Name: "SplitScopeListShapeAddressFieldEmpty"})
 	}
 
+	results = append(results, checkSubScopesDisjoint(ctx, c, caps, resp.SubClaimScopes))
+
 	return results
+}
+
+// @concept: fan-out
+func checkSubScopesDisjoint(
+	ctx context.Context,
+	c claimproducer.ClaimProducer,
+	caps claimproducer.Capabilities,
+	subs []claimproducer.SubClaimScopeDescriptor,
+) CheckResult {
+	const name = "SplitScopeSubScopesDisjoint"
+	for i := 0; i < len(subs); i++ {
+		for j := i + 1; j < len(subs); j++ {
+			overlap, err := subScopesOverlap(ctx, c, caps, subs[i].ClaimScopeData, subs[j].ClaimScopeData)
+			if err != nil {
+				return CheckResult{Name: name, Err: err}
+			}
+			if overlap {
+				return CheckResult{Name: name, Err: fmt.Errorf(
+					"sub-scopes for partitions %q and %q overlap; a split hands each clone a partition "+
+						"of the parent claim, so two sub-scopes of one split must never conflict",
+					subs[i].PartitionKey, subs[j].PartitionKey)}
+			}
+		}
+	}
+	return CheckResult{Name: name}
+}
+
+// @concept: fan-out
+func subScopesOverlap(
+	ctx context.Context,
+	c claimproducer.ClaimProducer,
+	caps claimproducer.Capabilities,
+	a, b []byte,
+) (bool, error) {
+	if bytes.Equal(a, b) {
+		return true, nil
+	}
+	if !caps.SupportsScopesConflict {
+		return false, nil
+	}
+	conflicts, err := c.ScopesConflict(ctx, a, b)
+	if err != nil {
+		return false, fmt.Errorf("ScopesConflict over two sub-scopes of one split failed: %w", err)
+	}
+	return conflicts, nil
 }
 
 func checkScopesConflict(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) []CheckResult {

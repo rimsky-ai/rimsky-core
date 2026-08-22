@@ -20,12 +20,10 @@ FROM ${RIMSKY_BASE}
 LABEL org.opencontainers.image.title="rimsky-all-in-one"
 LABEL org.opencontainers.image.description="Zero-config rimsky orchestrator (development convenience image; SQLite default, all roles in one single-process PID-1 — not for production)."
 
-# Bake the zero-config defaults, renaming each source file to the canonical
-# path the binaries read (RIMSKY_CONFIG / RIMSKY_SUPERVISOR_CONFIG, both set
-# in the base image). Root-owned 0644 is fine — the nonroot binaries only
-# read these.
-COPY dockerfiles/all-in-one.rimsky.yml            /etc/rimsky/rimsky.yml
-COPY dockerfiles/all-in-one.supervisor-config.yml /etc/rimsky/supervisor-config.yml
+# Bake the zero-config defaults, renaming the source file to the canonical
+# path the binaries read (RIMSKY_CONFIG, set in the base image). Root-owned
+# 0644 is fine — the nonroot binaries only read this.
+COPY dockerfiles/all-in-one.rimsky.yml /etc/rimsky/rimsky.yml
 
 # Bind the control-api to all interfaces so a published port reaches it out of
 # the box (`docker run -p 8080:8080 ...`). The base `rimsky` image leaves the
@@ -36,7 +34,7 @@ COPY dockerfiles/all-in-one.supervisor-config.yml /etc/rimsky/supervisor-config.
 # for production.
 ENV RIMSKY_CONTROL_API_HOST=0.0.0.0
 
-# USER, EXPOSE, VOLUME, the RIMSKY_CONFIG/RIMSKY_SUPERVISOR_CONFIG env, and
+# USER, EXPOSE, VOLUME, the RIMSKY_CONFIG env, and
 # ENTRYPOINT are inherited from the base `rimsky` image. ENTRYPOINT is restated
 # here so a cold read of this file shows the all-in-one PID-1 without chasing
 # the base.

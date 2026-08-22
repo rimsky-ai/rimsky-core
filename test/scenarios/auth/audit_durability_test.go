@@ -86,7 +86,7 @@ func countAttemptedRows(t *testing.T, f *authFixture, keyName, method, path stri
 		if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
 			page, err = f.db.Tables().Events().List(ctx,
-				persistence.EventListFilter{KindIn: []string{auth.EventAccessAttempted}},
+				persistence.EventListFilter{KindIn: []string{auth.EventAccessAttempted.String()}},
 				persistence.ListPagination{Limit: 500, Cursor: cursor}, tx)
 			return err
 		}); err != nil {

@@ -8,18 +8,18 @@ aliases:
 
 ## What it is
 
-The operator-dashboard HTTP-route backplane exposed by the control API: a read-only family of endpoints giving operators visibility into rimsky's own persisted runtime state, and, for discovered peer status, into the discovery cache populated by the observability handshake (see `concept:observability`). Membership of the route family is owned by the control-api code, not enumerated here. The per-instance read includes a cascade graph — the concept's namesake capability: the instance's nodes joined with their subscription edges, each node's run summary, and its last terminal event.
+Cascade graph is the read-only side of the control API: a family of routes that shows an operator rimsky's own persisted runtime state, and, for the status of a discovered peer, the discovery cache that the observability handshake fills (see `concept:observability`, `concept:discovery-cache`). No handler in the family mutates anything. This concept lists no route: the code settles which routes belong to the family. The per-instance read carries the cascade graph the concept is named for: the instance's nodes joined to their subscription edges, each node's run summary, and its last terminal event.
 
 ## Purpose
 
-Operators (and dashboards built on top of rimsky) need to see what's running, what's wedged, what events have fired, and how cascade is propagating. `cascade-graph` is the read-only HTTP surface that exposes that state without coupling consumers to internal SQL or to the per-service observability protocols.
+An operator, and a dashboard built on rimsky, needs to see what runs, what is wedged, which events have fired, and how cascade is propagating. Cascade graph exposes that state without coupling the consumer to rimsky's storage or to the per-service observability protocols.
 
 ## Boundaries
 
-Owns: the read-route definitions, the per-route handlers, the JSON marshalling, the per-handler short-transaction discipline — this surface is the sole owner of these handlers; no adjacent concept implements or owns them. Does NOT own: per-service executor/store observability protocols (see `observability`), audit-log writes (see `event-log`), control-plane mutation endpoints (see `control-api`). Adjacent: `observability`, `control-api`, `event-log`, `frame`, `node`.
+Cascade graph owns every handler in the read-only family; no neighbouring concept implements one. The per-service protocols that executors and stores answer belong to `concept:observability`. Writes to the audit log belong to `concept:event-log`. The mutating control-plane surface belongs to `concept:control-api`.
 
-## Invariants
+see also: `observability`, `control-api`, `event-log`, `discovery-cache`, `frame`, `node`
 
-- Handlers that read persisted tables open a short fresh transaction per read; handlers backed by the discovery cache or the dispatch queue read those sources directly, outside any table transaction.
-- Read-only: no handler in this surface mutates state.
-- The frames-read routes join each returned frame to its triggering message row, surfacing the message's type, sender, and sender kind alongside the frame (each message triggers at most one frame — see `concept:message` and `concept:frame`).
+## Aliases
+
+- operator dashboard backplane

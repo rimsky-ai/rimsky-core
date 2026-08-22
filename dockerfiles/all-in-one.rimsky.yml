@@ -8,6 +8,12 @@
 # deployed instances use the `rimsky` image with the postgres driver and an
 # explicit claim_producers/executors block, mounted at /etc/rimsky/rimsky.yml.
 #
+# Single-container supervisor defaults: the async-callback listener binds
+# 0.0.0.0:8081 and advertises 127.0.0.1, because every rimsky role (scheduler,
+# supervisor, control-api) runs in the single all-in-one process inside this
+# container. When the executors run outside the container, set
+# RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST to a hostname they can reach.
+#
 # Override by mounting your own file:
 #   docker run -v ./my-rimsky.yml:/etc/rimsky/rimsky.yml:ro rimskyai/rimsky-all-in-one
 
@@ -15,6 +21,14 @@ persistence:
   driver: sqlite
   sqlite:
     path: /var/lib/rimsky/state.db
+
+supervisor:
+  concurrency: 8
+  claim_poll_interval_ms: 200
+  callback:
+    host: 0.0.0.0
+    port: 8081
+    advertise_host: 127.0.0.1
 
 claim_producers: {}
 named_locks: {}

@@ -160,6 +160,9 @@ func releaseClaim(
 		if err := emitLockReleased(ctx, args, acq, lk, "held_marked", tx); err != nil {
 			return nil, err
 		}
+		if err := emitClaimHeld(ctx, args, acq, lk, claimSpec, tx); err != nil {
+			return nil, err
+		}
 		return pc, nil
 	}
 	row, err := args.ClaimHandles.LockForUpdate(ctx, lk.ClaimHandleID, tx)
@@ -229,6 +232,9 @@ func releaseClaim(
 		return nil, fmt.Errorf("releaseClaim: %w", err)
 	}
 	if err := emitLockReleased(ctx, args, acq, lk, verbAction, tx); err != nil {
+		return nil, err
+	}
+	if err := emitClaimResolved(ctx, args, acq, lk.ClaimHandleID, producerName, verbAction, tx); err != nil {
 		return nil, err
 	}
 	return pc, nil

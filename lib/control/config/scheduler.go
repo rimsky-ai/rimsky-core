@@ -111,12 +111,17 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		authSweepEvery = authSweepInterval
 	}
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
-	go runAuthSweepLoop(sweepCtx, persistStore, cfg.Clock, cfg.Logger, authSweepEvery)
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		runAuthSweepLoop(sweepCtx, persistStore, cfg.Clock, cfg.Logger, authSweepEvery)
+	}()
 	return schedulerHandleWithRegistry{
 		inner:         scheduler.Start(inner),
 		registry:      registry,
 		lifecycleSubs: lifecycleSubs,
 		sweepCancel:   sweepCancel,
+		sweepDone:     sweepDone,
 		stopIdentity:  stopIdentity,
 	}, nil
 }
@@ -148,6 +153,7 @@ type schedulerHandleWithRegistry struct {
 	registry      *locks.Registry
 	lifecycleSubs *lifecycle.Registry
 	sweepCancel   context.CancelFunc
+	sweepDone     <-chan struct{}
 	stopIdentity  func()
 }
 
@@ -160,6 +166,12 @@ func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
 	err := h.inner.Shutdown(ctx)
 	if h.sweepCancel != nil {
 		h.sweepCancel()
+	}
+	if h.sweepDone != nil {
+		select {
+		case <-h.sweepDone:
+		case <-ctx.Done():
+		}
 	}
 	if h.stopIdentity != nil {
 		h.stopIdentity()

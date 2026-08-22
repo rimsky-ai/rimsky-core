@@ -200,6 +200,13 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
+	if cfg.Persist != nil && cfg.Retention.LifecycleOutboxTrailing > 0 {
+		now := resolveNow(cfg.Clock)
+		if _, err := runtime.SweepLifecycleOutbox(ctx, cfg.Persist, cfg.Retention, now, log); err != nil {
+			log.Warn("tick: SweepLifecycleOutbox failed", "error", err.Error())
+		}
+	}
+
 	if cfg.Persist != nil && cfg.Retention.LineageTrailing > 0 {
 		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepLineageRetention(ctx, cfg.Persist.Lineage(), cfg.Retention, now, log); err != nil {

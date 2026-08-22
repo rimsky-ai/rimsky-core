@@ -33,6 +33,8 @@ type ProducerVerbOutboxRow struct {
 	NextAttemptAt       time.Time
 	LastError           string
 	EnqueuedAt          time.Time
+	// @decision: promotion-lineage-record-after-commit
+	PendingLineageRecord []byte
 }
 
 type ProducerVerbOutboxInsertInput struct {
@@ -47,6 +49,8 @@ type ProducerVerbOutboxInsertInput struct {
 	ParentClaimHandleID *shared.UUID
 	NextAttemptAt       time.Time
 	EnqueuedAt          time.Time
+	// @decision: promotion-lineage-record-after-commit
+	PendingLineageRecord []byte
 }
 
 type ProducerVerbOutboxTable interface {

@@ -84,7 +84,7 @@ func lastAttemptedRow(t *testing.T, tables persistence.Tables) map[string]any {
 	err := tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		var lerr error
 		res, lerr = tables.Events().List(ctx, persistence.EventListFilter{
-			KindIn: []string{auth.EventAccessAttempted},
+			KindIn: []string{auth.EventAccessAttempted.String()},
 		}, persistence.ListPagination{Limit: 1}, tx)
 		return lerr
 	})

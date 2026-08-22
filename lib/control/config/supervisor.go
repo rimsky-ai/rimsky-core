@@ -19,6 +19,24 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
+// @concept: rimsky-yml
+// @decision: launch-config-injection
+type SupervisorSection struct {
+	SupervisorID        string
+	Concurrency         int
+	LivenessIntervalMs  int
+	ClaimPollIntervalMs int
+	Callback            SupervisorCallbackSection
+}
+
+// @concept: rimsky-yml
+type SupervisorCallbackSection struct {
+	Host          string
+	Port          *int
+	AdvertiseHost string
+	AdvertisePort int
+}
+
 type SupervisorConfig struct {
 	SupervisorID      string
 	Driver            persistence.Database

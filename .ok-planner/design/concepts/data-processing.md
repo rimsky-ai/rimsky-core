@@ -6,18 +6,14 @@ concept: data-processing
 
 ## What it is
 
-Optional mix-in protocol on a claim producer. Advertised in the capabilities handshake by listing the data-processing protocol alongside the claim-producer protocol. The protocol carries control-plane operations for the typed-data version lifecycle: capability advertisement, candidate lifecycle (begin / commit / abandon), and read-side surfaces for version history, partition manifests, and per-version schema lookup.
+Data processing is an optional mix-in protocol a claim producer may implement alongside the claim-producer protocol, advertising the mix-in in the same capabilities handshake. The mix-in carries the control plane of a typed-data version lifecycle. A run stages a candidate value against the claim it acquired, and the producer promotes the staged candidates into one canonical version when the parent claim commits. Data motion stays substrate-direct: a run reads and writes through the address its acquired result carries, so the protocol moves no data itself.
 
-Data motion stays substrate-direct via the acquired result's address; the protocol carries control-plane only.
+## Purpose
+
+Data processing lets a claim producer that governs typed data expose that data's versioning to rimsky without exposing the data. Rimsky drives the staging and the promotion of a version as part of ordinary claim resolution. A template author gets an atomic many-writer write over data rimsky never reads, and the producer keeps its substrate, its storage layout, and its aggregation rules to itself.
 
 ## Boundaries
 
-Owns: the protocol's operation surface, the producer-candidate-handle's value-transition lifecycle (begin / commit / abandon) on sub-claim rows, the parent-claim resolution's commit aggregation step. Does NOT own: the per-child threading of the producer-candidate handle through fan-out dispatch (see `concept:fan-out`), the substrate (producer-internal; rimsky doesn't interpret it), the aggregator vocabulary (producer-internal; rimsky doesn't interpret), the asset presentation surface (see `concept:asset`). Adjacent: `concept:claim-producer`, `concept:asset`, `concept:fan-out`, `concept:validation`.
+Data processing owns the mix-in's operation surface, the value-transition lifecycle of a producer candidate handle on each sub-claim, and the commit-aggregation step of parent-claim resolution. It does not own the per-child threading of a candidate handle through a fan-out dispatch (see `concept:fan-out`). It does not own the substrate the producer writes to, nor the aggregator vocabulary a claim names; rimsky interprets neither. It does not own how produced data is presented (see `concept:asset`).
 
-## Invariants
-
-- Begin-candidate is idempotent on the claim-handle plus idempotency-key pair: a retried call returns the existing candidate handle.
-- For fan-out with the data-processing protocol: the supervisor calls begin-candidate at sub-claim acquisition time (in the same transaction that inserts the sub-claim's handle row) and persists the opaque candidate-handle bytes onto the sub-claim row. Passed to the leaf executor's execution request.
-- Commit-candidate runs at the corresponding leaf-run terminal (success path); abandon-candidate runs on failure / strict-cancel / descendant-cancel.
-- Parent-claim resolution: aggregation policy decides "promote" or "abandon"; on promote, the producer's commit verb on the parent claim triggers the producer to aggregate the registered candidates per the aggregator declared on the claim, atomically promote to a canonical version, and return the version identifier. Rimsky records the version identifier on the claim handle and in the lineage ledger.
-- The producer's data-block declaration is opaque to rimsky, parsed via the validation protocol at registration only.
+see also: `claim-producer`, `asset`, `fan-out`, `validation`

@@ -29,6 +29,7 @@ func TestLeafRunRecordCreation(t *testing.T) {
 		ChildKey:           "partition-7",
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       runtime.LeafRunTerminalKindComplete,
 	}
 	if err := runtime.WriteLeafRunLineage(ctx, lt, instanceID, frameID, time.Now().UTC(), rec, nil); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)
@@ -52,6 +53,47 @@ func TestLeafRunRecordCreation(t *testing.T) {
 	}
 	if decoded.NodeRunID != rec.NodeRunID || decoded.ChildKey != "partition-7" || decoded.State != "fresh" {
 		t.Errorf("payload roundtrip mismatch: %+v", decoded)
+	}
+}
+
+// @decision: lineage-records-computation-only
+func TestLeafRunRecordCreation_RefusesATerminalKindOutsideTheClosedFamily(t *testing.T) {
+	t.Parallel()
+	lt := &fakeLineage{}
+	for _, kind := range []string{"", "pure_cascade", "handler_pass"} {
+		rec := runtime.LeafRunRecord{
+			NodeRunID:          shared.UUID(uuid.New()),
+			NodeID:             shared.UUID(uuid.New()),
+			FrameID:            shared.UUID(uuid.New()),
+			State:              "fresh",
+			SettlingSignalType: "terminal/success",
+			TerminalKind:       kind,
+		}
+		err := runtime.WriteLeafRunLineage(context.Background(), lt, shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec, nil)
+		if err == nil {
+			t.Fatalf("terminal_kind %q must be refused: the family is complete | errored | park | subgraph_call", kind)
+		}
+	}
+	for _, kind := range []string{
+		runtime.LeafRunTerminalKindComplete,
+		runtime.LeafRunTerminalKindErrored,
+		runtime.LeafRunTerminalKindPark,
+		runtime.LeafRunTerminalKindSubgraphCall,
+	} {
+		rec := runtime.LeafRunRecord{
+			NodeRunID:          shared.UUID(uuid.New()),
+			NodeID:             shared.UUID(uuid.New()),
+			FrameID:            shared.UUID(uuid.New()),
+			State:              "fresh",
+			SettlingSignalType: "terminal/success",
+			TerminalKind:       kind,
+		}
+		if err := runtime.WriteLeafRunLineage(context.Background(), lt, shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec, nil); err != nil {
+			t.Fatalf("terminal_kind %q is a member of the family and must be accepted: %v", kind, err)
+		}
+	}
+	if len(lt.rows) != 4 {
+		t.Fatalf("expected the four accepted kinds to write four rows and the refused kinds none, got %d", len(lt.rows))
 	}
 }
 

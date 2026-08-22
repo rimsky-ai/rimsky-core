@@ -122,17 +122,16 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, producerName str
 	return templateHash, instanceID
 }
 
-func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
+func TestLifecycleReconciler_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
 	hash, inst := seedTerminatedInstance(t, f, "alpha", true)
 
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 	term.tick(context.Background())
 
 	calls := f.alpha.Calls()
-	require.Len(t, calls, 2)
 	var runScopeCall, terminatedCall *storetest.FakeCall
 	for i := range calls {
 		switch calls[i].Verb {
@@ -145,6 +144,10 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	require.NotNil(t, runScopeCall, "OnRunScopeTerminal must fire for the main run-scope")
 	require.NotEmpty(t, runScopeCall.RunScopeID)
 	require.NotNil(t, terminatedCall, "OnInstanceTerminated must fire")
+	require.Equal(t, 1, countCallsWithVerb(calls, "on_run_scope_terminal"),
+		"the terminated instance's OnRunScopeTerminal fires once in a tick")
+	require.Equal(t, 1, countCallsWithVerb(calls, "on_instance_terminated"),
+		"the terminated instance's OnInstanceTerminated fires once in a tick")
 	require.Equal(t, hash, terminatedCall.TemplateHash)
 	require.Equal(t, inst.String(), terminatedCall.InstanceID)
 	require.Less(t, runScopeCall.Sequence, terminatedCall.Sequence,
@@ -160,7 +163,7 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	require.Nil(t, row, "lifecycle row must be deleted on success")
 }
 
-func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
+func TestLifecycleReconciler_RowFoundRPCFailsRowPreserved(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
@@ -172,7 +175,7 @@ func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 		return nil
 	}
 
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 	term.tick(context.Background())
 
 	var row *persistence.LifecycleIdempotencyRow
@@ -185,7 +188,7 @@ func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 	require.NotNil(t, row, "lifecycle row must survive a per-store failure")
 }
 
-func TestInstanceTerminator_FailedTickRetriedToSuccessOnLaterTick(t *testing.T) {
+func TestLifecycleReconciler_FailedTickRetriedToSuccessOnLaterTick(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
@@ -197,7 +200,7 @@ func TestInstanceTerminator_FailedTickRetriedToSuccessOnLaterTick(t *testing.T) 
 		return nil
 	}
 
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 	term.tick(context.Background())
 
 	var row *persistence.LifecycleIdempotencyRow
@@ -229,7 +232,7 @@ func TestInstanceTerminator_FailedTickRetriedToSuccessOnLaterTick(t *testing.T) 
 	require.Equal(t, 2, terminatedCalls, "on_instance_terminated must be re-attempted on the following tick until it succeeds")
 }
 
-func TestInstanceTerminator_RunScopeFailureBlocksInstanceTerminatedRowDeletion(t *testing.T) {
+func TestLifecycleReconciler_RunScopeFailureBlocksInstanceTerminatedRowDeletion(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
@@ -241,7 +244,7 @@ func TestInstanceTerminator_RunScopeFailureBlocksInstanceTerminatedRowDeletion(t
 		return nil
 	}
 
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 	term.tick(context.Background())
 
 	var sawRunScope, sawTerminated bool
@@ -280,7 +283,7 @@ func TestInstanceTerminator_RunScopeFailureBlocksInstanceTerminatedRowDeletion(t
 	require.Nil(t, row, "once on_run_scope_terminal succeeds on retry, on_instance_terminated must fire and delete the row")
 }
 
-func TestInstanceTerminator_MultiStorePartialFailureInSameTick(t *testing.T) {
+func TestLifecycleReconciler_MultiStorePartialFailureInSameTick(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
@@ -355,7 +358,7 @@ func TestInstanceTerminator_MultiStorePartialFailureInSameTick(t *testing.T) {
 		return nil
 	}))
 
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 	term.tick(ctx)
 
 	var alphaRow, betaRow *persistence.LifecycleIdempotencyRow
@@ -376,7 +379,7 @@ func TestInstanceTerminator_MultiStorePartialFailureInSameTick(t *testing.T) {
 	require.NotNil(t, betaRow, "the failing peer's row must be preserved for retry")
 }
 
-func TestInstanceTerminator_TickRacesConcurrentDirectFanOut(t *testing.T) {
+func TestLifecycleReconciler_TickRacesConcurrentDirectFanOut(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
@@ -390,7 +393,7 @@ func TestInstanceTerminator_TickRacesConcurrentDirectFanOut(t *testing.T) {
 	}))
 	require.NotNil(t, tpl)
 
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -428,12 +431,12 @@ func TestInstanceTerminator_TickRacesConcurrentDirectFanOut(t *testing.T) {
 			"delivers on_instance_terminated exactly once, never twice")
 }
 
-func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T) {
+func TestLifecycleReconciler_TemplateMissingFallsBackToLifecycleRows(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
 	_, inst := seedTerminatedInstance(t, f, "alpha", false)
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 	term.tick(context.Background())
 
 	calls := f.alpha.Calls()
@@ -463,11 +466,11 @@ func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T
 	require.Nil(t, row, "fallback path must delete the lifecycle row on success")
 }
 
-func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
+func TestLifecycleReconciler_RunExitsOnContextCancel(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
-	term := NewInstanceTerminator(f.deps, 10*time.Millisecond)
+	term := NewLifecycleReconciler(f.deps, 10*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var wg sync.WaitGroup
@@ -476,13 +479,13 @@ func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 		defer wg.Done()
 		term.Run(ctx)
 	}()
-	waitForTerminatorStarted(t, term)
+	waitForReconcilerStarted(t, term)
 	cancel()
 
 	wg.Wait()
 }
 
-func waitForTerminatorStarted(t *testing.T, term *InstanceTerminator) {
+func waitForReconcilerStarted(t *testing.T, term *LifecycleReconciler) {
 	t.Helper()
 	awaited.Until(t, "the terminator's run loop to mark itself started", func() bool {
 		term.mu.Lock()
@@ -491,16 +494,16 @@ func waitForTerminatorStarted(t *testing.T, term *InstanceTerminator) {
 	})
 }
 
-func TestInstanceTerminator_ConcurrentStopDoesNotPanic(t *testing.T) {
+func TestLifecycleReconciler_ConcurrentStopDoesNotPanic(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go term.Run(ctx)
-	waitForTerminatorStarted(t, term)
+	waitForReconcilerStarted(t, term)
 
 	const concurrentStops = 8
 	var wg sync.WaitGroup
@@ -514,21 +517,21 @@ func TestInstanceTerminator_ConcurrentStopDoesNotPanic(t *testing.T) {
 	wg.Wait()
 }
 
-func TestInstanceTerminator_FailureLogCadenceCapsLogSpam(t *testing.T) {
+func TestLifecycleReconciler_FailureLogCadenceCapsLogSpam(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
-	term := NewInstanceTerminator(f.deps, time.Hour)
+	term := NewLifecycleReconciler(f.deps, time.Hour)
 
-	id := shared.UUID(uuid.New())
+	id := shared.UUID(uuid.New()).String()
 	var loggedAttempts []int
-	for i := 1; i <= terminatorFailureLogEvery*2; i++ {
+	for i := 1; i <= reconcilerFailureLogEvery*2; i++ {
 		attempt, shouldLog := term.recordFailure(id)
 		require.Equal(t, i, attempt)
 		if shouldLog {
 			loggedAttempts = append(loggedAttempts, attempt)
 		}
 	}
-	require.Equal(t, []int{1, terminatorFailureLogEvery, terminatorFailureLogEvery * 2}, loggedAttempts,
+	require.Equal(t, []int{1, reconcilerFailureLogEvery, reconcilerFailureLogEvery * 2}, loggedAttempts,
 		"only the first failure and then every Nth must log, to bound log volume for a persistently failing instance")
 
 	term.clearFailure(id)
@@ -537,16 +540,16 @@ func TestInstanceTerminator_FailureLogCadenceCapsLogSpam(t *testing.T) {
 	require.True(t, shouldLog)
 }
 
-func TestInstanceTerminator_StopReturnsOnTheLoopsExitNotOnItsBudget(t *testing.T) {
+func TestLifecycleReconciler_StopReturnsOnTheLoopsExitNotOnItsBudget(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
-	NewInstanceTerminator(f.deps, time.Hour).Stop()
+	NewLifecycleReconciler(f.deps, time.Hour).Stop()
 
-	term := NewInstanceTerminator(f.deps, 10*time.Millisecond)
+	term := NewLifecycleReconciler(f.deps, 10*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	go term.Run(ctx)
-	waitForTerminatorStarted(t, term)
+	waitForReconcilerStarted(t, term)
 	cancel()
 	term.Stop()
 	select {
@@ -554,4 +557,71 @@ func TestInstanceTerminator_StopReturnsOnTheLoopsExitNotOnItsBudget(t *testing.T
 	default:
 		t.Fatal("Stop returned on its budget rather than on the run loop's exit: the done channel is still open")
 	}
+}
+
+func countCallsWithVerb(calls []storetest.FakeCall, verb string) int {
+	n := 0
+	for _, c := range calls {
+		if c.Verb == verb {
+			n++
+		}
+	}
+	return n
+}
+
+// @decision: lifecycle-subscriber-at-least-once-delivery
+func TestLifecycleReconciler_InstanceThatTerminatesBeforeItsCreationLandsGetsBothEvents(t *testing.T) {
+	t.Parallel()
+	f := newTerminatorFixture(t)
+	ctx := context.Background()
+
+	templateHash := "sha256-" + repeatHex("a", 32) + uuid.NewString()[:32]
+	spec := node.TemplateSpec{
+		Name: "created-then-terminated", Version: "v1",
+		Nodes: []node.TemplateNodeDef{{
+			Type:           "n1",
+			ClaimProducers: []node.NodeClaimProducerRef{{Name: "alpha", Selector: "x", Intent: "r"}},
+		}},
+	}
+	instanceID := uuid.New()
+	ck := "ck-" + uuid.NewString()
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := f.persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID: templateHash, Spec: spec, State: persistence.TemplateStateDeployed,
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+			TargetRoutingIdentity: "test-agent",
+			ID:                    instanceID, TemplateHash: templateHash, InstanceKey: &ck,
+			Params: map[string]any{},
+		}, tx); err != nil {
+			return err
+		}
+		if err := StageInstanceLifecycleEvent(ctx, f.deps, EventInstanceCreated, templateHash,
+			instanceID.String(), spec, InstancePayload{InstanceKey: ck}, tx); err != nil {
+			return err
+		}
+		return f.persist.Instances().MarkTerminated(ctx, instanceID, tx)
+	}))
+
+	NewLifecycleReconciler(f.deps, time.Hour).tick(ctx)
+
+	var verbs []string
+	for _, c := range f.alpha.Calls() {
+		if c.Verb == "on_instance_created" || c.Verb == "on_instance_terminated" {
+			verbs = append(verbs, c.Verb)
+		}
+	}
+	require.Equal(t, []string{"on_instance_created", "on_instance_terminated"}, verbs,
+		"an instance whose creation never reached the subscriber still owes both events, in order")
+
+	var row *persistence.LifecycleIdempotencyRow
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.persist.LifecycleIdempotency().Get(ctx, "alpha",
+			persistence.LifecycleIdempotencyScopeInstance, instanceID.String(), tx)
+		row = r
+		return err
+	}))
+	require.Nil(t, row, "the terminated delivery closes the instance's ledger")
 }

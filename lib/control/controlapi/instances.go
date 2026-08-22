@@ -116,12 +116,12 @@ type instanceSubscriptionItem struct {
 	FailureReason string    `json:"failure_reason,omitempty"`
 }
 
-func toInstanceItem(r persistence.InstanceRow, redact []string, matchCounts []int64) instanceItem {
+func toInstanceItem(r persistence.InstanceRow, matchCounts []int64) instanceItem {
 	out := instanceItem{
 		ID:                    r.ID.String(),
 		TemplateHash:          r.TemplateHash,
 		InstanceKey:           r.InstanceKey,
-		Params:                ApplyParamsRedact(r.Params, redact),
+		Params:                r.Params,
 		Paused:                r.Paused,
 		CreatedAt:             r.CreatedAt,
 		TerminatedAt:          r.TerminatedAt,
@@ -296,7 +296,6 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 
 		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		var (
-			tplSpec                     nodepkg.TemplateSpec
 			respOut                     createInstanceResponse
 			existedKey                  bool
 			existingOverrides           map[string]any
@@ -318,7 +317,6 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					"instance creation requires template state 'deployed'",
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
-			tplSpec = row.Spec
 			if vErr := validateAttributeOverrides(body.AttributeOverrides, row.Spec.Nodes, row.Spec.Graphs, deps.Executors); vErr != nil {
 				return vErr
 			}
@@ -346,7 +344,8 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 						InstanceKey:  existing.InstanceKey,
 						NodeCount:    len(row.Spec.Nodes),
 					}
-					return nil
+					return stageInstanceCreated(ctx, deps, hash, row.Spec, respOut, existingParams,
+						fanOutBindings, fanOutOwner, fanOutTargetRoutingIdentity, tx)
 				}
 			}
 			provisioned, err := provisionInstanceTx(ctx, deps, row, provisionArgs{
@@ -387,7 +386,8 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			fanOutOwner = ident.KeyID
 			fanOutTargetRoutingIdentity = targetRoutingIdentity
 			respOut = provisioned
-			return nil
+			return stageInstanceCreated(ctx, deps, hash, row.Spec, respOut, params,
+				fanOutBindings, fanOutOwner, fanOutTargetRoutingIdentity, tx)
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_created", map[string]any{
@@ -421,34 +421,10 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		fanOutParams := params
-		if existedKey {
-			fanOutParams = existingParams
-		}
-		paramsBytes, err := json.Marshal(fanOutParams)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		instanceKey := ""
-		if respOut.InstanceKey != nil {
-			instanceKey = *respOut.InstanceKey
-		}
-		if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
-			EventInstanceCreated, hash, respOut.InstanceID, tplSpec,
-			InstancePayload{
-				InstanceKey:           instanceKey,
-				Params:                paramsBytes,
-				ServiceBindings:       fanOutBindings,
-				OwnerAPIKeyID:         fanOutOwner,
-				TargetRoutingIdentity: fanOutTargetRoutingIdentity,
-			}, nil); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"error":   "instance lifecycle fan-out failed",
-				"details": perStore,
-			})
-			return
-		}
+		deliverStagedLifecycleAfterCommit(req.Context(), deps,
+			persistence.LifecycleIdempotencyScopeInstance, respOut.InstanceID,
+			"instance_id", respOut.InstanceID, "template_hash", hash,
+			"event", EventInstanceCreated.String())
 		status := http.StatusCreated
 		if existedKey {
 			status = http.StatusOK
@@ -508,71 +484,14 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		items := make([]instanceItem, 0, len(page.Rows))
-		redactCache := map[string][]string{}
 		for _, r := range page.Rows {
-			redact, ok := redactCache[r.TemplateHash]
-			if !ok {
-				var tpl *persistence.TemplateRow
-				err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-					t, err := deps.Persist.Templates().GetByHash(ctx, r.TemplateHash, tx)
-					tpl = t
-					return err
-				})
-				switch {
-				case err != nil:
-					if deps.Logger != nil {
-						deps.Logger.Warn("handleListInstances: load template for params_redact failed; redacting all params",
-							"instance_id", r.ID.String(),
-							"template_hash", r.TemplateHash,
-							"error", err.Error())
-					}
-					redact = []string{RedactAllParamsSentinel}
-				case tpl == nil:
-					if deps.Logger != nil {
-						deps.Logger.Warn("handleListInstances: template not found for params_redact; redacting all params",
-							"instance_id", r.ID.String(),
-							"template_hash", r.TemplateHash)
-					}
-					redact = []string{RedactAllParamsSentinel}
-				default:
-					redact = tpl.Spec.ParamsRedact
-				}
-				redactCache[r.TemplateHash] = redact
-			}
-			items = append(items, toInstanceItem(r, redact, overrideMatchCountsFor(req.Context(), deps, r)))
+			items = append(items, toInstanceItem(r, overrideMatchCountsFor(req.Context(), deps, r)))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"instances":   items,
 			"next_cursor": page.NextCursor,
 		})
 	}
-}
-
-func instanceRedact(ctx context.Context, deps AppDeps, templateHash string, instanceID foundationshared.UUID) []string {
-	var tpl *persistence.TemplateRow
-	err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		t, err := deps.Persist.Templates().GetByHash(ctx, templateHash, tx)
-		tpl = t
-		return err
-	})
-	if err != nil {
-		if deps.Logger != nil {
-			deps.Logger.Warn("instanceRedact: load template for params_redact failed; redacting all params",
-				"instance_id", instanceID.String(),
-				"template_hash", templateHash,
-				"error", err.Error())
-		}
-		return []string{RedactAllParamsSentinel}
-	}
-	if tpl == nil {
-		if deps.Logger != nil {
-			deps.Logger.Warn("instanceRedact: template not found for params_redact; redacting all params",
-				"instance_id", instanceID.String(),
-				"template_hash", templateHash)
-		}
-		return []string{RedactAllParamsSentinel}
-	}
-	return tpl.Spec.ParamsRedact
 }
 
 func handleGetInstance(deps AppDeps) http.HandlerFunc {
@@ -586,8 +505,7 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
-		item := toInstanceItem(*inst, redact, overrideMatchCountsFor(req.Context(), deps, *inst))
+		item := toInstanceItem(*inst, overrideMatchCountsFor(req.Context(), deps, *inst))
 		// @concept: publisher-subscription
 		subs, err := deps.Persist.PublisherSubscriptions().ListByInstance(req.Context(), inst.ID)
 		if err != nil {
@@ -632,38 +550,6 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		}) {
 			return
 		}
-		var tpl *persistence.TemplateRow
-		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-			tpl = t
-			return err
-		}); err != nil {
-			writeError(w, err)
-			return
-		}
-		if tpl != nil {
-			terminatedAtMs := inst.TerminatedAt.UnixMilli()
-			if err := CloseAndFanOutRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_deleted"); err != nil && deps.Logger != nil {
-				deps.Logger.Warn("handleDeleteInstance: run-scope fan-out failed",
-					"instance_id", inst.ID.String(), "error", err.Error())
-			}
-			if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
-				EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
-				InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "instance lifecycle fan-out failed",
-					"details": perStore,
-				})
-				return
-			}
-		} else {
-			if err := fanOutInstanceTerminatedFromLifecycleRows(req.Context(), deps, *inst, "instance_deleted"); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error": err.Error(),
-				})
-				return
-			}
-		}
 		if err := runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
 			Persist:    deps.Persist,
 			Publishers: deps.Publishers,
@@ -697,6 +583,10 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.LifecycleIdempotency().DeleteByScope(ctx,
+				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
+				return err
+			}
+			if err := deps.Persist.LifecycleOutbox().DeleteByScope(ctx,
 				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
 				return err
 			}
@@ -768,7 +658,6 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
 		if inst.TerminatedAt != nil {
 			// @concept: dry-run
 			if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
@@ -777,7 +666,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			}) {
 				return
 			}
-			writeJSON(w, http.StatusOK, toInstanceItem(*inst, redact, overrideMatchCountsFor(req.Context(), deps, *inst)))
+			writeJSON(w, http.StatusOK, toInstanceItem(*inst, overrideMatchCountsFor(req.Context(), deps, *inst)))
 			return
 		}
 		var body struct {
@@ -909,7 +798,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, toInstanceItem(*updated, redact, overrideMatchCountsFor(req.Context(), deps, *updated)))
+		writeJSON(w, http.StatusOK, toInstanceItem(*updated, overrideMatchCountsFor(req.Context(), deps, *updated)))
 	}
 }
 

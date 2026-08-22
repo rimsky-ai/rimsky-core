@@ -6,6 +6,7 @@ package persistence
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -53,15 +54,37 @@ type CarriedBag struct {
 	Backend     string
 }
 
+// @concept: blob-backend
+// @decision: blob-backend-mismatch-read-refused
+func CheckBlobBackendMatches(op string, bb BlobBackend, handle, rowBackend string) error {
+	if handle == "" {
+		return nil
+	}
+	if bb != nil && rowBackend == bb.Name() {
+		return nil
+	}
+	if rowBackend == "" {
+		rowBackend = "<none>"
+	}
+	active := "<none>"
+	if bb != nil {
+		active = bb.Name()
+	}
+	return fmt.Errorf("%s: row has value_handle %q on backend %q, but active blob backend is %q",
+		op, handle, rowBackend, active)
+}
+
+// @decision: blob-backend-mismatch-read-refused
 func CarryForwardBag(
 	ctx context.Context, bb BlobBackend, key BlobKey, priorData []byte, priorHandle, priorBackend string, tx Tx,
 ) (CarriedBag, error) {
-	if priorHandle == "" || bb == nil || priorBackend != bb.Name() {
+	if err := CheckBlobBackendMatches("CarryForwardBag", bb, priorHandle, priorBackend); err != nil {
+		return CarriedBag{}, err
+	}
+	if priorHandle == "" {
 		return CarriedBag{
 			Data:        priorData,
 			DispatchBag: priorData,
-			Handle:      priorHandle,
-			Backend:     priorBackend,
 		}, nil
 	}
 	bytes, err := ReadBlob(ctx, bb, Handle(priorHandle), tx)

@@ -182,9 +182,11 @@ func TestMcpTransportParity(t *testing.T) {
 			readHTTPVerb: http.MethodGet,
 			readHTTPPath: "/v1/instances/" + instanceID + "/messages",
 			mutationTool: "message_send",
+			// @decision: idempotency-key-header-universal
 			mutationArgs: map[string]any{
-				"id":   instanceID,
-				"type": "parity/probe",
+				"id":              instanceID,
+				"type":            "parity/probe",
+				"idempotency_key": "mcp-parity-probe-" + uuid.NewString(),
 				"payload": map[string]any{
 					"reason": "mcp parity probe",
 				},

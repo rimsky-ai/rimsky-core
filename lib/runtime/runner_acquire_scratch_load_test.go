@@ -66,7 +66,7 @@ func TestLoadScratchIntoAcquisition_FailsRatherThanHandOverAFalseEmptyState(t *t
 		{
 			name:     "spilled scratch with no blob backend configured",
 			args:     RunArgs{Queue: scratchLoadQueue{handle: "h-1", backend: "s3"}},
-			wantWord: "no blob backend is configured",
+			wantWord: `active blob backend is "<none>"`,
 		},
 		{
 			name: "spilled scratch whose backend does not match the configured one",
@@ -74,7 +74,7 @@ func TestLoadScratchIntoAcquisition_FailsRatherThanHandOverAFalseEmptyState(t *t
 				Queue: scratchLoadQueue{handle: "h-1", backend: "s3"},
 				Blob:  scratchLoadBlobBackend{name: "memory"},
 			},
-			wantWord: "the configured backend is",
+			wantWord: `active blob backend is "memory"`,
 		},
 		{
 			name: "spilled scratch whose blob read fails",

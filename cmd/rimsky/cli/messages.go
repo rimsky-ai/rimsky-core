@@ -130,6 +130,10 @@ func RunMessagesShow(ctx context.Context, args []string) int {
 		{"sender_kind", m.SenderKind},
 		{"received_at", m.ReceivedAt.UTC().Format(time.RFC3339)},
 	}
+	// @decision: message-sender-kind-discriminator
+	if m.SenderSubject != "" {
+		pairs = append(pairs, [2]string{"sender_subject", m.SenderSubject})
+	}
 	if m.DeliveredAt != nil {
 		pairs = append(pairs, [2]string{"delivered_at", m.DeliveredAt.UTC().Format(time.RFC3339)})
 	}

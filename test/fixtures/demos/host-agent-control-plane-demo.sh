@@ -121,10 +121,14 @@ fi
 
 PROXY_PORT="$( pick_free_port )"
 PROXY_ADDR="127.0.0.1:${PROXY_PORT}"
+PROXY_PEER_PORT="$( pick_free_port )"
+PROXY_CA_PATH="${STATE_DIR}/host-agent-proxy-ca.pem"
 
 echo "host-agent-control-plane-demo: step 3 — booting ${RIMSKY_PROXY_BIN} on ${PROXY_ADDR}"
 
 RIMSKY_PROXY_GRPC_PORT="${PROXY_PORT}" \
+RIMSKY_PROXY_PEER_GRPC_PORT="${PROXY_PEER_PORT}" \
+RIMSKY_PROXY_LOCAL_CA_FILE="${PROXY_CA_PATH}" \
 RIMSKY_CONTROL_API_URL="${CONTROL_URL}" \
 RIMSKY_LOG_LEVEL=warn \
 "${RIMSKY_PROXY_BIN}" >/dev/null 2>&1 &
@@ -135,10 +139,16 @@ if ! wait_dialable "${PROXY_ADDR}" 10; then
     exit 1
 fi
 
+if [ ! -s "${PROXY_CA_PATH}" ]; then
+    echo "host-agent-control-plane-demo: FAIL — proxy did not publish its agent-facing CA root at ${PROXY_CA_PATH}" >&2
+    exit 1
+fi
+
 echo "host-agent-control-plane-demo: step 4 — agent start --proxy ${PROXY_ADDR} (anonymous mode, no api-key)"
 
 START_STDOUT="$( "${RIMSKY_BIN}" agent start \
     --proxy "${PROXY_ADDR}" \
+    --tls-ca "${PROXY_CA_PATH}" \
     --state-dir "${STATE_DIR}" )"
 echo "${START_STDOUT}"
 

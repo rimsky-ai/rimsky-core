@@ -21,8 +21,9 @@ type Config struct {
 	HeartbeatInterval  time.Duration
 	ReapGracePeriod    time.Duration
 	RegisterAckTimeout time.Duration
-	TLSEnabled         bool
-	TLSCAPath          string
+	// @decision: host-agent-proxy-tls
+	Insecure  bool
+	TLSCAPath string
 	// @story: host-agent-control-plane
 	StatusFile string
 	// @concept: anonymous-mode
@@ -53,7 +54,7 @@ func LoadConfigFromEnv() (Config, error) {
 		HeartbeatInterval:  heartbeat,
 		ReapGracePeriod:    reapGrace,
 		RegisterAckTimeout: registerAckTimeout,
-		TLSEnabled:         envBool("RIMSKY_AGENT_TLS"),
+		Insecure:           envBool(EnvInsecureHop),
 		TLSCAPath:          os.Getenv("RIMSKY_AGENT_TLS_CA"),
 		StatusFile:         os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
 		RoutingLabel:       os.Getenv(agentRoutingLabelEnvVar),
@@ -89,6 +90,9 @@ func defaultAgentLabel() string {
 }
 
 const allowPathsEnvVar = "RIMSKY_AGENT_ALLOW_PATHS"
+
+// @decision: host-agent-proxy-tls
+const EnvInsecureHop = "RIMSKY_HOST_AGENT_INSECURE"
 
 func splitCommaNonEmpty(s string) []string {
 	var out []string

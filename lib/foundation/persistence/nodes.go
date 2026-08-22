@@ -103,6 +103,10 @@ type NodeTable interface {
 	// @decision: mode-default-most-recent
 	HasLaterCascadePending(ctx context.Context, nodeID, runScopeID shared.UUID, afterSeq int64, tx Tx) (bool, error)
 
+	// @concept: cascade-mode
+	// @story: sequenced-preserves-cascade-rounds
+	HasEarlierQueuedRoundFromSameSender(ctx context.Context, receiverNodeRunID shared.UUID, tx Tx) (bool, error)
+
 	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchNodeRunID shared.UUID, tx Tx) (*NodeRunForCallback, error)
 
 	// @concept: cascade

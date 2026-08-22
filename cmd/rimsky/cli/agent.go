@@ -59,7 +59,7 @@ type agentStartFlags struct {
 	listen       string
 	proxy        string
 	apiKey       string
-	tls          bool
+	insecure     bool
 	tlsCA        string
 	label        string
 	identityFile string
@@ -78,8 +78,9 @@ func applyAgentStartFlags(cfg hostagent.Config, f agentStartFlags) hostagent.Con
 	if f.apiKey != "" {
 		cfg.APIKey = f.apiKey
 	}
-	if f.tls {
-		cfg.TLSEnabled = true
+	// @decision: host-agent-proxy-tls
+	if f.insecure {
+		cfg.Insecure = true
 	}
 	if f.tlsCA != "" {
 		cfg.TLSCAPath = f.tlsCA
@@ -99,8 +100,8 @@ func runAgentStart(args []string) int {
 	listen := fs.String("listen", "", "agent local listener addr (default 127.0.0.1:0)")
 	proxy := fs.String("proxy", "", "host-agent-proxy endpoint host:port (overrides $RIMSKY_HOST_AGENT_PROXY_URL)")
 	apiKey := fs.String("api-key", "", "api-key plaintext presented to the proxy on Register (overrides $RIMSKY_API_KEY); omit to register anonymously")
-	tls := fs.Bool("tls", false, "dial the proxy over TLS, verifying its server cert against --tls-ca (overrides $RIMSKY_AGENT_TLS)")
-	tlsCA := fs.String("tls-ca", "", "path to the pinned deployment CA root PEM used to verify the proxy server cert (overrides $RIMSKY_AGENT_TLS_CA)")
+	insecureHop := fs.Bool("insecure", false, "dial the proxy in plaintext instead of TLS; the proxy must run with the same switch (overrides $RIMSKY_HOST_AGENT_INSECURE)")
+	tlsCA := fs.String("tls-ca", "", "path to the pinned CA root PEM used to verify the proxy server cert (overrides $RIMSKY_AGENT_TLS_CA)")
 	stateDir := fs.String("state-dir", "", "directory for pid and status files (default ~/.rimsky)")
 	foreground := fs.Bool("foreground", false, "run in foreground (don't daemonize)")
 	label := fs.String("label", "", "anonymous routing label (silly-name) the agent asks the proxy to adopt; only meaningful in anonymous mode (no --api-key)")
@@ -120,7 +121,7 @@ func runAgentStart(args []string) int {
 		listen:       *listen,
 		proxy:        *proxy,
 		apiKey:       *apiKey,
-		tls:          *tls,
+		insecure:     *insecureHop,
 		tlsCA:        *tlsCA,
 		label:        *label,
 		identityFile: *identityFile,

@@ -4,8 +4,6 @@
 package spec
 
 import (
-	"encoding/json"
-
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
@@ -17,7 +15,6 @@ type TemplateSpec struct {
 	Graphs       []GraphSpec       `yaml:"graphs,omitempty" json:"graphs,omitempty"`
 	Publishers   []PublisherSpec   `yaml:"publishers,omitempty" json:"publishers,omitempty"`
 	ParamsSchema map[string]any    `yaml:"params_schema,omitempty" json:"params_schema,omitempty"`
-	ParamsRedact []string          `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 
 	LateBindServices []string `yaml:"late_bind_services,omitempty" json:"late_bind_services,omitempty"`
 
@@ -39,8 +36,8 @@ const (
 
 // @concept: message-schema
 type MessageSchema struct {
-	Type       string          `yaml:"type" json:"type"`
-	BodySchema json.RawMessage `yaml:"body_schema,omitempty" json:"body_schema,omitempty"`
+	Type       string  `yaml:"type" json:"type"`
+	BodySchema RawJSON `yaml:"body_schema,omitempty" json:"body_schema,omitempty"`
 }
 
 type TemplateDefaults struct {
@@ -112,7 +109,7 @@ type NodeClaimProducerRef struct {
 	Intent   claimproducer.Intent `yaml:"intent" json:"intent"`
 	Alias    string               `yaml:"alias,omitempty" json:"alias,omitempty"`
 	Lifetime string               `yaml:"lifetime,omitempty" json:"lifetime,omitempty"`
-	Data     json.RawMessage      `yaml:"data,omitempty" json:"data,omitempty"`
+	Data     RawJSON              `yaml:"data,omitempty" json:"data,omitempty"`
 }
 
 func (s NodeClaimProducerRef) AliasOf() string {

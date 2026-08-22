@@ -19,25 +19,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/ports"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
-
-type supervisorYAMLConfig struct {
-	SupervisorID        string                 `yaml:"supervisor_id"`
-	Concurrency         int                    `yaml:"concurrency"`
-	LivenessIntervalMs  int                    `yaml:"liveness_interval_ms"`
-	ClaimPollIntervalMs int                    `yaml:"claim_poll_interval_ms"`
-	Callback            supervisorYAMLCallback `yaml:"callback"`
-}
-
-type supervisorYAMLCallback struct {
-	Host          string `yaml:"host"`
-	Port          *int   `yaml:"port"`
-	AdvertiseHost string `yaml:"advertise_host"`
-	AdvertisePort int    `yaml:"advertise_port"`
-}
 
 type supervisorResolvedConfig struct {
 	SupervisorID        string
@@ -51,7 +35,9 @@ type supervisorResolvedConfig struct {
 	AdvertisePort       int
 }
 
-func resolveSupervisorConfig(cfg supervisorYAMLConfig) (supervisorResolvedConfig, error) {
+// @concept: rimsky-yml
+// @decision: launch-config-injection
+func resolveSupervisorConfig(cfg config.SupervisorSection) (supervisorResolvedConfig, error) {
 	supID := cfg.SupervisorID
 	if supID == "" {
 		if hostname, err := os.Hostname(); err == nil && hostname != "" {
@@ -121,22 +107,9 @@ func resolveSupervisorConfig(cfg supervisorYAMLConfig) (supervisorResolvedConfig
 func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations, preOpenedBlob persistence.BlobBackend) (StopFunc, <-chan error, error) {
 	log := shared.NewSlogLogger(logger)
 
-	cfgPath := os.Getenv("RIMSKY_SUPERVISOR_CONFIG")
-	if cfgPath == "" {
-		err := fmt.Errorf("missing RIMSKY_SUPERVISOR_CONFIG (path to YAML)")
-		log.Error("supervisor config path resolution", "error", err.Error())
-		return nil, nil, err
-	}
-
 	metricsPort, err := metricsPortFor("supervisor", rimskyCfg.Topology)
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
-		return nil, nil, err
-	}
-
-	cfg, err := loadSupervisorYAML(cfgPath)
-	if err != nil {
-		log.Error("loadSupervisorYAML", "error", err.Error())
 		return nil, nil, err
 	}
 
@@ -147,7 +120,8 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	storesCfg := rimskyCfg.ClaimProducers
 	namedLocksCfg := rimskyCfg.NamedLocks
 
-	resolved, err := resolveSupervisorConfig(cfg)
+	// @concept: rimsky-yml
+	resolved, err := resolveSupervisorConfig(rimskyCfg.Supervisor)
 	if err != nil {
 		log.Error("resolveSupervisorConfig", "error", err.Error())
 		return nil, nil, err
@@ -322,14 +296,6 @@ func mergeBundledExecutorAliases(resolver *executor.StaticResolver, configured m
 		}
 		resolver.Register(name, ep)
 	}
-}
-
-func loadSupervisorYAML(path string) (supervisorYAMLConfig, error) {
-	var cfg supervisorYAMLConfig
-	if err := configload.LoadFile(path, &cfg); err != nil {
-		return supervisorYAMLConfig{}, err
-	}
-	return cfg, nil
 }
 
 // @concept: peer-auth

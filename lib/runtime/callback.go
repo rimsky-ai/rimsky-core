@@ -639,6 +639,8 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		Locks:          ac.AcquiredLocks,
 		NodeDef:        ac.NodeDef,
 		InstanceParams: nil,
+		// @decision: lineage-records-computation-only
+		ExecutorInvoked: true,
 	}
 	var ackStatus string
 	var phase string

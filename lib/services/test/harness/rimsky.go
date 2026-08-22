@@ -429,7 +429,6 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 	t.Helper()
 	env := map[string]string{
 		"RIMSKY_CONFIG":                             "/etc/rimsky/rimsky.yml",
-		"RIMSKY_SUPERVISOR_CONFIG":                  "/etc/rimsky/supervisor-config.yml",
 		"RIMSKY_CONTROL_API_HOST":                   "0.0.0.0",
 		"RIMSKY_CONTROL_API_PORT":                   "8080",
 		"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": alias,
@@ -726,8 +725,19 @@ func renderRimskyYAML(internalDSN string, cb *configBuilder) string {
 	b.WriteString("  postgres:\n")
 	fmt.Fprintf(&b, "    dsn: %q\n", internalDSN)
 	writeBlobBlock(&b, cb)
+	writeSupervisorBlock(&b)
 	writePeerBlocks(&b, cb)
 	return b.String()
+}
+
+// @concept: rimsky-yml
+func writeSupervisorBlock(b *strings.Builder) {
+	b.WriteString("supervisor:\n")
+	b.WriteString("  concurrency: 8\n")
+	b.WriteString("  claim_poll_interval_ms: 200\n")
+	b.WriteString("  callback:\n")
+	b.WriteString("    host: 0.0.0.0\n")
+	b.WriteString("    port: 8081\n")
 }
 
 func writeBlobBlock(b *strings.Builder, cb *configBuilder) {
@@ -757,6 +767,7 @@ func renderRimskyYAMLSQLite(cb *configBuilder) string {
 	b.WriteString("  sqlite:\n")
 	fmt.Fprintf(&b, "    path: %q\n", sqliteStatePath)
 	writeBlobBlock(&b, cb)
+	writeSupervisorBlock(&b)
 	writePeerBlocks(&b, cb)
 	return b.String()
 }

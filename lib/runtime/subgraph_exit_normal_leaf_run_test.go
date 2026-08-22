@@ -126,6 +126,8 @@ func TestApplyTerminalComplete_SubgraphExit_EmitsNormalLeafRunRow(t *testing.T) 
 		GraphName:  "inner",
 		RunScopeID: exitScopeID,
 		NodeDef:    &node.TemplateNodeDef{Type: "inner-exit", Executor: "test-executor", IsSubgraphExit: true},
+		// @decision: lineage-records-computation-only
+		ExecutorInvoked: true,
 	}
 
 	var post postCommitFn

@@ -6,7 +6,6 @@ package harness
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +56,6 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 	hostDSN, internalDSN := startPostgresOnNetwork(ctx, t, networkName, pgAlias)
 
 	yamlBytes := []byte(renderRimskyYAML(internalDSN, cb))
-	supervisorYAML := []byte(renderSplitSupervisorYAML(supervisorAlias))
 
 	baseURL := startSplitControlAPI(ctx, t, cb, yamlBytes, networkName, controlAlias)
 
@@ -69,13 +67,12 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 		waitFor: wait.ForLog("scheduler started").WithStartupTimeout(120 * time.Second),
 	})
 	startSplitRole(ctx, t, cb, splitRoleSpec{
-		role:           "rimsky-supervisor",
-		alias:          supervisorAlias,
-		advertiseHost:  supervisorAlias,
-		yaml:           yamlBytes,
-		supervisorYAML: supervisorYAML,
-		network:        networkName,
-		waitFor:        wait.ForLog("supervisor started").WithStartupTimeout(120 * time.Second),
+		role:          "rimsky-supervisor",
+		alias:         supervisorAlias,
+		advertiseHost: supervisorAlias,
+		yaml:          yamlBytes,
+		network:       networkName,
+		waitFor:       wait.ForLog("supervisor started").WithStartupTimeout(120 * time.Second),
 	})
 
 	return RimskyEndpoint{
@@ -88,13 +85,12 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 }
 
 type splitRoleSpec struct {
-	role           string
-	alias          string
-	advertiseHost  string
-	yaml           []byte
-	supervisorYAML []byte
-	network        string
-	waitFor        wait.Strategy
+	role          string
+	alias         string
+	advertiseHost string
+	yaml          []byte
+	network       string
+	waitFor       wait.Strategy
 }
 
 func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName, alias string) string {
@@ -152,10 +148,8 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 	files := []testcontainers.ContainerFile{
 		rereadableContainerFile(string(spec.yaml), "/etc/rimsky/rimsky.yml", 0o644),
 	}
-	if spec.supervisorYAML != nil {
-		env["RIMSKY_SUPERVISOR_CONFIG"] = "/etc/rimsky/supervisor-config.yml"
+	if spec.advertiseHost != "" {
 		env["RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST"] = spec.advertiseHost
-		files = append(files, rereadableContainerFile(string(spec.supervisorYAML), "/etc/rimsky/supervisor-config.yml", 0o644))
 	}
 	for k, v := range cb.extraEnv {
 		env[k] = v
@@ -175,15 +169,4 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 		defer cancel()
 		_ = c.Terminate(termCtx)
 	})
-}
-
-func renderSplitSupervisorYAML(advertiseHost string) string {
-	var b strings.Builder
-	b.WriteString("concurrency: 8\n")
-	b.WriteString("claim_poll_interval_ms: 200\n")
-	b.WriteString("callback:\n")
-	b.WriteString("  host: 0.0.0.0\n")
-	b.WriteString("  port: 8081\n")
-	fmt.Fprintf(&b, "  advertise_host: %s\n", advertiseHost)
-	return b.String()
 }

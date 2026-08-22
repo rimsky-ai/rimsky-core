@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,8 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
 func TestTerminateInstance_NoReasonEmptyBody(t *testing.T) {
@@ -542,120 +539,6 @@ func TestCreateInstance_IdempotentRetryFansOutExistingParamsNotRequestParams(t *
 	require.JSONEq(t, `{"region":"us-east"}`, string(createdCall.Params),
 		"the re-dispatch to a peer recovering from a missing lifecycle row must carry the EXISTING instance's "+
 			"stored params, not the retry request's params")
-}
-
-func seedTerminatedInstanceWithoutTemplate(t *testing.T, h *harness, tag string) persistence.InstanceRow {
-	t.Helper()
-	ctx := context.Background()
-	inst := seedInstance(t, h, tag)
-
-	status, out := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate", nil)
-	require.Equal(t, http.StatusOK, status, out)
-
-	pgdbtest.ExecForTest(ctx, t, h.driver,
-		`ALTER TABLE rimsky_instances DROP CONSTRAINT IF EXISTS rimsky_instances_template_hash_fkey`)
-	pgdbtest.ExecForTest(ctx, t, h.driver,
-		`DELETE FROM rimsky_templates WHERE id = $1`, inst.TemplateHash)
-
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := h.persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-		require.NoError(t, err)
-		require.Nil(t, row, "template must be gone to exercise the missing-template fallback path")
-		return nil
-	}))
-	return inst
-}
-
-func TestDeleteInstance_MissingTemplateFallsBackToLifecycleRows(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-	ctx := context.Background()
-
-	inst := seedTerminatedInstanceWithoutTemplate(t, h, "del-notpl-"+uuid.NewString())
-
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			ClaimProducerName: "content",
-			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:           inst.ID.String(),
-			State:             persistence.LifecycleIdempotencyStateCreated,
-		}, tx); err != nil {
-			return err
-		}
-		return h.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			ClaimProducerName: "ghost-store",
-			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:           inst.ID.String(),
-			State:             persistence.LifecycleIdempotencyStateCreated,
-		}, tx)
-	}))
-
-	status, out := h.httpJSON(t, "DELETE", "/v1/instances/"+inst.ID.String(), nil)
-	require.Equal(t, http.StatusOK, status, out)
-	require.Equal(t, true, out["deleted"])
-
-	cp, ok := h.producers.Get("content")
-	require.True(t, ok)
-	fake, ok := cp.(*storetest.Fake)
-	require.True(t, ok)
-	calls := fake.Calls()
-	require.Len(t, calls, 1, "the known store must receive exactly one OnInstanceTerminated fan-out call")
-	require.Equal(t, "on_instance_terminated", calls[0].Verb)
-	require.Equal(t, inst.ID.String(), calls[0].InstanceID)
-
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := h.persist.LifecycleIdempotency().Get(ctx,
-			"content", persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx)
-		require.NoError(t, err)
-		require.Nil(t, row, "known-store lifecycle row must be deleted after a successful fan-out")
-		row, err = h.persist.LifecycleIdempotency().Get(ctx,
-			"ghost-store", persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx)
-		require.NoError(t, err)
-		require.Nil(t, row, "unregistered-store lifecycle row must be deleted by the unknown-subscriber branch")
-		return nil
-	}))
-}
-
-func TestDeleteInstance_MissingTemplateLifecycleFailureReturns500(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-	ctx := context.Background()
-
-	inst := seedTerminatedInstanceWithoutTemplate(t, h, "del-notpl-fail-"+uuid.NewString())
-
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			ClaimProducerName: "content",
-			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:           inst.ID.String(),
-			State:             persistence.LifecycleIdempotencyStateCreated,
-		}, tx)
-	}))
-
-	cp, ok := h.producers.Get("content")
-	require.True(t, ok)
-	fake, ok := cp.(*storetest.Fake)
-	require.True(t, ok)
-	fake.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
-		if verb == "on_instance_terminated" {
-			return errors.New("simulated lifecycle failure")
-		}
-		return nil
-	}
-
-	status, out := h.httpJSON(t, "DELETE", "/v1/instances/"+inst.ID.String(), nil)
-	require.Equal(t, http.StatusInternalServerError, status, out)
-	require.Contains(t, fmt.Sprint(out["error"]), "simulated lifecycle failure")
-
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := h.persist.LifecycleIdempotency().Get(ctx,
-			"content", persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx)
-		require.NoError(t, err)
-		require.NotNil(t, row, "lifecycle row must survive a failed fan-out so it can be retried")
-		return nil
-	}))
 }
 
 func TestCreateInstance_NodeListingIncludesMaterializedReceiversButNodeCountDoesNot(t *testing.T) {

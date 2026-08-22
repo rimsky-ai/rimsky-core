@@ -14,7 +14,10 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks/checks"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/stubprobe"
 )
+
+const defaultParkProbeScratch = "verifier-shape-checks-stub-park-scratch"
 
 type Server struct {
 	genv1.UnimplementedExecutorServer
@@ -23,7 +26,17 @@ type Server struct {
 
 func NewServer(stubMode bool) *Server { return &Server{stubMode: stubMode} }
 
-func (s *Server) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+	// @concept: conformance
+	if s.stubMode {
+		ud := req.GetAttributes().AsMap()
+		if stubmode.IsParkProbe(ud) {
+			return stubprobe.Park(ud, req.GetScratch(), defaultParkProbeScratch), nil
+		}
+		if stubmode.IsCancelProbe(ud) {
+			return nil, stubprobe.Cancel(ctx, req.GetCallbackUrl())
+		}
+	}
 	return s.executeCore(req), nil
 }
 

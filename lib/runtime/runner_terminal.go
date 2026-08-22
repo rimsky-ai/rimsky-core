@@ -212,6 +212,14 @@ func applyTerminalComplete(
 		if err := upsertFinalAttributesTx(ctx, args, acq, merged, tx); err != nil {
 			return nil, fmt.Errorf("applyTerminalComplete: upsert attributes: %w", err)
 		}
+		if err := emitAttributesCommitted(ctx, args, acq, t.Changed, t.AttributesDel, t.ChangeSummary, tx); err != nil {
+			return nil, err
+		}
+	}
+	if !t.Changed {
+		if err := emitNoOpCommit(ctx, args, acq, noOpCommitReason(t.ChangeSummary), tx); err != nil {
+			return nil, err
+		}
 	}
 	// @concept: executor
 	if err := applyTerminalScratchInTx(ctx, args, acq, t.Scratch, tx); err != nil {
@@ -222,6 +230,10 @@ func applyTerminalComplete(
 		// @decision: held-as-state-not-phase
 		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 			cascade.NodeStateHeld, cascade.ReasonHandlerHeld, settlingSignalType, tx); err != nil {
+			return nil, err
+		}
+		if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+			cascade.NodeStateRunning, cascade.NodeStateHeld, cascade.ReasonHandlerHeld, tx); err != nil {
 			return nil, err
 		}
 		if err := args.Queue.RemoveForNode(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
@@ -252,7 +264,7 @@ func applyTerminalComplete(
 		post := func(ctx context.Context) {
 			fanoutRecalculate(ctx, args, acq)
 			scope := resolveAcqScope(ctx, args, acq, nil)
-			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			emitLeafRunLineageForAcq(ctx, args, acq, LeafRunEmitInput{
 				InstanceID:         acq.InstanceID,
 				FrameID:            acq.FrameID,
 				NodeRunID:          nodeRunID,
@@ -260,7 +272,7 @@ func applyTerminalComplete(
 				State:              string(cascade.NodeStateHeld),
 				SettlingSignalType: *settlingSignalType,
 				Changed:            t.Changed,
-				TerminalKind:       "complete",
+				TerminalKind:       LeafRunTerminalKindComplete,
 				NodeAlias:          acq.NodeType,
 				ExecutorName:       acq.Executor,
 				TemplateHash:       acq.TemplateHash,
@@ -285,6 +297,10 @@ func applyTerminalComplete(
 	}
 	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, settlingSignalType, tx); err != nil {
+		return nil, err
+	}
+	if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+		cascade.NodeStateRunning, cascade.NodeStateFresh, cascade.ReasonHandlerComplete, tx); err != nil {
 		return nil, err
 	}
 	if err := recordRunTreeChanged(ctx, args, acq.NodeRunID, settlingSignalType, t.Changed, tx); err != nil {
@@ -315,7 +331,7 @@ func applyTerminalComplete(
 	post := func(ctx context.Context) {
 		fanoutRecalculate(ctx, args, acq)
 		scope := resolveAcqScope(ctx, args, acq, nil)
-		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		emitLeafRunLineageForAcq(ctx, args, acq, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
 			NodeRunID:          nodeRunID,
@@ -323,7 +339,7 @@ func applyTerminalComplete(
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: *settlingSignalType,
 			Changed:            t.Changed,
-			TerminalKind:       "complete",
+			TerminalKind:       LeafRunTerminalKindComplete,
 			NodeAlias:          acq.NodeType,
 			ExecutorName:       acq.Executor,
 			TemplateHash:       acq.TemplateHash,
@@ -355,6 +371,10 @@ func applyTerminalCompletePoisoned(
 		cascade.NodeStateFailed, cascade.ReasonAutoTerminalAbandon, settlingSignalType, tx); err != nil {
 		return nil, err
 	}
+	if err := AppendStateTransitionEvent(ctx, args.Persist, acq.NodeID, acq.InstanceID,
+		cascade.NodeStateRunning, cascade.NodeStateFailed, cascade.ReasonAutoTerminalAbandon, tx); err != nil {
+		return nil, err
+	}
 	if err := args.Queue.RemoveForNode(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompletePoisoned: remove for node: %w", err)
 	}
@@ -383,7 +403,7 @@ func applyTerminalCompletePoisoned(
 	nodeRunID := acq.NodeRunID
 	post := func(ctx context.Context) {
 		scope := resolveAcqScope(ctx, args, acq, nil)
-		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		emitLeafRunLineageForAcq(ctx, args, acq, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
 			FrameID:            acq.FrameID,
 			NodeRunID:          nodeRunID,
@@ -391,7 +411,7 @@ func applyTerminalCompletePoisoned(
 			State:              string(cascade.NodeStateFailed),
 			SettlingSignalType: *settlingSignalType,
 			Changed:            t.Changed,
-			TerminalKind:       "errored",
+			TerminalKind:       LeafRunTerminalKindErrored,
 			ErrorClass:         spec.ErrorClassAbandoned,
 			NodeAlias:          acq.NodeType,
 			ExecutorName:       acq.Executor,
@@ -793,6 +813,13 @@ func upsertFinalAttributesTx(
 		final = map[string]any{}
 	}
 	return args.Persist.NodeAttributes().Upsert(ctx, acq.NodeRunID, acq.NodeID, final, tx)
+}
+
+func noOpCommitReason(changeSummary string) string {
+	if changeSummary != "" {
+		return changeSummary
+	}
+	return "executor reported no change"
 }
 
 // @decision: uniform-attributes-delta

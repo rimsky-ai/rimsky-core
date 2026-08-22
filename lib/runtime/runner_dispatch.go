@@ -175,6 +175,8 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		}
 		defer sem.Release()
 	}
+	// @decision: lineage-records-computation-only
+	acq.ExecutorInvoked = true
 	outcome, peerPrincipal, err := client.Execute(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -443,6 +445,8 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	acq.MergedAttributes = filled
 	if schema != nil {
 		if vErr := attributes.Validate(relaxRequiredForExecutorWritten(schema), filled, attributes.PhaseDispatch); vErr != nil {
+			emitWorkRejected(ctx, args, acq, "dispatch_bag_violates_executor_schema",
+				map[string]any{"error": vErr.Error()})
 			return nil, schema, &attributeValidationError{
 				Reason: "dispatch_bag_violates_executor_schema",
 				Cause:  vErr,

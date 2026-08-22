@@ -109,21 +109,17 @@ func (s *AuthState) EmitKeyRotated(ctx context.Context, p auth.KeyRotatedPayload
 
 const auditWriteTimeout = 2 * time.Second
 
-func (s *AuthState) insertEvent(kind string, payload proto.Message) {
-	typedKind, err := eventskinds.ParseKindString(kind)
-	if err != nil {
-		s.Logger.Error("audit.kind-parse", "kind", kind, "err", err.Error())
-		return
-	}
+// @decision: event-log-kind-enum
+func (s *AuthState) insertEvent(kind eventskinds.Kind, payload proto.Message) {
 	ctx, cancel := context.WithTimeout(context.Background(), auditWriteTimeout)
 	defer cancel()
 	if err := s.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return s.Tables.Events().Append(ctx, persistence.EventAppendInput{
-			Kind:    typedKind,
+			Kind:    kind,
 			Payload: eventpayload.New(payload),
 		}, tx)
 	}); err != nil {
-		s.Logger.Error("audit.insert", "kind", kind, "err", err.Error())
+		s.Logger.Error("audit.insert", "kind", kind.String(), "err", err.Error())
 	}
 }
 

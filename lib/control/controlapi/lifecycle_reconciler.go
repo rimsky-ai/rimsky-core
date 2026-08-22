@@ -16,9 +16,9 @@ const tickBudget = 10 * time.Second
 
 const stopBudget = 5 * time.Second
 
-const terminatorFailureLogEvery = 10
+const reconcilerFailureLogEvery = 10
 
-type InstanceTerminator struct {
+type LifecycleReconciler struct {
 	deps         AppDeps
 	pollInterval time.Duration
 	logger       shared.Logger
@@ -30,10 +30,10 @@ type InstanceTerminator struct {
 	started  bool
 
 	failMu    sync.Mutex
-	failCount map[shared.UUID]int
+	failCount map[string]int
 }
 
-func NewInstanceTerminator(deps AppDeps, pollInterval time.Duration) *InstanceTerminator {
+func NewLifecycleReconciler(deps AppDeps, pollInterval time.Duration) *LifecycleReconciler {
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
 	}
@@ -41,7 +41,7 @@ func NewInstanceTerminator(deps AppDeps, pollInterval time.Duration) *InstanceTe
 	if logger == nil {
 		logger = shared.SilentLogger{}
 	}
-	return &InstanceTerminator{
+	return &LifecycleReconciler{
 		deps:         deps,
 		pollInterval: pollInterval,
 		logger:       logger,
@@ -50,7 +50,7 @@ func NewInstanceTerminator(deps AppDeps, pollInterval time.Duration) *InstanceTe
 	}
 }
 
-func (t *InstanceTerminator) Run(ctx context.Context) {
+func (t *LifecycleReconciler) Run(ctx context.Context) {
 	t.mu.Lock()
 	if t.started {
 		t.mu.Unlock()
@@ -73,7 +73,7 @@ func (t *InstanceTerminator) Run(ctx context.Context) {
 	}
 }
 
-func (t *InstanceTerminator) Stop() {
+func (t *LifecycleReconciler) Stop() {
 	t.mu.Lock()
 	started := t.started
 	t.mu.Unlock()
@@ -87,10 +87,17 @@ func (t *InstanceTerminator) Stop() {
 	}
 }
 
-func (t *InstanceTerminator) tick(ctx context.Context) {
+// @decision: lifecycle-subscriber-at-least-once-delivery
+func (t *LifecycleReconciler) tick(ctx context.Context) {
 	tickCtx, cancel := context.WithTimeout(ctx, tickBudget)
 	defer cancel()
 
+	t.drainStagedLifecycleDeliveries(tickCtx)
+	t.drainTerminatedInstances(tickCtx)
+}
+
+// @concept: lifecycle-subscriber
+func (t *LifecycleReconciler) drainTerminatedInstances(tickCtx context.Context) {
 	const batch = 100
 	var rows []persistence.InstanceRow
 	if err := t.deps.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
@@ -98,9 +105,12 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 		rows = r
 		return err
 	}); err != nil {
-		t.logger.Warn("instance_terminator.list_failed", "error", err.Error())
+		if n, log := t.recordFailure("terminated_instances"); log {
+			t.logger.Warn("lifecycle_reconciler.list_failed", "error", err.Error(), "consecutive_failures", n)
+		}
 		return
 	}
+	t.clearFailure("terminated_instances")
 	for _, inst := range rows {
 		var tpl *persistence.TemplateRow
 		if err := t.deps.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
@@ -108,8 +118,8 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 			tpl = r
 			return err
 		}); err != nil {
-			if n, log := t.recordFailure(inst.ID); log {
-				t.logger.Warn("instance_terminator.template_lookup_failed",
+			if n, log := t.recordFailure(inst.ID.String()); log {
+				t.logger.Warn("lifecycle_reconciler.template_lookup_failed",
 					"instance_id", inst.ID,
 					"template_hash", inst.TemplateHash,
 					"error", err.Error(),
@@ -119,8 +129,8 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 		}
 		if tpl == nil {
 			if err := fanOutInstanceTerminatedFromLifecycleRows(tickCtx, t.deps, inst, "instance_terminated"); err != nil {
-				if n, log := t.recordFailure(inst.ID); log {
-					t.logger.Warn("instance_terminator.fallback_fanout_failed",
+				if n, log := t.recordFailure(inst.ID.String()); log {
+					t.logger.Warn("lifecycle_reconciler.fallback_fanout_failed",
 						"instance_id", inst.ID,
 						"template_hash", inst.TemplateHash,
 						"error", err.Error(),
@@ -128,7 +138,7 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 				}
 				continue
 			}
-			t.clearFailure(inst.ID)
+			t.clearFailure(inst.ID.String())
 			continue
 		}
 		var terminatedAtMs int64
@@ -136,8 +146,8 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 			terminatedAtMs = inst.TerminatedAt.UnixMilli()
 		}
 		if err := CloseAndFanOutRunScopesForInstance(tickCtx, t.deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil {
-			if n, log := t.recordFailure(inst.ID); log {
-				t.logger.Warn("instance_terminator.run_scope_fanout_failed",
+			if n, log := t.recordFailure(inst.ID.String()); log {
+				t.logger.Warn("lifecycle_reconciler.run_scope_fanout_failed",
 					"instance_id", inst.ID,
 					"error", err.Error(),
 					"consecutive_failures", n)
@@ -147,32 +157,32 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 		_, perStoreErr, err := FanOutInstanceEvent(tickCtx, t.deps,
 			EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
 			InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil)
-		if err != nil {
-			if n, log := t.recordFailure(inst.ID); log {
-				t.logger.Warn("instance_terminator.fanout_partial_failure",
+		if err != nil || len(perStoreErr) > 0 {
+			if n, log := t.recordFailure(inst.ID.String()); log {
+				t.logger.Warn("lifecycle_reconciler.fanout_partial_failure",
 					"instance_id", inst.ID,
 					"per_store_error", perStoreErr,
 					"consecutive_failures", n)
 			}
 			continue
 		}
-		t.clearFailure(inst.ID)
+		t.clearFailure(inst.ID.String())
 	}
 }
 
-func (t *InstanceTerminator) recordFailure(id shared.UUID) (attempt int, shouldLog bool) {
+func (t *LifecycleReconciler) recordFailure(key string) (attempt int, shouldLog bool) {
 	t.failMu.Lock()
 	defer t.failMu.Unlock()
 	if t.failCount == nil {
-		t.failCount = make(map[shared.UUID]int)
+		t.failCount = make(map[string]int)
 	}
-	t.failCount[id]++
-	n := t.failCount[id]
-	return n, n == 1 || n%terminatorFailureLogEvery == 0
+	t.failCount[key]++
+	n := t.failCount[key]
+	return n, n == 1 || n%reconcilerFailureLogEvery == 0
 }
 
-func (t *InstanceTerminator) clearFailure(id shared.UUID) {
+func (t *LifecycleReconciler) clearFailure(key string) {
 	t.failMu.Lock()
-	delete(t.failCount, id)
+	delete(t.failCount, key)
 	t.failMu.Unlock()
 }

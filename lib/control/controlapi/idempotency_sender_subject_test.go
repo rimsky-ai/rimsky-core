@@ -262,3 +262,85 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	require.Equal(t, "B-first", payloadB["label"],
 		"key B's envelope must carry B's first-request payload, distinct from key A's")
 }
+
+// @decision: message-sender-kind-discriminator
+// @concept: message
+func TestMessageEnvelope_OperatorSendNamesTheSendingKey(t *testing.T) {
+	t.Parallel()
+	h := newSenderSubjectHarness(t)
+	t.Cleanup(h.close)
+
+	adminKey, _ := h.mintActiveAPIKey(t, "admin", []map[string]any{{"action": "*"}})
+	senderPlain, senderID := h.mintActiveAPIKey(t, "tenant-sender", []map[string]any{
+		{"action": "message:send"},
+		{"action": "message:read"},
+	})
+
+	instID := h.newInstance(t, adminKey, "envelope-subject")
+
+	status, body := h.httpPostAs(t, fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
+		"type":    "system/invalidate",
+		"payload": messagePayload("named-key"),
+	}, senderPlain, "idem-"+uuid.NewString())
+	require.Equal(t, http.StatusCreated, status, body)
+	msgID, _ := body["message_id"].(string)
+	require.NotEmpty(t, msgID)
+
+	env := h.getMessage(t, msgID, adminKey)
+	require.Equal(t, "operator", env["sender_kind"])
+	require.Equal(t, senderID.String(), env["sender_subject"],
+		"an operator send's envelope must name the api-key behind it, so two keys are "+
+			"distinguishable on the envelope rather than only in the dedup ledger: %+v", env)
+
+	listStatus, listBody := doHTTPRequest(t, h.srv.URL, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages", instID), nil,
+		map[string]string{"Authorization": "Bearer " + adminKey})
+	require.Equal(t, http.StatusOK, listStatus, listBody)
+	msgs, _ := listBody["messages"].([]any)
+	require.Len(t, msgs, 1)
+	listed, _ := msgs[0].(map[string]any)
+	require.Equal(t, senderID.String(), listed["sender_subject"],
+		"the message listing must carry the sender-subject the envelope stores: %+v", listed)
+}
+
+// @decision: message-sender-kind-discriminator
+// @concept: message
+func TestMessageEnvelope_PublisherSendNamesTheSubscription(t *testing.T) {
+	t.Parallel()
+	h := newSenderSubjectHarness(t)
+	t.Cleanup(h.close)
+
+	adminKey, _ := h.mintActiveAPIKey(t, "admin", []map[string]any{{"action": "*"}})
+	instID := h.newInstance(t, adminKey, "envelope-publisher")
+
+	instUUID, err := uuid.Parse(instID)
+	require.NoError(t, err)
+	subID := shared.UUID(uuid.New())
+	require.NoError(t, h.db.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		return h.db.Tables().PublisherSubscriptions().Insert(ctx, persistence.PublisherSubscriptionRow{
+			ID:             subID,
+			InstanceID:     shared.UUID(instUUID),
+			PublisherName:  "sensor-http",
+			Kind:           "http",
+			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
+			MessageType:    "system/invalidate",
+			State:          persistence.PublisherSubscriptionStateActive,
+		}, tx)
+	}))
+
+	status, body := h.httpPostAs(t, fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
+		"type":                      "system/invalidate",
+		"publisher_subscription_id": subID.String(),
+		"payload":                   messagePayload("from-publisher"),
+	}, adminKey, "idem-"+uuid.NewString())
+	require.Equal(t, http.StatusCreated, status, body)
+	msgID, _ := body["message_id"].(string)
+	require.NotEmpty(t, msgID)
+
+	env := h.getMessage(t, msgID, adminKey)
+	require.Equal(t, "publisher", env["sender_kind"])
+	require.Equal(t, "sensor-http", env["sender"])
+	require.Equal(t, subID.String(), env["sender_subject"],
+		"a publisher send's envelope must name the subscription behind it, so two subscriptions "+
+			"of one publisher are distinguishable on the envelope: %+v", env)
+}

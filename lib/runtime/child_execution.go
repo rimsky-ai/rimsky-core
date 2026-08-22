@@ -311,7 +311,7 @@ func fanOutRunScopeEventPostCommit(
 ) postCommitFn {
 	return func(ctx context.Context) {
 		FanOutRunScopeEvent(ctx, args.Persist, args.AdvisoryLocker, args.LifecycleSubs,
-			args.LifecyclePeersForSpec, tplSpec, runScopeID, instanceID, terminalReason, args.Logger, nil)
+			args.LifecyclePeersForSpec, tplSpec, runScopeID, instanceID, terminalReason, args.Logger)
 	}
 }
 

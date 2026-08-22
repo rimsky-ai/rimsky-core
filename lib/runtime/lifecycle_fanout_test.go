@@ -33,17 +33,14 @@ func openLifecycleFanoutTestDB(t *testing.T) persistence.Database {
 	return d
 }
 
-func fanOutRunScopeEventInTx(
+func fanOutRunScopeEvent(
 	t *testing.T, d persistence.Database, lifecycleSubs *lifecycle.Registry,
 	peersForSpec func(node.TemplateSpec) []string, tplSpec node.TemplateSpec,
 	runScopeID, instanceID shared.UUID, terminalReason string,
 ) {
 	t.Helper()
-	persist := d.Tables()
-	require.NoError(t, persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		FanOutRunScopeEvent(ctx, persist, d.AdvisoryLocker(), lifecycleSubs, peersForSpec, tplSpec, runScopeID, instanceID, terminalReason, nil, tx)
-		return nil
-	}))
+	FanOutRunScopeEvent(context.Background(), d.Tables(), d.AdvisoryLocker(), lifecycleSubs, peersForSpec,
+		tplSpec, runScopeID, instanceID, terminalReason, nil)
 }
 
 func TestFanOutRunScopeEvent_ReplayIsNoOp(t *testing.T) {
@@ -58,11 +55,11 @@ func TestFanOutRunScopeEvent_ReplayIsNoOp(t *testing.T) {
 	runScopeID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 
-	fanOutRunScopeEventInTx(t, d, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit")
+	fanOutRunScopeEvent(t, d, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit")
 	require.Len(t, fake.Calls(), 1, "the first fan-out must deliver on_run_scope_terminal exactly once")
 	require.Equal(t, "on_run_scope_terminal", fake.Calls()[0].Verb)
 
-	fanOutRunScopeEventInTx(t, d, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit")
+	fanOutRunScopeEvent(t, d, lcReg, peersForSpec, tplSpec, runScopeID, instanceID, "subgraph_exit")
 	require.Len(t, fake.Calls(), 1,
 		"replaying a fan-out for the same (peer, run-scope) pair must be a no-op: the idempotency row from "+
 			"the first delivery is already at run-scope-terminal, so no second downstream delivery may occur")
@@ -81,8 +78,8 @@ func TestFanOutRunScopeEvent_DistinctRunScopesEachDeliverOnce(t *testing.T) {
 	scopeA := shared.UUID(uuid.New())
 	scopeB := shared.UUID(uuid.New())
 
-	fanOutRunScopeEventInTx(t, d, lcReg, peersForSpec, tplSpec, scopeA, instanceID, "subgraph_exit")
-	fanOutRunScopeEventInTx(t, d, lcReg, peersForSpec, tplSpec, scopeB, instanceID, "subgraph_exit")
+	fanOutRunScopeEvent(t, d, lcReg, peersForSpec, tplSpec, scopeA, instanceID, "subgraph_exit")
+	fanOutRunScopeEvent(t, d, lcReg, peersForSpec, tplSpec, scopeB, instanceID, "subgraph_exit")
 
 	require.Len(t, fake.Calls(), 2,
 		"two distinct run scopes for the same peer must each deliver independently; "+
@@ -102,9 +99,9 @@ func TestFanOutRunScopeEvent_NilTxCommitsIndependently(t *testing.T) {
 	instanceID := shared.UUID(uuid.New())
 
 	FanOutRunScopeEvent(context.Background(), d.Tables(), d.AdvisoryLocker(), lcReg, peersForSpec, tplSpec,
-		runScopeID, instanceID, "subgraph_exit", nil, nil)
+		runScopeID, instanceID, "subgraph_exit", nil)
 	require.Len(t, fake.Calls(), 1,
-		"a nil tx must still deliver to the peer, managing its own short transactions for the idempotency read/write")
+		"the fan-out delivers to the peer, managing its own short transaction for the idempotency read and write")
 
 	require.NoError(t, d.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		row, err := d.Tables().LifecycleIdempotency().Get(ctx, "peer-a",

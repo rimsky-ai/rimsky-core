@@ -9,23 +9,21 @@ aliases:
 
 ## What it is
 
-The per-key authorization grant attached to a `concept:api-key`. Each key carries a JSON array of grant entries; each entry pairs an action string with an optional mode (an identity-bound dry-run floor owned by `concept:dry-run`, defaulting to full execution) and an optional scope (a resource selector evaluated alongside the action match).
-
-The grant comprises four pieces: the grant-entry types and their parser, the wildcard matcher and validator, the set-membership permission evaluator, and the canonical action registry.
+A permission is the authorization grant one api-key carries (see `concept:api-key`). The grant is a set of entries. Each entry names an action — what may be done, and to what kind of resource — and may also carry a mode, the floor below which that key's requests cannot execute (see `concept:dry-run`), and a scope, a selector the request's target resource must satisfy. A permission has four parts: the shape of an entry, the matcher that decides whether an entry's action covers a request, the evaluator that decides a request against the whole set, and the registry of the actions a deployment recognizes.
 
 ## Purpose
 
-The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode` and `scope`) without a schema migration — so entries are JSON with a parser that preserves unknown fields.
+A permission lets an operator say what one key may do, in a vocabulary small enough to check when the key is minted and to evaluate on every request. Because an entry may narrow itself by mode and by target resource, an operator mints a key that reaches exactly the resources one caller needs and executes only as far as that caller should go.
 
 ## Boundaries
 
-Owns: the grant entry shape, a boundary-only wildcard matcher over the action grammar, the canonical action registry (which includes the `service:enroll` verb that authorizes a service to enroll for a certificate identity), and per-action resource scoping via the optional selector field. Does NOT own: per-route handler dispatch (that's the HTTP router's concern), role expansion (CLI-side; see `concept:role-template`), the resolution of preview-vs-commit (`concept:dry-run` owns resolving the request's mode; `concept:permission` owns only the grant mode field that feeds the floor), the certificate machinery gated by the `service:enroll` grant (that's `concept:peer-auth`). Adjacent: `concept:api-key`, `concept:control-api`, `concept:dry-run` (owns resolving the request's mode from the flag and this concept's grant mode field together), `concept:role-template`, `concept:peer-auth`.
+A permission owns the shape of a grant entry, the matcher over the action vocabulary, the registry of recognized actions, and the per-action scoping the optional selector gives.
 
-## Invariants
+It does not own the routing of a request to its handler, the expansion of a named role into a grant, which belongs to `concept:role-template`, or the resolution of a request's mode, which belongs to `concept:dry-run` — a permission owns only the entry's mode field that feeds that resolution. It does not own the certificate machinery the enrollment grant unlocks, which belongs to `concept:peer-auth`.
 
-- **Closed action grammar.** An action is a noun:verb pair joined by a single separator, and the wildcard vocabulary is exactly three forms: the full wildcard, a noun-scoped wildcard (every verb of one noun), and a verb-scoped wildcard (one verb across every noun). The separator is part of the match boundary — a noun-scoped wildcard never matches a longer noun — and no other wildcard shape (infix, pattern) exists; an invalid form is rejected at key creation.
-- **Set-membership evaluation.** A request is allowed iff some entry's action matches AND that entry's scope (if present) is satisfied by the request's target resource; otherwise denied. Iteration order is irrelevant — any matching, in-scope entry allows, so there is no first-match-wins rule.
-- **Scoped entries are least-privilege.** A scope-bearing entry allows ONLY requests whose target resource satisfies the selector; an out-of-scope request of the same action is denied unless another entry independently allows it.
-- **Grant mode is a floor.** The matched entry's mode (full execution by default) is the most permissive mode the request may run at; the dry-run flag may restrict further but never escalate (see `concept:dry-run`).
-- **Forward-compatible parser.** Unknown JSON fields on grant entries are preserved (round-tripped through marshal).
-- **Action registry is canonical.** The same registry validates key-creation request bodies (unknown action strings → 400) and resolves MCP tool names → action → handler.
+see also: `api-key`, `control-api`, `dry-run`, `role-template`, `peer-auth`
+
+## Aliases
+
+- grant
+- action

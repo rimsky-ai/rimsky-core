@@ -6,25 +6,16 @@ concept: lineage
 
 ## What it is
 
-A persisted projection of **data lineage** — what each run's output literally depended on, and what each claim-handle resolved to. Two record kinds (`leaf_run`, `claim_terminal`); both append-only. Data dependency is captured via attribute-substitution refs on each leaf-run record (every `{{nodes.X.attribute.Y}}` reference declared in the node's attribute schema becomes a citation to the sender's most recent run), and via the claim-tree linkage on each claim-terminal record. The source of truth is the audit log plus the claim-handle lifecycle (see `concept:event-log`, `concept:claim-handle`); the lineage projection is written forward from those at terminal time, not reconstructed from them.
+Lineage is a persisted projection of data lineage: what each run's output depended on, and what each claim handle resolved to. It holds two append-only record kinds, the leaf-run record and the claim-terminal record (see `concept:lineage-record`). Data dependency reaches the projection two ways: on a leaf-run record, every attribute-substitution reference the node declares becomes a citation to the sender's most recent run; on a claim-terminal record, the claim-tree linkage carries it. A claim-terminal record carries a per-terminal disposition with three values, and the projection captures every claim-handle terminal. The audit log and the claim-handle lifecycle are the source of truth (see `concept:event-log`, `concept:claim-handle`); rimsky writes the projection forward from them at terminal time.
 
-The `claim_terminal` record carries a per-record outcome discriminator with three values for the per-terminal disposition. The projection captures every claim-handle terminal in one record kind.
+## Purpose
+
+Lineage lets an operator ask what a value depended on and how a promotion resolved without reading the audit log back. Because rimsky writes the projection forward at terminal time, the answer is a point lookup and a bounded walk rather than a reconstruction.
 
 ## Boundaries
 
-Owns: the lineage projection storage, the two record kinds, the operator-facing lineage query surface. Does NOT own: the source-of-truth audit log (lives in `concept:event-log`), the external-receiver wire format (lives with the external-receiver subscriber; see `concept:lineage-record`), **wake-only causality** (the "consumer was woken by upstream's settled signal but its attribute template never read from that upstream" relationship — operators wanting this consult the audit log's signal-emission rows or the wait-set ledger directly). Adjacent: `concept:lineage-record`, `concept:event-log`, `concept:claim-handle`, `concept:node-run`.
+Lineage owns the projection's storage, its two record kinds, and the operator-facing query surface over it. It does not own the audit log that is its source of truth (see `concept:event-log`), the wire format an external receiver consumes (see `concept:lineage-record`), or **wake-only causality** — the relationship where an upstream's settled signal woke a consumer whose attribute template never read from that upstream. An operator asking that question reads the audit log's signal-emission entries or the wait-set ledger instead.
 
-## Invariants
+Runs that invoke no executor write no record (see `decision:lineage-records-computation-only`). Causality for such a run lives in the audit log's signal-emission and cascade-firing entries.
 
-- Records are append-only; no UPDATEs.
-- Source of truth: the lineage projection is written forward from the audit log and the claim-handle lifecycle at terminal time; it is not reconstructed from them (there is no replay/rebuild path — the projection writer runs at leaf-run terminal and at claim-handle terminal (commit, natural abandon, or force-cancelled abandon), and that is the only way records are populated).
-- Pass-through nodes — runs whose runtime path never invokes an executor (fan-out parents, which skip executor at the acquire-phase split to dispatch children directly; pure-cascade nodes, which carry no executor declaration and settle on cascade alone) — emit no `leaf_run` record. The projection covers computational units; a pass-through has no computation to cite and no substitution-derived data dependency to capture, so it is structurally absent from the leaf-run surface by design. Causality for these runs lives in the audit log's signal-emission and cascade-firing rows, not in lineage.
-- Walks are bounded by a configurable depth.
-
-## Query surface
-
-The operator-facing query surface supports point lookups by run id, claim-handle id, source type+id, and producer name, plus recursive backward/forward walks across runs and claim handles bounded by depth. The source-id and producer-name reverse lookups page internally past their first window rather than silently dropping older matches, and surface a `truncated` flag if their internal scan budget is exhausted before the underlying data is.
-
-## Retention
-
-Operator-configurable trailing window, applied uniformly regardless of the corresponding run or claim handle's own retention (default 30 days). Manual prune is available.
+see also: `concept:lineage-record`, `concept:event-log`, `concept:claim-handle`, `concept:node-run`, `concept:wait-set`.

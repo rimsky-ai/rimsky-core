@@ -127,7 +127,7 @@ error messages. Inertness is not minimalism; it is what keeps rimsky
 out of the consumer's domain. Once the platform reads bytes for
 meaning, it becomes a partial participant in the domain and inherits
 bug surface and security surface that belongs to the consumer. Three
-invariants lock this in source — userdata opaque, claim content
+properties lock this in source — userdata opaque, claim content
 inert, blob content inert — and removing them would unwind the design.
 
 No domain helpers ship. Reference service implementations are
@@ -152,7 +152,7 @@ special-cased "deterministic node" type because the cascade,
 substitution, retry policy, and claim semantics are already correct for
 pure code.
 
-Pre-v1 has invariants because the safety properties are load-bearing
+Pre-v1 still holds its safety properties because they are load-bearing
 for any consumer. The release stance gives rimsky permission to break
 wire shapes and schema between versions; it does not give the platform
 permission to weaken acquisition determinism, the verify-before-run
@@ -163,8 +163,8 @@ properties are stable.
 ## 4. Load-bearing primitives
 
 The primitives below are what an evaluator needs to know exists. Each
-gets one paragraph here; the formal definitions, boundaries, and
-invariants live in the design catalog.
+gets one paragraph here; the formal definitions and boundaries live in
+the design catalog.
 
 **Templates and instances.** A template is a content-addressed
 specification of a graph — keyed by a hash over its canonicalized
@@ -248,7 +248,7 @@ operate this platform on behalf of a human or as part of a higher-level
 agentic system."
 
 For the formal definitions of each primitive — purpose, boundaries,
-invariants, and the code sites that enforce them — read
+and the code sites that cite them — read
 `.ok-planner/design/concepts.md`. It is an auto-generated TOC over a
 file-per-concept catalog and is the durable design surface. Inline
 `@concept:` annotations in the source link enforcement sites back to
@@ -359,9 +359,8 @@ catalog below are the canonical surfaces.
 
 For the concept catalog: `.ok-planner/design/concepts.md` is an
 auto-generated TOC over the per-concept files under
-`.ok-planner/design/concepts/`. Each file carries a definition,
-purpose, boundaries, and invariants, plus a notes section recording how
-the concept evolved. Inline `@concept:` annotations in the source code
+`.ok-planner/design/concepts/`. Each file carries a definition, a
+purpose, and boundaries. Inline `@concept:` annotations in the source code
 point at enforcement sites.
 
 For protocols: the wire definitions live in this repo under

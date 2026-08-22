@@ -33,8 +33,9 @@ func (b *producerVerbOutboxImpl) run(tx persistence.Tx) querier {
 const sqliteInsertProducerVerbOutboxSQL = `
 	INSERT OR IGNORE INTO rimsky_producer_verb_outbox
 	    (claim_handle_id, producer_name, verb, claim_scope_data, address, lease_token,
-	     supervisor_id, instance_id, parent_claim_handle_id, next_attempt_at, enqueued_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	     supervisor_id, instance_id, parent_claim_handle_id, next_attempt_at, enqueued_at,
+	     pending_lineage_record)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func (b *producerVerbOutboxImpl) Enqueue(ctx context.Context, in persistence.ProducerVerbOutboxInsertInput, tx persistence.Tx) error {
 	var instanceID any
@@ -50,6 +51,7 @@ func (b *producerVerbOutboxImpl) Enqueue(ctx context.Context, in persistence.Pro
 		in.SupervisorID, instanceID, parentID,
 		in.NextAttemptAt.UTC().Format(timeLayoutFixedNanos),
 		in.EnqueuedAt.UTC().Format(timeLayoutFixedNanos),
+		in.PendingLineageRecord,
 	); err != nil {
 		return fmt.Errorf("sqlite.ProducerVerbOutbox.Enqueue: %w", err)
 	}
@@ -58,7 +60,8 @@ func (b *producerVerbOutboxImpl) Enqueue(ctx context.Context, in persistence.Pro
 
 const sqliteSelectProducerVerbOutboxSQL = `
 	SELECT seq, claim_handle_id, producer_name, verb, claim_scope_data, address, lease_token,
-	       supervisor_id, instance_id, parent_claim_handle_id, attempt_count, next_attempt_at, last_error, enqueued_at
+	       supervisor_id, instance_id, parent_claim_handle_id, attempt_count, next_attempt_at, last_error, enqueued_at,
+	       pending_lineage_record
 	  FROM rimsky_producer_verb_outbox`
 
 func (b *producerVerbOutboxImpl) ListAll(ctx context.Context, tx persistence.Tx) ([]persistence.ProducerVerbOutboxRow, error) {
@@ -136,6 +139,7 @@ func scanProducerVerbOutboxRows(rows *sql.Rows) ([]persistence.ProducerVerbOutbo
 		)
 		if err := rows.Scan(&r.Seq, &handleStr, &r.ProducerName, &verb, &r.ClaimScopeData, &r.Address, &r.LeaseToken,
 			&r.SupervisorID, &instanceStr, &parentStr, &r.AttemptCount, &nextAttemptAt, &r.LastError, &enqueuedAt,
+			&r.PendingLineageRecord,
 		); err != nil {
 			return nil, fmt.Errorf("sqlite.ProducerVerbOutbox.scan: %w", err)
 		}

@@ -6,18 +6,12 @@ concept: observability
 
 ## What it is
 
-The service-facing optional observability protocols and the startup handshake that probes them. Two optional gRPC protocols total, one per service kind, each exposing a capabilities query: the executor-observability protocol, exposing single-trace fetch and trace-stream methods, and the claim-producer-observability protocol, exposing claim-detail fetch, claim-state streaming, claim-inventory pagination, and producer-declared admin views. A given service implements at most one, matching its kind. The handshake probes each declared service in parallel at rimsky startup, populating the discovery cache (see `concept:discovery-cache`). Also the canonical site for the executor-side `expected_attributes_schema` declaration (read from the handshake, applied at template registration and at dispatch post-merge/post-substitution).
+Observability is the pair of optional service protocols a peer service may implement, together with the startup handshake that probes them. One protocol belongs to each service kind: an executor exposes its trace surface, and a claim producer exposes its claim and inventory surfaces. Each protocol answers a capabilities query, so rimsky asks a service what it supports instead of assuming. A service implements at most the one protocol its kind matches. The startup handshake probes every declared service (see `concept:discovery-cache`). Observability is also where an executor declares the attribute keys it reads, as a closed contract (see `decision:expected-attributes-schema-closed`).
 
 ## Purpose
 
-Services declare their own capabilities and trace surfaces; rimsky should learn them once, cache the result, and consult the cache at validation gates. Keeping the protocol-side concept separate from the cache it populates (`discovery-cache`) and the operator-dashboard backplane (`cascade-graph`) keeps each concept's boundary sharp.
+Observability lets a service describe itself. Rimsky learns a service's capabilities and its trace surface from the service, rather than carrying a fixed picture of every service it talks to. Rimsky learns this once and consults what it learned at later validation gates. An operator reaches a running service's traces, claims, and inventory through rimsky, without opening a separate connection to each service.
 
 ## Boundaries
 
-Owns: the optional service protocols, the handshake mechanism, the refresh-loop policy, the executor-side `expected_attributes_schema` validation surface. Does NOT own: the cache the handshake populates (see `discovery-cache`), the operator-dashboard HTTP routes (see `cascade-graph`), the per-event audit log (see `event-log`). Adjacent: `discovery-cache`, `cascade-graph`, `executor`, `claim-producer`, `event-log`, `terminal-tag`.
-
-## Invariants
-
-- The handshake is best-effort: unreachable services are recorded with an unreachable status in `discovery-cache`; never aborts startup.
-- The capabilities query is named uniformly across both observability protocols.
-- The executor-side `expected_attributes_schema` validates at template registration AND at dispatch post-merge/post-substitution.
+Observability owns the two optional service protocols, the startup handshake, the policy for refreshing what the handshake learned, and the executor's declaration of the attribute keys it reads. It does not own the store the handshake fills: that is the discovery cache (see `discovery-cache`). It does not own the operator-facing view of a running graph (see `cascade-graph`), and it does not own the durable record of what happened (see `event-log`). An executor and a claim producer each carry their own definition (see `executor`, `claim-producer`). See also: `terminal-tag`.

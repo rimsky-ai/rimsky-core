@@ -31,9 +31,10 @@ type frameItem struct {
 	EndedAt             *time.Time `json:"ended_at,omitempty"`
 	LastProgressAt      *time.Time `json:"last_progress_at,omitempty"`
 
-	MessageType       string `json:"message_type,omitempty"`
-	MessageSender     string `json:"message_sender,omitempty"`
-	MessageSenderKind string `json:"message_sender_kind,omitempty"`
+	MessageType          string `json:"message_type,omitempty"`
+	MessageSender        string `json:"message_sender,omitempty"`
+	MessageSenderKind    string `json:"message_sender_kind,omitempty"`
+	MessageSenderSubject string `json:"message_sender_subject,omitempty"`
 }
 
 type listFramesResponse struct {
@@ -163,16 +164,17 @@ func handleGetInstanceFrame(deps AppDeps) http.HandlerFunc {
 
 func toFrameItem(r persistence.FrameRowWithMessage) frameItem {
 	return frameItem{
-		FrameID:             r.FrameID.String(),
-		InstanceID:          r.InstanceID.String(),
-		State:               string(r.State),
-		TriggeringMessageID: r.TriggeringMessageID.String(),
-		RootRunScopeID:      r.RootRunScopeID.String(),
-		StartedAt:           r.StartedAt,
-		EndedAt:             r.EndedAt,
-		LastProgressAt:      r.LastProgressAt,
-		MessageType:         r.MessageType,
-		MessageSender:       r.MessageSender,
-		MessageSenderKind:   r.MessageSenderKind,
+		FrameID:              r.FrameID.String(),
+		InstanceID:           r.InstanceID.String(),
+		State:                string(r.State),
+		TriggeringMessageID:  r.TriggeringMessageID.String(),
+		RootRunScopeID:       r.RootRunScopeID.String(),
+		StartedAt:            r.StartedAt,
+		EndedAt:              r.EndedAt,
+		LastProgressAt:       r.LastProgressAt,
+		MessageType:          r.MessageType,
+		MessageSender:        r.MessageSender,
+		MessageSenderKind:    r.MessageSenderKind,
+		MessageSenderSubject: r.MessageSenderSubject,
 	}
 }

@@ -6,38 +6,16 @@ concept: cancel-siblings
 
 ## What it is
 
-The proactive sibling cancellation that the strict aggregation policy always performs: when one sub-claim resolves to Abandon — whether the child's own natural abandon or a forced cancel — under a parent whose policy is strict, the runtime unconditionally walks the parent's other in-flight sub-claims and force-Abandons each via recursive claim-handle terminal-resolution calls. This is what "fail fast" means for strict aggregation; it is not a separate, configurable behavior — it is intrinsic to choosing strict. A workflow that wants surviving siblings to keep running despite one failure chooses a different aggregation policy kind instead (see `concept:fan-out`); a threshold policy set to the full child count tolerates any number of failures short of total loss without ever triggering this walk.
+Cancel siblings is the proactive cancellation a strict aggregation policy always performs. When one sub-claim of a fan-out parent resolves to abandonment — the child's own outcome, or a cancellation forced on it — and the parent's policy is strict, the runtime walks the parent's other in-flight sub-claims and force-abandons each one. This is what fail-fast means for a strict aggregation policy. It is not a setting of its own: choosing strict chooses this walk. A workflow that wants the surviving siblings to keep running after one failure chooses a different aggregation policy instead (see `concept:fan-out`). The parent claim-handle carries the aggregation policy the parent was acquired under, and the walk reads the policy there.
 
-Snapshotted on the parent claim-handle row at acquire-time from the fan-out parent's aggregation policy. Implemented as a sibling-level cancel walk plus a recursive descendant walk (see `concept:claim-tree`).
+## Purpose
+
+Cancel siblings stops work a strict fan-out can no longer use. Once one partition has failed, a strict parent can only fail. The remaining partitions then run for a verdict that is already settled, and they hold claims other work waits for. The walk ends that work and releases those claims at the moment the verdict becomes certain, rather than when the last sibling finishes on its own.
 
 ## Boundaries
 
-Owns: the proactive cancel walker, the multi-supervisor scope filter. Does NOT own: the post-resolution aggregate verdict (see `concept:fan-out` aggregator), the `strict` policy's semantics itself (owned by `concept:fan-out`; `concept:node-run` only snapshots the value on the parent run for run-tree aggregation), the held-durable promotion (see `concept:claim-lifetime`), the unconditional recursive descendant-cancel walk that fires on any Abandon regardless of aggregation policy (see `concept:claim-tree`), the run-level force-cancellation of remaining in-flight clones under `strict`/`first` — a separate mechanism, keyed off the run tree rather than the claim tree, that reaches clones with no active claim to walk (see `concept:fan-out`, `concept:node-run`). Adjacent: `concept:claim-tree`, `concept:fan-out`, `concept:claim-co-holdership`, `concept:claim-lifetime`.
+Cancel siblings owns the proactive cancel walk and the filter that keeps the walk to the siblings the walking supervisor holds. A supervisor mutates only the claims it holds itself (see `concept:claim-handle`), so where a deployment runs several supervisors and they acquired sibling sub-claims of one parent in parallel, a strict parent's fail-fast reaches the siblings that supervisor acquired and no others. The siblings another supervisor holds run to their own outcomes, and the parent's verdict combines both sets.
 
-## Invariants
+The aggregate verdict computed once the sub-claims resolve belongs to `concept:fan-out`, and so does the meaning of the strict policy itself; `concept:node-run` only carries the policy value on the parent run for run-tree aggregation. Promoting a held claim to durable belongs to `concept:claim-lifetime`. The recursive descendant-cancel walk that fires on any abandonment, whatever the aggregation policy, belongs to `concept:claim-tree`. The run-level cancellation of the remaining in-flight clones — keyed off the run tree rather than the claim tree, so it reaches a clone that holds no claim to walk — belongs to `concept:fan-out` and `concept:node-run`.
 
-- Proactive cancellation fires inside the triggering child's terminal-resolution call, AFTER the producer Abandon verb and the parent-counter bump, BEFORE the parent's recursive resolution walk.
-- Each force-Abandoned sibling is force-Abandoned via the same terminal-resolution path; the recursion runs the standard counter-bump + lineage-write + cancel-descendants chain, so the parent's aggregate verdict ends up consistent regardless of how many siblings were force-cancelled.
-- The recursion is bounded by claim-tree depth, not configuration. A force-Abandoned sibling that is itself a fan-out parent has its own descendants cancelled by the unconditional descendant-cancel walk (see `concept:claim-tree`) running inside the recursive resolution frame BEFORE the sibling's own terminal resolution — promotion to abandoned, or deletion under the ownership-bail source — so the descendants are not left orphaned in-flight.
-- Each sibling row is row-locked (a locking select) before the recursive cancellation fires on it. The lock is held for the duration of the recursive call. This closes the race against a parallel worker on the same supervisor that may be terminating the sibling natively (Commit/Abandon via the executor path) — producer-side claim-id idempotency cannot reconcile distinct verbs (Commit vs Abandon).
-- Force-cancelled rows are written to the lineage ledger with a force-cancelled outcome and a cause field distinguishing sibling-cancel from descendant-cancel — see `concept:lineage`.
-- The cancel walker SKIPS three classes of sibling rows: (a) non-active rows — committed-durable rows preserve the `concept:claim-lifetime` durable-Commit contract; committed-subgraph and abandoned rows aren't candidates for re-cancellation either; (b) rows already Promoted by an inner recursive walker (a defensive re-check after the row-lock); (c) **rows held by a different supervisor**, per invariant 4 (claimant-guarded release).
-- The parent claim-handle row is also gated on its state being active — symmetric with the other auto-terminal paths. Non-active parents have already resolved.
-- A malformed aggregation-policy value on the parent → log a warn and treat as non-strict, i.e. no proactive cancellation (safe fallback; the post-resolution aggregator's default-strict path still computes a correct aggregate verdict).
-
-## Multi-supervisor scope (load-bearing)
-
-**Cancel-siblings is scoped to the supervisor that holds the parent.** Under multi-supervisor deployments (more than one supervisor process running concurrently), sub-claims of the same parent can be acquired by different supervisor processes. The cancel walker filters mismatched-supervisor siblings out of its walk per invariant 4: a supervisor cannot release claims held by a different supervisor.
-
-Practical consequence under a `strict` aggregation policy with multi-supervisor fan-out:
-
-- Supervisor A holds 5 of 12 sub-claims; supervisor B holds the other 7.
-- One of A's sub-claims resolves to Abandon.
-- A's cancel walker force-Abandons A's other 4 sub-claims.
-- A's cancel walker SKIPS B's 7 sub-claims (claimant-guard filter).
-- B's 7 sub-claims continue to natural completion; each Commit / Abandon bumps the parent counter independently.
-- The parent's aggregator computes the final verdict from the union of A's force-Abandons + B's natural outcomes.
-
-"Fail fast" is honored within a supervisor, not across. The producer side is also protected: forcing an Abandon from supervisor A on a claim held by supervisor B would race with B's natural Commit/Abandon and corrupt the producer's `claim_id`-keyed state.
-
-Fan-out is typically single-supervisor in practice (the supervisor that acquired the parent dispatches the children; single-replica deployments are the common case). The multi-supervisor edge case matters when (a) more than one supervisor replica is deployed, AND (b) multiple supervisors picked up sibling sub-claim rows in parallel, AND (c) the parent's policy is strict.
+see also: `claim-tree`, `fan-out`, `claim-handle`, `claim-co-holdership`, `claim-lifetime`, `node-run`

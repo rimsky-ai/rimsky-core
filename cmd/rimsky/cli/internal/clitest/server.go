@@ -254,10 +254,12 @@ func (s *Server) handleValidateTemplate(w http.ResponseWriter, r *http.Request) 
 	}
 	warningsAsErrors := r.URL.Query().Get("warnings_as_errors") == "true"
 	ok := len(errs) == 0 && (!warningsAsErrors || len(warns) == 0)
+	// @decision: template-identity-deployment-canonical
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                  ok,
 		"validation_errors":   errs,
 		"validation_warnings": warns,
+		"template_hash":       hashSpec(body.Spec),
 	})
 }
 

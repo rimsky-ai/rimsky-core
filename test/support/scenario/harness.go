@@ -86,6 +86,13 @@ type HarnessOpts struct {
 // @concept: anonymous-mode
 const defaultHarnessTargetAgent = "scenario-default-agent"
 
+func scenarioDebugLogger() shared.Logger {
+	if os.Getenv("SCENARIO_DEBUG") == "" {
+		return shared.SilentLogger{}
+	}
+	return shared.NewSlogLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+}
+
 func Start(t testing.TB, opts HarnessOpts) *Harness {
 	t.Helper()
 	ctx, cancelHarness := context.WithCancel(context.Background())
@@ -219,10 +226,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	}
 
 	if !opts.NoSupervisor {
-		var supLogger shared.Logger = shared.SilentLogger{}
-		if os.Getenv("SCENARIO_DEBUG") != "" {
-			supLogger = shared.NewSlogLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		}
+		supLogger := scenarioDebugLogger()
 		sv, err := config.StartSupervisor(config.SupervisorConfig{
 			SupervisorID:                "scenario-supervisor",
 			Driver:                      driver,
@@ -257,7 +261,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	ca, err := config.StartControlAPI(config.ControlAPIConfig{
 		Driver:                 driver,
 		Clock:                  clock,
-		Logger:                 shared.SilentLogger{},
+		Logger:                 scenarioDebugLogger(),
 		Host:                   "127.0.0.1",
 		Port:                   0,
 		ControlAPIID:           "scenario-control-api",
@@ -1063,9 +1067,6 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 	}
 	if len(spec.ParamsSchema) > 0 {
 		out["params_schema"] = spec.ParamsSchema
-	}
-	if len(spec.ParamsRedact) > 0 {
-		out["params_redact"] = spec.ParamsRedact
 	}
 	if spec.Defaults != nil && spec.Defaults.Attributes != nil && len(spec.Defaults.Attributes.ByExecutor) > 0 {
 		out["defaults"] = map[string]any{

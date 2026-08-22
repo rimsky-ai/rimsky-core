@@ -476,8 +476,8 @@ func allAuditPayloads(t *testing.T, f *authFixture) []map[string]any {
 	t.Helper()
 	ctx := context.Background()
 	kinds := []string{
-		auth.EventAccessAttempted, auth.EventAccessDenied,
-		auth.EventKeyCreated, auth.EventKeyRevoked, auth.EventKeyRotated,
+		auth.EventAccessAttempted.String(), auth.EventAccessDenied.String(),
+		auth.EventKeyCreated.String(), auth.EventKeyRevoked.String(), auth.EventKeyRotated.String(),
 	}
 	var out []map[string]any
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

@@ -6,6 +6,7 @@ package claimproducer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -208,5 +209,72 @@ func TestRun_Uniformity_PassesIdenticalSemanticsOnByteEqualScope(t *testing.T) {
 	row := findRow(t, results, "Uniformity")
 	if row.Err != nil {
 		t.Fatalf("Uniformity expected PASS when byte-equal scope produces identical RealizedWriteSemantics, got Err: %v", row.Err)
+	}
+}
+
+type pickPolicyFake struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (f *pickPolicyFake) Name() string { return "conformance-target" }
+
+func (f *pickPolicyFake) Capabilities(context.Context) (claimproducer.Capabilities, error) {
+	return claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+	}, nil
+}
+
+func (f *pickPolicyFake) Open(_ context.Context, _ claimproducer.ClaimID, _ claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
+	f.mu.Lock()
+	f.calls++
+	scope := []byte(fmt.Sprintf(`{"picked":%d}`, f.calls))
+	f.mu.Unlock()
+	return claimproducer.OpenOutcome{
+		Available: true,
+		Result: claimproducer.ClaimResult{
+			Address:                scope,
+			ClaimScope:             scope,
+			RealizedWriteSemantics: claimproducer.WriteSemanticsSync,
+		},
+	}, nil
+}
+
+func (f *pickPolicyFake) Commit(context.Context, claimproducer.ClaimID, []byte, []byte, string) (claimproducer.CommitResult, error) {
+	return claimproducer.CommitResult{}, nil
+}
+
+func (f *pickPolicyFake) Abandon(context.Context, claimproducer.ClaimID, []byte, []byte, string) error {
+	return nil
+}
+
+func (f *pickPolicyFake) Release(context.Context, claimproducer.ClaimID, []byte, []byte, string) error {
+	return nil
+}
+
+func (f *pickPolicyFake) SplitScope(context.Context, claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+	return claimproducer.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
+}
+
+func (f *pickPolicyFake) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
+	return string(a) == string(b), nil
+}
+
+// @concept: conformance
+func TestRun_Uniformity_SkippedForAPickPolicyProducerWhoseOpensReturnDifferentScopes(t *testing.T) {
+	results := Run(context.Background(), &pickPolicyFake{})
+
+	if row := findRow(t, results, "OpenFirst"); row.Err != nil {
+		t.Fatalf("OpenFirst expected PASS for a pick-policy producer, got Err: %v", row.Err)
+	}
+	if row := findRow(t, results, "OpenSecond"); row.Err != nil {
+		t.Fatalf("OpenSecond expected PASS for a pick-policy producer, got Err: %v", row.Err)
+	}
+	for _, r := range results {
+		if r.Name == "Uniformity" {
+			t.Fatalf("a producer whose consecutive opens pick different scopes has no byte-equal scope "+
+				"to compare, so the uniformity check is skipped rather than reported; got a %q row (err=%v)",
+				r.Name, r.Err)
+		}
 	}
 }

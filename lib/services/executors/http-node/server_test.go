@@ -298,9 +298,12 @@ func TestExecute_NonNumericExpectStatusEntry_RejectedAsAttributeInvalid(t *testi
 	}
 }
 
-func TestExecute_StubOnlyKeys_NotForwardedInLiveRequestBody(t *testing.T) {
+// @decision: expected-attributes-schema-closed
+func TestExecute_RequestBodyComesFromTheBodyAttributeAlone(t *testing.T) {
 	var gotBody map[string]any
+	var gotCT string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCT = r.Header.Get("Content-Type")
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
@@ -313,10 +316,10 @@ func TestExecute_StubOnlyKeys_NotForwardedInLiveRequestBody(t *testing.T) {
 	req := newRequest(t, map[string]any{
 		"url":            ts.URL,
 		"method":         "POST",
+		"body":           map[string]any{"customer_id": "cust_42"},
 		"probe_park":     true,
-		"probe_cancel":   false,
 		"park_resume_at": "2026-01-01T00:00:00Z",
-		"real_field":     "keep-me",
+		"real_field":     "not-a-declared-attribute",
 	})
 	outcome, err := s.Execute(context.Background(), req)
 	if err != nil {
@@ -325,13 +328,14 @@ func TestExecute_StubOnlyKeys_NotForwardedInLiveRequestBody(t *testing.T) {
 	if outcome.GetSuccess() == nil {
 		t.Fatalf("expected Success, got %T", outcome.GetOutcome())
 	}
-	for _, leaked := range []string{"probe_park", "probe_cancel", "park_resume_at"} {
-		if _, ok := gotBody[leaked]; ok {
-			t.Errorf("stub-only key %q leaked into live upstream request body: %+v", leaked, gotBody)
-		}
+	if gotBody["customer_id"] != "cust_42" {
+		t.Errorf("the body attribute did not reach the upstream request: %+v", gotBody)
 	}
-	if gotBody["real_field"] != "keep-me" {
-		t.Errorf("real attribute dropped from upstream request body: %+v", gotBody)
+	if len(gotBody) != 1 {
+		t.Errorf("the upstream body carries more than the body attribute: %+v", gotBody)
+	}
+	if !strings.Contains(gotCT, "json") {
+		t.Errorf("expected json Content-Type, got %q", gotCT)
 	}
 }
 
@@ -474,39 +478,7 @@ func TestExecute_PostWithStructBody(t *testing.T) {
 	}
 }
 
-func TestExecute_AttributesAsRequestBody(t *testing.T) {
-	var got map[string]any
-	var gotCT string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotCT = r.Header.Get("Content-Type")
-		_ = json.NewDecoder(r.Body).Decode(&got)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"upstream_ack":true}`))
-	}))
-	defer ts.Close()
-
-	s := testServer(t, false)
-	req := newRequestWithAttrs(t,
-		map[string]any{"url": ts.URL, "method": "POST"},
-		map[string]any{"customer_id": "cust_42", "topic": "alpha"},
-	)
-	outcome, err := s.Execute(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if got["customer_id"] != "cust_42" || got["topic"] != "alpha" {
-		t.Errorf("attributes were not posted as request body: %+v", got)
-	}
-	if !strings.Contains(gotCT, "json") {
-		t.Errorf("expected json Content-Type, got %q", gotCT)
-	}
-	delta := outcome.GetSuccess().GetAttributesDelta().AsMap()
-	if delta["upstream_ack"] != true {
-		t.Errorf("expected attributes_delta to mirror upstream JSON body, got %+v", delta)
-	}
-}
-
-func TestExecute_NoAttributesNoBody(t *testing.T) {
+func TestExecute_NoBodyAttributeSendsNoBody(t *testing.T) {
 	var bodyLen int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf, _ := io.ReadAll(r.Body)

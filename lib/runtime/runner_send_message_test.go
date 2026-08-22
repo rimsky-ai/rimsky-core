@@ -145,12 +145,28 @@ func countMessages(t *testing.T, ctx context.Context, d persistence.Database, in
 	return len(page.Rows)
 }
 
+// @concept: node
+func seedSendNode(t *testing.T, ctx context.Context, d persistence.Database, instanceID shared.UUID) shared.UUID {
+	t.Helper()
+	nodeID := shared.UUID(uuid.New())
+	store := d.Tables()
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: nodeID, InstanceID: instanceID, NodeType: "n",
+		}, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("seedSendNode: %v", err)
+	}
+	return nodeID
+}
+
 func TestSendCascadeMessageInTx_HappyPath(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := openSendTestDB(t)
 	instanceID := seedSendInstance(t, ctx, d)
-	nodeID := shared.UUID(uuid.New())
+	nodeID := seedSendNode(t, ctx, d, instanceID)
 	frameID := shared.UUID(uuid.New())
 
 	var msgID shared.UUID
@@ -199,7 +215,7 @@ func TestSendCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 	ctx := context.Background()
 	d := openSendTestDB(t)
 	instanceID := seedSendInstance(t, ctx, d)
-	nodeID := shared.UUID(uuid.New())
+	nodeID := seedSendNode(t, ctx, d, instanceID)
 	frameID := shared.UUID(uuid.New())
 
 	preCount := countMessages(t, ctx, d, instanceID)
@@ -233,7 +249,7 @@ func TestSendCascadeMessage_NotCancelledByLaterRollback(t *testing.T) {
 	ctx := context.Background()
 	d := openSendTestDB(t)
 	instanceID := seedSendInstance(t, ctx, d)
-	nodeID := shared.UUID(uuid.New())
+	nodeID := seedSendNode(t, ctx, d, instanceID)
 	frameID := shared.UUID(uuid.New())
 
 	msgID, replayed, err := sendCascadeMessage(ctx, d.Tables(),
@@ -270,7 +286,7 @@ func TestSendCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 	ctx := context.Background()
 	d := openSendTestDB(t)
 	instanceID := seedSendInstance(t, ctx, d)
-	nodeID := shared.UUID(uuid.New())
+	nodeID := seedSendNode(t, ctx, d, instanceID)
 	frameID := shared.UUID(uuid.New())
 
 	var firstID, secondID shared.UUID
@@ -333,7 +349,7 @@ func TestSendCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 	ctx := context.Background()
 	d := openSendTestDB(t)
 	instanceID := seedSendInstance(t, ctx, d)
-	nodeID := shared.UUID(uuid.New())
+	nodeID := seedSendNode(t, ctx, d, instanceID)
 	frameID := shared.UUID(uuid.New())
 
 	var msgID shared.UUID
@@ -368,7 +384,7 @@ func TestSendCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) 
 	ctx := context.Background()
 	d := openSendTestDB(t)
 	instanceID := seedSendInstance(t, ctx, d)
-	nodeID := shared.UUID(uuid.New())
+	nodeID := seedSendNode(t, ctx, d, instanceID)
 	frameID := shared.UUID(uuid.New())
 
 	for i := 0; i < 2; i++ {
@@ -390,7 +406,7 @@ func TestSendCascadeMessageInTx_EmptyNonNilBodyDefaultsToJSONObject(t *testing.T
 	ctx := context.Background()
 	d := openSendTestDB(t)
 	instanceID := seedSendInstanceNoBodySchema(t, ctx, d)
-	nodeID := shared.UUID(uuid.New())
+	nodeID := seedSendNode(t, ctx, d, instanceID)
 	frameID := shared.UUID(uuid.New())
 
 	var msgID shared.UUID
@@ -423,7 +439,7 @@ func TestSendCascadeMessageInTx_DistinctNodeFramePairProducesDistinctEnvelopes(t
 	instanceID := seedSendInstance(t, ctx, d)
 
 	for i := 0; i < 3; i++ {
-		nodeID := shared.UUID(uuid.New())
+		nodeID := seedSendNode(t, ctx, d, instanceID)
 		frameID := shared.UUID(uuid.New())
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			_, _, err := sendCascadeMessage(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"v"}`), tx)

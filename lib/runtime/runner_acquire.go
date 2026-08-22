@@ -100,6 +100,14 @@ type acquisition struct {
 	LockSpecSubstitutionSite      string
 	LockSpecSubstitutionDirective string
 	LockSpecSubstitutionErr       string
+
+	// @decision: lineage-records-computation-only
+	ExecutorInvoked bool
+}
+
+// @decision: lineage-records-computation-only
+func (a *acquisition) invokedExecutor() bool {
+	return a != nil && a.ExecutorInvoked
 }
 
 type openResult int

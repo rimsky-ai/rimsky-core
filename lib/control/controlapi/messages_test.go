@@ -442,6 +442,55 @@ func TestMCPMessageSend_CallerSuppliedIdempotencyKeyReplaysInsteadOfDoubleSendin
 	require.Len(t, msgs, 1, "a replayed send must not enqueue a second message envelope")
 }
 
+// @decision: idempotency-key-header-universal
+func TestMCPMessageSend_OmittedIdempotencyKeyFailsNamingTheArgument(t *testing.T) {
+	h := newMCPParityHarness(t)
+	admin := h.mintKey(t, "admin", `[{"action":"*"}]`)
+
+	status, out := h.http(t, "POST", "/v1/templates", admin, validTemplateBody("mcp-msg-nokey-"+uuid.NewString()))
+	require.Equal(t, http.StatusCreated, status, out)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+	deployStatus, _ := h.http(t, "POST", "/v1/templates/"+tplID+"/deploy", admin, map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
+	status, out = h.http(t, "POST", "/v1/instances", admin, map[string]any{
+		"template":     tplID,
+		"instance_key": "mcp-msg-nokey-ck-" + uuid.NewString(),
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instID, _ := out["instance_id"].(string)
+	require.NotEmpty(t, instID)
+
+	rpcBody := map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{
+			"name": "message_send",
+			"arguments": map[string]any{
+				"id":   instID,
+				"type": "system/invalidate",
+			},
+		},
+	}
+	status, out = h.http(t, "POST", "/v1/mcp", admin, rpcBody)
+	require.Equal(t, http.StatusOK, status, out)
+	result, ok := out["result"].(map[string]any)
+	require.True(t, ok, "expected JSON-RPC result envelope: %v", out)
+	require.Equal(t, true, result["isError"],
+		"a message_send call carrying no idempotency_key must come back as a tool error: %v", result)
+	content, ok := result["content"].([]any)
+	require.True(t, ok && len(content) > 0, "expected result.content: %v", result)
+	firstContent, _ := content[0].(map[string]any)
+	text, _ := firstContent["text"].(string)
+	require.Contains(t, text, "idempotency_key",
+		"the tool error must name the missing argument: %s", text)
+
+	status, out = h.http(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?type=system/invalidate", instID), admin, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Empty(t, msgs,
+		"a keyless MCP send must persist no envelope: the tool mints no key on the caller's behalf")
+}
+
 func TestCreateMessage_DeclaredTypeAccepted(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -944,4 +993,55 @@ func getMessageRow(t *testing.T, ctx context.Context, h *harness, id shared.UUID
 		return err
 	}))
 	return row
+}
+
+// @decision: mcp-http-parity
+// @decision: idempotency-key-header-universal
+// @concept: permission
+func TestMCPMessageSend_AnUnauthorizedCallerIsRefusedBeforeItLearnsTheArguments(t *testing.T) {
+	h := newMCPParityHarness(t)
+	admin := h.mintKey(t, "admin", `[{"action":"*"}]`)
+	readOnly := h.mintKey(t, "reader", `[{"action":"mcp:read"}]`)
+
+	status, out := h.http(t, "POST", "/v1/templates", admin, validTemplateBody("mcp-msg-authz-"+uuid.NewString()))
+	require.Equal(t, http.StatusCreated, status, out)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+	deployStatus, _ := h.http(t, "POST", "/v1/templates/"+tplID+"/deploy", admin, map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
+	status, out = h.http(t, "POST", "/v1/instances", admin, map[string]any{
+		"template":     tplID,
+		"instance_key": "mcp-msg-authz-ck-" + uuid.NewString(),
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instID, _ := out["instance_id"].(string)
+	require.NotEmpty(t, instID)
+
+	arguments := map[string]any{"id": instID, "type": "system/invalidate"}
+	rpcBody := map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{"name": "message_send", "arguments": arguments},
+	}
+	status, out = h.http(t, "POST", "/v1/mcp", readOnly, rpcBody)
+	require.Equal(t, http.StatusOK, status, out)
+	result, ok := out["result"].(map[string]any)
+	require.True(t, ok, "expected JSON-RPC result envelope: %v", out)
+
+	httpStatus, _ := h.http(t, "POST", "/v1/instances/"+instID+"/messages", readOnly, map[string]any{
+		"type": "system/invalidate",
+	})
+	require.Equal(t, http.StatusForbidden, httpStatus,
+		"the HTTP route refuses a caller holding only mcp:read")
+	content, ok := result["content"].([]any)
+	require.True(t, ok && len(content) > 0, "expected result.content: %v", result)
+	firstContent, _ := content[0].(map[string]any)
+	text, _ := firstContent["text"].(string)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text), &payload), "tool result text must be the JSON envelope: %s", text)
+	require.EqualValues(t, httpStatus, payload["status"],
+		"the tool must answer the same status the route does. A caller the deployment refuses learns nothing "+
+			"about the tool's arguments, and the two transports agree: %s", text)
+	require.NotContains(t, text, "idempotency_key",
+		"a refused caller must not be told which arguments the tool requires: %s", text)
 }

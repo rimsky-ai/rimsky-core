@@ -114,6 +114,7 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `template-lifecycle` — Operator manages template catalog.
 - `template-sub-graph-delegation` — Template author composes via sub-graphs.
 - `template-subscriptions` — Template author wires CEL-predicated subscriptions.
+- `template-validate-without-registering` — Template author validates a spec without registering it.
 - `typed-message-substitution` — Template author reads message bodies through the typed-message substitution grammar shared with node attributes.
 - `uncovered-substitution-rejected` — Template author gets a registration error for an uncovered substitution ref.
 - `uniform-attributes-delta-subscription` — One subscription predicated on verdict-time attributes fires uniformly across success and error terminals.
@@ -125,4 +126,3 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `verifier-severity-partition` — Template author distinguishes warning vs error.
 - `verifier-shape-checks` — Template author validates data shape with built-in checks.
 - `work-completed-emitted` — Operator pairs every work-started event with a work-completed event.
-

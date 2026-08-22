@@ -18,6 +18,9 @@ import (
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
+// @concept: cancel-siblings
+var errNodeRowMissingForRun = errors.New("node row missing for an in-flight run")
+
 func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath, changed bool) signalpkg.Signal {
 	switch state {
 	case cascade.NodeStateFailed:
@@ -341,17 +344,19 @@ func cancelInFlightRunTreeChild(
 		}
 		return nil, fmt.Errorf("cancelInFlightRunTreeChild: UpdateState %s: %w", current.NodeRunID, err)
 	}
-	var (
-		instanceID shared.UUID
-		nodeType   string
-	)
 	nodeRow, err := args.Persist.Nodes().Get(ctx, current.NodeID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("cancelInFlightRunTreeChild: load node %s: %w", current.NodeID, err)
 	}
-	if nodeRow != nil {
-		instanceID = nodeRow.InstanceID
-		nodeType = nodeRow.NodeType
+	if nodeRow == nil {
+		return nil, fmt.Errorf("cancelInFlightRunTreeChild: %w: node %s of run %s",
+			errNodeRowMissingForRun, current.NodeID, current.NodeRunID)
+	}
+	instanceID := nodeRow.InstanceID
+	nodeType := nodeRow.NodeType
+	if err := AppendStateTransitionEvent(ctx, args.Persist, current.NodeID, instanceID,
+		current.State, cascade.NodeStateFailed, cascade.ReasonSiblingCancelled, tx); err != nil {
+		return nil, fmt.Errorf("cancelInFlightRunTreeChild: state_transition event: %w", err)
 	}
 	// @concept: signal
 	cancelSig := signalpkg.BuildTerminalErrorSignal(cascade.ErrorClassSiblingFailed, nil, 0, 0, nil, nil)

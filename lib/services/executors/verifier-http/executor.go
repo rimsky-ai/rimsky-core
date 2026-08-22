@@ -21,7 +21,10 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/checkspec"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/stubprobe"
 )
+
+const defaultParkProbeScratch = "verifier-http-stub-park-scratch"
 
 // @concept: executor
 type Server struct {
@@ -40,8 +43,17 @@ func NewServer(opts Opts) *Server {
 
 func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	ud := req.GetAttributes().AsMap()
-	if stubmode.IsProbe(ud) && s.stubMode {
-		return execoutcome.StubSuccess("verifier-http stub"), nil
+	if s.stubMode {
+		// @concept: conformance
+		if stubmode.IsProbe(ud) {
+			return execoutcome.StubSuccess("verifier-http stub"), nil
+		}
+		if stubmode.IsParkProbe(ud) {
+			return stubprobe.Park(ud, req.GetScratch(), defaultParkProbeScratch), nil
+		}
+		if stubmode.IsCancelProbe(ud) {
+			return nil, stubprobe.Cancel(ctx, req.GetCallbackUrl())
+		}
 	}
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {

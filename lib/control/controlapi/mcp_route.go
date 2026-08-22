@@ -35,6 +35,8 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 		Schemas:          builtinSchemas(),
 		ResolveIdentity:  IdentityFromContextOK,
 		WithProtocolSkin: WithProtocolSkin,
+		// @decision: idempotency-key-header-universal
+		IdempotencyKeyRequired: map[string]bool{"message_send": true},
 	}
 	server := &mcp.Server{
 		Tools:     catalog,
@@ -99,7 +101,7 @@ func builtinSchemas() map[string][]byte {
 		// @concept: peer-auth
 		"service_enroll": []byte(`{"type":"object","properties":{"label":{"type":"string","description":"optional label recorded on the enrollment audit line"}}}`),
 
-		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string","description":"ignored; the server derives sender from the caller's identity or publisher_subscription_id"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Omit to have the server synthesize a random one"}},"required":["id","type"]}`),
+		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string","description":"ignored; the server derives sender from the caller's identity or publisher_subscription_id"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Required: the server mints no key on the caller's behalf"}},"required":["id","type","idempotency_key"]}`),
 		"message_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"message_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"message id"}},"required":["id"]}`),
 

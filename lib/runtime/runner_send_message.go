@@ -65,9 +65,10 @@ func sendCascadeMessageRow(
 
 	candidateID := shared.UUID(uuid.New())
 
+	// @decision: message-sender-kind-discriminator
 	dedupRow, inserted, err := tables.MessageIdempotencies().InsertOrLookup(ctx, persistence.MessageIdempotencyRow{
 		InstanceID:     instanceID,
-		SenderKind:     senderKind,
+		SenderKind:     persistence.DedupSenderKindInstance,
 		Sender:         sender,
 		SenderSubject:  "",
 		IdempotencyKey: idempotencyKey,
@@ -88,7 +89,7 @@ func sendCascadeMessageRow(
 		SenderKind: senderKind,
 		Payload:    body,
 	}
-	if err := EnqueueMessage(ctx, tables, enqueueReq, tx); err != nil {
+	if err := EnqueueMessageFromNode(ctx, tables, enqueueReq, nodeID, tx); err != nil {
 		return shared.UUID{}, false, fmt.Errorf("sendCascadeMessage: insert envelope: %w", err)
 	}
 	return candidateID, false, nil

@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-var numberedInvariantPattern = regexp.MustCompile(`(?i)\b(invariant|inv)s?\b[\s#-]*\d+`)
+var numberedInvariantPattern = regexp.MustCompile(`(?i)\b(invariant|inv)s?\b[\s#:-]*\d+`)
 
 func TestNoNumberedInvariantReferences(t *testing.T) {
 	repoRoot := findRepoRoot(t)
@@ -70,8 +70,37 @@ func TestNoNumberedInvariantReferences(t *testing.T) {
 	}
 
 	if len(violations) > 0 {
-		t.Fatalf("numbered-invariant references found in source (concept-doc invariant numbering is design-doc-internal "+
-			"and must not be cited from code, error strings, or test names/messages; name the behavior in words instead):\n%s",
+		t.Fatalf("numbered-invariant references found in source (rimsky keeps no numbered-invariant catalog — a safety "+
+			"property is recorded in the decision or story that owns it and proven by a test, so a number must not be "+
+			"cited from code, error strings, or test names/messages; name the behavior in words instead):\n%s",
 			strings.Join(violations, "\n"))
+	}
+}
+
+func TestNumberedInvariantPatternCatchesCitationForms(t *testing.T) {
+	caught := []string{
+		"invariant:4",
+		"invariant:4-claimant-guarded-release",
+		"invariant 4",
+		"invariant #4",
+		"invariant-4",
+		"invariants: 12",
+		"inv 7",
+	}
+	for _, line := range caught {
+		if !numberedInvariantPattern.MatchString(line) {
+			t.Errorf("guard missed a numbered-invariant reference: %q", line)
+		}
+	}
+
+	passed := []string{
+		"the claimant-guarded release invariant",
+		"invariantly true",
+		"@decision: blessed-invariant-annotations",
+	}
+	for _, line := range passed {
+		if numberedInvariantPattern.MatchString(line) {
+			t.Errorf("guard flagged prose that cites no number: %q", line)
+		}
 	}
 }

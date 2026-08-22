@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -193,7 +194,7 @@ func TestCARoundTripThroughLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("KeyPKCS8DER: %v", err)
 	}
-	reloaded, err := LoadCA(ca.CertPEM(), keyDER)
+	reloaded, err := LoadCA(ca.CertPEM(), keyDER, fixedNow)
 	if err != nil {
 		t.Fatalf("LoadCA: %v", err)
 	}
@@ -204,5 +205,95 @@ func TestCARoundTripThroughLoad(t *testing.T) {
 	leaf := leafCertOf(t, issued)
 	if err := verifyLeaf(leaf, ca.CertPool(), x509.ExtKeyUsageClientAuth); err != nil {
 		t.Fatalf("leaf issued by reloaded CA must verify against original pool: %v", err)
+	}
+}
+
+// @decision: host-agent-proxy-tls
+// @concept: peer-auth
+func TestLoadCARefusesAKeyThatDoesNotBelongToTheCertificate(t *testing.T) {
+	pinned, err := GenerateCA(fixedNow)
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	other, err := GenerateCA(fixedNow)
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	otherKeyDER, err := other.KeyPKCS8DER()
+	if err != nil {
+		t.Fatalf("KeyPKCS8DER: %v", err)
+	}
+
+	_, err = LoadCA(pinned.CertPEM(), otherKeyDER, fixedNow)
+	if err == nil {
+		t.Fatal("a key that does not belong to the pinned certificate must be refused at load")
+	}
+	if !strings.Contains(err.Error(), "does not belong to") {
+		t.Fatalf("error = %q, want it to name the mismatch between the key and the certificate", err)
+	}
+}
+
+// @concept: peer-auth
+func TestLoadCARefusesAnExpiredCertificate(t *testing.T) {
+	ca, err := GenerateCA(fixedNow)
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	keyDER, err := ca.KeyPKCS8DER()
+	if err != nil {
+		t.Fatalf("KeyPKCS8DER: %v", err)
+	}
+
+	_, err = LoadCA(ca.CertPEM(), keyDER, fixedNow.Add(caTTL).Add(time.Hour))
+	if err == nil {
+		t.Fatal("an expired CA certificate signs leaves nothing accepts, so LoadCA must refuse it")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("error = %q, want it to say the certificate expired", err)
+	}
+}
+
+// @concept: peer-auth
+func TestLoadCARefusesACertificateThatIsNotValidYet(t *testing.T) {
+	ca, err := GenerateCA(fixedNow)
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	keyDER, err := ca.KeyPKCS8DER()
+	if err != nil {
+		t.Fatalf("KeyPKCS8DER: %v", err)
+	}
+
+	_, err = LoadCA(ca.CertPEM(), keyDER, fixedNow.Add(-clockSkewTolerance).Add(-time.Hour))
+	if err == nil {
+		t.Fatal("a CA whose validity has not started signs leaves no peer accepts, so LoadCA must refuse it")
+	}
+	if !strings.Contains(err.Error(), "not valid until") {
+		t.Fatalf("error = %q, want it to say the certificate is not valid yet", err)
+	}
+}
+
+// @concept: peer-auth
+func TestLoadCARefusesALeafCertificate(t *testing.T) {
+	ca, err := GenerateCA(fixedNow)
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	issued, err := ca.IssueLeaf("key-xyz", fixedNow, LeafTTL)
+	if err != nil {
+		t.Fatalf("IssueLeaf: %v", err)
+	}
+
+	keyBlock, _ := pem.Decode(issued.KeyPEM)
+	if keyBlock == nil {
+		t.Fatal("the issued leaf carries no PEM private key block")
+	}
+
+	_, err = LoadCA(issued.CertPEM, keyBlock.Bytes, fixedNow)
+	if err == nil {
+		t.Fatal("a leaf certificate signs nothing, so LoadCA must refuse it even with its own key")
+	}
+	if !strings.Contains(err.Error(), "not a CA certificate") {
+		t.Fatalf("error = %q, want it to say the certificate is not a CA", err)
 	}
 }

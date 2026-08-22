@@ -109,12 +109,12 @@ func TestSweepRotationGrace(t *testing.T) {
 
 	var auditFound int
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rl, err := tables.Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventKeyRevoked}}, persistence.ListPagination{}, tx)
+		rl, err := tables.Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventKeyRevoked.String()}}, persistence.ListPagination{}, tx)
 		if err != nil {
 			return err
 		}
 		for _, e := range rl.Events {
-			if e.KindRaw == auth.EventKeyRevoked {
+			if e.KindRaw == auth.EventKeyRevoked.String() {
 				auditFound++
 				if reason, _ := e.Payload.Map()["reason"].(string); reason != string(auth.RevokeReasonRotationGrace) {
 					t.Errorf("audit reason: got %q want %q", reason, auth.RevokeReasonRotationGrace)

@@ -210,7 +210,7 @@ func TestHostAgentPerRunScopeReapIsolation(t *testing.T) {
 	require.NotNil(t, worker, "worker node should exist")
 	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
 
-	conn, err := grpc.NewClient(fx.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(fx.proxyPeerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 

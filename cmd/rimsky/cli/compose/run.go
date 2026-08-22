@@ -130,13 +130,8 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		reapSpawnedFatal(services, logger)
 		return 2
 	}
-	if err := WriteSyntheticRimskyYAML(runDir, m, spawnOverlay, siblings); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, m, spawnOverlay, siblings, 0); err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: write rimsky.yml:", err)
-		reapSpawnedFatal(services, logger)
-		return 2
-	}
-	if err := WriteSyntheticSupervisorYAMLWithCallbackPort(runDir, 0); err != nil {
-		fmt.Fprintln(os.Stderr, "rimsky compose run: write supervisor.yml:", err)
 		reapSpawnedFatal(services, logger)
 		return 2
 	}
@@ -149,11 +144,10 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	}
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d", controlAPIPort)
 	restoreEnv := snapshotAndSetEnv(map[string]string{
-		"RIMSKY_CONFIG":            filepath.Join(runDir, "rimsky.yml"),
-		"RIMSKY_SUPERVISOR_CONFIG": filepath.Join(runDir, "supervisor.yml"),
-		"RIMSKY_PROCESS_ROLE":      "unified",
-		"RIMSKY_CONTROL_API_HOST":  "127.0.0.1",
-		"RIMSKY_CONTROL_API_PORT":  strconv.Itoa(controlAPIPort),
+		"RIMSKY_CONFIG":           filepath.Join(runDir, "rimsky.yml"),
+		"RIMSKY_PROCESS_ROLE":     "unified",
+		"RIMSKY_CONTROL_API_HOST": "127.0.0.1",
+		"RIMSKY_CONTROL_API_PORT": strconv.Itoa(controlAPIPort),
 	})
 	defer restoreEnv()
 
@@ -204,32 +198,9 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
-	// @decision: compose-driver-sends-empty-message-after-create
-	// @story: one-shot-to-terminal
-	rootByHash := map[string]bool{}
-	for _, ci := range created {
-		if ci.ID == "" {
-			continue
-		}
-		hasRoot, ok := rootByHash[ci.TemplateHash]
-		if !ok {
-			h, herr := cli.TemplateHasStructuralRoot(bootCtx, c, ci.TemplateHash)
-			if herr != nil {
-				fmt.Fprintln(os.Stderr, "rimsky compose run: inspect template:", herr)
-				return coord.Drain(context.Background(), bootFailureReason(bootCtx))
-			}
-			rootByHash[ci.TemplateHash] = h
-			hasRoot = h
-		}
-		if !hasRoot {
-			continue
-		}
-		wakeKey := "compose-wake-" + ci.Key
-		if _, err := c.CreateInstanceMessage(bootCtx, ci.ID, wakeKey,
-			cli.CreateInstanceMessageRequest{}); err != nil {
-			fmt.Fprintln(os.Stderr, "rimsky compose run: emit wake message:", err)
-			return coord.Drain(context.Background(), bootFailureReason(bootCtx))
-		}
+	if err := WakeCreatedInstances(bootCtx, c, created, logger); err != nil {
+		fmt.Fprintln(os.Stderr, "rimsky compose run:", err)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
 	instanceIDs, keyByID := extractInstanceIDs(created)
@@ -345,6 +316,40 @@ func pluralS(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// @decision: compose-driver-sends-empty-message-after-create
+// @story: one-shot-to-terminal
+func WakeCreatedInstances(ctx context.Context, c *cli.Client, created []CreatedInstance, logger *slog.Logger) error {
+	rootByHash := map[string]bool{}
+	for _, ci := range created {
+		if ci.ID == "" {
+			continue
+		}
+		hasRoot, known := rootByHash[ci.TemplateHash]
+		if !known {
+			h, err := cli.TemplateHasStructuralRoot(ctx, c, ci.TemplateHash)
+			if err != nil {
+				return fmt.Errorf("inspect template: %w", err)
+			}
+			rootByHash[ci.TemplateHash] = h
+			hasRoot = h
+		}
+		if !hasRoot {
+			logger.Warn("compose.rootless_instance_not_woken",
+				"instance_key", ci.Key,
+				"instance_id", ci.ID,
+				"template_hash", ci.TemplateHash,
+				"consequence", "the template declares no structural root, so compose run sends this instance no "+
+					"wake message. It reaches terminal only when a sensor or another instance drives it.")
+			continue
+		}
+		if _, err := c.CreateInstanceMessage(ctx, ci.ID, "compose-wake-"+ci.Key,
+			cli.CreateInstanceMessageRequest{}); err != nil {
+			return fmt.Errorf("emit wake message: %w", err)
+		}
+	}
+	return nil
 }
 
 func extractInstanceIDs(created []CreatedInstance) ([]string, map[string]string) {

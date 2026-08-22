@@ -4,7 +4,6 @@
 package scenarios
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,7 +26,7 @@ func TestIdempotentMode_SubstitutionFailureRoutesBeforeModeRule(t *testing.T) {
 		Messages: []spec.MessageSchema{
 			{
 				Type: "test/detail-wake",
-				BodySchema: json.RawMessage(`{
+				BodySchema: spec.RawJSON(`{
 					"type": "object",
 					"properties": {"reason": {"type": "string"}}
 				}`),

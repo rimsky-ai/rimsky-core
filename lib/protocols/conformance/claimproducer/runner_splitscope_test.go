@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -170,6 +171,9 @@ type splitScopeFake struct {
 	listShapeRoundTrip       bool
 	listShapeNonEmptyAddress bool
 	listShapeCorruptPayload  bool
+	listShapeOverlapping     bool
+	scopesConflictSupported  bool
+	scopesConflictAlways     bool
 
 	terminalCalls map[claimproducer.ClaimID]int
 }
@@ -188,8 +192,9 @@ func (f *splitScopeFake) Name() string { return "split-scope-fake" }
 
 func (f *splitScopeFake) Capabilities(context.Context) (claimproducer.Capabilities, error) {
 	return claimproducer.Capabilities{
-		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
-		SupportsSplitScope:    f.supportsSplitScope,
+		WriteSemanticsAllowed:  []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:     f.supportsSplitScope,
+		SupportsScopesConflict: f.scopesConflictSupported,
 	}, nil
 }
 
@@ -228,7 +233,7 @@ func (f *splitScopeFake) SplitScope(_ context.Context, req claimproducer.SplitCl
 	if f.splitScopeErr != nil {
 		return claimproducer.SplitClaimScopeResponse{}, f.splitScopeErr
 	}
-	if f.listShapeRoundTrip || f.listShapeNonEmptyAddress || f.listShapeCorruptPayload {
+	if f.listShapeRoundTrip || f.listShapeNonEmptyAddress || f.listShapeCorruptPayload || f.listShapeOverlapping {
 		return f.roundTripListShape(req.PartitionRequest), nil
 	}
 	return f.splitScopeReturns, nil
@@ -255,6 +260,9 @@ func (f *splitScopeFake) roundTripListShape(partitionRequest []byte) claimproduc
 			Payload:        payload,
 			ClaimScopeData: []byte(fmt.Sprintf(`{"k":%q}`, el.Key)),
 		}
+		if f.listShapeOverlapping {
+			desc.ClaimScopeData = []byte(`{"k":"whole-parent"}`)
+		}
 		if f.listShapeNonEmptyAddress {
 			desc.Address = []byte("/some/path/" + el.Key)
 		}
@@ -264,5 +272,59 @@ func (f *splitScopeFake) roundTripListShape(partitionRequest []byte) claimproduc
 }
 
 func (f *splitScopeFake) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
+	if f.scopesConflictAlways {
+		return true, nil
+	}
 	return bytes.Equal(a, b), nil
+}
+
+// @concept: fan-out
+func TestCheckSplitScope_ByteEqualSubScopesAcrossPartitionsFails(t *testing.T) {
+	producer := &splitScopeFake{
+		supportsSplitScope:   true,
+		listShapeOverlapping: true,
+		terminalCalls:        map[claimproducer.ClaimID]int{},
+	}
+	results := Run(context.Background(), producer)
+	row := findRow(t, results, "SplitScopeSubScopesDisjoint")
+	if row.Err == nil {
+		t.Fatal("SplitScopeSubScopesDisjoint expected non-nil Err when every partition comes back " +
+			"on the same sub-scope, got PASS")
+	}
+	if !strings.Contains(row.Err.Error(), "overlap") {
+		t.Fatalf("the failure should name the overlap, got: %v", row.Err)
+	}
+}
+
+// @concept: fan-out
+func TestCheckSplitScope_ProducerReportingItsOwnSubScopesAsConflictingFails(t *testing.T) {
+	producer := &splitScopeFake{
+		supportsSplitScope:      true,
+		listShapeRoundTrip:      true,
+		scopesConflictSupported: true,
+		scopesConflictAlways:    true,
+		terminalCalls:           map[claimproducer.ClaimID]int{},
+	}
+	results := Run(context.Background(), producer)
+	row := findRow(t, results, "SplitScopeSubScopesDisjoint")
+	if row.Err == nil {
+		t.Fatal("SplitScopeSubScopesDisjoint expected non-nil Err when the producer's own conflict " +
+			"relation says two sub-scopes of one split conflict, got PASS")
+	}
+}
+
+// @concept: fan-out
+func TestCheckSplitScope_DistinctSubScopesPass(t *testing.T) {
+	producer := &splitScopeFake{
+		supportsSplitScope:      true,
+		listShapeRoundTrip:      true,
+		scopesConflictSupported: true,
+		terminalCalls:           map[claimproducer.ClaimID]int{},
+	}
+	results := Run(context.Background(), producer)
+	row := findRow(t, results, "SplitScopeSubScopesDisjoint")
+	if row.Err != nil {
+		t.Fatalf("SplitScopeSubScopesDisjoint expected PASS when each partition comes back on its own "+
+			"sub-scope, got Err: %v", row.Err)
+	}
 }

@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -21,10 +22,15 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// @concept: run-scope
+type errorPolicyPassFixture struct {
+	tables      persistence.Tables
+	parentRunID shared.UUID
+	childRunID  shared.UUID
+}
+
 // @concept: error-policy
-func TestApplyErrorPolicy_PassActionPropagatesToRunTreeParent(t *testing.T) {
-	t.Parallel()
+func passAnErrorThroughTheErrorPolicy(t *testing.T, errorClass string) errorPolicyPassFixture {
+	t.Helper()
 	ctx := context.Background()
 
 	d, err := persistence.Open(ctx, persistence.Config{
@@ -142,13 +148,14 @@ func TestApplyErrorPolicy_PassActionPropagatesToRunTreeParent(t *testing.T) {
 	nodeDef := &node.TemplateNodeDef{
 		Type: "child", Executor: "test-executor",
 		ErrorTypes: map[string]node.ErrorTypePolicy{
-			"soft": {Action: spec.ActionPass},
+			errorClass: {Action: spec.ActionPass},
 		},
 	}
 	acq := &acquisition{
 		NodeRunID: childRunID, NodeID: childNodeID, InstanceID: instanceID,
 		NodeType: "child", Executor: "test-executor", GraphName: "staging",
 		RunScopeID: childScopeID, FrameID: frameID, NodeDef: nodeDef,
+		ExecutorInvoked: true, TemplateHash: templateHash,
 	}
 	args := RunArgs{
 		Persist: tables, Queue: q, ClaimHandles: tables.ClaimHandles(),
@@ -157,7 +164,7 @@ func TestApplyErrorPolicy_PassActionPropagatesToRunTreeParent(t *testing.T) {
 
 	var post postCommitFn
 	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		pc, err := applyErrorPolicyWithScratch(ctx, args, acq, "soft", "", nil, nil, nil, nil, tx)
+		pc, err := applyErrorPolicyWithScratch(ctx, args, acq, errorClass, "", nil, nil, nil, nil, tx)
 		post = pc
 		return err
 	}))
@@ -165,9 +172,19 @@ func TestApplyErrorPolicy_PassActionPropagatesToRunTreeParent(t *testing.T) {
 		post(ctx)
 	}
 
+	return errorPolicyPassFixture{tables: tables, parentRunID: parentRunID, childRunID: childRunID}
+}
+
+// @concept: run-scope
+// @concept: error-policy
+func TestApplyErrorPolicy_PassActionPropagatesToRunTreeParent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fx := passAnErrorThroughTheErrorPolicy(t, "soft")
+
 	var parentRow *persistence.NodeRunTreeRow
-	require.NoError(t, tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := tables.NodeRunTree().GetByID(ctx, parentRunID, tx)
+	require.NoError(t, fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := fx.tables.NodeRunTree().GetByID(ctx, fx.parentRunID, tx)
 		parentRow = r
 		return err
 	}))
@@ -176,4 +193,32 @@ func TestApplyErrorPolicy_PassActionPropagatesToRunTreeParent(t *testing.T) {
 		"a child settling via the error-policy PASS action must nudge run-tree parent aggregation "+
 			"(PropagateIfChildAfterTerminal) just like every other terminal path; the strict-policy parent "+
 			"with its only child now settled Fresh must itself settle Fresh")
+}
+
+// @concept: lineage-record
+// @concept: error-policy
+// @decision: lineage-records-computation-only
+func TestApplyErrorPolicy_PassActionRecordsTheErrorClassOnACompleteLineageRecord(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fx := passAnErrorThroughTheErrorPolicy(t, "soft")
+
+	rows, err := fx.tables.Lineage().GetByRunID(ctx, fx.childRunID)
+	require.NoError(t, err)
+
+	var rec LeafRunRecord
+	var found bool
+	for _, row := range rows {
+		if row.RecordKind != persistence.LineageRecordKindLeafRun {
+			continue
+		}
+		require.NoError(t, json.Unmarshal(row.Record, &rec))
+		found = true
+	}
+	require.True(t, found, "a run the executor invoked writes a leaf-run lineage record at its terminal")
+	require.Equal(t, LeafRunTerminalKindComplete, rec.TerminalKind,
+		"a passed error settles the run Fresh, so the record's terminal kind is the completing one")
+	require.Equal(t, "soft", rec.ErrorClass,
+		"the executor errored, and the policy passed the error. The record names the class, so a reader tells a "+
+			"passed error apart from a plain success")
 }

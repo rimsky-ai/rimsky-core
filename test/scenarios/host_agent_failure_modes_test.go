@@ -76,7 +76,8 @@ func TestProxyReconnectAfterAgentRestart(t *testing.T) {
 	fx.cancelAgent()
 	<-fx.agentDone
 
-	cancel, done, statusFile := startAgent(t, fx.proxyAddr, agentStartOptions{APIKey: fx.adminKey})
+	cancel, done, statusFile := startAgent(t, fx.proxyAddr, fx.proxyCAPath,
+		agentStartOptions{APIKey: fx.adminKey})
 	t.Cleanup(func() {
 		cancel()
 		<-done

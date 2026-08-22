@@ -9,8 +9,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
 func resolveMostRecentRun(ctx context.Context, t *testing.T, d persistence.Database, nodeID, runScopeID shared.UUID) shared.UUID {
@@ -74,6 +78,148 @@ func testScopeKeyedOps_HasAdvancedSiblingInScope(t *testing.T, d persistence.Dat
 	}
 	if advancedInA {
 		t.Fatalf("HasAdvancedSiblingInScope(scopeA, excluding runA) = true; scopeB's runB leaked in as a sibling")
+	}
+}
+
+// @concept: cascade-mode
+// @concept: wait-set
+// @story: sequenced-preserves-cascade-rounds
+func testScopeKeyedOps_HasEarlierQueuedRoundFromSameSender(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	f := seedTwoScopeRuns(ctx, t, d)
+	store := d.Tables()
+
+	newSenderNode := func(nodeType string) shared.UUID {
+		t.Helper()
+		id := shared.UUID(uuid.New())
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			_, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+				ID: id, InstanceID: f.fix.InstanceID, NodeType: nodeType, Executor: "test-executor",
+			}, tx)
+			return err
+		}); err != nil {
+			t.Fatalf("create sender node %s: %v", nodeType, err)
+		}
+		return id
+	}
+	newRound := func(nodeID, scopeID shared.UUID) shared.UUID {
+		t.Helper()
+		var id shared.UUID
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			var err error
+			id, err = store.Nodes().CreateCascadePending(ctx, nodeID, scopeID, f.fix.FrameID, tx)
+			return err
+		}); err != nil {
+			t.Fatalf("create cascade round: %v", err)
+		}
+		return id
+	}
+	nameSender := func(receiverRunID, senderRunID shared.UUID) {
+		t.Helper()
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+				FrameID:           f.fix.FrameID,
+				ReceiverNodeRunID: receiverRunID,
+				SenderNodeRunID:   senderRunID,
+				TopicKind:         "terminal",
+			}, tx)
+		}); err != nil {
+			t.Fatalf("insert wait-set row: %v", err)
+		}
+	}
+	ask := func(receiverRunID shared.UUID) bool {
+		t.Helper()
+		var got bool
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			var err error
+			got, err = store.Nodes().HasEarlierQueuedRoundFromSameSender(ctx, receiverRunID, tx)
+			return err
+		}); err != nil {
+			t.Fatalf("HasEarlierQueuedRoundFromSameSender: %v", err)
+		}
+		return got
+	}
+	move := func(runID shared.UUID, steps ...struct {
+		state  cascade.NodeState
+		reason cascade.TransitionReason
+	}) {
+		t.Helper()
+		for _, step := range steps {
+			if err := inTx(ctx, store, func(tx persistence.Tx) error {
+				return store.Nodes().UpdateState(ctx, runID, step.state, step.reason, nil, tx)
+			}); err != nil {
+				t.Fatalf("move run %s to %s: %v", runID, step.state, err)
+			}
+		}
+	}
+	step := func(state cascade.NodeState, reason cascade.TransitionReason) struct {
+		state  cascade.NodeState
+		reason cascade.TransitionReason
+	} {
+		return struct {
+			state  cascade.NodeState
+			reason cascade.TransitionReason
+		}{state, reason}
+	}
+
+	senderOne := newSenderNode("sender-one")
+	senderTwo := newSenderNode("sender-two")
+	senderOneRunA := newRound(senderOne, f.scopeA)
+	senderOneRunB := newRound(senderOne, f.scopeA)
+	senderTwoRun := newRound(senderTwo, f.scopeA)
+
+	first := newRound(f.fix.NodeID, f.scopeA)
+	nameSender(first, senderOneRunA)
+	second := newRound(f.fix.NodeID, f.scopeA)
+	nameSender(second, senderOneRunB)
+	fromTheOtherSender := newRound(f.fix.NodeID, f.scopeA)
+	nameSender(fromTheOtherSender, senderTwoRun)
+	third := newRound(f.fix.NodeID, f.scopeA)
+	nameSender(third, senderOneRunA)
+
+	otherScope := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.RunScopes().Create(ctx, persistence.RunScopeRow{
+			ID:               otherScope,
+			ParentRunScopeID: &f.scopeA,
+			ParentNodeRunID:  &f.runA,
+			GraphName:        spec.MainGraphName,
+			InstanceID:       f.fix.InstanceID,
+			PartitionKey:     "scope-other",
+		}, tx)
+	}); err != nil {
+		t.Fatalf("create the other run scope: %v", err)
+	}
+	onlyRoundElsewhere := newRound(f.fix.NodeID, otherScope)
+	nameSender(onlyRoundElsewhere, senderOneRunA)
+
+	if ask(first) {
+		t.Fatal("the sender's first round found a predecessor")
+	}
+	if !ask(second) {
+		t.Fatal("a round missed the older queued round of the same sender")
+	}
+	if !ask(third) {
+		t.Fatal("a round missed the two older queued rounds of the same sender")
+	}
+	if ask(fromTheOtherSender) {
+		t.Fatal("a round waited behind another sender's queued rounds; sequenced orders a receiver's " +
+			"rounds per sender, not across senders")
+	}
+	if ask(onlyRoundElsewhere) {
+		t.Fatal("the probe read another run scope's queued rounds")
+	}
+
+	move(first,
+		step(cascade.NodeStateStale, cascade.ReasonGateCleared),
+		step(cascade.NodeStateFresh, cascade.ReasonPureCascade))
+	move(second,
+		step(cascade.NodeStateStale, cascade.ReasonGateCleared),
+		step(cascade.NodeStateRunning, cascade.ReasonDispatchClaimed),
+		step(cascade.NodeStateParked, cascade.ReasonHandlerPark))
+	if ask(third) {
+		t.Fatal("a settled round and a parked round still held their successor; " +
+			"only a queued round holds one back")
 	}
 }
 

@@ -32,6 +32,7 @@ const (
 	defaultRetentionLineageTrailing              = 30 * 24 * time.Hour
 	defaultRetentionClaimHandlesTrailing         = 30 * 24 * time.Hour
 	defaultRetentionMessageIdempotenciesTrailing = 24 * time.Hour
+	defaultRetentionLifecycleOutboxTrailing      = time.Duration(0)
 )
 
 type yamlRetention struct {
@@ -40,6 +41,7 @@ type yamlRetention struct {
 	LineageTrailing              *time.Duration `yaml:"lineage_trailing"`
 	ClaimHandlesTrailing         *time.Duration `yaml:"claim_handles_trailing"`
 	MessageIdempotenciesTrailing *time.Duration `yaml:"message_idempotencies_trailing"`
+	LifecycleOutboxTrailing      *time.Duration `yaml:"lifecycle_outbox_trailing"`
 }
 
 type yamlDispatchDefaults struct {
@@ -198,6 +200,7 @@ type RimskyConfig struct {
 	DataProcessors         RemoteDataProcessorsConfig
 	Retention              runtime.RetentionConfig
 	Dispatch               DispatchDefaultsConfig
+	Supervisor             SupervisorSection
 	LateBindServiceProxies map[string]string
 	PeerAuth               string
 	Topology               persistence.Topology
@@ -287,6 +290,21 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Protocols             []string `yaml:"protocols"`
 		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
 	}
+	type yamlSupervisorCallback struct {
+		Host          string `yaml:"host"`
+		Port          *int   `yaml:"port"`
+		AdvertiseHost string `yaml:"advertise_host"`
+		AdvertisePort int    `yaml:"advertise_port"`
+	}
+	// @concept: rimsky-yml
+	// @decision: launch-config-injection
+	type yamlSupervisor struct {
+		SupervisorID        string                 `yaml:"supervisor_id"`
+		Concurrency         int                    `yaml:"concurrency"`
+		LivenessIntervalMs  int                    `yaml:"liveness_interval_ms"`
+		ClaimPollIntervalMs int                    `yaml:"claim_poll_interval_ms"`
+		Callback            yamlSupervisorCallback `yaml:"callback"`
+	}
 	type yamlDataProcessorEntry struct {
 		Endpoint              string   `yaml:"endpoint"`
 		TLS                   string   `yaml:"tls"`
@@ -328,6 +346,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Retention                  *yamlRetention                    `yaml:"retention"`
 		DispatchDefaults           *yamlDispatchDefaults             `yaml:"dispatch_defaults"`
 		LateBindServiceProxies     map[string]string                 `yaml:"late_bind_service_proxies"`
+		Supervisor                 *yamlSupervisor                   `yaml:"supervisor"`
 		PeerAuth                   string                            `yaml:"peer_auth"`
 		UnreachableValidatorPolicy string                            `yaml:"unreachable_validator_policy"`
 	}
@@ -573,6 +592,22 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
 
+	supervisorSection := SupervisorSection{}
+	if sup := wrapper.Supervisor; sup != nil {
+		supervisorSection = SupervisorSection{
+			SupervisorID:        sup.SupervisorID,
+			Concurrency:         sup.Concurrency,
+			LivenessIntervalMs:  sup.LivenessIntervalMs,
+			ClaimPollIntervalMs: sup.ClaimPollIntervalMs,
+			Callback: SupervisorCallbackSection{
+				Host:          sup.Callback.Host,
+				Port:          sup.Callback.Port,
+				AdvertiseHost: sup.Callback.AdvertiseHost,
+				AdvertisePort: sup.Callback.AdvertisePort,
+			},
+		}
+	}
+
 	return RimskyConfig{
 		Persistence:                  pcfg,
 		Blob:                         bcfg,
@@ -584,6 +619,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		DataProcessors:               dataProcessorsCfg,
 		Retention:                    retentionCfg,
 		Dispatch:                     dispatchCfg,
+		Supervisor:                   supervisorSection,
 		LateBindServiceProxies:       wrapper.LateBindServiceProxies,
 		PeerAuth:                     peerAuth,
 		Topology:                     topology,
@@ -600,6 +636,7 @@ func parseRetention(in *yamlRetention) (runtime.RetentionConfig, error) {
 		LineageTrailing:              defaultRetentionLineageTrailing,
 		ClaimHandlesTrailing:         defaultRetentionClaimHandlesTrailing,
 		MessageIdempotenciesTrailing: defaultRetentionMessageIdempotenciesTrailing,
+		LifecycleOutboxTrailing:      defaultRetentionLifecycleOutboxTrailing,
 	}
 	if in == nil {
 		return out, nil
@@ -633,6 +670,13 @@ func parseRetention(in *yamlRetention) (runtime.RetentionConfig, error) {
 			return runtime.RetentionConfig{}, fmt.Errorf("retention.message_idempotencies_trailing must be non-negative")
 		}
 		out.MessageIdempotenciesTrailing = *in.MessageIdempotenciesTrailing
+	}
+	// @decision: lifecycle-subscriber-at-least-once-delivery
+	if in.LifecycleOutboxTrailing != nil {
+		if *in.LifecycleOutboxTrailing < 0 {
+			return runtime.RetentionConfig{}, fmt.Errorf("retention.lifecycle_outbox_trailing must be non-negative")
+		}
+		out.LifecycleOutboxTrailing = *in.LifecycleOutboxTrailing
 	}
 	return out, nil
 }

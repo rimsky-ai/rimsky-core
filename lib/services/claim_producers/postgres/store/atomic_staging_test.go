@@ -699,3 +699,77 @@ func TestAtomicStaging_ListShapeSubClaimCommitAndAbandon_BypassSwapPath_UnderSta
 		t.Fatalf("Abandon of list-shape sub-claim under staged_async failed (regression: was routed into swap path and decodeSchemaName errored on JSON object): %v", err)
 	}
 }
+
+// @concept: atomic-staging
+func TestAtomicStaging_ReleaseDropsUncommittedStagingExactlyAsAbandonDoes(t *testing.T) {
+	pool, st := bootStagingStore(t)
+	ctx := context.Background()
+
+	const canonical = "release_drops_staging_canonical"
+
+	stage := func(t *testing.T) (claimID, staging string, out claimproducer.OpenOutcome) {
+		t.Helper()
+		claimID = uuid.NewString()
+		o, err := st.Open(ctx, claimID, canonical, claimproducer.IntentReadWrite)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		staging = addressSchema(t, o.Result.Address)
+		if _, err := pool.Exec(ctx, "CREATE TABLE "+staging+".items (id TEXT, payload TEXT)"); err != nil {
+			t.Fatalf("create staged table: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			"INSERT INTO "+staging+".items (id, payload) VALUES ('staged','never-committed')"); err != nil {
+			t.Fatalf("seed staged rows: %v", err)
+		}
+		return claimID, staging, o
+	}
+
+	reservationCount := func(t *testing.T, staging string) int {
+		t.Helper()
+		var count int
+		if err := pool.QueryRow(ctx,
+			"SELECT count(*) FROM "+stagingReservationsTable+" WHERE schema_name = $1", staging).Scan(&count); err != nil {
+			t.Fatalf("count reservation rows: %v", err)
+		}
+		return count
+	}
+
+	resetCanonicalWithRows(t, pool, canonical, "('old','stale')")
+	abandonedID, abandonedStaging, abandonedOut := stage(t)
+	releasedID, releasedStaging, releasedOut := stage(t)
+
+	if err := st.Abandon(ctx, abandonedID, abandonedOut.Result.ClaimScope, abandonedOut.Result.Address); err != nil {
+		t.Fatalf("Abandon: %v", err)
+	}
+	if err := st.Release(ctx, releasedID, releasedOut.Result.ClaimScope, releasedOut.Result.Address); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	if schemaExists(t, pool, abandonedStaging) {
+		t.Fatalf("Abandon left the staging schema %q behind", abandonedStaging)
+	}
+	if schemaExists(t, pool, releasedStaging) {
+		t.Fatalf("Release left the staging schema %q behind; a release must drop an uncommitted staging "+
+			"on the same terms as an abandon", releasedStaging)
+	}
+	if got := reservationCount(t, abandonedStaging); got != 0 {
+		t.Fatalf("Abandon left %d reservation row(s) for %q", got, abandonedStaging)
+	}
+	if got := reservationCount(t, releasedStaging); got != 0 {
+		t.Fatalf("Release left %d reservation row(s) for %q; a release must clear the reservation as an abandon does",
+			got, releasedStaging)
+	}
+
+	if got := canonicalItemCount(t, pool, canonical); got != 1 {
+		t.Fatalf("canonical %q has %d rows; neither the abandon nor the release may touch the canonical view", canonical, got)
+	}
+	var stagedLanded int
+	if err := pool.QueryRow(ctx,
+		"SELECT count(*) FROM "+canonical+".items WHERE payload = 'never-committed'").Scan(&stagedLanded); err != nil {
+		t.Fatalf("count staged rows in canonical: %v", err)
+	}
+	if stagedLanded != 0 {
+		t.Fatalf("canonical %q holds %d row(s) from a staging that was never committed", canonical, stagedLanded)
+	}
+}

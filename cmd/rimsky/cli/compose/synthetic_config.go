@@ -17,15 +17,30 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
-	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
 type syntheticRimskyYAML struct {
 	Persistence    syntheticPersistence                  `yaml:"persistence"`
+	Supervisor     syntheticSupervisor                   `yaml:"supervisor"`
 	Executors      map[string]ManifestExecutorEntry      `yaml:"executors,omitempty"`
 	ClaimProducers map[string]ManifestClaimProducerEntry `yaml:"claim_producers,omitempty"`
 	Publishers     map[string]syntheticPublisherEntry    `yaml:"publishers,omitempty"`
 	NamedLocks     map[string]locks.NamedLockConfig      `yaml:"named_locks,omitempty"`
+}
+
+// @concept: rimsky-yml
+// @decision: launch-config-injection
+type syntheticSupervisor struct {
+	Concurrency         int                         `yaml:"concurrency"`
+	ClaimPollIntervalMs int                         `yaml:"claim_poll_interval_ms"`
+	Callback            syntheticSupervisorCallback `yaml:"callback"`
+}
+
+// @decision: network-binding
+type syntheticSupervisorCallback struct {
+	Host          string `yaml:"host"`
+	Port          *int   `yaml:"port"`
+	AdvertiseHost string `yaml:"advertise_host"`
 }
 
 type syntheticPublisherEntry struct {
@@ -60,8 +75,20 @@ type SiblingBlocks struct {
 	NamedLocks map[string]locks.NamedLockConfig
 }
 
-func WriteSyntheticRimskyYAML(runDir string, m *Manifest, spawnOverlay map[string]ManifestExecutorEntry, siblings *SiblingBlocks) error {
+func WriteSyntheticRimskyYAML(
+	runDir string, m *Manifest, spawnOverlay map[string]ManifestExecutorEntry,
+	siblings *SiblingBlocks, callbackPort int,
+) error {
 	out := syntheticRimskyYAML{
+		Supervisor: syntheticSupervisor{
+			Concurrency:         syntheticSupervisorConcurrency,
+			ClaimPollIntervalMs: syntheticSupervisorClaimPollIntervalMs,
+			Callback: syntheticSupervisorCallback{
+				Host:          syntheticSupervisorCallbackHost,
+				Port:          &callbackPort,
+				AdvertiseHost: syntheticSupervisorCallbackAdvertiseHost,
+			},
+		},
 		Persistence: syntheticPersistence{
 			Driver: "sqlite",
 			SQLite: syntheticPersistenceSQLite{
@@ -150,56 +177,11 @@ func LoadSiblingBlocks(path string) (*SiblingBlocks, error) {
 	}, nil
 }
 
-const syntheticSupervisorYAML = `# Default supervisor tuning baked into the rimsky-all-in-one image and copied
-# to /etc/rimsky/supervisor-config.yml at build time. Loaded by the supervisor
-# process via RIMSKY_SUPERVISOR_CONFIG; deployment-shape config
-# (claim_producers, named_locks, executors) lives separately in rimsky.yml
-# under RIMSKY_CONFIG.
-#
-# Single-container defaults: the async-callback listener binds 0.0.0.0:8081 and
-# advertises 127.0.0.1, because every rimsky role (scheduler, supervisor,
-# control-api) runs in the single all-in-one process inside this container. Override advertise_host
-# via RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST when executors run outside the
-# container (or mount your own file at /etc/rimsky/supervisor-config.yml).
-
-concurrency: 8
-claim_poll_interval_ms: 200
-callback:
-  host: 0.0.0.0
-  port: 8081
-  advertise_host: 127.0.0.1
-`
-
-type supervisorYAMLProbe struct {
-	SupervisorID        string                      `yaml:"supervisor_id,omitempty"`
-	Concurrency         int                         `yaml:"concurrency,omitempty"`
-	LivenessIntervalMs  int                         `yaml:"liveness_interval_ms,omitempty"`
-	ClaimPollIntervalMs int                         `yaml:"claim_poll_interval_ms,omitempty"`
-	Callback            supervisorYAMLProbeCallback `yaml:"callback"`
-}
-
-type supervisorYAMLProbeCallback struct {
-	Host          string `yaml:"host"`
-	Port          int    `yaml:"port"`
-	AdvertiseHost string `yaml:"advertise_host,omitempty"`
-	AdvertisePort int    `yaml:"advertise_port,omitempty"`
-}
-
 // @decision: launch-config-injection
 // @decision: network-binding
-func WriteSyntheticSupervisorYAMLWithCallbackPort(runDir string, callbackPort int) error {
-	var probe supervisorYAMLProbe
-	if err := configload.DecodeStrict("<baked supervisor.yml>", []byte(syntheticSupervisorYAML), &probe); err != nil {
-		return fmt.Errorf("synthetic supervisor.yml: parse baked default: %w", err)
-	}
-	probe.Callback.Port = callbackPort
-	body, err := yaml.Marshal(&probe)
-	if err != nil {
-		return fmt.Errorf("synthetic supervisor.yml: marshal spliced config: %w", err)
-	}
-	path := filepath.Join(runDir, "supervisor.yml")
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		return fmt.Errorf("write synthetic supervisor.yml to %q: %w", path, err)
-	}
-	return nil
-}
+const (
+	syntheticSupervisorConcurrency           = 8
+	syntheticSupervisorClaimPollIntervalMs   = 200
+	syntheticSupervisorCallbackHost          = "0.0.0.0"
+	syntheticSupervisorCallbackAdvertiseHost = "127.0.0.1"
+)

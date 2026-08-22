@@ -54,13 +54,13 @@ func TestAuditRoute_AuthPrefixKindNarrows(t *testing.T) {
 	defer cleanup()
 	seedAuditEvents(t, h)
 	status, body := h.httpJSON(t, http.MethodGet,
-		"/v1/audit?kind="+auth.EventKeyRevoked, nil)
+		"/v1/audit?kind="+auth.EventKeyRevoked.String(), nil)
 	require.Equal(t, http.StatusOK, status)
 	rows, ok := body["audit"].([]any)
 	require.True(t, ok)
 	require.Len(t, rows, 1)
 	r := rows[0].(map[string]any)
-	require.Equal(t, auth.EventKeyRevoked, r["kind"])
+	require.Equal(t, auth.EventKeyRevoked.String(), r["kind"])
 }
 
 func TestAuditRoute_NoKindExcludesNonAuthOperationalEvents(t *testing.T) {

@@ -21,7 +21,7 @@ type MetricsHook interface {
 }
 
 // @concept: run-scope
-type RunScopeTerminalFanout func(ctx context.Context, instanceID, runScopeID shared.UUID, terminalReason string, tx persistence.Tx)
+type RunScopeTerminalFanout func(ctx context.Context, instanceID, runScopeID shared.UUID, terminalReason string)
 
 const settledScopeTerminalReason = "frame_settled"
 
@@ -65,6 +65,7 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 
 func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, instanceID shared.UUID, logger Logger, scopeFanout RunScopeTerminalFanout, metrics MetricsHook) error {
 	var result persistence.FrameEndResult
+	var settledScopes []shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		row, gerr := store.Frames().GetForObservability(ctx, frameID, tx)
 		if gerr != nil {
@@ -85,13 +86,21 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 		}
 		result = res
 		if res.Transitioned && row != nil && row.RootRunScopeID != (shared.UUID{}) {
-			if err := closeSettledFrameScopeTree(ctx, store, row.RootRunScopeID, frameID, instanceID, logger, scopeFanout, tx); err != nil {
+			scopes, err := closeSettledFrameScopeTree(ctx, store, row.RootRunScopeID, frameID, instanceID, logger, tx)
+			if err != nil {
 				return err
 			}
+			settledScopes = scopes
 		}
 		return nil
 	}); err != nil {
 		return err
+	}
+	// @decision: lifecycle-fanout-after-commit
+	if scopeFanout != nil {
+		for _, scopeID := range settledScopes {
+			scopeFanout(ctx, instanceID, scopeID, settledScopeTerminalReason)
+		}
 	}
 	if result.Transitioned {
 		logger.Info("frame.end",
@@ -108,12 +117,13 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 // @concept: run-scope
 // @concept: frame
 func closeSettledFrameScopeTree(
-	ctx context.Context, store persistence.Tables, rootRunScopeID, frameID, instanceID shared.UUID, logger Logger, scopeFanout RunScopeTerminalFanout, tx persistence.Tx,
-) error {
+	ctx context.Context, store persistence.Tables, rootRunScopeID, frameID, instanceID shared.UUID, logger Logger, tx persistence.Tx,
+) ([]shared.UUID, error) {
 	tree, err := store.RunScopes().ListTreeDeepestFirst(ctx, rootRunScopeID, tx)
 	if err != nil {
-		return fmt.Errorf("list run-scope tree for settled frame %s: %w", frameID, err)
+		return nil, fmt.Errorf("list run-scope tree for settled frame %s: %w", frameID, err)
 	}
+	closed := make([]shared.UUID, 0, len(tree))
 	for _, scope := range tree {
 		if scope.ClosedAt == nil {
 			if scope.ID != rootRunScopeID {
@@ -124,14 +134,12 @@ func closeSettledFrameScopeTree(
 					"root_run_scope_id", rootRunScopeID)
 			}
 			if err := store.RunScopes().Close(ctx, scope.ID, tx); err != nil {
-				return fmt.Errorf("close run scope %s for settled frame %s: %w", scope.ID, frameID, err)
+				return nil, fmt.Errorf("close run scope %s for settled frame %s: %w", scope.ID, frameID, err)
 			}
 		}
-		if scopeFanout != nil {
-			scopeFanout(ctx, instanceID, scope.ID, settledScopeTerminalReason, tx)
-		}
+		closed = append(closed, scope.ID)
 	}
-	return nil
+	return closed, nil
 }
 
 // @decision: one-message-per-frame

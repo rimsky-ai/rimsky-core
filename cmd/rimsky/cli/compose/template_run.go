@@ -100,13 +100,8 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		return 2
 	}
 
-	if err := WriteSyntheticRimskyYAML(runDir, nil, spawnOverlay, nil); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, nil, spawnOverlay, nil, 0); err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: write rimsky.yml:", err)
-		reapSpawnedFatal(services, logger)
-		return 2
-	}
-	if err := WriteSyntheticSupervisorYAMLWithCallbackPort(runDir, 0); err != nil {
-		fmt.Fprintln(os.Stderr, "rimsky run: write supervisor.yml:", err)
 		reapSpawnedFatal(services, logger)
 		return 2
 	}
@@ -119,11 +114,10 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 	}
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d", controlAPIPort)
 	restoreEnv := snapshotAndSetEnv(map[string]string{
-		"RIMSKY_CONFIG":            filepath.Join(runDir, "rimsky.yml"),
-		"RIMSKY_SUPERVISOR_CONFIG": filepath.Join(runDir, "supervisor.yml"),
-		"RIMSKY_PROCESS_ROLE":      "unified",
-		"RIMSKY_CONTROL_API_HOST":  "127.0.0.1",
-		"RIMSKY_CONTROL_API_PORT":  strconv.Itoa(controlAPIPort),
+		"RIMSKY_CONFIG":           filepath.Join(runDir, "rimsky.yml"),
+		"RIMSKY_PROCESS_ROLE":     "unified",
+		"RIMSKY_CONTROL_API_HOST": "127.0.0.1",
+		"RIMSKY_CONTROL_API_PORT": strconv.Itoa(controlAPIPort),
 	})
 	defer restoreEnv()
 
@@ -161,6 +155,18 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
 
+	// @decision: compose-driver-sends-empty-message-after-create
+	// @story: one-shot-to-terminal
+	hasRoot, err := cli.TemplateHasStructuralRoot(bootCtx, c, hash)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "rimsky run: inspect template:", err)
+		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
+	}
+	if !hasRoot {
+		fmt.Fprintln(os.Stderr, "rimsky run:", cli.NoStructuralRootError(hash))
+		return coord.Drain(context.Background(), ReasonAnyFailure)
+	}
+
 	body := cli.CreateInstanceRequest{Template: hash, Params: rf.Params, TargetAgent: cli.ResolveTargetAgent("", "")}
 	if rf.Key != "" {
 		key := rf.Key
@@ -178,17 +184,10 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 	}
 
 	// @decision: compose-driver-sends-empty-message-after-create
-	hasRoot, err := cli.TemplateHasStructuralRoot(bootCtx, c, hash)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "rimsky run: inspect template:", err)
+	if _, err := c.CreateInstanceMessage(bootCtx, inst.UUID(), "run-wake-"+inst.UUID(),
+		cli.CreateInstanceMessageRequest{}); err != nil {
+		fmt.Fprintln(os.Stderr, "rimsky run: emit wake message:", err)
 		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
-	}
-	if hasRoot {
-		if _, err := c.CreateInstanceMessage(bootCtx, inst.UUID(), "run-wake-"+inst.UUID(),
-			cli.CreateInstanceMessageRequest{}); err != nil {
-			fmt.Fprintln(os.Stderr, "rimsky run: emit wake message:", err)
-			return coord.Drain(context.Background(), bootFailureReason(bootCtx))
-		}
 	}
 
 	if err := UpdateLatestSymlink(root, runDir); err != nil {

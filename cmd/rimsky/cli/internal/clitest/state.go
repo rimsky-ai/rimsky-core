@@ -92,6 +92,7 @@ func hashSpec(spec map[string]any) string {
 	var ts node.TemplateSpec
 	if uerr := json.Unmarshal(raw, &ts); uerr == nil {
 		node.ApplyFrameResolutionDefaults(&ts)
+		node.CanonicalizeAggregationPolicyDefault(&ts)
 		if h, herr := canonical.CanonicalSpecHash(ts); herr == nil {
 			return h
 		}

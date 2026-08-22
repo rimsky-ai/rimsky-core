@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -105,8 +106,69 @@ func Validate(schema map[string]any, data map[string]any, phase string) error {
 		return &ErrSchemaValidation{
 			Phase:   phase,
 			Message: "data does not satisfy schema",
-			Cause:   err,
+			Cause:   ValueFreeValidationError(err),
 		}
 	}
 	return nil
+}
+
+// @concept: inertness
+// @concept: attribute
+var valueBearingSchemaKeywords = map[string]bool{
+	"const":            true,
+	"enum":             true,
+	"format":           true,
+	"minimum":          true,
+	"maximum":          true,
+	"exclusiveMinimum": true,
+	"exclusiveMaximum": true,
+	"multipleOf":       true,
+}
+
+type schemaConstraintViolations struct {
+	violations []string
+}
+
+func (e *schemaConstraintViolations) Error() string {
+	return strings.Join(e.violations, "; ")
+}
+
+// @concept: inertness
+func ValueFreeValidationError(err error) error {
+	var ve *jsonschema.ValidationError
+	if !errors.As(err, &ve) {
+		return err
+	}
+	out := &schemaConstraintViolations{}
+	collectValueFreeViolations(ve, &out.violations)
+	if len(out.violations) == 0 {
+		out.violations = []string{"the value does not satisfy the schema"}
+	}
+	return out
+}
+
+func collectValueFreeViolations(ve *jsonschema.ValidationError, into *[]string) {
+	if len(ve.Causes) > 0 {
+		for _, cause := range ve.Causes {
+			collectValueFreeViolations(cause, into)
+		}
+		return
+	}
+	keyword := ve.KeywordLocation
+	if idx := strings.LastIndex(keyword, "/"); idx >= 0 {
+		keyword = keyword[idx+1:]
+	}
+	path := ve.InstanceLocation
+	if path == "" {
+		path = "/"
+	}
+	if keyword == "" {
+		*into = append(*into, path+" does not satisfy the schema")
+		return
+	}
+	if valueBearingSchemaKeywords[keyword] {
+		*into = append(*into, path+" violates "+keyword)
+		return
+	}
+	*into = append(*into, path+" violates "+keyword+": "+ve.Message)
 }

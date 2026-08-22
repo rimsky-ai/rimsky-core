@@ -236,7 +236,7 @@ func applyTerminalCompleteSubgraphCaller(
 			State:              string(cascade.NodeStateRunning),
 			SettlingSignalType: settlingSig,
 			Changed:            t.Changed,
-			TerminalKind:       "subgraph_call",
+			TerminalKind:       LeafRunTerminalKindSubgraphCall,
 			NodeAlias:          acq.NodeType,
 			ExecutorName:       acq.Executor,
 			TemplateHash:       acq.TemplateHash,

@@ -16,12 +16,13 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+// @decision: event-log-kind-enum
 var (
-	EventAccessAttempted = events.KindAuthAccessAttempted().String()
-	EventAccessDenied    = events.KindAuthAccessDenied().String()
-	EventKeyCreated      = events.KindAuthKeyCreated().String()
-	EventKeyRevoked      = events.KindAuthKeyRevoked().String()
-	EventKeyRotated      = events.KindAuthKeyRotated().String()
+	EventAccessAttempted = events.KindAuthAccessAttempted()
+	EventAccessDenied    = events.KindAuthAccessDenied()
+	EventKeyCreated      = events.KindAuthKeyCreated()
+	EventKeyRevoked      = events.KindAuthKeyRevoked()
+	EventKeyRotated      = events.KindAuthKeyRotated()
 )
 
 type DenialReason string

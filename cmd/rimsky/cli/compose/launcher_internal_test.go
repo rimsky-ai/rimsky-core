@@ -29,11 +29,8 @@ func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(runDir, "blobs"), 0o755); err != nil {
 		t.Fatalf("mkdir blobs: %v", err)
 	}
-	if err := WriteSyntheticRimskyYAML(runDir, &Manifest{Project: "test-bi"}, nil, nil); err != nil {
+	if err := WriteSyntheticRimskyYAML(runDir, &Manifest{Project: "test-bi"}, nil, nil, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
-	}
-	if err := WriteSyntheticSupervisorYAMLWithCallbackPort(runDir, 0); err != nil {
-		t.Fatalf("WriteSyntheticSupervisorYAMLWithCallbackPort: %v", err)
 	}
 	port, err := hostagent.FreeLocalPort()
 	if err != nil {
@@ -41,7 +38,6 @@ func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 	}
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d", port)
 	t.Setenv("RIMSKY_CONFIG", filepath.Join(runDir, "rimsky.yml"))
-	t.Setenv("RIMSKY_SUPERVISOR_CONFIG", filepath.Join(runDir, "supervisor.yml"))
 	t.Setenv("RIMSKY_PROCESS_ROLE", "unified")
 	t.Setenv("RIMSKY_CONTROL_API_HOST", "127.0.0.1")
 	t.Setenv("RIMSKY_CONTROL_API_PORT", strconv.Itoa(port))

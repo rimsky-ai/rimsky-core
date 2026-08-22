@@ -86,7 +86,7 @@ func GenerateCA(now time.Time) (*CA, error) {
 	}, nil
 }
 
-func LoadCA(certPEM, keyPKCS8DER []byte) (*CA, error) {
+func LoadCA(certPEM, keyPKCS8DER []byte, now time.Time) (*CA, error) {
 	block, _ := pem.Decode(certPEM)
 	if block == nil || block.Type != pemTypeCertificate {
 		return nil, errors.New("pki.LoadCA: ca_cert_pem is not a PEM CERTIFICATE block")
@@ -102,6 +102,29 @@ func LoadCA(certPEM, keyPKCS8DER []byte) (*CA, error) {
 	key, ok := keyAny.(*ecdsa.PrivateKey)
 	if !ok {
 		return nil, fmt.Errorf("pki.LoadCA: private key is not ECDSA: %T", keyAny)
+	}
+	if !cert.IsCA {
+		return nil, fmt.Errorf("pki.LoadCA: certificate %q is not a CA certificate, so it signs no leaf",
+			cert.Subject.CommonName)
+	}
+	if now.Before(cert.NotBefore) {
+		return nil, fmt.Errorf("pki.LoadCA: CA certificate %q is not valid until %s, so every leaf it signs is rejected until then",
+			cert.Subject.CommonName, cert.NotBefore.UTC().Format(time.RFC3339))
+	}
+	if now.After(cert.NotAfter) {
+		return nil, fmt.Errorf("pki.LoadCA: CA certificate %q expired at %s, so every leaf it signs is already invalid",
+			cert.Subject.CommonName, cert.NotAfter.UTC().Format(time.RFC3339))
+	}
+	certPublicKey, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("pki.LoadCA: CA certificate %q carries a %T public key, not ECDSA",
+			cert.Subject.CommonName, cert.PublicKey)
+	}
+	if !key.PublicKey.Equal(certPublicKey) {
+		return nil, fmt.Errorf(
+			"pki.LoadCA: the private key does not belong to CA certificate %q; a leaf signed with this key "+
+				"verifies against no peer that pinned that certificate",
+			cert.Subject.CommonName)
 	}
 	return &CA{cert: cert, certPEM: certPEM, key: key}, nil
 }

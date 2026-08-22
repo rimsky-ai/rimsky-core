@@ -332,6 +332,10 @@ func transitionHolderIfFullyResolved(
 	if err != nil || holderNode == nil {
 		return nil, err
 	}
+	if err := AppendStateTransitionEvent(ctx, args.Persist, holderRun.NodeID, holderNode.InstanceID,
+		cascade.NodeStateHeld, newState, reason, tx); err != nil {
+		return nil, fmt.Errorf("transitionHolderIfFullyResolved: state_transition event: %w", err)
+	}
 	tmplSpec, terr := loadTemplateSpec(ctx, args, holderNode.InstanceID, tx)
 	if terr != nil {
 		return nil, fmt.Errorf("load template: %w", terr)

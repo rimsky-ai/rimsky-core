@@ -124,11 +124,11 @@ func ResolveClaimHandleTerminal(
 	if err != nil {
 		return nil, err
 	}
+	pendingLineage := emitTerminalForensics(ctx, args, td, tx)
 	// @concept: terminal-resolution
-	if err := enqueueProducerVerb(ctx, args, td, tx); err != nil {
+	if err := enqueueProducerVerb(ctx, args, td, pendingLineage, tx); err != nil {
 		return nil, fmt.Errorf("ResolveClaimHandleTerminal: %w", err)
 	}
-	emitTerminalForensics(ctx, args, td, tx)
 	post := kickProducerVerbDispatch(args)
 	if td.Outcome.IsAbandon() {
 		pc, err := cancelDescendantClaims(ctx, args, td.ClaimHandleID, tx)

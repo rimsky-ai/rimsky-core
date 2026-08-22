@@ -33,6 +33,7 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 		FrameID:            frameID,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       runtime.LeafRunTerminalKindComplete,
 	}, nil); err != nil {
 		t.Fatalf("seed root: %v", err)
 	}
@@ -42,6 +43,7 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 		FrameID:            frameID,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       runtime.LeafRunTerminalKindComplete,
 		ParentNodeRunID:    rootRunID.String(),
 	}, nil); err != nil {
 		t.Fatalf("seed child: %v", err)
@@ -52,6 +54,7 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 		FrameID:            frameID,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       runtime.LeafRunTerminalKindComplete,
 		ParentNodeRunID:    childRunID.String(),
 	}, nil); err != nil {
 		t.Fatalf("seed grandchild: %v", err)
@@ -165,6 +168,7 @@ func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 		FrameID:            frameID,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       runtime.LeafRunTerminalKindComplete,
 	}, nil); err != nil {
 		t.Fatalf("seed root: %v", err)
 	}
@@ -174,6 +178,7 @@ func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 		FrameID:            frameID,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       runtime.LeafRunTerminalKindComplete,
 		SubstitutionRefs: []runtime.SubstitutionRef{
 			{SourceKind: "run", SourceNodeAlias: "root", SourceVersionOrID: rootRunID.String()},
 		},
@@ -186,6 +191,7 @@ func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 		FrameID:            frameID,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       runtime.LeafRunTerminalKindComplete,
 		SubstitutionRefs: []runtime.SubstitutionRef{
 			{SourceKind: "run", SourceNodeAlias: "child", SourceVersionOrID: childRunID.String()},
 		},

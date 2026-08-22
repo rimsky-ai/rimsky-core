@@ -27,8 +27,8 @@ func (b *messagesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(
 
 const insertMessageSQL = `
 INSERT INTO rimsky_messages (
-    id, instance_id, type, sender, sender_kind, payload, received_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+    id, instance_id, type, sender, sender_kind, sender_subject, payload, received_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 func (b *messagesImpl) Insert(ctx context.Context, req persistence.EnqueueMessageRequest, tx persistence.Tx) error {
 	if req.ReceivedAt.IsZero() {
@@ -36,7 +36,7 @@ func (b *messagesImpl) Insert(ctx context.Context, req persistence.EnqueueMessag
 	}
 	_, err := b.q(tx).Exec(ctx, insertMessageSQL,
 		req.ID, req.InstanceID, req.Type, req.Sender, req.SenderKind,
-		req.Payload, req.ReceivedAt)
+		req.SenderSubject, req.Payload, req.ReceivedAt)
 	if err != nil {
 		return fmt.Errorf("postgres.Messages.Insert: %w", err)
 	}
@@ -57,7 +57,7 @@ func (b *messagesImpl) MarkDelivered(ctx context.Context, id shared.UUID, frame 
 }
 
 const listPendingForInstanceSQL = `
-SELECT id, instance_id, type, sender, sender_kind, payload,
+SELECT id, instance_id, type, sender, sender_kind, sender_subject, payload,
        received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE
@@ -73,7 +73,7 @@ func (b *messagesImpl) ListPendingForInstance(ctx context.Context, instanceID sh
 }
 
 const listDeliveredForFrameSQL = `
-SELECT id, instance_id, type, sender, sender_kind, payload,
+SELECT id, instance_id, type, sender, sender_kind, sender_subject, payload,
        received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE frame_id = $1
@@ -89,7 +89,7 @@ func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, frame shared.U
 }
 
 const getMessageSQL = `
-SELECT id, instance_id, type, sender, sender_kind, payload,
+SELECT id, instance_id, type, sender, sender_kind, sender_subject, payload,
        received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE id = $1`
@@ -161,7 +161,7 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		limit = 100
 	}
 	args = append(args, limit)
-	sql := fmt.Sprintf(`SELECT id, instance_id, type, sender, sender_kind, payload,
+	sql := fmt.Sprintf(`SELECT id, instance_id, type, sender, sender_kind, sender_subject, payload,
        received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages %s
  ORDER BY received_at DESC, id DESC
@@ -268,7 +268,7 @@ func collectMessages(rows pgx.Rows) ([]persistence.MessageRow, error) {
 		var deliveredAt *time.Time
 		var frameID *shared.UUID
 		if err := rows.Scan(
-			&m.ID, &m.InstanceID, &m.Type, &m.Sender, &m.SenderKind,
+			&m.ID, &m.InstanceID, &m.Type, &m.Sender, &m.SenderKind, &m.SenderSubject,
 			&m.Payload, &m.ReceivedAt, &deliveredAt,
 			&frameID, &m.Cancelled,
 		); err != nil {

@@ -189,6 +189,96 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 }
 
 // @concept: message
+// @decision: message-sender-kind-discriminator
+func testMessagesSenderSubjectRoundTrips(t *testing.T, d persistence.Database) {
+	t.Helper()
+	defer d.Close()
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	operatorID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if err := store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
+			ID:            operatorID,
+			InstanceID:    fix.InstanceID,
+			Type:          "fixture/message",
+			Sender:        "operator",
+			SenderKind:    "operator",
+			SenderSubject: "api-key-A",
+			ReceivedAt:    time.Now().UTC(),
+		}, tx); err != nil {
+			return err
+		}
+		return store.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
+			ID:         instanceID,
+			InstanceID: fix.InstanceID,
+			Type:       "fixture/message",
+			Sender:     "instance:" + fix.InstanceID.String(),
+			SenderKind: "instance",
+			ReceivedAt: time.Now().UTC(),
+		}, tx)
+	}); err != nil {
+		t.Fatalf("Messages.Insert: %v", err)
+	}
+
+	want := map[shared.UUID]string{operatorID: "api-key-A", instanceID: ""}
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		for id, subject := range want {
+			row, err := store.Messages().Get(ctx, id, tx)
+			if err != nil {
+				return err
+			}
+			if row == nil {
+				t.Fatalf("Messages.Get(%s) returned no row", id)
+			}
+			if row.SenderSubject != subject {
+				t.Fatalf("Messages.Get(%s) sender_subject = %q, want %q", id, row.SenderSubject, subject)
+			}
+		}
+		pending, err := store.Messages().ListPendingForInstance(ctx, fix.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		seen := 0
+		for _, row := range pending {
+			subject, tracked := want[row.ID]
+			if !tracked {
+				continue
+			}
+			seen++
+			if row.SenderSubject != subject {
+				t.Fatalf("ListPendingForInstance sender_subject for %s = %q, want %q", row.ID, row.SenderSubject, subject)
+			}
+		}
+		if seen != len(want) {
+			t.Fatalf("ListPendingForInstance returned %d of the %d seeded envelopes", seen, len(want))
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("read back sender_subject: %v", err)
+	}
+
+	listed, err := store.Messages().List(ctx,
+		persistence.MessageListFilter{InstanceID: &fix.InstanceID},
+		persistence.ListPagination{Limit: 50})
+	if err != nil {
+		t.Fatalf("Messages.List: %v", err)
+	}
+	for _, row := range listed.Rows {
+		subject, tracked := want[row.ID]
+		if !tracked {
+			continue
+		}
+		if row.SenderSubject != subject {
+			t.Fatalf("Messages.List sender_subject for %s = %q, want %q", row.ID, row.SenderSubject, subject)
+		}
+	}
+}
+
+// @concept: message
 func testMessagesMarkDeliveredExcludesCancelled(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()

@@ -95,6 +95,29 @@ func testMessageIdempotencyInsertOrLookup(t *testing.T, d persistence.Database) 
 		t.Fatalf("distinct sender collided with existing tuple")
 	}
 
+	// @decision: message-sender-kind-discriminator
+	for _, kind := range []string{persistence.DedupSenderKindInstance, persistence.DedupSenderKindAnonymous} {
+		row := base
+		row.SenderKind = kind
+		row.SenderSubject = ""
+		row.MessageID = shared.UUID(uuid.New())
+		got, inserted = idempotencyInsertOrLookup(ctx, t, d, row)
+		if !inserted || got.MessageID != row.MessageID {
+			t.Fatalf("the dedup discriminator must admit %q: inserted=%v id=%s want=%s",
+				kind, inserted, got.MessageID, row.MessageID)
+		}
+	}
+
+	unknownKind := base
+	unknownKind.SenderKind = "sensor"
+	unknownKind.MessageID = shared.UUID(uuid.New())
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, _, err := d.Tables().MessageIdempotencies().InsertOrLookup(ctx, unknownKind, tx)
+		return err
+	}); err == nil {
+		t.Fatal("the dedup discriminator is a closed four-value enum; an unknown sender_kind must be refused")
+	}
+
 	otherInstance := seedFixtureSet(ctx, t, d)
 	otherInstanceRow := base
 	otherInstanceRow.InstanceID = otherInstance.InstanceID

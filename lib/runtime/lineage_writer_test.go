@@ -59,6 +59,7 @@ func TestWriteLeafRunLineage_PayloadRoundtrip(t *testing.T) {
 		FrameID:            frame,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       LeafRunTerminalKindComplete,
 		ParamsSnapshotHash: HashBytes([]byte(`{"key":"value"}`)),
 	}
 	if err := WriteLeafRunLineage(ctx, lt, inst, frame, now, rec, nil); err != nil {
@@ -216,6 +217,7 @@ func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 		FrameID:            frame,
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       LeafRunTerminalKindComplete,
 		ParentNodeRunID:    parent.String(),
 	}
 	if err := WriteLeafRunLineage(ctx, lt, inst, frame, time.Now().UTC(), rec, nil); err != nil {
@@ -295,6 +297,7 @@ func seedLeafRunForMostRecentLookup(
 		FrameID:            shared.UUID(uuid.New()),
 		State:              "fresh",
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       LeafRunTerminalKindComplete,
 	}
 	if err := WriteLeafRunLineage(context.Background(), lt, instanceID, rec.FrameID, time.Now().UTC(), rec, nil); err != nil {
 		t.Fatalf("seedLeafRunForMostRecentLookup: %v", err)
@@ -365,6 +368,7 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 			NodeID:             shared.UUID(uuid.New()),
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: "terminal/success",
+			TerminalKind:       LeafRunTerminalKindComplete,
 			ParentNodeRunID:    nil,
 		})
 		if len(lt.rows) != 1 {
@@ -400,6 +404,7 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 			NodeID:             shared.UUID(uuid.New()),
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: "terminal/success",
+			TerminalKind:       LeafRunTerminalKindComplete,
 			ParentNodeRunID:    &parent,
 		})
 		if len(lt.rows) != 1 {
@@ -431,6 +436,7 @@ func TestEmitLeafRunLineage_TemplateNodeAliasDistinctFromNodeAlias(t *testing.T)
 			NodeID:             shared.UUID(uuid.New()),
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: "terminal/success",
+			TerminalKind:       LeafRunTerminalKindComplete,
 			NodeAlias:          "runtime-alias",
 			TemplateNodeAlias:  "template-alias",
 		})
@@ -457,6 +463,7 @@ func TestEmitLeafRunLineage_TemplateNodeAliasDistinctFromNodeAlias(t *testing.T)
 			NodeID:             shared.UUID(uuid.New()),
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: "terminal/success",
+			TerminalKind:       LeafRunTerminalKindComplete,
 			NodeAlias:          "only-alias",
 		})
 		var rec LeafRunRecord
@@ -550,6 +557,7 @@ func TestEmitLeafRunLineage_PopulatesFrameTriggerFields(t *testing.T) {
 		NodeID:             shared.UUID(uuid.New()),
 		State:              string(cascade.NodeStateFresh),
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       LeafRunTerminalKindComplete,
 	})
 	if len(lt.rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(lt.rows))
@@ -583,6 +591,7 @@ func TestEmitLeafRunLineage_FrameLookupUnavailableOmitsTriggerFields(t *testing.
 		NodeID:             shared.UUID(uuid.New()),
 		State:              string(cascade.NodeStateFresh),
 		SettlingSignalType: "terminal/success",
+		TerminalKind:       LeafRunTerminalKindComplete,
 	})
 	if len(lt.rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(lt.rows))

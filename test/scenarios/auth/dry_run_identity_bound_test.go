@@ -119,7 +119,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 	ctx := context.Background()
 	var sawFlooredAttempt bool
 	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessAttempted}}, persistence.ListPagination{Limit: 200}, tx)
+		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventAccessAttempted.String()}}, persistence.ListPagination{Limit: 200}, tx)
 		if err != nil {
 			return err
 		}

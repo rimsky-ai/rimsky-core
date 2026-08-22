@@ -29,6 +29,7 @@ type CallbackReceiver struct {
 	delivered      map[string]bool
 	restartSim     bool
 	restartSimHits chan string
+	attemptTimes   map[string][]time.Time
 }
 
 type ReceiverOptions struct {
@@ -61,6 +62,7 @@ func StartCallbackReceiver(opts ...ReceiverOptions) (*CallbackReceiver, error) {
 		advertiseURL: fmt.Sprintf("http://%s:%d", advertise, tcpAddr.Port),
 		wait:         map[string]chan *genv1.Outcome{},
 		delivered:    map[string]bool{},
+		attemptTimes: map[string][]time.Time{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/callback/", r.handle)
@@ -101,6 +103,15 @@ func (r *CallbackReceiver) SimulateRestart() <-chan string {
 	return r.restartSimHits
 }
 
+// @concept: executor
+func (r *CallbackReceiver) AttemptTimes(ackID string) []time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]time.Time, len(r.attemptTimes[ackID]))
+	copy(out, r.attemptTimes[ackID])
+	return out
+}
+
 func (r *CallbackReceiver) EndSimulatedRestart() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -127,6 +138,7 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	simulating := r.restartSim
 	hits := r.restartSimHits
+	r.attemptTimes[ackID] = append(r.attemptTimes[ackID], time.Now())
 	r.mu.Unlock()
 	if simulating {
 		select {

@@ -155,7 +155,7 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 		return defaultStubCompleteOutcome(opts.SessionID, &summary)
 	}
 
-	if stubResponse, present := attrs["stub_response"]; present {
+	if stubResponse, present := attrs[stubmode.ResponseOverrideAttribute]; present {
 		obj, isObject := stubResponse.(map[string]any)
 		if !isObject {
 			return erroredOutcome("agent/attribute_invalid", map[string]any{

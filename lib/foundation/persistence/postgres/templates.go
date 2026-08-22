@@ -169,11 +169,6 @@ func (s *templatesImpl) UpdateState(ctx context.Context, hash string, newState p
 
 func (s *templatesImpl) DeleteByHash(ctx context.Context, hash string, tx persistence.Tx) error {
 	ex := s.q(tx)
-	if _, err := ex.Exec(ctx,
-		`DELETE FROM rimsky_lifecycle_idempotencies
-		 WHERE scope_kind = 'template' AND scope_id = $1`, hash); err != nil {
-		return fmt.Errorf("templates.deleteByHash: cleanup lifecycle rows: %w", err)
-	}
 	tag, err := ex.Exec(ctx, `DELETE FROM rimsky_templates WHERE id = $1`, hash)
 	if err != nil {
 		if isFKViolation(err) {

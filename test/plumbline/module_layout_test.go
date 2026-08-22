@@ -266,3 +266,148 @@ func TestGeneratedProtoBindingsMatchSource(t *testing.T) {
 		}
 	}
 }
+
+// @concept: module-layout
+func TestBuildLintAndTestGatesCoverEveryWorkspaceModule(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	workspace := workspaceModules(t, filepath.Join(repoRoot, "go.work"))
+	if len(workspace) == 0 {
+		t.Fatal("go.work declares no modules")
+	}
+	rules := parseMakefileRules(t, filepath.Join(repoRoot, "Makefile"))
+
+	for _, gate := range []struct {
+		target  string
+		command string
+	}{
+		{target: "build-all", command: "go build ./..."},
+		{target: "lint", command: "golangci-lint run"},
+		{target: "test-all", command: "$(GOTEST_GUARD)"},
+	} {
+		covered := modulesRunning(t, rules, gate.target, gate.command)
+		if strings.Join(covered, ",") != strings.Join(workspace, ",") {
+			t.Errorf("make %s runs %q over %v, but go.work declares %v — a module the gate skips is a module nothing checks",
+				gate.target, gate.command, covered, workspace)
+		}
+	}
+	t.Logf("checked all %d workspace modules go.work declares against three gates", len(workspace))
+}
+
+func workspaceModules(t *testing.T, path string) []string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var out []string
+	inUseBlock := false
+	for _, raw := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(raw)
+		switch {
+		case line == "use (":
+			inUseBlock = true
+		case inUseBlock && line == ")":
+			inUseBlock = false
+		case inUseBlock && line != "":
+			out = append(out, normalizeModuleDir(line))
+		case strings.HasPrefix(line, "use ") && !strings.Contains(line, "("):
+			out = append(out, normalizeModuleDir(strings.TrimPrefix(line, "use ")))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeModuleDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	dir = strings.TrimPrefix(dir, "./")
+	dir = strings.TrimSuffix(dir, "/")
+	if dir == "" {
+		return "."
+	}
+	return dir
+}
+
+type makeRule struct {
+	prereqs []string
+	recipe  []string
+}
+
+func parseMakefileRules(t *testing.T, path string) map[string]makeRule {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	rules := map[string]makeRule{}
+	current := ""
+	for _, raw := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(raw, "\t") {
+			if current != "" {
+				r := rules[current]
+				r.recipe = append(r.recipe, strings.TrimSpace(raw))
+				rules[current] = r
+			}
+			continue
+		}
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		colon := strings.Index(line, ":")
+		if colon <= 0 || colon+1 < len(line) && line[colon+1] == '=' {
+			current = ""
+			continue
+		}
+		name := strings.TrimSpace(line[:colon])
+		if strings.ContainsAny(name, " \t=$") {
+			current = ""
+			continue
+		}
+		current = name
+		rules[name] = makeRule{prereqs: strings.Fields(line[colon+1:])}
+	}
+	return rules
+}
+
+func modulesRunning(t *testing.T, rules map[string]makeRule, target, command string) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	dirs := map[string]bool{}
+	var walk func(name string)
+	walk = func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		rule, ok := rules[name]
+		if !ok {
+			return
+		}
+		for _, line := range rule.recipe {
+			if !strings.Contains(line, command) {
+				continue
+			}
+			dirs[normalizeModuleDir(makeRecipeDir(line))] = true
+		}
+		for _, prereq := range rule.prereqs {
+			walk(prereq)
+		}
+	}
+	walk(target)
+	out := make([]string, 0, len(dirs))
+	for dir := range dirs {
+		out = append(out, dir)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func makeRecipeDir(line string) string {
+	rest, found := strings.CutPrefix(line, "cd ")
+	if !found {
+		return "."
+	}
+	dir, _, _ := strings.Cut(rest, " &&")
+	return dir
+}

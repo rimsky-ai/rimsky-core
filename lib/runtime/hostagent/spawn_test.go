@@ -23,6 +23,8 @@ import (
 func connectAgentToFakeProxy(t *testing.T, fp *fakeProxy, cfg Config) {
 	t.Helper()
 	cfg.ProxyURL = fp.addr
+	// @decision: host-agent-proxy-tls
+	cfg.Insecure = true
 	if cfg.APIKey == "" {
 		cfg.APIKey = "k"
 	}

@@ -19,8 +19,8 @@ import (
 func TestHostAgentProxyRejectsUnsupportedLateBindProtocols(t *testing.T) {
 	fx := newHostAgentFixture(t, fixtureOpts{})
 
-	conn, err := grpc.NewClient(fx.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err, "dial proxy")
+	conn, err := grpc.NewClient(fx.proxyPeerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err, "dial the proxy peer-facing listener")
 	t.Cleanup(func() { _ = conn.Close() })
 
 	t.Run("validation", func(t *testing.T) {

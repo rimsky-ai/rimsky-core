@@ -22,11 +22,11 @@ import (
 )
 
 var auditKinds = []string{
-	auth.EventAccessAttempted,
-	auth.EventAccessDenied,
-	auth.EventKeyCreated,
-	auth.EventKeyRevoked,
-	auth.EventKeyRotated,
+	auth.EventAccessAttempted.String(),
+	auth.EventAccessDenied.String(),
+	auth.EventKeyCreated.String(),
+	auth.EventKeyRevoked.String(),
+	auth.EventKeyRotated.String(),
 }
 
 func registerAuditRoutes(r chi.Router, deps AppDeps) {

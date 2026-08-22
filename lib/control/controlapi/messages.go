@@ -34,14 +34,15 @@ func operatorSenderSubject(ident auth.Identity) string {
 	return ""
 }
 
+// @decision: message-sender-kind-discriminator
 func dedupSenderKind(senderKind string, ident auth.Identity) string {
 	if senderKind == runtime.SenderKindPublisher {
-		return runtime.SenderKindPublisher
+		return persistence.DedupSenderKindPublisher
 	}
 	if ident.Kind == auth.IdentityAnonymous {
-		return string(auth.IdentityAnonymous)
+		return persistence.DedupSenderKindAnonymous
 	}
-	return runtime.SenderKindOperator
+	return persistence.DedupSenderKindOperator
 }
 
 func registerMessagesRoutes(r chi.Router, deps AppDeps) {
@@ -63,16 +64,17 @@ type postMessageResponse struct {
 }
 
 type messageItem struct {
-	ID          string          `json:"id"`
-	InstanceID  string          `json:"instance_id"`
-	Type        string          `json:"type"`
-	Sender      string          `json:"sender"`
-	SenderKind  string          `json:"sender_kind"`
-	Payload     json.RawMessage `json:"payload,omitempty"`
-	ReceivedAt  time.Time       `json:"received_at"`
-	DeliveredAt *time.Time      `json:"delivered_at,omitempty"`
-	FrameID     string          `json:"frame_id,omitempty"`
-	Cancelled   bool            `json:"cancelled,omitempty"`
+	ID            string          `json:"id"`
+	InstanceID    string          `json:"instance_id"`
+	Type          string          `json:"type"`
+	Sender        string          `json:"sender"`
+	SenderKind    string          `json:"sender_kind"`
+	SenderSubject string          `json:"sender_subject"`
+	Payload       json.RawMessage `json:"payload,omitempty"`
+	ReceivedAt    time.Time       `json:"received_at"`
+	DeliveredAt   *time.Time      `json:"delivered_at,omitempty"`
+	FrameID       string          `json:"frame_id,omitempty"`
+	Cancelled     bool            `json:"cancelled,omitempty"`
 }
 
 type listMessagesResponse struct {
@@ -82,15 +84,16 @@ type listMessagesResponse struct {
 
 func toMessageItem(r persistence.MessageRow) messageItem {
 	out := messageItem{
-		ID:          r.ID.String(),
-		InstanceID:  r.InstanceID.String(),
-		Type:        r.Type,
-		Sender:      r.Sender,
-		SenderKind:  r.SenderKind,
-		Payload:     r.Payload,
-		ReceivedAt:  r.ReceivedAt,
-		DeliveredAt: r.DeliveredAt,
-		Cancelled:   r.Cancelled,
+		ID:            r.ID.String(),
+		InstanceID:    r.InstanceID.String(),
+		Type:          r.Type,
+		Sender:        r.Sender,
+		SenderKind:    r.SenderKind,
+		SenderSubject: r.SenderSubject,
+		Payload:       r.Payload,
+		ReceivedAt:    r.ReceivedAt,
+		DeliveredAt:   r.DeliveredAt,
+		Cancelled:     r.Cancelled,
 	}
 	if r.FrameID != nil {
 		out.FrameID = r.FrameID.String()
@@ -218,13 +221,15 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			if isDryRun {
 				return errDryRunOK
 			}
+			// @decision: message-sender-kind-discriminator
 			enqueueReq := persistence.EnqueueMessageRequest{
-				ID:         msgID,
-				InstanceID: instUUID,
-				Type:       body.Type,
-				Sender:     sender,
-				SenderKind: senderKind,
-				Payload:    body.Payload,
+				ID:            msgID,
+				InstanceID:    instUUID,
+				Type:          body.Type,
+				Sender:        sender,
+				SenderKind:    senderKind,
+				SenderSubject: senderSubject,
+				Payload:       body.Payload,
 			}
 			if err := runtime.EnqueueMessage(ctx, deps.Persist, enqueueReq, tx); err != nil {
 				return err

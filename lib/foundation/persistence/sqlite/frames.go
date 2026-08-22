@@ -652,19 +652,19 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 }
 
 func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRowWithMessage, error) {
-	var mType, mSender, mKind sql.NullString
+	var mType, mSender, mKind, mSubject sql.NullString
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT f.frame_id, f.instance_id,
 		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at,
-		        m.type, m.sender, m.sender_kind
+		        m.type, m.sender, m.sender_kind, m.sender_subject
 		   FROM rimsky_frames f
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		  WHERE f.frame_id = ?`,
 		frameID.String(),
 	)
-	cols, err := scanFrameObservabilityCols(row, &mType, &mSender, &mKind)
+	cols, err := scanFrameObservabilityCols(row, &mType, &mSender, &mKind, &mSubject)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -684,6 +684,9 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 	}
 	if mKind.Valid {
 		r.MessageSenderKind = mKind.String
+	}
+	if mSubject.Valid {
+		r.MessageSenderSubject = mSubject.String
 	}
 	return &r, nil
 }
@@ -724,7 +727,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at,
-		        m.type, m.sender, m.sender_kind
+		        m.type, m.sender, m.sender_kind, m.sender_subject
 		   FROM rimsky_frames f
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		  WHERE (? IS NULL OR f.instance_id = ?)
@@ -744,8 +747,8 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	var out []persistence.FrameRowWithMessage
 	var lastStarted time.Time
 	for rows.Next() {
-		var mType, mSender, mKind sql.NullString
-		cols, err := scanFrameObservabilityCols(rows, &mType, &mSender, &mKind)
+		var mType, mSender, mKind, mSubject sql.NullString
+		cols, err := scanFrameObservabilityCols(rows, &mType, &mSender, &mKind, &mSubject)
 		if err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
 		}
@@ -762,6 +765,9 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		}
 		if mKind.Valid {
 			r.MessageSenderKind = mKind.String
+		}
+		if mSubject.Valid {
+			r.MessageSenderSubject = mSubject.String
 		}
 		if r.StartedAt != nil {
 			lastStarted = *r.StartedAt

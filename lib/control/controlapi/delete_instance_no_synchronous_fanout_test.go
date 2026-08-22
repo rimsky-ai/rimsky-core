@@ -15,13 +15,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-func TestDeleteInstance_OnRunScopeTerminalFiresBeforeOnInstanceTerminated(t *testing.T) {
+// @decision: lifecycle-fanout-after-commit
+// @concept: lifecycle-subscriber
+// @concept: control-api
+func TestDeleteInstance_CallsNoSubscriberSynchronously(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 	ctx := context.Background()
 
-	tplID := registerAndDeployBody(t, h, templateWithClaimProducersAndLocks("del-order-"+uuid.NewString()))
+	tplID := registerAndDeployBody(t, h, templateWithClaimProducersAndLocks("del-nofanout-"+uuid.NewString()))
 	ck := "ck-" + uuid.NewString()
 	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
@@ -51,33 +54,24 @@ func TestDeleteInstance_OnRunScopeTerminalFiresBeforeOnInstanceTerminated(t *tes
 		_, err := h.persist.Frames().InsertRunningFrame(ctx, instID, msgID, rootScopeID, tx)
 		return err
 	}))
-
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.persist.Instances().MarkTerminated(ctx, instID, tx)
 	}))
-
-	status, out = h.httpJSON(t, "DELETE", "/v1/instances/"+instID.String(), nil)
-	require.Equal(t, http.StatusOK, status, out)
 
 	cp, ok := h.producers.Get("topics-ring")
 	require.True(t, ok)
 	fake, ok := cp.(*storetest.Fake)
 	require.True(t, ok)
+	before := len(fake.Calls())
 
-	allCalls := fake.Calls()
-	var runScopeCall, terminatedCall *storetest.FakeCall
-	for i := range allCalls {
-		switch allCalls[i].Verb {
-		case "on_run_scope_terminal":
-			runScopeCall = &allCalls[i]
-		case "on_instance_terminated":
-			terminatedCall = &allCalls[i]
-		}
+	status, out = h.httpJSON(t, "DELETE", "/v1/instances/"+instID.String(), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["deleted"])
+
+	for _, c := range fake.Calls()[before:] {
+		require.NotEqual(t, "on_run_scope_terminal", c.Verb,
+			"the delete route delivers no lifecycle event; the polling terminator alone does")
+		require.NotEqual(t, "on_instance_terminated", c.Verb,
+			"the delete route delivers no lifecycle event; the polling terminator alone does")
 	}
-	require.NotNil(t, runScopeCall, "DELETE /v1/instances/{id} must fan out OnRunScopeTerminal for the frame's root run scope")
-	require.NotNil(t, terminatedCall, "DELETE /v1/instances/{id} must fan out OnInstanceTerminated")
-	require.Less(t, runScopeCall.Sequence, terminatedCall.Sequence,
-		"the explicit-DELETE close site must fire OnRunScopeTerminal strictly before OnInstanceTerminated, "+
-			"same as the polling-terminator close site, so main-scope-dependent peers observe run-scope "+
-			"closure before the instance is reported terminated")
 }

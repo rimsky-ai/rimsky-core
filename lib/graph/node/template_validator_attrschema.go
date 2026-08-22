@@ -9,6 +9,8 @@ import (
 	"fmt"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
+
+	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 )
 
 // @concept: template
@@ -135,13 +137,8 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 	}
 	execProps, _ := execSchema["properties"].(map[string]any)
 	nodeProps, _ := nodeSchema["properties"].(map[string]any)
-	additionalProperties, hasAddProps := execSchema["additionalProperties"]
-	closed := false
-	if hasAddProps {
-		if b, ok := additionalProperties.(bool); ok && !b {
-			closed = true
-		}
-	}
+	// @decision: expected-attributes-schema-closed
+	closed := !executorSchemaAllowsExtensions(execSchema)
 
 	for name, raw := range nodeProps {
 		nodeProp, ok := raw.(map[string]any)
@@ -170,16 +167,22 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 		}
 	}
 
+	// @decision: expected-attributes-schema-closed
+	outputsOpen := executorSchemaAllowsReadOnlyExtensions(execSchema)
 	if closed && execProps != nil {
 		for name := range nodeProps {
-			if _, declared := execProps[name]; !declared {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("%s.properties.%s", sbase, name),
-					Msg: fmt.Sprintf(
-						"property %s is not declared in executor's expected_attributes_schema and the executor's schema is closed (additionalProperties: false)",
-						name),
-				})
+			if _, declared := execProps[name]; declared {
+				continue
 			}
+			if outputsOpen && nodePropertyIsReadOnly(nodeProps, name) {
+				continue
+			}
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.properties.%s", sbase, name),
+				Msg: fmt.Sprintf(
+					"property %s is not declared in executor's expected_attributes_schema, which declares every attribute the executor reads and admits no other",
+					name),
+			})
 		}
 		for name := range l1Defaults {
 			if _, declared := execProps[name]; declared {
@@ -191,7 +194,7 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("defaults.attributes.by_executor.%s", name),
 				Msg: fmt.Sprintf(
-					"property %s is not declared in executor's expected_attributes_schema and the executor's schema is closed (additionalProperties: false)",
+					"property %s is not declared in executor's expected_attributes_schema, which declares every attribute the executor reads and admits no other",
 					name),
 			})
 		}
@@ -262,7 +265,11 @@ func validateAgainstSchema(schema, data map[string]any) error {
 	if err := json.Unmarshal(dataBytes, &normalized); err != nil {
 		return fmt.Errorf("unmarshal data: %w", err)
 	}
-	return compiled.Validate(normalized)
+	// @concept: inertness
+	if err := compiled.Validate(normalized); err != nil {
+		return attributes.ValueFreeValidationError(err)
+	}
+	return nil
 }
 
 func jsonValuesEqual(a, b any) bool {
@@ -290,6 +297,8 @@ func CheckEffectiveAttributesSchema(effective, nodeSchema, execSchema map[string
 	execProps, _ := execSchema["properties"].(map[string]any)
 	schemaHasNoProps := IsPermissiveExecutorSchema(execSchema)
 	execOpen := executorSchemaAllowsExtensions(execSchema)
+	// @decision: expected-attributes-schema-closed
+	outputsOpen := executorSchemaAllowsReadOnlyExtensions(execSchema)
 	for name, raw := range effProps {
 		prop, ok := raw.(map[string]any)
 		if !ok {
@@ -307,14 +316,15 @@ func CheckEffectiveAttributesSchema(effective, nodeSchema, execSchema map[string
 		}
 		_, execEnumerates := execProps[name]
 		propUnconstrained := schemaHasNoProps || (execOpen && !execEnumerates)
-		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !propUnconstrained {
+		templateOutput := outputsOpen && !execEnumerates && nodePropertyIsReadOnly(nodeProps, name)
+		if !hasSource && !hasDefault && !execRO && !templateOutput && execSchemaVisible && !propUnconstrained {
 			out = append(out, AttributesSchemaCheckError{
 				Path: fmt.Sprintf("properties.%s", name),
 				Msg:  "property has no `source:`, no `default:`, and is not marked `readOnly: true` in the executor's expected_attributes_schema — declare one of these or the property is unpopulated at dispatch",
 			})
 			continue
 		}
-		if nodeProps != nil && execSchemaVisible && !propUnconstrained {
+		if nodeProps != nil && execSchemaVisible && !propUnconstrained && !templateOutput {
 			if rawNode, present := nodeProps[name]; present {
 				if nodeProp, ok := rawNode.(map[string]any); ok {
 					if ro, _ := nodeProp["readOnly"].(bool); ro && !execRO {
@@ -340,6 +350,7 @@ func IsPermissiveExecutorSchema(execSchema map[string]any) bool {
 }
 
 // @concept: attribute
+// @decision: expected-attributes-schema-closed
 func executorSchemaAllowsExtensions(execSchema map[string]any) bool {
 	if execSchema == nil {
 		return false
@@ -351,7 +362,43 @@ func executorSchemaAllowsExtensions(execSchema map[string]any) bool {
 	if b, ok := add.(bool); ok {
 		return b
 	}
-	return true
+	return !readOnlyExtensionSubschema(add)
+}
+
+// @concept: attribute
+// @concept: executor
+// @decision: expected-attributes-schema-closed
+func executorSchemaAllowsReadOnlyExtensions(execSchema map[string]any) bool {
+	if execSchema == nil {
+		return false
+	}
+	add, has := execSchema["additionalProperties"]
+	if !has {
+		return false
+	}
+	return readOnlyExtensionSubschema(add)
+}
+
+func readOnlyExtensionSubschema(additionalProperties any) bool {
+	sub, isObject := additionalProperties.(map[string]any)
+	if !isObject {
+		return false
+	}
+	readOnly, _ := sub["readOnly"].(bool)
+	return readOnly
+}
+
+func nodePropertyIsReadOnly(nodeProps map[string]any, name string) bool {
+	raw, present := nodeProps[name]
+	if !present {
+		return false
+	}
+	prop, isObject := raw.(map[string]any)
+	if !isObject {
+		return false
+	}
+	readOnly, _ := prop["readOnly"].(bool)
+	return readOnly
 }
 
 // @concept: attribute

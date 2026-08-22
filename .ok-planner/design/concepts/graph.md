@@ -6,15 +6,14 @@ concept: graph
 
 ## What it is
 
-A graph is rimsky's unit of node connectivity. A template declares its graphs either explicitly, through the template DSL's graphs surface, or implicitly, by declaring nodes directly at the template's top level; either form constitutes the reserved top-level graph, named `main`. Every instance's root run-scope binds to that top-level graph at creation. Other graphs are **sub-graphs** (see `concept:sub-graph`), invocable from the top-level graph or from each other via the delegation surface.
+A graph is rimsky's unit of node connectivity: a named set of nodes and the edges among them, declared by a template. A template declares its graphs either explicitly, through the template surface for graphs, or implicitly, by declaring nodes at its top level. Either form constitutes the one top-level graph, which carries a reserved name. A new instance starts from the top-level graph. Every other graph is a sub-graph (see `concept:sub-graph`), which the top-level graph or another sub-graph invokes through delegation.
+
+## Purpose
+
+Graphs let a template name a body of work once and invoke it from more than one place, while keeping exactly one place an instance can start from. The top-level graph gives an instance its single entry. Sub-graphs give an author reuse and nesting without opening a second way in.
 
 ## Boundaries
 
-Owns: the template-DSL surface that declares graphs (the explicit graphs surface and the implicit top-level-nodes form), the reserved-name rule. Does NOT own: per-node lifecycle (see `concept:node`, `concept:node-run`), cascade walking (see `concept:cascade`), sub-graph invocation semantics (see `concept:delegation`). Adjacent: `concept:sub-graph`, `concept:delegation`, `concept:template`, `concept:node`.
+A graph owns the template surface that declares graphs — both the explicit form and the implicit top-level form — and the reserved name the top-level graph carries. A graph is either the top-level graph or a sub-graph, and a sub-graph declares its entry and exit points.
 
-## Invariants
-
-- Every template has exactly one reserved top-level graph, named `main`. A template using the explicit graphs surface must name exactly one graph `main`; a template declaring nodes directly at the top level implicitly constitutes that same reserved graph without naming it. Every instance's root run-scope is bound to it at creation.
-- A graph is either the top-level graph or a sub-graph; sub-graphs declare entry and exit points.
-- Sub-graph definitions can only be referenced via delegation from a node in another graph; their nodes are never dispatched except through that delegation — they carry no independent entry point at instance creation.
-- The top-level graph cannot declare entry or exit points (those have no meaning at instance level; rejected at registration).
+A graph does not own per-node lifecycle (see `concept:node`, `concept:node-run`), cascade walking (see `concept:cascade`), or sub-graph invocation semantics (see `concept:delegation`). See also `concept:sub-graph` and `concept:template`.

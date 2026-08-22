@@ -523,24 +523,25 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 
 func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRowWithMessage, error) {
 	var (
-		r       persistence.FrameRowWithMessage
-		mType   *string
-		mSender *string
-		mKind   *string
+		r        persistence.FrameRowWithMessage
+		mType    *string
+		mSender  *string
+		mKind    *string
+		mSubject *string
 	)
 	err := s.q(tx).QueryRow(ctx,
 		`SELECT f.frame_id, f.instance_id,
 		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at,
-		        m.type, m.sender, m.sender_kind
+		        m.type, m.sender, m.sender_kind, m.sender_subject
 		   FROM rimsky_frames f
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		  WHERE f.frame_id = $1`,
 		frameID,
 	).Scan(&r.FrameID, &r.InstanceID, &r.State, &r.TriggeringMessageID, &r.RootRunScopeID,
 		&r.StartedAt, &r.EndedAt, &r.LastProgressAt,
-		&mType, &mSender, &mKind)
+		&mType, &mSender, &mKind, &mSubject)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -555,6 +556,9 @@ func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID
 	}
 	if mKind != nil {
 		r.MessageSenderKind = *mKind
+	}
+	if mSubject != nil {
+		r.MessageSenderSubject = *mSubject
 	}
 	return &r, nil
 }
@@ -600,7 +604,7 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		        `+frameStateCaseSQL+` AS state,
 		        f.triggering_message_id, f.root_run_scope_id,
 		        f.started_at, f.ended_at, f.last_progress_at,
-		        m.type, m.sender, m.sender_kind
+		        m.type, m.sender, m.sender_kind, m.sender_subject
 		   FROM rimsky_frames f
 		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
 		  WHERE ($1::uuid IS NULL OR f.instance_id = $1)
@@ -620,14 +624,15 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 	var lastStarted time.Time
 	for rows.Next() {
 		var (
-			r       persistence.FrameRowWithMessage
-			mType   *string
-			mSender *string
-			mKind   *string
+			r        persistence.FrameRowWithMessage
+			mType    *string
+			mSender  *string
+			mKind    *string
+			mSubject *string
 		)
 		if err := rows.Scan(&r.FrameID, &r.InstanceID, &r.State, &r.TriggeringMessageID, &r.RootRunScopeID,
 			&r.StartedAt, &r.EndedAt, &r.LastProgressAt,
-			&mType, &mSender, &mKind); err != nil {
+			&mType, &mSender, &mKind, &mSubject); err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
 		}
 		if mType != nil {
@@ -638,6 +643,9 @@ func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter
 		}
 		if mKind != nil {
 			r.MessageSenderKind = *mKind
+		}
+		if mSubject != nil {
+			r.MessageSenderSubject = *mSubject
 		}
 		if r.StartedAt != nil {
 			lastStarted = *r.StartedAt

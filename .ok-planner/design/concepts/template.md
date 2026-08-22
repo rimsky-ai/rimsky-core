@@ -8,21 +8,20 @@ aliases:
 
 ## What it is
 
-A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, subscription and cascade-coupling declarations, message-type schemas, publisher declarations, a params schema, late-bind service names, and sub-graph declarations. Persisted as a template record keyed by a content-hash identifier computed over the canonicalized spec bytes. Templates pass through a small lifecycle from initial registration through deployment, undeployment, and final deregistration.
+A template is the static artifact a consumer registers with rimsky: node definitions, attribute schemas, claim and lock declarations, subscription and cascade-coupling declarations, message-type schemas, publisher declarations, a params schema, late-bind service names, and sub-graph declarations. Its identifier is the content hash of its spec after the deployment's canonicalization. That canonicalization absorbs key order and whitespace and reads the deployment's kind-alias map, so a template's identity is a function of both the spec and the deployment that registers it (see `decision:template-identity-deployment-canonical`). A template passes through a small lifecycle: initial registration, deployment, undeployment, and final deregistration.
 
 ## Purpose
 
-Content-addressing gives a template stable identity. Two semantically-identical specs (key order, whitespace) produce the same hash; differing specs do not. Idempotent re-registration is a registration-entry-point property: the registration handler resolves the incoming spec's hash first and, when a matching template already exists, returns success without re-inserting rather than surfacing a conflict.
+Content-addressed identity makes a template a fixed reference that a running instance can hold for as long as it lives. Two specs that canonicalize alike are the same template, and two that differ are not, so re-registering an unchanged spec is idempotent: the registration entry point resolves the incoming spec's hash first and answers with the existing record instead of reporting a conflict. What has to move — which template is the current one — moves by name instead (see `concept:tag`).
 
 ## Boundaries
 
-Owns: the spec bytes, the canonical hash, the lifecycle states, the registration entry point. Does NOT own: deployment routing (see `concept:tag`), per-deployment overrides (see `concept:instance`), runtime state (see `concept:node`). Adjacent: `concept:tag`, `concept:instance`, `concept:lifecycle-subscriber`, and the canonicalization step (a sub-detail of template hashing inside this concept; pinned to a fixed canonicalization-library version).
+A template owns its spec bytes, its identifier, its lifecycle states, and the registration entry point. That entry point also serves a path that validates a spec without registering it (see `story:template-validate-without-registering`), and it validates every executor, store, and named-lock reference the spec declares, with no setting that relaxes the check (see `decision:template-registration-validation-unconditional`). The template-level late-bind list is the one boundary against that validation: a service the list names is exempt from registration-time existence and schema checks, because its schema arrives from the spawned binary at dispatch (see also `concept:host-agent-proxy`). The list is part of the spec, so changing it registers a different template.
 
-## Invariants
+Deployment routing is out and belongs to `concept:tag`: an instance binds to one template identity at creation, and moving a tag never migrates it. Per-deployment overrides are out (see also `concept:instance`), and so is runtime state (see also `concept:node`). Instance params are cleartext operational data — rimsky masks nothing in them on any surface, and a secret belongs instead in a surface that carries the never-logged, never-returned guarantee (see `decision:secret-at-rest-posture`).
 
-- The template id is a stable digest-prefix plus the hex-encoded digest, computed over the canonicalized spec bytes.
-- The canonicalization-library version pin is a standing commitment, guarded by a mechanical check that fails when the pinned version moves. A bump that changes canonicalization output would silently split template identity — every persisted template keeps its old id while every newly computed hash differs — so the pin moves only as a deliberate act, together with a decision on identity migration (see `decision:jcs-cyberphone`).
-- Instances bind to a specific template-hash identity at creation; tag movement does not migrate live instances.
-- A template-level late-bind list names services whose registration-time existence and schema validation are bypassed (their actual schema comes from the spawned binary's capabilities handshake at dispatch). The list is part of the canonical spec bytes, so it participates in the canonicalized template hash — changing the list reregisters the template under a new hash, preserving the content-addressing invariant. Names absent from the list are subject to strict registration-time checks. See `concept:host-agent-proxy`.
-- The registration pipeline is also exposed as a validate-without-persist entry point: it runs the full registration validation over a submitted spec and returns the findings without writing a template record.
-- Reference and schema validation at registration is **unconditional**: every executor, store, and named-lock reference a template declares by name must exist and validate, and an executor's expected-attributes schema must be visible and satisfied, across the executor / store / lock / schema legs alike. There is no operator setting that relaxes this — a reference that cannot be validated at registration is a hard registration failure, with no register-before-provision path. Executor and store names validate against the shared `concept:service-address-book`, the same source of truth dispatch-time resolution reads.
+See also `concept:lifecycle-subscriber`.
+
+## Aliases
+
+`canonical-spec`.

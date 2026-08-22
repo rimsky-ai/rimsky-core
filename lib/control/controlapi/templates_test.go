@@ -136,6 +136,7 @@ func TestTemplateRegister_RejectsDelegateCycleOverRoute(t *testing.T) {
 		"a validation_errors entry must name subgraph_recursion_unsupported, got: %v", rawErrs)
 }
 
+// @story: template-validate-without-registering
 func TestTemplateValidate_RejectsButDoesNotPersist(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

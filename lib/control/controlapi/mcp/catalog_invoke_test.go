@@ -54,12 +54,43 @@ func TestCatalogInvoke_BodylessRequestDoesNotPanic(t *testing.T) {
 	if m, ok := got.(map[string]any); ok && m["isError"] == true {
 		t.Fatalf("thing_create: got error envelope %+v", m)
 	}
-	if sawIdempotency == "" {
-		t.Fatalf("thing_create: expected synthesized Idempotency-Key header, got none")
+	if sawIdempotency != "" {
+		t.Fatalf("thing_create: expected no Idempotency-Key header for a caller that supplied none, got %q", sawIdempotency)
 	}
 
 	if _, _, mcpErr := cat.Invoke(httptest.NewRequest("GET", "/mcp", nil), "thing_list", nil); mcpErr != nil {
 		t.Fatalf("thing_list: unexpected error %+v", mcpErr)
+	}
+}
+
+// @decision: idempotency-key-header-universal
+func TestCatalogInvoke_OmittedIdempotencyKeyMintsNoKeyForTheCaller(t *testing.T) {
+	r := chi.NewRouter()
+	seen := []string{}
+	r.Post("/things", func(w http.ResponseWriter, req *http.Request) {
+		defer func() { _ = req.Body.Close() }()
+		_, _ = io.ReadAll(req.Body)
+		seen = append(seen, req.Header.Get("Idempotency-Key"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	reg := &fakeRegistry{
+		tools: []string{"thing_create"},
+		entries: map[string]mcp.RegistryEntry{
+			"thing_create": {Action: "thing:create", Routes: []mcp.RegistryRoute{{Method: "POST", Path: "/things"}}},
+		},
+	}
+	cat := &mcp.Catalog{Registry: reg, Router: r}
+
+	for range 2 {
+		if _, _, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_create", json.RawMessage(`{"name":"widget"}`)); mcpErr != nil {
+			t.Fatalf("unexpected error %+v", mcpErr)
+		}
+	}
+	for i, key := range seen {
+		if key != "" {
+			t.Fatalf("call %d: expected no Idempotency-Key header, got %q", i, key)
+		}
 	}
 }
 

@@ -6,40 +6,12 @@ concept: claim-scope
 
 ## What it is
 
-ClaimScope is the opaque byte stream that identifies "what was acquired": returned by a claim producer's open verb, or supplied per sub-claim by the producer's split-scope verb during fan-out partitioning. Persisted on the claim-handle ledger. The default conflict predicate is byte-equality; a producer that advertises the scopes-conflict capability supplies its own overlap predicate instead, and rimsky delegates the conflict decision to it (see Invariants). The producer parses its own selector DSL and emits canonical bytes.
-
-### Selector vs claim scope
-
-The two terms name two ends of the resolution pipeline; conflating them is a common authoring error:
-
-- The **selector** is the opaque text the graph author supplies in a node's claim declaration. At template-author time it may still carry unresolved substitution directives; these resolve at dispatch, and the producer parses the dispatch-time-resolved text.
-- The **claim scope** is the resolved selector or, for a producer that picks among candidates rather than matching a literal selector (a pick policy), the identifier it picked — the canonical-byte form the producer commits to representing this claim by. Returned by the producer's open verb and persisted with the claim handle. Claim scopes never contain substitution directives — they are post-resolution.
-
-A claim-scope substitution path inserts the resolved claim scope into the consuming attribute path under the substitution grammar's general stringification convention (shared with the address path): a JSON-string scope inserts as its unquoted text; any other JSON form inserts as its raw JSON text.
+A claim scope is the opaque byte stream that says what a claim acquired. The producer returns a claim scope when it grants a claim, or supplies one per sub-claim when it splits a scope for fan-out, and rimsky persists it on the claim-handle ledger (see `concept:claim-producer`, `concept:claim-handle`). A selector and a claim scope are the two ends of one resolution. The graph author writes the selector, the opaque text in a node's claim declaration; a selector may carry unresolved substitution directives while the author is writing the template, and those directives resolve at dispatch. The producer then parses the resolved selector in its own language and answers with canonical bytes: the resolved selector itself, or, where the producer picks among candidates rather than matching what the author wrote, the identifier of what it picked. A claim scope is always post-resolution, and it never carries a substitution directive. Where a producer reports no scope at all, the persisted scope is rimsky's own rendering of the resolved selector, so the record stays meaningful rather than blank.
 
 ## Purpose
 
-Rimsky has to detect "these two claims target the same data" across producers it knows nothing about. The default conflict predicate is byte-equal comparison of claim scope bytes; a producer may instead advertise the scopes-conflict capability and supply its own overlap predicate, consulted at acquisition (including the fan-out sub-claim path) in place of byte-equality.
-
-The rationale for byte-equal-conflict as the default (rather than mandating richer producer-specific semantics):
-
-1. **Uniform default across heterogeneous producers.** Rimsky cannot reason about producer-specific selector DSLs (one might be POSIX glob, another might be SQL row-range, another might be regex over a custom namespace). Byte-equality is the predicate rimsky can evaluate without any producer-specific code; a producer with richer overlap semantics opts into its own predicate via the scopes-conflict capability instead of relying on canonicalization tricks.
-2. **Producer authorship is the canonicalization contract.** A producer that wants byte-equal claim scopes to line up for the data it considers identical must canonicalize at the open verb; a producer that instead wants to honor "different selectors that target the same data" without forcing a byte-equal canonical form advertises the scopes-conflict capability and answers the overlap question directly.
-3. **Audit-trail honesty.** When the producer's open verb returns claim scope bytes, those bytes are persisted exactly as returned — no lossy normalization happens at the rimsky persistence boundary. When the producer returns an empty claim scope, the persisted bytes remain rimsky's JSON-marshaled form of the resolved selector, seeded on the claim-handle row before open: the request stands in for the unreported acquisition so the scope stays meaningful for audit and conflict detection rather than blank.
+Rimsky has to tell whether two claims target the same data, across producers whose domains it knows nothing about, and the claim scope is what makes that possible. The producer folds its domain knowledge into the bytes and rimsky compares the bytes. A producer whose overlap semantics are richer than a comparison can express answers the overlap question itself instead (see `decision:byte-equal-conflict-default`, `concept:claim-producer`).
 
 ## Boundaries
 
-Owns: the conflict-check comparison, the schema column, inertness discipline at all rimsky-side sites. Does NOT own: canonicalization (producer's job), capacity counting (named-lock's job), claim payload/address (other inert streams). Adjacent: `claim`, `claim-handle`, `claim-producer`, `write-semantics`, `inertness`.
-
-## Invariants
-
-- Claim scope comparison is byte-equality by default; empty byte streams never conflict under the default predicate. A producer that advertises the scopes-conflict capability supplies its own overlap predicate instead, consulted at acquisition and in the fan-out sub-claim path — rimsky imposes no byte-equality or empty-never-conflicts guarantee on that path; the producer owns the emptiness/overlap semantics for its own predicate.
-- Producers maintain the byte-equal-claim-scope **uniformity invariant**: two open calls with byte-equal claim scope MUST return the same realized write semantics. Rimsky relies on this; does not verify it.
-- Claim scope content is inert in rimsky (invariant 20).
-- **Canonical naming vocabulary.** The concept's noun is ClaimScope, qualified everywhere it appears: the persisted claim-handle ledger names its scope bytes `claim_scope_data`, the per-scope advisory-lock kind is `claim_scope`, and the byte-equality helper carries the `ClaimScopes` prefix. The retired vocabulary — `region`, bare `scope_data`, a bare `Scope`-prefixed helper, lock kind `scope` — never returns; a repo-wide fitness test enforces the boundary.
-
-## Common pitfalls
-
-- Confusing selector with claim scope. The selector is what the template author writes (and may contain unresolved substitution directives); the claim scope is the canonical-byte form returned by the producer post-acquisition.
-- Implementing a producer that doesn't canonicalize claim scope bytes and doesn't advertise the scopes-conflict capability. Two claims that should conflict but produce different claim scope bytes will NOT be detected as conflicting under the byte-equal default; the producer must either normalize to byte-equal claim scopes or advertise scopes-conflict and answer the overlap question itself.
-- Confusing **ClaimScope** (this concept; claim-identity bytes) with **RunScope** (`concept:run-scope`; execution-context). The two share the "Scope" suffix but name entirely different things — ClaimScope is for claim conflict detection; RunScope is for "which graph instantiation does this run belong to." Both carry qualifying prefixes; bare `Scope` is never used.
+Claim scope owns the comparison rimsky makes when it checks for a conflict, and the discipline that leaves the bytes unread everywhere else (see `concept:inertness`). It does not own canonicalization, which is the producer's job; capacity counting, which belongs to `named-lock`; or the other opaque streams a claim carries, its address and its payload, which belong to `claim`. Claim scope is not run scope. The two share a word and name different things: a claim scope identifies what a claim acquired, and a run scope identifies which instantiation of a graph a run belongs to (see `concept:run-scope`). See also: `claim`, `claim-handle`, `claim-producer`, `write-semantics`, `inertness`, `run-scope`.

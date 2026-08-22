@@ -23,6 +23,8 @@ type (
 	TemplateAttributeDefaults = spec.TemplateAttributeDefaults
 
 	MessageSchema = spec.MessageSchema
+
+	RawJSON = spec.RawJSON
 )
 
 var BoolPtr = spec.BoolPtr

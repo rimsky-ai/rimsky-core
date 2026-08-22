@@ -6,17 +6,14 @@ concept: asset
 
 ## What it is
 
-An asset is a documented compound, not a new primitive: a committed claim against a data-processing-capable producer with a durable lifetime. Anything satisfying all three is an asset; anything else isn't. Rimsky does not apply asset semantics to other claims.
+An asset is a documented compound, not a new primitive: a committed claim, held against a producer that advertises the data-processing capability, whose lifetime is durable. A claim satisfying all three is an asset; any other claim is not, and rimsky applies asset semantics to no other claim. Rimsky surfaces an asset by finding the claim handles that meet the three conditions, so no separate asset record exists.
 
-Assets are surfaced by querying claim handles that are committed and durable against data-processing-advertising producers.
+## Purpose
+
+An asset gives an operator a durable, named handle on the data an instance produced, and does it without adding a record type to the platform. Because an asset is a claim, its versions, its materialization history, and its release all come from the claim machinery already in place.
 
 ## Boundaries
 
-Owns: the compound definition, the asset presentation surface (listing, detail, versions, materialization-history, delete operations across operator interfaces). Does NOT own: any new primitive (assets are claims; see `concept:claim`, `concept:claim-lifetime`); re-materialization triggering (operators express re-materialization via messages — empty for whole-instance, typed for template-author-designed partial paths). Adjacent: `concept:claim-lifetime`, `concept:claim-handle`, `concept:data-processing`, `concept:lineage`.
+An asset owns the compound definition and the surface through which an operator observes and removes assets (see `story:asset-management`). It owns no new primitive: an asset is a claim, and its durability is a claim lifetime. It does not own re-materialization, which an operator asks for by sending a message — an empty one to wake the whole instance, a typed one to take the partial path the template author designed. It does not own whatever a template declares for the producer's own use inside an asset; that block is producer-targeted and stays opaque to rimsky.
 
-## Invariants
-
-- Assets are namespaced per-instance; the identity composes the instance with the asset's alias.
-- The producer MUST advertise the data-processing capability. A durable-lifetime claim against a producer lacking that capability remains durable but is not surfaced as an asset (see `concept:claim-lifetime`).
-- The asset's `data:` block in the template is producer-targeted and opaque to rimsky. Rimsky-aware fields outside `data:`: `name`, `selector`, `intent`, `alias`, `lifetime`.
-- The asset-delete endpoint releases the claim handle via the producer's release verb; it refuses if any in-flight run holds the claim.
+see also: `claim`, `claim-lifetime`, `claim-handle`, `data-processing`, `lineage`

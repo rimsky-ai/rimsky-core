@@ -6,6 +6,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	rsignal "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -42,4 +43,13 @@ func TemplateHasStructuralRoot(ctx context.Context, c *Client, hash string) (boo
 	}
 	matched := edges.Match("", rsignal.TypePath("terminal/success"))
 	return len(matched) > 0, nil
+}
+
+// @story: one-shot-to-terminal
+// @decision: termination
+// @decision: compose-driver-sends-empty-message-after-create
+func NoStructuralRootError(hash string) error {
+	return fmt.Errorf("template %s declares no structural root, so the run sends no wake message and nothing "+
+		"drives the instance to terminal; subscribe a node to the template's structural root, or create the "+
+		"instance with `rimsky instances create` and drive it yourself", hash)
 }

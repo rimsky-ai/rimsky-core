@@ -12,29 +12,31 @@ import (
 )
 
 type MessageRow struct {
-	ID          shared.UUID
-	InstanceID  shared.UUID
-	Type        string
-	Sender      string
-	SenderKind  string
-	Payload     json.RawMessage
-	ReceivedAt  time.Time
-	DeliveredAt *time.Time
-	FrameID     *shared.UUID
-	Cancelled   bool
+	ID            shared.UUID
+	InstanceID    shared.UUID
+	Type          string
+	Sender        string
+	SenderKind    string
+	SenderSubject string
+	Payload       json.RawMessage
+	ReceivedAt    time.Time
+	DeliveredAt   *time.Time
+	FrameID       *shared.UUID
+	Cancelled     bool
 }
 
 // @decision: empty-message-as-root-trigger
 func (m MessageRow) IsEmptyWake() bool { return m.Type == "" }
 
 type EnqueueMessageRequest struct {
-	ID         shared.UUID
-	InstanceID shared.UUID
-	Type       string
-	Sender     string
-	SenderKind string
-	Payload    json.RawMessage
-	ReceivedAt time.Time
+	ID            shared.UUID
+	InstanceID    shared.UUID
+	Type          string
+	Sender        string
+	SenderKind    string
+	SenderSubject string
+	Payload       json.RawMessage
+	ReceivedAt    time.Time
 }
 
 type MessageListFilter struct {

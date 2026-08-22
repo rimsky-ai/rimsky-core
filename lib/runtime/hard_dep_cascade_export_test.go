@@ -17,3 +17,14 @@ func CascadeSubscribersStaleInTxForTest(
 	sig := signalpkg.BuildTerminalSuccessSignal(true, map[string]any{}, "cascade_test", nil)
 	return cascadeSubscribersStaleInTx(ctx, args, senderID, senderNodeType, senderNodeRunID, instanceID, senderFrameID, sig, tx)
 }
+
+// @concept: auto-terminal
+func TransitionHolderIfFullyResolvedForTest(
+	ctx context.Context, args RunArgs, holderNodeRunID shared.UUID, tx persistence.Tx,
+) (func(context.Context), error) {
+	post, err := transitionHolderIfFullyResolved(ctx, args, holderNodeRunID, tx)
+	if post == nil {
+		return nil, err
+	}
+	return post, err
+}

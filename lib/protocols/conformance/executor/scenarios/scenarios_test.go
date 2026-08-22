@@ -100,6 +100,7 @@ func deliverAsyncSuccess(callbackURL, ackID string) {
 }
 
 func postCallbackUntilAccepted(callbackURL, ackID string, body []byte) {
+	backoff := 10 * time.Millisecond
 	for {
 		resp, err := http.Post(callbackURL+"/v1/callback/"+ackID, "application/json", bytes.NewReader(body))
 		if err == nil {
@@ -109,7 +110,10 @@ func postCallbackUntilAccepted(callbackURL, ackID string, body []byte) {
 			}
 		}
 		//nolint:testwallclock-outcome inter-attempt cadence; this loop returns only when the receiver accepts the callback
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(backoff)
+		if backoff < time.Second {
+			backoff *= 3
+		}
 	}
 }
 
@@ -134,8 +138,9 @@ func TestUnaryProtocolScenarios_RunAgainstALiveExecutor(t *testing.T) {
 
 	results, err := conformance.Run(ctx, conformance.RunnerOpts{
 		Endpoint: conformance.Endpoint{Transport: "grpc", URL: "grpc://" + addr},
-		Only:     []string{"tags_round_trip", "attributes_serialization", "async_callback_survives_restart", "scratch_park_round_trip"},
-		Timeout:  10 * time.Second,
+		Only: []string{"tags_round_trip", "attributes_serialization", "async_callback_survives_restart",
+			"scratch_park_round_trip"},
+		Timeout: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("conformance.Run: %v", err)
@@ -146,7 +151,8 @@ func TestUnaryProtocolScenarios_RunAgainstALiveExecutor(t *testing.T) {
 		byName[r.Scenario] = r
 	}
 
-	for _, name := range []string{"tags_round_trip", "attributes_serialization", "async_callback_survives_restart", "scratch_park_round_trip"} {
+	for _, name := range []string{"tags_round_trip", "attributes_serialization", "async_callback_survives_restart",
+		"scratch_park_round_trip"} {
 		r, ok := byName[name]
 		if !ok {
 			t.Errorf("scenario %q did not run at all (not registered or filtered out); registered scenarios: %v", name, scenarioNames(results))

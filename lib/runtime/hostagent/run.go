@@ -190,6 +190,7 @@ func Run(ctx context.Context, cfg Config) error {
 	defer clearStatusFile(cfg.StatusFile)
 
 	backoff := reconnectMinBackoff
+	var gate reconnectLogGate
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -199,7 +200,7 @@ func Run(ctx context.Context, cfg Config) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			slog.Warn("hostagent: connect failed; backing off", "error", connErr, "backoff", backoff)
+			gate.report(connErr, backoff)
 			if !sleepCtx(ctx, backoff) {
 				return nil
 			}
@@ -207,6 +208,7 @@ func Run(ctx context.Context, cfg Config) error {
 			continue
 		}
 		backoff = reconnectMinBackoff
+		gate.reset()
 
 		curMu.Lock()
 		cur = a
@@ -309,6 +311,46 @@ func clearStatusFile(path string) {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		slog.Warn("hostagent: status file remove failed", "path", path, "error", err)
 	}
+}
+
+// @concept: host-agent
+type reconnectLogGate struct {
+	lastError string
+	silenced  bool
+}
+
+func (g *reconnectLogGate) report(connErr error, backoff time.Duration) {
+	emit, last := g.decide(connErr.Error(), backoff)
+	if !emit {
+		return
+	}
+	kv := []any{"error", connErr, "backoff", backoff}
+	if last {
+		kv = append(kv, "repeat_logging",
+			"the agent stays quiet while this error repeats at the maximum backoff. The next line names a changed error.")
+	}
+	slog.Warn("hostagent.connect_failed", kv...)
+}
+
+func (g *reconnectLogGate) decide(msg string, backoff time.Duration) (emit, last bool) {
+	if msg != g.lastError {
+		g.lastError = msg
+		g.silenced = false
+		return true, false
+	}
+	if backoff < reconnectMaxBackoff {
+		return true, false
+	}
+	if g.silenced {
+		return false, false
+	}
+	g.silenced = true
+	return true, true
+}
+
+func (g *reconnectLogGate) reset() {
+	g.lastError = ""
+	g.silenced = false
 }
 
 func connectOnce(ctx context.Context, cfg Config, trust *localTrust, enrollBaseURL, callbackBaseURL string) (*agent, error) {

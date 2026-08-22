@@ -29,6 +29,7 @@ func (noopStore) Instances() persistence.InstanceTable                    { retu
 func (noopStore) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
 	return nil
 }
+func (noopStore) LifecycleOutbox() persistence.LifecycleOutboxTable              { return nil }
 func (noopStore) Nodes() persistence.NodeTable                                   { return noopNodes{} }
 func (noopStore) ClaimHandles() persistence.ClaimHandleTable                     { return nil }
 func (noopStore) NodeAttributes() persistence.NodeAttributeTable                 { return nil }
@@ -203,6 +204,9 @@ func (noopNodes) DeletePriorCascadeStales(context.Context, shared.UUID, shared.U
 	return 0, nil
 }
 func (noopNodes) HasLaterCascadePending(context.Context, shared.UUID, shared.UUID, int64, persistence.Tx) (bool, error) {
+	return false, nil
+}
+func (noopNodes) HasEarlierQueuedRoundFromSameSender(context.Context, shared.UUID, persistence.Tx) (bool, error) {
 	return false, nil
 }
 func (noopNodes) ListPendingRunsInScopeForNodes(context.Context, shared.UUID, []shared.UUID, persistence.Tx) ([]shared.UUID, error) {

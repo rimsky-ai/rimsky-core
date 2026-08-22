@@ -30,8 +30,8 @@ Takes one argument: the job slug (kebab-case; derive one from the job descriptio
 
 ## What this skill does NOT do
 
-- Does not start the stack — the workspace's own session does that (with images resolved via the src-tag discipline).
+- Does not start the stack — the workspace's own session does that (with images resolved via the per-run tag discipline).
 - Does not modify the main checkout, beyond `git worktree add`'s bookkeeping.
 - Does not create a workspace over uncommitted intent: if the *job* is supposed to include current uncommitted changes, stop and ask — moving work between trees is the owner's call.
 
-<!-- Materialized by ok-workspaces v18.8.0 — suite-owned; overwritten on converge; do not hand-edit. -->
+<!-- Materialized by ok-workspaces v19.0.0 — suite-owned; overwritten on converge; do not hand-edit. -->

@@ -474,6 +474,43 @@ func TestValidateAttributesSchema_NestedSourceNonStringRejected(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].attributes.schema.properties.config.properties.nested_field.source")
 }
 
+// @decision: expected-attributes-schema-closed
+func TestValidateAttributesSchema_UndeclaredPropertyRejectedWithoutAnExplicitClosedFlag(t *testing.T) {
+	for name, execSchema := range map[string]string{
+		"schema saying nothing about extensions": `{"type":"object","properties":{"known":{"type":"string"}}}`,
+		"schema closing extensions explicitly":   `{"type":"object","properties":{"known":{"type":"string"}},"additionalProperties":false}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name:    "demo",
+				Version: "1.0.0",
+				Nodes: []TemplateNodeDef{{
+					Type:     "a",
+					Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"known":    map[string]any{"type": "string", "default": "x"},
+							"misspelt": map[string]any{"type": "string", "default": "hi"},
+						},
+					}},
+				}},
+			}
+			hooks := RegistryHooks{
+				StoreDeclared: storeDeclaredLookup(knownClaimProducers),
+				ExecutorExpectedAttributesSchema: func(string) ([]byte, bool) {
+					return []byte(execSchema), true
+				},
+			}
+			res := ValidateTemplate(spec, hooks)
+			require.False(t, res.Ok(),
+				"an executor schema declares every attribute the executor reads, so a node "+
+					"attribute the schema does not declare is a misspelling and registration refuses it")
+			hasErrorAt(t, res, "nodes[0].attributes.schema.properties.misspelt")
+		})
+	}
+}
+
 func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L2(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
@@ -618,7 +655,8 @@ func TestValidateCompositionAgainstExecutor_RequiredInputWithSource(t *testing.T
 		res.Errors)
 }
 
-func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
+// @decision: expected-attributes-schema-closed
+func TestValidateAttributesSchema_ExplicitlyOpenSchemaAcceptsExtraProperty(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
@@ -639,9 +677,128 @@ func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
 	hooks := RegistryHooks{
 		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
-			return []byte(`{"type":"object","properties":{"known":{"type":"string","readOnly":true}}}`), true
+			return []byte(`{"type":"object","properties":{"known":{"type":"string","readOnly":true}},"additionalProperties":true}`), true
 		},
 	}
 	res := ValidateTemplate(spec, hooks)
-	assert.True(t, res.Ok(), "open executor schema should admit extra L2 props; errors: %+v", res.Errors)
+	assert.True(t, res.Ok(),
+		"an executor that declares additionalProperties:true produces node-declared outputs, "+
+			"so a property it does not enumerate stands; errors: %+v", res.Errors)
+}
+
+// @concept: inertness
+// @concept: attribute
+func TestValidateTemplate_DefaultsSchemaViolationNamesTheConstraintWithoutTheValue(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"token": map[string]any{
+						"type":    "string",
+						"default": "supplied-secret",
+					},
+				},
+			}},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownClaimProducers),
+		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+			return []byte(`{"type":"object","properties":{"token":{"type":"string","const":"expected-secret"}}}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+
+	var msg string
+	for _, e := range res.Errors {
+		if e.Path == "nodes[0].attributes.schema.defaults" {
+			msg = e.Msg
+		}
+	}
+	require.NotEmpty(t, msg, "expected a defaults error, got: %+v", res.Errors)
+	assert.NotContains(t, msg, "supplied-secret", "the defaults error must not embed the declared value")
+	assert.NotContains(t, msg, "expected-secret", "the defaults error must not embed the executor's permitted value")
+	assert.Contains(t, msg, "/token", "the defaults error must name the failing path")
+	assert.Contains(t, msg, "const", "the defaults error must name the constraint")
+}
+
+// @decision: expected-attributes-schema-closed
+func TestValidateAttributesSchema_ReadOnlyExtensionsAdmitATemplateNamedOutput(t *testing.T) {
+	const execSchema = `{"type":"object","properties":{"known":{"type":"string"}},"additionalProperties":{"readOnly":true}}`
+
+	for name, tc := range map[string]struct {
+		property map[string]any
+		wantOk   bool
+	}{
+		"output the template marks read-only": {
+			property: map[string]any{"type": "string", "readOnly": true},
+			wantOk:   true,
+		},
+		"writable property the executor never reads": {
+			property: map[string]any{"type": "string", "default": "hi"},
+			wantOk:   false,
+		},
+		"property with neither a source nor a default": {
+			property: map[string]any{"type": "string"},
+			wantOk:   false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name:    "demo",
+				Version: "1.0.0",
+				Nodes: []TemplateNodeDef{{
+					Type:     "a",
+					Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"known":    map[string]any{"type": "string", "default": "x"},
+							"produced": tc.property,
+						},
+					}},
+				}},
+			}
+			hooks := RegistryHooks{
+				StoreDeclared: storeDeclaredLookup(knownClaimProducers),
+				ExecutorExpectedAttributesSchema: func(string) ([]byte, bool) {
+					return []byte(execSchema), true
+				},
+			}
+			res := ValidateTemplate(spec, hooks)
+			if tc.wantOk {
+				require.True(t, res.Ok(),
+					"an executor that leaves its outputs open admits a property the template marks read-only; errors = %+v",
+					res.Errors)
+				return
+			}
+			require.False(t, res.Ok(),
+				"an executor that leaves its outputs open still declares every attribute it reads, so an "+
+					"undeclared writable property is a misspelling")
+			hasErrorAt(t, res, "nodes[0].attributes.schema.properties.produced")
+		})
+	}
+}
+
+// @decision: expected-attributes-schema-closed
+func TestExecutorSchemaAllowsExtensions_ReadOnlyExtensionsDoNotOpenTheInputBag(t *testing.T) {
+	readOnlyExtensions := map[string]any{"additionalProperties": map[string]any{"readOnly": true}}
+	require.False(t, executorSchemaAllowsExtensions(readOnlyExtensions),
+		"a schema whose extensions must be read-only accepts no undeclared input")
+	require.True(t, executorSchemaAllowsReadOnlyExtensions(readOnlyExtensions))
+
+	typedExtensions := map[string]any{"additionalProperties": map[string]any{"type": "string"}}
+	require.True(t, executorSchemaAllowsExtensions(typedExtensions),
+		"a schema that admits an undeclared string property has an open input bag")
+	require.False(t, executorSchemaAllowsReadOnlyExtensions(typedExtensions))
+
+	closed := map[string]any{"additionalProperties": false}
+	require.False(t, executorSchemaAllowsExtensions(closed))
+	require.False(t, executorSchemaAllowsReadOnlyExtensions(closed))
 }
