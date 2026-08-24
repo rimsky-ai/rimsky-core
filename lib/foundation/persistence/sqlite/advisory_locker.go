@@ -75,7 +75,7 @@ func (c *advisoryLockerImpl) TakeClaimScopeLock(_ context.Context, _ string, _ [
 	return nil
 }
 
-func (c *advisoryLockerImpl) TakeLifecycleScopeLock(_ context.Context, _ persistence.LifecycleIdempotencyScopeKind, _ string, _ persistence.Tx) error {
+func (c *advisoryLockerImpl) TakeLifecycleScopeLock(_ context.Context, _ persistence.LifecycleScopeKind, _ string, _ persistence.Tx) error {
 	return nil
 }
 

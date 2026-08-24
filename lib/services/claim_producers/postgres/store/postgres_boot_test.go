@@ -16,8 +16,7 @@ import (
 
 func bootPostgresTestContainer(t *testing.T) (*pgxpool.Pool, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	container, err := pgmodule.Run(ctx,
 		"postgres:14-alpine",
 		pgmodule.WithDatabase("rimsky"),
@@ -35,6 +34,7 @@ func bootPostgresTestContainer(t *testing.T) (*pgxpool.Pool, string) {
 		t.Skipf("postgres testcontainer unavailable: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, c := context.WithTimeout(context.Background(), 30*time.Second)
 		defer c()
 		_ = container.Terminate(termCtx)

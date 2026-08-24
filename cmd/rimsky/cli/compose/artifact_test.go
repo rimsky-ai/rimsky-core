@@ -129,19 +129,6 @@ func TestEnsureRunDir_ConcurrentClaimsDistinct(t *testing.T) {
 	}
 }
 
-func TestEnsureRunDir_BlobsCreated(t *testing.T) {
-	tmp := t.TempDir()
-	runDir, err := EnsureRunDir(tmp, "2026-06-13T11-00-00Z", "demo")
-	if err != nil {
-		t.Fatalf("EnsureRunDir: %v", err)
-	}
-	blobs := filepath.Join(runDir, "blobs")
-	info, err := os.Stat(blobs)
-	if err != nil || !info.IsDir() {
-		t.Fatalf("blobs dir %q missing or not a directory: %v", blobs, err)
-	}
-}
-
 func TestFormatRunTimestamp_FilesystemSafe(t *testing.T) {
 	got := FormatRunTimestamp(time.Date(2026, 6, 13, 10, 30, 45, 0, time.UTC))
 	if strings.Contains(got, ":") {

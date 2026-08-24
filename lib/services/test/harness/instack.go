@@ -62,6 +62,7 @@ func RunInStackSuites(ctx context.Context, t testing.TB, ep RimskyEndpoint, suit
 		t.Fatalf("harness: start test-runner: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = runner.Terminate(termCtx)

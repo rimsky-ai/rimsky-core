@@ -13,7 +13,7 @@ looks for its page. This is it.
 **`error_types` cannot act on any of them.** The runtime handles them on a
 separate path that never consults the per-class action map. Declaring
 `error_types: {"executor_dial_failed": {action: retry}}` registers — with a
-vocabulary warning, since no peer declares the class — and changes nothing.
+vocabulary warning, since no service declares the class — and changes nothing.
 
 ## The classes
 
@@ -45,8 +45,8 @@ It retries, automatically, under its own cap:
   `terminal/error/<class>` — the same event shape a policy give-up produces,
   so downstream subscribers see an ordinary terminal error.
 
-This is the sanctioned escalation for a transiently unreachable peer: retry,
-hit the cap, fail the run. There is no separate peer-offline alert.
+This is the sanctioned escalation for a transiently unreachable service: retry,
+hit the cap, fail the run. There is no separate service-offline alert.
 
 ## What to change
 

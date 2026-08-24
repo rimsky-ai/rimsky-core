@@ -44,7 +44,7 @@ func SweepLineageRetention(
 		return 0, fmt.Errorf("SweepLineageRetention: %w", err)
 	}
 	if log != nil && n > 0 {
-		log.Info("retention.lineage.sweep", "deleted", n, "cutoff", cutoff.Format(time.RFC3339))
+		log.Info("RETENTION.LINEAGE.SWEPT", "deleted", n, "cutoff", cutoff.Format(time.RFC3339))
 	}
 	return n, nil
 }
@@ -65,7 +65,7 @@ func SweepRunTreeRetention(
 		return 0, fmt.Errorf("SweepRunTreeRetention: frames: %w", err)
 	}
 	if log != nil && frames > 0 {
-		log.Info("retention.trace.frames.sweep",
+		log.Info("RETENTION.TRACEFRAMES.SWEPT",
 			"deleted", frames, "recent_frames_kept", cfg.RecentFramesKept,
 			"cutoff", cutoffLogValue(cutoff))
 	}
@@ -75,7 +75,7 @@ func SweepRunTreeRetention(
 			return frames, fmt.Errorf("SweepRunTreeRetention: events: %w", err)
 		}
 		if log != nil && events > 0 {
-			log.Info("retention.trace.events.sweep",
+			log.Info("RETENTION.TRACEEVENTS.SWEPT",
 				"deleted", events, "cutoff", cutoff.Format(time.RFC3339))
 		}
 	}

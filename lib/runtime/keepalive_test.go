@@ -20,31 +20,28 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type stubTables struct{}
 
-func (stubTables) Templates() persistence.TemplateTable                    { return nil }
-func (stubTables) ServiceAddressBook() persistence.ServiceAddressBookTable { return nil }
-func (stubTables) TemplateTags() persistence.TemplateTagTable              { return nil }
-func (stubTables) Instances() persistence.InstanceTable                    { return nil }
-func (stubTables) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
-	return nil
-}
-func (stubTables) LifecycleOutbox() persistence.LifecycleOutboxTable         { return nil }
-func (stubTables) Nodes() persistence.NodeTable                              { return nil }
-func (stubTables) ClaimHandles() persistence.ClaimHandleTable                { return nil }
-func (stubTables) NodeAttributes() persistence.NodeAttributeTable            { return nil }
-func (stubTables) ClaimHolders() persistence.ClaimHolderTable                { return nil }
-func (stubTables) Events() persistence.EventTable                            { return nil }
-func (stubTables) Supervisors() persistence.SupervisorTable                  { return nil }
-func (stubTables) Frames() persistence.FrameTable                            { return nil }
-func (stubTables) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
-func (stubTables) WaitSet() persistence.WaitSetTable                         { return nil }
-func (stubTables) Messages() persistence.MessageTable                        { return nil }
-func (stubTables) MessageIdempotencies() persistence.MessageIdempotencyTable { return nil }
-func (stubTables) Lineage() persistence.LineageTable                         { return nil }
+func (stubTables) Templates() persistence.TemplateTable                         { return nil }
+func (stubTables) ServiceAddressBook() persistence.ServiceAddressBookTable      { return nil }
+func (stubTables) TemplateTags() persistence.TemplateTagTable                   { return nil }
+func (stubTables) Instances() persistence.InstanceTable                         { return nil }
+func (stubTables) LifecycleOutbox() persistence.LifecycleOutboxTable            { return nil }
+func (stubTables) ServiceDeliveryStalls() persistence.ServiceDeliveryStallTable { return nil }
+func (stubTables) Nodes() persistence.NodeTable                                 { return nil }
+func (stubTables) ClaimHandles() persistence.ClaimHandleTable                   { return nil }
+func (stubTables) NodeAttributes() persistence.NodeAttributeTable               { return nil }
+func (stubTables) ClaimHolders() persistence.ClaimHolderTable                   { return nil }
+func (stubTables) Events() persistence.EventTable                               { return nil }
+func (stubTables) Supervisors() persistence.SupervisorTable                     { return nil }
+func (stubTables) Frames() persistence.FrameTable                               { return nil }
+func (stubTables) WaitSet() persistence.WaitSetTable                            { return nil }
+func (stubTables) Messages() persistence.MessageTable                           { return nil }
+func (stubTables) MessageIdempotencies() persistence.MessageIdempotencyTable    { return nil }
+func (stubTables) Lineage() persistence.LineageTable                            { return nil }
 func (stubTables) PublisherSubscriptions() persistence.PublisherSubscriptionTable {
 	return nil
 }
@@ -222,7 +219,7 @@ func TestKeepalive_MTLSRejectsMissingClientCert(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		PeerAuth:     peer.PeerAuthMTLS,
+		ServiceAuth:  service.ServiceAuthMTLS,
 	}
 	router := newKeepaliveRouter(c)
 
@@ -243,7 +240,7 @@ func TestKeepalive_MTLSAcceptsVerifiedPrincipal(t *testing.T) {
 		SupervisorID: "sup-1",
 		Persist:      stubTables{},
 		Queue:        queue,
-		PeerAuth:     peer.PeerAuthMTLS,
+		ServiceAuth:  service.ServiceAuthMTLS,
 	}
 	router := newKeepaliveRouter(c)
 
@@ -267,7 +264,7 @@ func TestKeepalive_MTLSRejectsCertWithoutPrincipal(t *testing.T) {
 	c := &CallbackServer{
 		Logger:       shared.SilentLogger{},
 		SupervisorID: "sup-1",
-		PeerAuth:     peer.PeerAuthMTLS,
+		ServiceAuth:  service.ServiceAuthMTLS,
 	}
 	router := newKeepaliveRouter(c)
 

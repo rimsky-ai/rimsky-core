@@ -12,18 +12,18 @@ func TestCapturingLogger_WithDerivedChildRecordsVisibleToParent(t *testing.T) {
 	parent := NewCapturingLogger()
 	child := parent.With("role", "supervisor")
 
-	parent.Info("parent message")
-	child.Info("child message")
+	parent.Info("TEST.PARENTLOGGER.EMITTED")
+	child.Info("TEST.CHILDLOGGER.EMITTED")
 
 	got := parent.Records()
 	if len(got) != 2 {
 		t.Fatalf("parent.Records() returned %d records, want 2 (one logged directly, one via the With-derived child)", len(got))
 	}
-	if got[0].Msg != "parent message" {
-		t.Fatalf("got[0].Msg = %q, want %q", got[0].Msg, "parent message")
+	if got[0].Msg != "TEST.PARENTLOGGER.EMITTED" {
+		t.Fatalf("got[0].Msg = %q, want %q", got[0].Msg, "TEST.PARENTLOGGER.EMITTED")
 	}
-	if got[1].Msg != "child message" {
-		t.Fatalf("got[1].Msg = %q, want %q", got[1].Msg, "child message")
+	if got[1].Msg != "TEST.CHILDLOGGER.EMITTED" {
+		t.Fatalf("got[1].Msg = %q, want %q", got[1].Msg, "TEST.CHILDLOGGER.EMITTED")
 	}
 	if got[1].Fields["role"] != "supervisor" {
 		t.Fatalf("got[1].Fields[%q] = %v, want %q", "role", got[1].Fields["role"], "supervisor")
@@ -35,7 +35,7 @@ func TestCapturingLogger_GrandchildRecordsVisibleToParent(t *testing.T) {
 	child := parent.With("role", "scheduler")
 	grandchild := child.With("tick", 1)
 
-	grandchild.Warn("grandchild message")
+	grandchild.Warn("TEST.GRANDCHILDLOGGER.EMITTED")
 
 	got := parent.Records()
 	if len(got) != 1 {
@@ -50,7 +50,7 @@ func TestCapturingLogger_WithDoesNotMutateParentBaseFields(t *testing.T) {
 	parent := NewCapturingLogger()
 	_ = parent.With("role", "supervisor")
 
-	parent.Info("parent message")
+	parent.Info("TEST.PARENTLOGGER.EMITTED")
 
 	got := parent.Records()
 	if len(got) != 1 {
@@ -71,13 +71,13 @@ func TestCapturingLogger_ConcurrentParentAndChildAppendsDoNotRace(t *testing.T) 
 	go func() {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
-			parent.Info("parent message")
+			parent.Info("TEST.PARENTLOGGER.EMITTED")
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
-			child.Info("child message")
+			child.Info("TEST.CHILDLOGGER.EMITTED")
 		}
 	}()
 	wg.Wait()
@@ -92,7 +92,7 @@ func TestCapturingLogger_ClearOnParentClearsChildView(t *testing.T) {
 	parent := NewCapturingLogger()
 	child := parent.With("role", "supervisor")
 
-	child.Info("child message")
+	child.Info("TEST.CHILDLOGGER.EMITTED")
 	parent.Clear()
 
 	if got := parent.Records(); len(got) != 0 {

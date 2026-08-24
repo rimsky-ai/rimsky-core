@@ -203,18 +203,17 @@ type NodeRunForGate struct {
 // @concept: cascade
 // @decision: non-cascade-direct-to-stale
 type NonCascadeStaleInput struct {
-	NodeID                      shared.UUID
-	RunScopeID                  shared.UUID
-	FrameID                     shared.UUID
-	ExecutorName                string
-	RequiredClaimProducers      []string
-	EnqueuedAt                  time.Time
-	CreationReason              cascade.CreationReason
-	PriorNodeRunID              *shared.UUID
-	PriorDispatchDisposition    string
-	InitialScratchInline        []byte
-	InitialScratchHandle        string
-	InitialScratchHandleBackend string
+	NodeID                   shared.UUID
+	RunScopeID               shared.UUID
+	FrameID                  shared.UUID
+	ExecutorName             string
+	RequiredClaimProducers   []string
+	EnqueuedAt               time.Time
+	CreationReason           cascade.CreationReason
+	PriorNodeRunID           *shared.UUID
+	PriorDispatchDisposition string
+	// @decision: scratch-column
+	InitialScratch []byte
 }
 
 type NodeRunForCallback struct {

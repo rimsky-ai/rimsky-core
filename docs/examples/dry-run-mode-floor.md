@@ -76,7 +76,7 @@ floor is the grant's doing and not the deployment's.
 The pinned key keeps its read grant throughout and stays a working credential
 for what it was granted.
 
-An operator can hand an autonomous agent a credential that can only ever attempt
+An operator can hand an autonomous daemon a credential that can only ever attempt
 the write.
 
 ## The proviso

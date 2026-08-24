@@ -81,7 +81,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instID, TemplateHash: tmplHash, InstanceKey: &ck,
 			Params: map[string]any{"region": "us-east"},
 		}, tx)

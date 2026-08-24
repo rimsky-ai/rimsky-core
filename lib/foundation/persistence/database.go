@@ -5,7 +5,6 @@ package persistence
 
 import (
 	"context"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -17,8 +16,6 @@ type Database interface {
 	AdvisoryLocker() AdvisoryLocker
 	Migrate(ctx context.Context, log shared.Logger) error
 	Ping(ctx context.Context) error
-
-	SetBlobBackend(bb BlobBackend, threshold int, retention time.Duration)
 
 	Close() error
 }
@@ -34,5 +31,5 @@ type AdvisoryLocker interface {
 
 	TakeClaimScopeLock(ctx context.Context, claimProducerName string, claimScopeData []byte, tx Tx) error
 
-	TakeLifecycleScopeLock(ctx context.Context, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) error
+	TakeLifecycleScopeLock(ctx context.Context, scopeKind LifecycleScopeKind, scopeID string, tx Tx) error
 }

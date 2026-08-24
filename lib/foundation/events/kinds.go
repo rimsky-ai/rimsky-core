@@ -125,6 +125,8 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY:             "subgraph.exit_carry",
 	genv1.OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED:           "parked_resume_started",
 	genv1.OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED:          "debug.override.applied",
+	genv1.OperationalKind_OPERATIONAL_KIND_SERVICE_DELIVERY_STALLED:        "service_delivery.stalled",
+	genv1.OperationalKind_OPERATIONAL_KIND_SERVICE_DELIVERY_RECOVERED:      "service_delivery.recovered",
 }
 
 var operationalKindFromWire = func() map[string]genv1.OperationalKind {
@@ -291,4 +293,14 @@ func KindParkedResumeStarted() Kind {
 }
 func KindDebugOverrideApplied() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED)
+}
+
+// @decision: service-delivery-stall-signal
+func KindServiceDeliveryStalled() Kind {
+	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_SERVICE_DELIVERY_STALLED)
+}
+
+// @decision: service-delivery-stall-signal
+func KindServiceDeliveryRecovered() Kind {
+	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_SERVICE_DELIVERY_RECOVERED)
 }

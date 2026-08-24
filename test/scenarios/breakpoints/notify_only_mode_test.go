@@ -50,6 +50,6 @@ func TestNotifyOnlyMode(t *testing.T) {
 	hits := waitForHitCount(t, h, bpID, 1)
 	require.Len(t, hits, 1)
 	require.Nil(t, hits[0].ResumedAt,
-		"notify_only hit must NOT be auto-resumed; the agent reads it but does not need to release the dispatch")
+		"notify_only hit must NOT be auto-resumed; the daemon reads it but does not need to release the dispatch")
 	require.Equal(t, "notify_only", string(hits[0].Mode))
 }

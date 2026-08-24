@@ -35,7 +35,7 @@ func TestMigrate_ForeignKeyViolationAbortsAndRestoresPragma(t *testing.T) {
 
 	badSQL := `
 INSERT INTO rimsky_templates (id, spec, state, source) VALUES ('fk-guard-tpl', '{}', 'registered', 'direct');
-INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES ('fk-guard-inst', 'fk-guard-tpl', 'test-agent');
+INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES ('fk-guard-inst', 'fk-guard-tpl', 'test-daemon');
 INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES ('fk-guard-node', 'fk-guard-inst', 'fixture');
 DELETE FROM rimsky_instances WHERE id = 'fk-guard-inst';
 `

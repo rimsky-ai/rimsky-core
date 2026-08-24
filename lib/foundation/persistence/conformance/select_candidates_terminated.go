@@ -35,7 +35,7 @@ func testSelectCandidatesSkipsTerminatedInstances(t *testing.T, d persistence.Da
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID:           terminatedInstanceID,
 			TemplateHash: activeFix.TemplateHash,
 		}, tx); err != nil {

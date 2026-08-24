@@ -128,7 +128,7 @@ func runOptionalChecks(ctx context.Context, c claimproducer.ClaimProducer, caps 
 	out = append(out, checkTerminals(ctx, c)...)
 	out = append(out, checkSplitScope(ctx, c, caps)...)
 	out = append(out, checkScopesConflict(ctx, c, caps)...)
-	out = append(out, checkSerialization9b(ctx, c, caps))
+	out = append(out, checkSerialization9b(ctx, c, caps, boundReaderOpenByTimeout))
 	return out
 }
 

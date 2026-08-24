@@ -59,7 +59,7 @@ Two more vocabularies show up in the record rather than in a call you make: 44 e
 
 **You are writing a template.** Open `templates.md` for the keys, `examples/` for one behaviour at a time, and `cookbook/` for a whole shape.
 
-**You are standing up a deployment.** Open `operating.md`. It settles the topology, the database, the peer-authentication posture, the ports, and the diagnostics, and hands you off to the four per-key references.
+**You are standing up a deployment.** Open `operating.md`. It settles the topology, the database, the service-authentication posture, the ports, and the diagnostics, and hands you off to the four per-key references.
 
 **You are writing a service rimsky calls.** Open `protocols/README.md`, pick your protocol's guide, then read `protocols/conventions.md`.
 
@@ -126,7 +126,7 @@ Four things surprise most readers at the first step. Each reference names the su
 
 **A misspelled variable is silent; a misspelled YAML key is loud.** Rimsky checks the values of the variables it reads and never checks the names of the ones it does not. An unknown YAML key stops the process at load and names the offending field.
 
-**The CLI does not reach every control-API route.** Whole route families have no verb: breakpoints, instance pause and resume, the lineage read routes, and the observability routes. Reach those over HTTP or MCP. The CLI also carries verbs that contact no server at all — the `ctx` verbs, `agent status`, `agent stop`, and `version` — and two verbs, `rimsky run` and `rimsky compose run`, that boot a whole rimsky stack inside the CLI process.
+**The CLI does not reach every control-API route.** Whole route families have no verb: breakpoints, instance pause and resume, the lineage read routes, and the observability routes. Reach those over HTTP or MCP. The CLI also carries verbs that contact no server at all — the `ctx` verbs, `daemon status`, `daemon stop`, and `version` — and two verbs, `rimsky run` and `rimsky compose run`, that boot a whole rimsky stack inside the CLI process.
 
 ## Versions
 

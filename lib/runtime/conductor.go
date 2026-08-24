@@ -53,7 +53,7 @@ func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 		}
 		// @concept: node-run
 		if err := args.Queue.ReleaseClaimWithDisposition(ctx, o.ID, prior, "stale_recovery"); err != nil {
-			log.Warn("tick: release orphaned claim failed",
+			log.Warn("CONDUCTOR.ORPHANEDCLAIM.RELEASEFAILED",
 				"dispatch_id", o.ID.String(), "error", err.Error())
 			continue
 		}
@@ -68,7 +68,7 @@ func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 			instancePtr = &instID
 			return nil
 		}); err != nil {
-			log.Warn("tick: orphan node lookup failed; emit without instance_id",
+			log.Warn("CONDUCTOR.ORPHANNODE.LOOKUPFAILED", "detail", "the event is emitted without instance_id",
 				"node_id", nodeID.String(), "error", err.Error())
 		}
 		// @concept: supervisor
@@ -92,10 +92,10 @@ func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 				Payload:    payload,
 			}, tx)
 		}); err != nil {
-			log.Warn("tick: append orphaned_claim_released failed",
+			log.Warn("CONDUCTOR.ORPHANEDCLAIMRELEASEDEVENT.APPENDFAILED",
 				"dispatch_id", o.ID.String(), "error", err.Error())
 		}
-		log.Warn("tick: released orphaned async dispatch",
+		log.Warn("CONDUCTOR.ORPHANEDASYNCDISPATCH.RELEASED",
 			"dispatch_id", o.ID.String(),
 			"prior_claimed_by", prior,
 			"error_class", errorClass,

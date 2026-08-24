@@ -7,7 +7,6 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -64,8 +63,7 @@ func TestFilesystemServer_LifecycleEnabled_CapabilitiesAdvertisesProtocol(t *tes
 	addr := startFilesystemServerForLifecycleGateTest(t, true)
 	client := dialClaimProducerClient(t, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	resp, err := client.Capabilities(ctx, &genv1.CapabilitiesRequest{})
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
@@ -85,8 +83,7 @@ func TestFilesystemServer_LifecycleDisabled_CapabilitiesOmitsProtocol(t *testing
 	addr := startFilesystemServerForLifecycleGateTest(t, false)
 	client := dialClaimProducerClient(t, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	resp, err := client.Capabilities(ctx, &genv1.CapabilitiesRequest{})
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
@@ -100,8 +97,7 @@ func TestFilesystemServer_LifecycleDisabled_RPCUnimplemented(t *testing.T) {
 	addr := startFilesystemServerForLifecycleGateTest(t, false)
 	client := dialLifecycleSubscriberClient(t, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	_, err := client.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{InstanceId: "inst-1"})
 
 	if err == nil {
@@ -120,8 +116,7 @@ func TestFilesystemServer_LifecycleEnabled_RPCSucceeds(t *testing.T) {
 	addr := startFilesystemServerForLifecycleGateTest(t, true)
 	client := dialLifecycleSubscriberClient(t, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	ack, err := client.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{InstanceId: "inst-1"})
 	if err != nil {
 		t.Fatalf("OnInstanceCreated with EnableLifecycle=true: got err %v, want a successful ack from the "+

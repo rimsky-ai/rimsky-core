@@ -19,19 +19,11 @@ func testLogger(_ *testing.T) *slog.Logger {
 func TestOpenDriverFromEnv_OpensSqliteDriverAtConfiguredPath(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
-	blobRoot := filepath.Join(dir, "blobs")
-	if err := os.MkdirAll(blobRoot, 0o755); err != nil {
-		t.Fatalf("mkdir blob root: %v", err)
-	}
 	cfgPath := filepath.Join(dir, "rimsky.yml")
 	cfg := `persistence:
   driver: sqlite
   sqlite:
     path: ` + dbPath + `
-  blob:
-    backend: filesystem
-    filesystem:
-      root: ` + blobRoot + `
 `
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)

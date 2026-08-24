@@ -15,6 +15,7 @@ import (
 )
 
 // @decision: lifecycle-subscriber-at-least-once-delivery
+// @decision: service-delivery-stall-signal
 func SweepLifecycleOutbox(
 	ctx context.Context, tables persistence.Tables, cfg RetentionConfig,
 	now time.Time, log shared.Logger,
@@ -32,7 +33,7 @@ func SweepLifecycleOutbox(
 		return 0, fmt.Errorf("SweepLifecycleOutbox: %w", err)
 	}
 	if log != nil && n > 0 {
-		log.Info("retention.lifecycle_outbox.sweep",
+		log.Info("RETENTION.LIFECYCLEOUTBOX.SWEPT",
 			"deleted", n,
 			"cutoff", cutoff.Format(time.RFC3339),
 			"trailing", cfg.LifecycleOutboxTrailing.String())

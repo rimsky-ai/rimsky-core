@@ -57,6 +57,10 @@ func TestValidator_RejectsMissingFields(t *testing.T) {
 	if res.OK() {
 		t.Fatal("expected validation error for missing OnCommit, got OK")
 	}
+	joined := errsString(res.Errors)
+	if !strings.Contains(joined, "on_commit: required (got null or missing)") {
+		t.Errorf("expected 'on_commit: required (got null or missing)'; got %q", joined)
+	}
 }
 
 func TestValidator_RejectsPopOnOpen(t *testing.T) {
@@ -307,20 +311,6 @@ func TestValidator_RejectsTargetEqualsPolicyRoot(t *testing.T) {
 	joined := errsString(res.Errors)
 	if !strings.Contains(joined, "same directory as the policy root") {
 		t.Errorf("expected 'same directory as the policy root' error; got %q", joined)
-	}
-}
-
-func TestValidator_RejectsNullCommit(t *testing.T) {
-	root, sub := validatorTestRoot(t)
-	pp := newValidPolicy(root, sub)
-	pp.OnCommit = action.Action{}
-	res := validatePickPolicy(root, "@r", pp)
-	if res.OK() {
-		t.Fatal("expected validation error for null on_commit")
-	}
-	joined := errsString(res.Errors)
-	if !strings.Contains(joined, "on_commit: required (got null or missing)") {
-		t.Errorf("expected 'on_commit: required (got null or missing)'; got %q", joined)
 	}
 }
 

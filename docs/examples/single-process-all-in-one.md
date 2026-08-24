@@ -5,8 +5,7 @@ release. Read it only when directed here. -->
 # One process carrying all three roles
 
 The `rimsky-all-in-one` image runs the scheduler, supervisor and control API in
-a single process. That is what lets the in-memory blob backend work with no
-storage service beside it.
+a single process, so the deployment needs no service beside it.
 
 ## Run it
 
@@ -35,54 +34,3 @@ curl -sS "$BASE/v1/observability/system/health"   # one supervisor registered
 
 Drive a node and it dispatches and settles fresh. The process count is still one
 afterwards.
-
-## The memory blob backend
-
-```yaml
-persistence:
-  driver: sqlite
-  sqlite:
-    path: /var/lib/rimsky/state.db
-  blob:
-    backend: memory
-    spill_threshold_bytes: 256
-claim_producers: {}
-named_locks: {}
-executors: {}
-```
-
-```yaml
-name: memory-blob-demo
-version: "1"
-nodes:
-  - type: worker
-    kind: attribute_passthrough
-    attributes:
-      schema:
-        type: object
-        properties:
-          payload:
-            type: string
-            default: "<8700 bytes>"
-```
-
-The node runs to `terminal/success`, and the whole payload reads back:
-
-```bash
-curl -sS "$BASE/v1/nodes/$WORKER_NODE_ID"
-```
-
-The supervisor role spilled it and the control-api role read it back, out of one
-in-process store.
-
-## The coupling is enforced
-
-Hand the same configuration to a single-role container:
-
-```bash
-docker run -v "$PWD/rimsky.yml:/etc/rimsky/rimsky.yml:ro" rimsky:<tag> rimsky-control-api
-```
-
-It exits non-zero at startup, naming the memory backend as dev-only and naming
-the single-process mode it requires. Per-role processes cannot share an
-in-process map, and the deployment says so rather than failing later.

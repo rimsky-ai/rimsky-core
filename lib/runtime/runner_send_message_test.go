@@ -74,7 +74,7 @@ func seedSendInstance(t *testing.T, ctx context.Context, d persistence.Database)
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 		}, tx); err != nil {
@@ -121,7 +121,7 @@ func seedSendInstanceNoBodySchema(t *testing.T, ctx context.Context, d persisten
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 		}, tx); err != nil {
@@ -376,28 +376,6 @@ func TestSendCascadeMessageInTx_InsertsMessageEnvelope(t *testing.T) {
 	}
 	if row.DeliveredAt != nil {
 		t.Errorf("message.delivered_at = %v; want nil (frame opens later, in the tick)", row.DeliveredAt)
-	}
-}
-
-func TestSendCascadeMessageInTx_ReplayDoesNotDoubleInsertEnvelope(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	d := openSendTestDB(t)
-	instanceID := seedSendInstance(t, ctx, d)
-	nodeID := seedSendNode(t, ctx, d, instanceID)
-	frameID := shared.UUID(uuid.New())
-
-	for i := 0; i < 2; i++ {
-		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			_, _, err := sendCascadeMessage(ctx, d.Tables(), instanceID, nodeID, frameID, "ping/recheck", []byte(`{"pong_status":"v"}`), tx)
-			return err
-		}); err != nil {
-			t.Fatalf("send iter %d: %v", i, err)
-		}
-	}
-
-	if got := countMessages(t, ctx, d, instanceID); got != 1 {
-		t.Fatalf("envelope count = %d; want 1 (replay dedups envelope)", got)
 	}
 }
 

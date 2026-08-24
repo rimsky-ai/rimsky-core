@@ -84,7 +84,7 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 				selector, strings.Join(msgs, "; "))
 		}
 		for _, w := range res.Warnings {
-			slog.Warn(w)
+			slog.Warn("POSTGRESSTORE.PICKPOLICY.WARNED", "selector", selector, "detail", w)
 		}
 		if err := verifyItemsTable(ctx, pool, pp.ItemsTable); err != nil {
 			pool.Close()

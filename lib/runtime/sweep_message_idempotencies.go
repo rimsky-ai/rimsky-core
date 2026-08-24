@@ -27,7 +27,7 @@ func SweepMessageIdempotencies(
 		return 0, fmt.Errorf("SweepMessageIdempotencies: %w", err)
 	}
 	if log != nil && n > 0 {
-		log.Info("retention.message_idempotencies.sweep",
+		log.Info("RETENTION.MESSAGEIDEMPOTENCIES.SWEPT",
 			"deleted", n,
 			"cutoff", cutoff.Format(time.RFC3339),
 			"trailing", cfg.MessageIdempotenciesTrailing.String())

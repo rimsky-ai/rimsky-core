@@ -49,9 +49,7 @@ func TestStartOnce_Success(t *testing.T) {
 	}
 	dir := t.TempDir()
 	writeFixtureBinary(t, dir, "rimsky-migrate", `echo "migrate ok"; exit 0`)
-	t.Cleanup(func() { binaryDir = "/usr/local/bin" })
-	binaryDir = dir
-	_, exitCh, err := startOnce("rimsky-migrate")
+	_, exitCh, err := startOnce(dir, "rimsky-migrate")
 	if err != nil {
 		t.Fatalf("startOnce: %v", err)
 	}
@@ -67,9 +65,7 @@ func TestStartOnce_FailurePropagates(t *testing.T) {
 	}
 	dir := t.TempDir()
 	writeFixtureBinary(t, dir, "rimsky-migrate", `exit 7`)
-	t.Cleanup(func() { binaryDir = "/usr/local/bin" })
-	binaryDir = dir
-	_, exitCh, err := startOnce("rimsky-migrate")
+	_, exitCh, err := startOnce(dir, "rimsky-migrate")
 	if err != nil {
 		t.Fatalf("startOnce: %v", err)
 	}
@@ -92,14 +88,13 @@ func TestRunMigrateIfOwned_SignalInterrupts(t *testing.T) {
 	}
 	if os.Getenv("ENTRYPOINT_TEST_MIGRATE_SIGNAL") == "1" {
 		dir := os.Getenv("ENTRYPOINT_TEST_FIXTURE_DIR")
-		binaryDir = dir
 		sigCh := make(chan os.Signal, 1)
 		sigCh <- syscall.SIGTERM
 		plan, err := newLaunchPlan([]string{"rimsky-control-api"})
 		if err != nil {
 			os.Exit(2)
 		}
-		runMigrateIfOwned(plan, sigCh)
+		runMigrateIfOwned(dir, plan, sigCh)
 		os.Exit(99)
 	}
 
@@ -182,10 +177,8 @@ func TestEntrypointRoleSelection(t *testing.T) {
 			writeFixtureBinary(t, dir, n,
 				`touch "`+filepath.Join(markerDir, n)+`"; exec sleep 60`)
 		}
-		t.Cleanup(func() { binaryDir = "/usr/local/bin" })
-		binaryDir = dir
 
-		cmd, exitCh, err := spawnRole("rimsky-scheduler")
+		cmd, exitCh, err := spawnRole(dir, "rimsky-scheduler")
 		if err != nil {
 			t.Fatalf("spawnRole: %v", err)
 		}
@@ -205,10 +198,8 @@ func TestEntrypointRoleSelection(t *testing.T) {
 		envFile := filepath.Join(t.TempDir(), "env-dump")
 		writeFixtureBinary(t, dir, "rimsky-scheduler",
 			`env > "`+envFile+`.tmp" && mv "`+envFile+`.tmp" "`+envFile+`"; exec sleep 60`)
-		t.Cleanup(func() { binaryDir = "/usr/local/bin" })
-		binaryDir = dir
 
-		cmd, exitCh, err := spawnRole("rimsky-scheduler")
+		cmd, exitCh, err := spawnRole(dir, "rimsky-scheduler")
 		if err != nil {
 			t.Fatalf("spawnRole: %v", err)
 		}
@@ -436,14 +427,14 @@ func TestRunMigrateIfOwned_InvalidOverrideExitsNonZero(t *testing.T) {
 		t.Skip("shell-script fixtures unavailable on windows")
 	}
 	if os.Getenv("ENTRYPOINT_TEST_MIGRATE_INVALID") == "1" {
-		binaryDir = os.Getenv("ENTRYPOINT_TEST_FIXTURE_DIR")
+		fixtureDir := os.Getenv("ENTRYPOINT_TEST_FIXTURE_DIR")
 		sigCh := make(chan os.Signal, 1)
 		plan, err := newLaunchPlan([]string{"rimsky-control-api"})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "invalid migrate override: %v\n", err)
 			os.Exit(2)
 		}
-		runMigrateIfOwned(plan, sigCh)
+		runMigrateIfOwned(fixtureDir, plan, sigCh)
 		os.Exit(0)
 	}
 
@@ -475,10 +466,8 @@ func TestShutdownChild(t *testing.T) {
 	}
 	dir := t.TempDir()
 	writeFixtureBinary(t, dir, "rimsky-scheduler", `exec sleep 60`)
-	t.Cleanup(func() { binaryDir = "/usr/local/bin" })
-	binaryDir = dir
 
-	cmd, exitCh, err := spawnRole("rimsky-scheduler")
+	cmd, exitCh, err := spawnRole(dir, "rimsky-scheduler")
 	if err != nil {
 		t.Fatalf("spawnRole: %v", err)
 	}
@@ -541,8 +530,7 @@ func TestShutdownChildHardExitsOnSecondSignal(t *testing.T) {
 func hardExitReadyPath(dir string) string { return filepath.Join(dir, "signals-ignored") }
 
 func runHardExitHelper(dir string) {
-	binaryDir = dir
-	cmd, exitCh, err := spawnRole("rimsky-scheduler")
+	cmd, exitCh, err := spawnRole(dir, "rimsky-scheduler")
 	if err != nil {
 		os.Exit(3)
 	}

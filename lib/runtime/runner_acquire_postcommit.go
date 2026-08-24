@@ -19,7 +19,7 @@ import (
 func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 	ownership, err := args.Queue.GetClaimedBy(ctx, acq.NodeRunID)
 	if err != nil {
-		args.Logger.Warn("verifyBeforeRun: GetClaimedBy failed",
+		args.Logger.Warn("RUNNER.CLAIMOWNERSHIP.VERIFYFAILED", "site", "verifyBeforeRun",
 			"dispatch_id", acq.NodeRunID.String(), "error", err.Error())
 		return false
 	}
@@ -31,7 +31,7 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 	for _, lk := range acq.Locks {
 		if err := bailAcquiredLock(ctx, args, lk); err != nil && args.Logger != nil {
-			args.Logger.Warn("handleOrphanedClaim: unwind acquired lock failed",
+			args.Logger.Warn("RUNNER.ORPHANEDCLAIMLOCK.UNWINDFAILED", "site", "handleOrphanedClaim",
 				"claim_handle_id", lk.ClaimHandleID.String(),
 				"producer", producerNameForSpec(lk.Spec),
 				"dispatch_id", acq.NodeRunID.String(),
@@ -39,7 +39,7 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 		}
 	}
 	if err := args.Queue.ReleaseClaim(ctx, acq.NodeRunID, args.SupervisorID); err != nil && args.Logger != nil {
-		args.Logger.Warn("handleOrphanedClaim: release claim failed",
+		args.Logger.Warn("RUNNER.ORPHANEDCLAIM.RELEASEFAILED", "site", "handleOrphanedClaim",
 			"dispatch_id", acq.NodeRunID.String(),
 			"supervisor_id", args.SupervisorID,
 			"error", err.Error())
@@ -54,7 +54,7 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 			}),
 		}, tx)
 	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("handleOrphanedClaim: append orphaned_claim_lost_race event failed",
+		args.Logger.Warn("RUNNER.ORPHANEDCLAIMLOSTRACEEVENT.APPENDFAILED", "site", "handleOrphanedClaim",
 			"node_id", acq.NodeID.String(),
 			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())

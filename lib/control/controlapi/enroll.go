@@ -28,7 +28,7 @@ func registerEnrollRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/enroll", deps.AuthState.gateByAction("service:enroll", handleEnroll(deps)))
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 func registerCARootRoute(r chi.Router, deps AppDeps) {
 	if deps.Enroll == nil || deps.Enroll.CA == nil {
 		return
@@ -36,7 +36,7 @@ func registerCARootRoute(r chi.Router, deps AppDeps) {
 	r.Get("/ca-root", handleCARoot(deps))
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 // @decision: enroll-token-is-api-key
 func handleCARoot(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
@@ -83,7 +83,7 @@ func handleEnroll(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if deps.Logger != nil {
-			deps.Logger.Info("service enrolled",
+			deps.Logger.Info("SERVICEAUTH.SERVICE.ENROLLED",
 				"label", body.Label,
 				"principal", ident.KeyID.String(),
 				"not_after", issued.NotAfter.Format(time.RFC3339))

@@ -18,6 +18,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -65,19 +66,25 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 
 	fake.waitFor(t, "OnTemplateRegistered", templateHash, "")
 	fake.waitFor(t, "OnTemplateDeployed", templateHash, "")
+	requireOutboxDrains(t, h, persistence.LifecycleScopeTemplate, templateHash, "deploying the template")
 
 	instanceID := h.CreateInstance(templateHash, "canary-lifecycle-ck", nil)
 	fake.waitFor(t, "OnInstanceCreated", templateHash, instanceID.String())
+	requireOutboxDrains(t, h, persistence.LifecycleScopeInstance, instanceID.String(), "creating the instance")
 
 	postAndExpectOK(t, h, "/v1/instances/"+instanceID.String()+"/terminate")
 	fake.waitFor(t, "OnInstanceTerminated", templateHash, instanceID.String())
+	requireOutboxDrains(t, h, persistence.LifecycleScopeInstance, instanceID.String(), "terminating the instance")
 	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
+	requireOutboxDrains(t, h, persistence.LifecycleScopeInstance, instanceID.String(), "deleting the instance")
 
 	postAndExpectOK(t, h, "/v1/templates/"+templateHash+"/undeploy")
 	fake.waitFor(t, "OnTemplateUndeployed", templateHash, "")
+	requireOutboxDrains(t, h, persistence.LifecycleScopeTemplate, templateHash, "undeploying the template")
 
 	deleteAndExpectOK(t, h, "/v1/templates/"+templateHash)
 	fake.waitFor(t, "OnTemplateDeregistered", templateHash, "")
+	requireOutboxDrains(t, h, persistence.LifecycleScopeTemplate, templateHash, "deregistering the template")
 
 	for _, verb := range []string{
 		"OnTemplateRegistered", "OnTemplateDeployed", "OnTemplateUndeployed",
@@ -193,6 +200,22 @@ func TestCanary_RanInstanceTerminationFiresOnRunScopeTerminal(t *testing.T) {
 	require.GreaterOrEqualf(t, fake.countFor("OnRunScopeTerminal"), 1,
 		"terminating an instance that genuinely ran a dispatch (and so owns a real frame-root run scope) "+
 			"must fire OnRunScopeTerminal, unlike the never-ran case above")
+}
+
+// @decision: lifecycle-subscriber-at-least-once-delivery
+func requireOutboxDrains(
+	t *testing.T, h *scenario.Harness, kind persistence.LifecycleScopeKind, scopeID, transition string,
+) {
+	t.Helper()
+	awaited.Until(t, "the lifecycle outbox for "+string(kind)+"/"+scopeID+" to drain after "+transition, func() bool {
+		var rows []persistence.LifecycleOutboxRow
+		require.NoError(t, h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := h.Persist.LifecycleOutbox().ListPendingForScope(ctx, kind, scopeID, tx)
+			rows = r
+			return err
+		}))
+		return len(rows) == 0
+	})
 }
 
 type fakeLifecycleServer struct {
@@ -369,9 +392,9 @@ func deleteAndExpectOK(t *testing.T, h *scenario.Harness, path string) {
 func postInstanceRawExpectCreated(t *testing.T, h *scenario.Harness, templateHash, instanceKey string) string {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"template":     templateHash,
-		"instance_key": instanceKey,
-		"target_agent": "scenario-default-agent",
+		"template":      templateHash,
+		"instance_key":  instanceKey,
+		"target_daemon": "scenario-default-daemon",
 	})
 	require.NoError(t, err)
 	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", strings.NewReader(string(body)))

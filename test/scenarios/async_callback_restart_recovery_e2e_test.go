@@ -25,13 +25,13 @@ func TestAsyncCallback_SurvivesRegistryLoss_ViaProductionRegisteredAck(t *testin
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
 	const ackID = "ack-guard-restart-recovery"
-	h.Stub.WhenType("agent").AwaitAsyncCallback(ackID, 5000)
+	h.Stub.WhenType("daemon").AwaitAsyncCallback(ackID, 5000)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "async-callback-restart-recovery", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "agent", Executor: "stub"},
+				node.TemplateNodeDef{Type: "daemon", Executor: "stub"},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -43,7 +43,7 @@ func TestAsyncCallback_SurvivesRegistryLoss_ViaProductionRegisteredAck(t *testin
 	})
 	iid := h.CreateInstance(tid, "ck-async-callback-restart-recovery", map[string]any{})
 
-	n := h.FindNode(iid, "agent")
+	n := h.FindNode(iid, "daemon")
 	require.NotNil(t, n)
 
 	h.WaitForNodeState(n.ID, cascade.NodeStateRunning)

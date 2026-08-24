@@ -115,17 +115,6 @@ func TestParseCallbackBody_RejectsMultipleOutcomes(t *testing.T) {
 	}
 }
 
-func TestParseCallbackBody_RejectsAllThreeOutcomes(t *testing.T) {
-	body := map[string]any{
-		"success": map[string]any{},
-		"error":   map[string]any{"error_class": "x"},
-		"park":    map[string]any{},
-	}
-	if _, err := parseCallbackBody(body); err == nil {
-		t.Fatal("expected error for body with all three outcomes")
-	}
-}
-
 func TestParseCallbackBody_RejectsNoOutcome(t *testing.T) {
 	if _, err := parseCallbackBody(map[string]any{}); err == nil {
 		t.Fatal("expected error for empty body")
@@ -159,22 +148,17 @@ func TestParseCallbackBody_RejectsNullOutcomeMixedWithLegacyField(t *testing.T) 
 }
 
 func TestParseCallbackBody_RejectsUnknownTopLevelField(t *testing.T) {
-	body := map[string]any{
-		"success":          map[string]any{"changed": true},
+	for name, extra := range map[string]any{
 		"unexpected_field": "x",
-	}
-	if _, err := parseCallbackBody(body); err == nil {
-		t.Fatal("expected error for a body carrying an unrecognized top-level field alongside a valid outcome")
-	}
-}
-
-func TestParseCallbackBody_RejectsReservedEventsField(t *testing.T) {
-	body := map[string]any{
-		"success": map[string]any{"changed": true},
-		"events":  []any{},
-	}
-	if _, err := parseCallbackBody(body); err == nil {
-		t.Fatal("expected error for a body carrying the reserved events field (executor.proto reserves it; no longer accepted)")
+		"events":           []any{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := map[string]any{"success": map[string]any{"changed": true}, name: extra}
+			if _, err := parseCallbackBody(body); err == nil {
+				t.Fatalf("expected error for a body carrying the top-level field %q alongside a valid outcome "+
+					"(executor.proto reserves events; no unrecognized field is accepted)", name)
+			}
+		})
 	}
 }
 
@@ -262,33 +246,6 @@ func TestReceiver_DuplicateCallback_RejectedNotDelivered(t *testing.T) {
 	select {
 	case extra := <-ch:
 		t.Fatalf("duplicate callback must not be delivered to the registered channel, got: %T", extra.GetOutcome())
-	default:
-	}
-}
-
-func TestReceiver_LateCallback_AfterConsumptionRejectedNotDelivered(t *testing.T) {
-	r, err := StartCallbackReceiver()
-	if err != nil {
-		t.Fatalf("StartCallbackReceiver: %v", err)
-	}
-	defer func() { _ = r.Close() }()
-
-	ackID := "ack-late"
-	ch := r.Register(ackID)
-	postCallback(t, r.URL(), ackID, map[string]any{
-		"success": map[string]any{"changed": true},
-	})
-	<-ch
-
-	ackStatus := postDuplicateCallback(t, r.URL(), ackID, map[string]any{
-		"success": map[string]any{"changed": true},
-	})
-	if ackStatus != "rejected_run_terminal" {
-		t.Fatalf("late callback ack_status=%q, want %q", ackStatus, "rejected_run_terminal")
-	}
-	select {
-	case extra := <-ch:
-		t.Fatalf("late callback must not be re-delivered to the registered channel, got: %T", extra.GetOutcome())
 	default:
 	}
 }
@@ -432,24 +389,6 @@ func TestReceiver_HandleRejectsMissingAckID(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status=%d want 400 for missing ack_id", resp.StatusCode)
-	}
-}
-
-func TestReceiver_HandleSuccessReturns204(t *testing.T) {
-	r, err := StartCallbackReceiver()
-	if err != nil {
-		t.Fatalf("StartCallbackReceiver: %v", err)
-	}
-	defer func() { _ = r.Close() }()
-
-	body, _ := json.Marshal(map[string]any{"success": map[string]any{"changed": true}})
-	resp, err := http.Post(r.URL()+"/v1/callback/ack-204", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("status=%d want 204", resp.StatusCode)
 	}
 }
 

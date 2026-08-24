@@ -106,7 +106,7 @@ func newEnrollHarness(t *testing.T, withEnroll, withEnrollClock bool) enrollHarn
 		if err != nil {
 			t.Fatalf("GenerateCA: %v", err)
 		}
-		deps.PeerAuth = "mtls"
+		deps.ServiceAuth = "mtls"
 		enrollClock := shared.Clock(nil)
 		if withEnrollClock {
 			enrollClock = clock
@@ -221,14 +221,14 @@ func TestEnrollLogsServiceLabel(t *testing.T) {
 		t.Fatalf("enroll status: got %d body=%v", status, body)
 	}
 
-	gotLabel, ok := h.logger.fieldFor("service enrolled", "label")
+	gotLabel, ok := h.logger.fieldFor("SERVICEAUTH.SERVICE.ENROLLED", "label")
 	if !ok {
 		t.Fatalf("enrollment did not emit a 'service enrolled' log line carrying the client label — the wire label is dead again")
 	}
 	if gotLabel != "sensor-webhook" {
 		t.Fatalf("enrollment logged label = %v, want %q", gotLabel, "sensor-webhook")
 	}
-	gotPrincipal, ok := h.logger.fieldFor("service enrolled", "principal")
+	gotPrincipal, ok := h.logger.fieldFor("SERVICEAUTH.SERVICE.ENROLLED", "principal")
 	if !ok || gotPrincipal != id.String() {
 		t.Fatalf("enrollment logged principal = %v (present=%v), want authenticated key id %q", gotPrincipal, ok, id.String())
 	}
@@ -243,7 +243,7 @@ func TestEnrollForbiddenWithoutPermission(t *testing.T) {
 	}
 }
 
-func TestEnrollRouteAbsentWhenPeerAuthNone(t *testing.T) {
+func TestEnrollRouteAbsentWhenServiceAuthNone(t *testing.T) {
 	h := newEnrollHarness(t, false, false)
 	_, plaintext := h.seedKey(t, "enroller", "service:enroll")
 	status, _ := h.post(t, "/v1/enroll", plaintext)
@@ -285,7 +285,7 @@ func TestEnrollWithNilClockDefaultsToSystemClock(t *testing.T) {
 	}
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 func TestCARootServedUnauthenticated(t *testing.T) {
 	h := newEnrollHarness(t, true, false)
 
@@ -310,8 +310,8 @@ func TestCARootServedUnauthenticated(t *testing.T) {
 	}
 }
 
-// @concept: peer-auth
-func TestCARootAbsentWhenPeerAuthNotConfigured(t *testing.T) {
+// @concept: service-auth
+func TestCARootAbsentWhenServiceAuthNotConfigured(t *testing.T) {
 	h := newEnrollHarness(t, false, false)
 
 	resp, err := http.Get(h.srv.URL + "/v1/ca-root")

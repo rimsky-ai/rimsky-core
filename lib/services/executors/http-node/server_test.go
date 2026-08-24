@@ -147,7 +147,9 @@ func TestExecute_NetworkError_ReturnsTransportErr(t *testing.T) {
 }
 
 func TestExecute_Timeout_ReturnsTimeout(t *testing.T) {
+	entered := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(entered)
 		<-r.Context().Done()
 	}))
 	defer ts.Close()
@@ -157,8 +159,11 @@ func TestExecute_Timeout_ReturnsTimeout(t *testing.T) {
 		Egress: loopbackGuard(t),
 	})
 	req := newRequest(t, map[string]any{"url": ts.URL})
-	deadlineCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	deadlineCtx, expireDeadline := newFiredDeadlineContext(context.Background())
+	go func() {
+		<-entered
+		expireDeadline()
+	}()
 	outcome, _ := s.Execute(deadlineCtx, req)
 	errd := outcome.GetError()
 	if errd == nil {
@@ -538,15 +543,19 @@ func TestHttpNode_429ParksWithResumeAtAndAutoWakes(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s := testServer(t, false)
+	dispatchedAt := time.Date(2026, 3, 4, 9, 0, 0, 0, time.UTC)
+	s := NewServer(Opts{
+		Host:         "127.0.0.1",
+		MaxBodyBytes: 1 << 20,
+		Egress:       loopbackGuard(t),
+		Now:          func() time.Time { return dispatchedAt },
+	})
 
 	req1 := newRequest(t, map[string]any{"url": ts.URL, "method": "GET"})
-	before := time.Now()
 	outcome1, err := s.Execute(context.Background(), req1)
 	if err != nil {
 		t.Fatalf("Execute (first dispatch): %v", err)
 	}
-	after := time.Now()
 
 	if errd := outcome1.GetError(); errd != nil {
 		t.Fatalf("429 must Park, not Error; got error_class=%q", errd.GetErrorClass())
@@ -562,10 +571,9 @@ func TestHttpNode_429ParksWithResumeAtAndAutoWakes(t *testing.T) {
 		t.Errorf("park tags=%v, want [%s]", tags, TagRateLimited)
 	}
 	resumeAt := park.GetResumeAt().AsTime()
-	lo := before.Add(retryAfterSeconds*time.Second - 2*time.Second)
-	hi := after.Add(retryAfterSeconds*time.Second + 2*time.Second)
-	if resumeAt.Before(lo) || resumeAt.After(hi) {
-		t.Errorf("resume_at=%v out of expected window [%v, %v]", resumeAt, lo, hi)
+	want := dispatchedAt.Add(retryAfterSeconds * time.Second)
+	if !resumeAt.Equal(want) {
+		t.Errorf("resume_at=%v, want %v (Retry-After: %ds from the dispatch clock)", resumeAt, want, retryAfterSeconds)
 	}
 
 	req2 := newRequest(t, map[string]any{"url": ts.URL, "method": "GET"})

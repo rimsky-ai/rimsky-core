@@ -41,7 +41,7 @@ The generated protobuf and gRPC bindings live at:
 import genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 ```
 
-The module carries the ten `.proto` files, the Go bindings generated from them, protocol server kits, peer-authentication enrollment, and the per-protocol conformance libraries the `rimsky conformance` runners drive.
+The module carries the ten `.proto` files, the Go bindings generated from them, protocol server kits, service-authentication enrollment, and the per-protocol conformance libraries the `rimsky conformance` runners drive.
 
 In git, this module's releases are tagged `lib/protocols/vX.Y.Z`. Go maps the subdirectory prefix itself, so you still write `@vX.Y.Z` in the `go get` argument.
 
@@ -104,7 +104,7 @@ Each archive holds the `rimsky` binary and five license files: `LICENSE.agpl`, `
 
 Beside the archives the release attaches `checksums.txt`, covering every archive, and one SBOM per archive named `<archive>.sbom.json`.
 
-There is no Windows archive. The CLI transitively embeds Unix-only process control — process-group creation for spawned agent processes, and `stat` inode comparison in the filesystem claim producer — so the build matrix is Unix-only by construction.
+There is no Windows archive. The CLI transitively embeds Unix-only process control — process-group creation for spawned daemon processes, and `stat` inode comparison in the filesystem claim producer — so the build matrix is Unix-only by construction.
 
 To install:
 
@@ -119,22 +119,22 @@ Rimsky builds eight binaries.
 
 | Binary | What it does | Where it ships |
 | --- | --- | --- |
-| `rimsky` | The CLI, and more: it also carries the protocol conformance runners, the host-agent daemon, and an in-process rimsky stack that `rimsky run` and `rimsky compose run` self-host when no endpoint resolves | Release archives, and the `rimsky`, `rimsky-all-in-one`, and `rimsky-conformance` images |
+| `rimsky` | The CLI, and more: it also carries the protocol conformance runners, the host daemon, and an in-process rimsky stack that `rimsky run` and `rimsky compose run` self-host when no endpoint resolves | Release archives, and the `rimsky`, `rimsky-all-in-one`, and `rimsky-conformance` images |
 | `rimsky-scheduler` | Runs the scheduler role | `rimsky` and `rimsky-all-in-one` images |
 | `rimsky-supervisor` | Runs the supervisor role | `rimsky` and `rimsky-all-in-one` images |
 | `rimsky-control-api` | Runs the control-API role | `rimsky` and `rimsky-all-in-one` images |
 | `rimsky-migrate` | Applies the persistence migrations and exits | `rimsky` and `rimsky-all-in-one` images |
 | `rimsky-entrypoint` | PID 1 of the `rimsky` and `rimsky-all-in-one` images; reads the container command and starts the roles | `rimsky` and `rimsky-all-in-one` images |
-| `rimsky-host-agent` | The host-agent daemon as a standalone binary, configured entirely from the environment | No image and no archive — build it from the repository |
-| `rimsky-host-agent-proxy` | The in-stack proxy that host agents register with and dial through | `rimsky-host-agent-proxy` image |
+| `rimsky-host-daemon` | The host daemon as a standalone binary, configured entirely from the environment | No image and no archive — build it from the repository |
+| `rimsky-host-daemon-proxy` | The in-stack proxy that host daemons register with and dial through | `rimsky-host-daemon-proxy` image |
 
 Three of these carry a wrinkle worth knowing before you plan a deployment.
 
-**`rimsky-host-agent` reaches you only as source.** No published image and no release archive contains it. The ordinary route to the host agent is the CLI: `rimsky agent start` runs the same daemon out of the `rimsky` binary, re-executing itself in the background and writing its state under the agent state directory. Build the standalone binary only when you want a daemon supervised by something other than the CLI.
+**`rimsky-host-daemon` reaches you only as source.** No published image and no release archive contains it. The ordinary route to the host daemon is the CLI: `rimsky daemon start` runs the same daemon out of the `rimsky` binary, re-executing itself in the background and writing its state under the daemon state directory. Build the standalone binary only when you want a daemon supervised by something other than the CLI.
 
 **`rimsky-migrate` is not a role name.** The binary ships inside the `rimsky` image, but the image's entrypoint reads its argument as a role, and `rimsky-migrate` is not one — `docker run … rimsky-migrate` exits 2 with `unknown role "rimsky-migrate"; valid roles: rimsky-scheduler, rimsky-supervisor, rimsky-control-api`. Reach the binary the way a container platform normally names a different command: override the image's entrypoint. Migrations are forward-only; no binary, subcommand, or environment setting runs them down.
 
-**The `rimsky` binary is the whole platform in one file.** Beyond the control-API verbs, it self-hosts a full rimsky stack in-process for one-shot runs, serves the host-agent daemon, and runs the conformance probes. A dev-machine consumer who installs one archive has everything needed to register a template and drive it to terminal without a container.
+**The `rimsky` binary is the whole platform in one file.** Beyond the control-API verbs, it self-hosts a full rimsky stack in-process for one-shot runs, serves the host daemon, and runs the conformance probes. A dev-machine consumer who installs one archive has everything needed to register a template and drive it to terminal without a container.
 
 ## Licensing
 

@@ -131,7 +131,7 @@ The path is `/v1/health`, not `/health`. A probe written against `/health` gets 
 
 Unauthenticated. Returns the deployment CA root certificate as `application/x-pem-file` with `Cache-Control: no-store`. A service needs this root to verify the control API's certificate before it can present a token to enroll, so requiring a token would be circular. The certificate is public; nothing secret is disclosed.
 
-**This route exists only when the deployment configures peer authentication with a CA.** On the zero-config default, and on an explicit `peer_auth: none`, `GET /v1/ca-root` answers chi's `404 page not found` — unauthenticated, with an admin key, and with any key. The router has no such path; no handler is refusing the caller. Under `peer_auth: mtls` the route appears and the control API itself serves HTTPS.
+**This route exists only when the deployment configures service authentication with a CA.** On the zero-config default, and on an explicit `service_auth: none`, `GET /v1/ca-root` answers chi's `404 page not found` — unauthenticated, with an admin key, and with any key. The router has no such path; no handler is refusing the caller. Under `service_auth: mtls` the route appears and the control API itself serves HTTPS.
 
 ## Authentication and enrollment
 
@@ -298,10 +298,10 @@ Request:
  "paused": false,
  "service_bindings": {...},
  "message_queue_mode": "backlog",
- "target_agent": "brave-otter"}
+ "target_daemon": "brave-otter"}
 ```
 
-`template` is required and names a tag or a content hash. `message_queue_mode` is `backlog` or `coalesce`. `target_agent` is required only in anonymous mode, where no key id exists to route host-agent work by.
+`template` is required and names a tag or a content hash. `message_queue_mode` is `backlog` or `coalesce`. `target_daemon` is required only in anonymous mode, where no key id exists to route host-daemon work by.
 
 Response `201`:
 
@@ -327,7 +327,7 @@ Params named in the template's `params_redact` list come back as `"[REDACTED]"` 
 
 Action `instance:terminate`. **This deletes an already-terminal instance and its rows. It does not terminate a running one** — a running instance answers `409 instance is not in terminal state; wait for terminated_at to be set`. To force a running instance terminal, call `POST /v1/instances/{idOrKey}/terminate`, which is gated by `instance:kill`. The two verbs read the inverse of their names.
 
-Answers `{"deleted": true}`. Deleting also releases committed durable claims, stops publisher subscriptions, and fans an `instance_terminated` lifecycle event out to subscribers.
+Answers `{"deleted": true}`. Deleting also releases committed durable claims, stops publisher subscriptions, and closes any run scope the instance still holds open, delivering a run-scope terminal for each. It discards nothing a subscriber has not taken: lifecycle deliveries already staged for the instance stay owed and drain after the row is gone.
 
 The `terminated_at` field this route's own 409 tells you to wait for is not returned by `GET /v1/instances/{id}`. It appears on `GET /v1/observability/instances/{id}`, so the route that names the field and the route you would poll are on opposite sides of the permission line.
 
@@ -552,6 +552,8 @@ Every gated request appends an `auth.access_attempted` row carrying the caller, 
 
 **Parking:** `parked_resume_started`.
 
+**Service delivery:** `service_delivery.stalled`, `service_delivery.recovered` — one entry when a service's oldest pending outbox row first passes `service_delivery.stall_after`, one when that service next delivers. Both name the service and the outbox (`lifecycle` or `producer_verb`).
+
 **Signal kinds** are any value containing `/`: `terminal/*`, `transient/*`, and `attribute/*/changed`.
 
 Three properties of this vocabulary will surprise a client that assumes a regular scheme.
@@ -643,6 +645,17 @@ Action `diagnostics:read`. Undelivered producer-verb outbox entries.
               "last_error": "...", "enqueued_at": "..."}]}
 ```
 
+### `GET /v1/admin/diagnostics/lifecycle-outbox`
+
+Action `diagnostics:read`. What each lifecycle subscriber is still owed, one object per service with a pending row. `depth` counts every pending row for that service; `entries` carries the oldest 100. The staged payload is the subscriber's business and never appears here.
+
+```json
+{"services": [{"service": "...", "depth": 2, "oldest_staged_at": "...", "oldest_age_seconds": 540.0,
+               "entries": [{"seq": 7, "scope_kind": "template", "scope_id": "...",
+                            "event": "EventTemplateDeployed", "staged_at": "...", "age_seconds": 540.0,
+                            "attempt_count": 3, "next_attempt_at": "...", "last_error": "..."}]}]}
+```
+
 ## MCP
 
 The three `/v1/mcp` routes carry an MCP JSON-RPC 2.0 skin over the same action set as the REST routes. All three take the action `mcp:read`; a `tools/call` is additionally gated by the per-tool action.
@@ -695,10 +708,10 @@ Treat these as a second, differently shaped read surface, not a low-privilege co
 
 | Route | Query parameters | Response |
 | --- | --- | --- |
-| `GET /v1/observability/claim-producers` | — | `{"claim_producers": [peer]}`, no cursor, ignores `limit` |
-| `GET /v1/observability/claim-producers/{name}` | — | `{"peer": ..., "lifecycle": [...]}`; unknown name `404` |
-| `GET /v1/observability/executors` | — | `{"executors": [peer]}`, no cursor, ignores `limit` |
-| `GET /v1/observability/executors/{name}` | — | `{"peer": ...}`; unknown name `404` |
+| `GET /v1/observability/claim-producers` | — | `{"claim_producers": [service]}`, no cursor, ignores `limit` |
+| `GET /v1/observability/claim-producers/{name}` | — | `{"service": ..., "pending_lifecycle_deliveries": [...]}`; unknown name `404` |
+| `GET /v1/observability/executors` | — | `{"executors": [service]}`, no cursor, ignores `limit` |
+| `GET /v1/observability/executors/{name}` | — | `{"service": ...}`; unknown name `404` |
 | `GET /v1/observability/templates` | `state`, `tag`, `limit`, `cursor` | `{"templates": [...], "next_cursor": "..."}` |
 | `GET /v1/observability/templates/{hash}` | — | `{"template": ..., "tags": [...]}` |
 | `GET /v1/observability/instances` | `template_hash`, `active`, `limit`, `cursor` | `{"instances": [...], "next_cursor": "..."}` |
@@ -730,9 +743,9 @@ So the audit trail is what defeats the flag: recording the request that carried 
 
 ## Supervisor callback routes
 
-The supervisor binds a separate HTTP listener for executor callbacks — port 9100 in the `rimsky-all-in-one` image. The base URL an executor should call arrives in its dispatch as `callback_url`; the supervisor stamps it from `callback.advertise_host` or a non-wildcard `callback.host`, and refuses to start with a wildcard bind and no advertise host.
+The supervisor binds a separate HTTP listener for executor callbacks — port 8081 in the `rimsky-all-in-one` image. The base URL an executor should call arrives in its dispatch as `callback_url`; the supervisor stamps it from `callback.advertise_host` or a non-wildcard `callback.host`, and refuses to start with a wildcard bind and no advertise host.
 
-Under `peer_auth: mtls` this listener requires a client certificate from the deployment CA, and the callback route additionally requires that the presenting principal match the principal the dispatch was sent to.
+Under `service_auth: mtls` this listener requires a client certificate from the deployment CA, and the callback route additionally requires that the presenting principal match the principal the dispatch was sent to.
 
 ### `POST ${callback_url}/v1/callback/{async_ack_id}`
 

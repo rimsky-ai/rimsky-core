@@ -10,9 +10,7 @@ A persistence-layer function carrying the `...InTx` suffix requires an
 already-open transaction passed in by its caller — that is the
 suffix's whole meaning. Paired variants (a public `X` that opens its
 own transaction backed by a private `XInTx`) are forbidden: one method
-taking an optional transaction parameter is the house shape. The blob
-backend's transactional interface carries `...InTx` method names — a
-capability split across two interfaces, not a duplicated pair.
+taking an optional transaction parameter is the house shape.
 
 ## Rationale
 

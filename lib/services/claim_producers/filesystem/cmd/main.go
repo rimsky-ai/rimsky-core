@@ -33,7 +33,8 @@ func main() {
 	if adminLis != nil {
 		adminAddr = adminLis.Addr().String()
 	}
-	slog.Info(serviceName+" started",
+	slog.Info("FILESYSTEMSTORE.PROCESS.STARTED",
+		"service", serviceName,
 		"root", opts.Root,
 		"grpc_addr", grpcLis.Addr().String(),
 		"http_addr", httpLis.Addr().String(),

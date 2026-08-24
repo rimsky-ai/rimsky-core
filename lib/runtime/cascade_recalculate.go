@@ -66,7 +66,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			}),
 		}, tx)
 	}); err != nil {
-		log.Warn("RecalculateNode: message_received audit event append failed",
+		log.Warn("CASCADE.MESSAGERECEIVEDEVENT.APPENDFAILED", "site", "RecalculateNode",
 			"node_id", args.TargetNodeID.String(),
 			"source_node_id", sourceStr,
 			"error", err.Error())
@@ -158,32 +158,29 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			}
 		}
 		// @decision: scratch-recovery
-		var scratchInline []byte
-		var scratchHandle, scratchBackend string
+		var scratch []byte
 		if !inFlightTarget && priorNodeRunID != nil && *priorNodeRunID != (shared.UUID{}) {
 			var lerr error
-			scratchInline, scratchHandle, scratchBackend, lerr = args.Queue.LoadScratch(ctx, *priorNodeRunID, tx)
+			scratch, lerr = args.Queue.LoadScratch(ctx, *priorNodeRunID, tx)
 			if lerr != nil {
 				return fmt.Errorf("load prior scratch: %w", lerr)
 			}
 		}
 		return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-			NodeID:                      target.ID,
-			ExecutorName:                target.Executor,
-			RequiredClaimProducers:      requiredClaimProducers,
-			EnqueuedAt:                  args.Clock.Now(),
-			FrameID:                     *runningFrID,
-			RunScopeID:                  runScopeID,
-			PriorNodeRunID:              priorNodeRunID,
-			PriorDispatchDisposition:    "recalculate",
-			InitialScratchInline:        scratchInline,
-			InitialScratchHandle:        scratchHandle,
-			InitialScratchHandleBackend: scratchBackend,
-			CreationReason:              cascade.CreationReasonRecalculate,
+			NodeID:                   target.ID,
+			ExecutorName:             target.Executor,
+			RequiredClaimProducers:   requiredClaimProducers,
+			EnqueuedAt:               args.Clock.Now(),
+			FrameID:                  *runningFrID,
+			RunScopeID:               runScopeID,
+			PriorNodeRunID:           priorNodeRunID,
+			PriorDispatchDisposition: "recalculate",
+			InitialScratch:           scratch,
+			CreationReason:           cascade.CreationReasonRecalculate,
 		}, tx)
 	}); err != nil {
 		if errors.Is(err, persistence.ErrRunScopeClosed) {
-			log.Debug("RecalculateNode: skip enqueue: run scope closed",
+			log.Debug("CASCADE.ENQUEUE.SKIPPED", "site", "RecalculateNode", "detail", "the run scope is closed",
 				"node_id", target.ID.String(),
 				"run_scope_id", runScopeID.String())
 			return nil

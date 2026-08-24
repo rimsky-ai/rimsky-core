@@ -44,6 +44,7 @@ func StartPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alia
 		t.Fatalf("harness: start claim-producer postgres: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)
@@ -97,6 +98,7 @@ func StartPostgresClaimProducer(ctx context.Context, t testing.TB, networkName, 
 		t.Fatalf("harness: start claim-producer-postgres: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)

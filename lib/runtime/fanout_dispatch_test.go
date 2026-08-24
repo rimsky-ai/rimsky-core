@@ -16,6 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 type fakeScopeOnlyTables struct {
@@ -124,15 +125,17 @@ func TestFanOutParallelismSemaphore_BoundsConcurrency(t *testing.T) {
 	if sem.InFlight() != 2 {
 		t.Errorf("in-flight: %d (want 2)", sem.InFlight())
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	err := sem.Acquire(ctx)
-	if err == nil {
-		t.Errorf("expected context-deadline error from 3rd acquire on cap=2 semaphore")
+	third := make(chan error, 1)
+	go func() { third <- sem.Acquire(context.Background()) }()
+	awaited.Until(t, "the third acquire to park on a full cap=2 semaphore", func() bool {
+		return sem.Waiting() == 1
+	})
+	if sem.InFlight() != 2 {
+		t.Errorf("in-flight while a third acquire is parked: %d (want 2)", sem.InFlight())
 	}
 	sem.Release()
-	if err := sem.Acquire(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := <-third; err != nil {
+		t.Fatalf("the parked acquire must take the released slot: %v", err)
 	}
 	if sem.InFlight() != 2 {
 		t.Errorf("in-flight after release+acquire: %d (want 2)", sem.InFlight())

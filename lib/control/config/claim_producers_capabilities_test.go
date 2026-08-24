@@ -13,7 +13,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type syncOnlyCapabilitiesProducer struct {
@@ -49,7 +49,7 @@ func TestDialRemoteClaimProducers_OperatorDeclaredSupersetOfProducerAdvertised_F
 	cfg := RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
 		"items-store": {
 			Endpoint: endpoint,
-			TLS:      peer.TLSModeOff,
+			TLS:      service.TLSModeOff,
 			Capabilities: claimproducer.Capabilities{
 				WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsStagedAsync},
 			},
@@ -77,7 +77,7 @@ func TestDialRemoteClaimProducers_OperatorDeclaredSubsetOfProducerAdvertised_Suc
 	cfg := RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
 		"items-store": {
 			Endpoint: endpoint,
-			TLS:      peer.TLSModeOff,
+			TLS:      service.TLSModeOff,
 			Capabilities: claimproducer.Capabilities{
 				WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 			},

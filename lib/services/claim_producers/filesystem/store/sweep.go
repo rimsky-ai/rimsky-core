@@ -39,7 +39,7 @@ func (s *Store) sweepOnce() {
 		avail := filepath.Join(state, "available")
 		entries, err := os.ReadDir(inProg)
 		if err != nil {
-			slog.Warn("filesystem store: sweep readdir", "selector", selector, "error", err.Error())
+			slog.Warn("FILESYSTEMSTORE.SWEEPREADDIR.FAILED", "selector", selector, "error", err.Error())
 			continue
 		}
 		cutoff := time.Now().Add(-pp.VisibilityTimeout).UnixNano()
@@ -56,7 +56,7 @@ func (s *Store) sweepOnce() {
 			folderAbs := filepath.Join(s.root, pp.Root, folder)
 			if _, statErr := os.Stat(folderAbs); statErr != nil {
 				if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
-					slog.Warn("filesystem store: sweep unlink orphan sentinel", "selector", selector, "folder", folder, "error", err.Error())
+					slog.Warn("FILESYSTEMSTORE.SWEEPORPHANSENTINEL.UNLINKFAILED", "selector", selector, "folder", folder, "error", err.Error())
 					continue
 				}
 				fsyncDir(inProg)
@@ -65,7 +65,7 @@ func (s *Store) sweepOnce() {
 			dst := filepath.Join(avail, folder)
 			if err := os.Rename(src, dst); err != nil {
 				if !errors.Is(err, fs.ErrNotExist) {
-					slog.Warn("filesystem store: sweep reclaim", "selector", selector, "folder", folder, "error", err.Error())
+					slog.Warn("FILESYSTEMSTORE.SWEEPRECLAIM.FAILED", "selector", selector, "folder", folder, "error", err.Error())
 				}
 				continue
 			}

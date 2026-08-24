@@ -72,7 +72,7 @@ func TestGateSubstitutionFailureWritesNoLineageRecord(t *testing.T) {
 			return err
 		}
 		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			TargetRoutingIdentity: "test-agent",
+			TargetRoutingIdentity: "test-daemon",
 			ID:                    instID, TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
 		}, tx); err != nil {
 			return err

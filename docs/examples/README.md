@@ -52,18 +52,18 @@ Graph shape, substitution, subscriptions, claims, and everything an author write
 
 ## The CLI
 
-What `rimsky` does from a terminal: credentials, the catalogue, instances, the host agent, and the local dev loop.
+What `rimsky` does from a terminal: credentials, the catalogue, instances, the host daemon, and the local dev loop.
 
-- [anonymous-agents-isolated](./anonymous-agents-isolated.md) — Two developers share one anonymous deployment without colliding
+- [anonymous-daemons-isolated](./anonymous-daemons-isolated.md) — Two developers share one anonymous deployment without colliding
 - [api-key-management](./api-key-management.md) — Administering the api-key lifecycle
 - [asset-management](./asset-management.md) — Governing the data assets an instance produced
 - [claim-producer-conformance](./claim-producer-conformance.md) — Proving a claim producer before you ship it
 - [clean-lint](./clean-lint.md) — Linting the whole tree under full enforcement
 - [client-context](./client-context.md) — Registering deployments and switching between them
-- [host-agent-anonymous-mode](./host-agent-anonymous-mode.md) — The late-bind dev loop with no credential minted
-- [host-agent-control-plane](./host-agent-control-plane.md) — Driving the host agent from the rimsky CLI
-- [host-agent-per-binding-overrides](./host-agent-per-binding-overrides.md) — Per-binding environment, arguments, directory and timeout
-- [host-agent-per-run-scope-isolation](./host-agent-per-run-scope-isolation.md) — One child process per run-scope, reaped when the scope closes
+- [host-daemon-anonymous-mode](./host-daemon-anonymous-mode.md) — The late-bind dev loop with no credential minted
+- [host-daemon-control-plane](./host-daemon-control-plane.md) — Driving the host daemon from the rimsky CLI
+- [host-daemon-per-binding-overrides](./host-daemon-per-binding-overrides.md) — Per-binding environment, arguments, directory and timeout
+- [host-daemon-per-run-scope-isolation](./host-daemon-per-run-scope-isolation.md) — One child process per run-scope, reaped when the scope closes
 - [instance-create-is-idle](./instance-create-is-idle.md) — Creating an instance runs nothing
 - [instance-lifecycle](./instance-lifecycle.md) — An instance from create to deleted
 - [lineage-admin](./lineage-admin.md) — Pruning lineage records by a cutoff
@@ -130,9 +130,9 @@ Executors, claim producers, publishers, sensors, subscribers, and how a deployme
 - [lifecycle-subscriber-author](./lifecycle-subscriber-author.md) — Being told when templates, instances and run-scopes change state
 - [named-lock-metric](./named-lock-metric.md) — Graphing named-lock and producer-claim acquisitions off one metric
 - [opaque-executor-scratch](./opaque-executor-scratch.md) — Carrying private bytes between dispatches of one node-run
-- [peer-auth-mtls-mutual](./peer-auth-mtls-mutual.md) — One configuration change authenticates the internal plane
-- [peer-tls-enforced](./peer-tls-enforced.md) — Requiring transport security on a peer entry
-- [permissive-peer-build](./permissive-peer-build.md) — Building a peer with only the permissive protocols module
+- [service-auth-mtls-mutual](./service-auth-mtls-mutual.md) — One configuration change authenticates the internal plane
+- [service-tls-enforced](./service-tls-enforced.md) — Requiring transport security on a service entry
+- [permissive-service-build](./permissive-service-build.md) — Building a service with only the permissive protocols module
 - [producer-class-routing](./producer-class-routing.md) — Routing on the error class a producer itself declares
 - [producer-error-passthrough](./producer-error-passthrough.md) — Reading a failing producer's own class and message
 - [publisher-protocol](./publisher-protocol.md) — A third-party publisher feeding messages into a workflow
@@ -145,7 +145,7 @@ Executors, claim producers, publishers, sensors, subscribers, and how a deployme
 - [single-process-all-in-one](./single-process-all-in-one.md) — One process carrying all three roles
 - [subscriber-lineage-receiver](./subscriber-lineage-receiver.md) — Sending run lineage to an OpenLineage receiver
 - [validation-author](./validation-author.md) — A service's own validator consulted at template registration
-- [validation-mixin-uniform](./validation-mixin-uniform.md) — The validation mix-in works the same for every peer role
+- [validation-mixin-uniform](./validation-mixin-uniform.md) — The validation mix-in works the same for every service role
 - [verifier-http](./verifier-http.md) — Wiring an external check service into the graph
 - [verifier-severity-partition](./verifier-severity-partition.md) — Warning-severity and error-severity checks
 - [verifier-shape-checks](./verifier-shape-checks.md) — Declaring shape checks over tabular data

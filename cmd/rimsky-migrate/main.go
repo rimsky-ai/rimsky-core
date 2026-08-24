@@ -44,6 +44,6 @@ func run(ctx context.Context, slogLogger *slog.Logger) error {
 	if err := driver.Migrate(ctx, logger); err != nil {
 		return fmt.Errorf("driver.Migrate: %w", err)
 	}
-	logger.Info("migrations complete")
+	logger.Info("MIGRATE.COMMAND.COMPLETED")
 	return nil
 }

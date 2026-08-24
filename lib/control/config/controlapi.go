@@ -29,7 +29,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type ControlAPIConfig struct {
@@ -47,14 +47,23 @@ type ControlAPIConfig struct {
 	DataProcessors         RemoteDataProcessorsConfig
 	Metrics                runtime.MetricsHook
 	LateBindServiceProxies map[string]string
-	PeerAuth               string
+	ServiceAuth            string
 
 	// @concept: validation
 	UnreachableValidatorPolicy string
 
 	ObservabilityRefreshInterval time.Duration
 
+	// @decision: lifecycle-subscriber-at-least-once-delivery
+	ServiceDeliveryStallAfter time.Duration
+
+	// @decision: lifecycle-drain-per-role
+	SharedLifecycleDrain *runtime.LifecycleReconciler
+
 	Bundled *BundledRegistrations
+
+	ResyncPublishers                func(context.Context, runtime.PublisherLifecycleDeps) error
+	ReconcilePublisherSubscriptions func(context.Context, runtime.PublisherLifecycleDeps, time.Duration)
 }
 
 type ControlAPIHandle interface {
@@ -64,16 +73,16 @@ type ControlAPIHandle interface {
 }
 
 type controlAPIHandle struct {
-	srv                 *http.Server
-	addr                string
-	serveErr            chan error
-	registry            *locks.Registry
-	lifecycleReg        *lifecycle.Registry
-	lifecycleReconciler *controlapi.LifecycleReconciler
-	cancelLoops         context.CancelFunc
-	cancelDiscovery     context.CancelFunc
-	peerClosers         []func()
-	wg                  sync.WaitGroup
+	srv             *http.Server
+	addr            string
+	serveErr        chan error
+	registry        *locks.Registry
+	lifecycleReg    *lifecycle.Registry
+	lifecycleDrain  *runtime.LifecycleReconciler
+	cancelLoops     context.CancelFunc
+	cancelDiscovery context.CancelFunc
+	serviceClosers  []func()
+	wg              sync.WaitGroup
 }
 
 func (h *controlAPIHandle) goWG(f func()) {
@@ -95,8 +104,8 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	if h.cancelDiscovery != nil {
 		h.cancelDiscovery()
 	}
-	if h.lifecycleReconciler != nil {
-		h.lifecycleReconciler.Stop()
+	if h.lifecycleDrain != nil {
+		h.lifecycleDrain.Stop()
 	}
 	h.wg.Wait()
 	if h.registry != nil {
@@ -105,7 +114,7 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	if h.lifecycleReg != nil {
 		h.lifecycleReg.Close()
 	}
-	for _, c := range h.peerClosers {
+	for _, c := range h.serviceClosers {
 		c()
 	}
 	return err
@@ -113,10 +122,6 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 func (h *controlAPIHandle) Addr() string { return h.addr }
 
 func (h *controlAPIHandle) ServeErr() <-chan error { return h.serveErr }
-
-var resyncPublishersAtStartup = runtime.ResyncPublisherSubscriptions
-
-var runPublisherSubscriptionReconciler = runtime.RunPublisherSubscriptionReconciler
 
 func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if cfg.Driver == nil {
@@ -135,15 +140,15 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	var (
 		mtlsCA       *pki.CA
-		mtlsIdentity *peer.IdentityHolder
+		mtlsIdentity *service.IdentityHolder
 		stopIdentity = func() {}
 	)
-	if cfg.PeerAuth == peer.PeerAuthMTLS {
+	if cfg.ServiceAuth == service.ServiceAuthMTLS {
 		principal := cfg.ControlAPIID
 		if principal == "" {
 			principal = defaultControlAPIPrincipal()
 		}
-		holder, ca, cancel, err := installPeerIdentity(context.Background(), persistStore, principal, cfg.Clock, cfg.Logger)
+		holder, ca, cancel, err := installServiceIdentity(context.Background(), persistStore, principal, cfg.Clock, cfg.Logger)
 		if err != nil {
 			return nil, fmt.Errorf("StartControlAPI: %w", err)
 		}
@@ -159,7 +164,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if cfg.Bundled != nil {
 		obsLog := slogLoggerFor(cfg.Logger)
 		mergeBundledClaimProducers(registry, cfg.Bundled.ClaimProducerClients(), func(name string) {
-			obsLog.Info("bundled claim producer overridden by configured endpoint", "producer", name)
+			obsLog.Info("BUNDLED.CLAIMPRODUCER.OVERRIDDEN", "producer", name)
 		})
 	}
 	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
@@ -202,18 +207,18 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		lifecycleReg.Close()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
-	execPeers := make([]observability.PeerSpec, 0, len(cfg.Executors.Executors))
+	execServices := make([]observability.ServiceSpec, 0, len(cfg.Executors.Executors))
 	for name, e := range cfg.Executors.Executors {
-		execPeers = append(execPeers, observability.PeerSpec{
+		execServices = append(execServices, observability.ServiceSpec{
 			Name:                  name,
 			Endpoint:              e.Endpoint,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
 			TLS:                   e.TLS,
 		})
 	}
-	storePeers := make([]observability.PeerSpec, 0, len(cfg.ClaimProducers.ClaimProducers))
+	storeServices := make([]observability.ServiceSpec, 0, len(cfg.ClaimProducers.ClaimProducers))
 	for name, e := range cfg.ClaimProducers.ClaimProducers {
-		storePeers = append(storePeers, observability.PeerSpec{
+		storeServices = append(storeServices, observability.ServiceSpec{
 			Name:                  name,
 			Endpoint:              e.Endpoint,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
@@ -222,12 +227,12 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}
 	obsLogger := slogLoggerFor(cfg.Logger)
 	// @concept: observability
-	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execPeers, storePeers, obsLogger)
+	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execServices, storeServices, obsLogger)
 	if cfg.Bundled != nil {
 		cfg.Bundled.AdvertiseInto(disc, cfg.Executors.Executors, cfg.ClaimProducers.ClaimProducers)
 	}
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
-	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers, cfg.Validators, cfg.DataProcessors)
+	publisherReg, validationReg, dataProcessorReg, serviceClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers, cfg.Validators, cfg.DataProcessors)
 	if err != nil {
 		stopIdentity()
 		cancelDiscovery()
@@ -246,6 +251,18 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if mtlsCA != nil {
 		enrollDeps = &controlapi.EnrollDeps{CA: mtlsCA, LeafTTL: pki.LeafTTL, Clock: cfg.Clock}
 	}
+	// @decision: lifecycle-drain-per-role
+	lifecycleDrain := cfg.SharedLifecycleDrain
+	if lifecycleDrain == nil {
+		lifecycleDrain = runtime.NewLifecycleReconciler(runtime.LifecycleReconcilerConfig{
+			Persist:        persistStore,
+			AdvisoryLocker: cfg.Driver.AdvisoryLocker(),
+			Subscribers:    lifecycleReg,
+			Clock:          cfg.Clock,
+			Logger:         cfg.Logger,
+			StallAfter:     cfg.ServiceDeliveryStallAfter,
+		})
+	}
 	deps := controlapi.AppDeps{
 		Persist:        persistStore,
 		Queue:          persistQueue,
@@ -255,32 +272,33 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		AuthState:      authState,
 		ClaimProducers: registry,
 		LifecycleSubs:  lifecycleReg,
+		LifecycleKick:  lifecycleDrain.Kick,
 		NamedLocks:     cfg.NamedLocks,
 		Executors:      executorsByName,
 		ExecutorCapabilities: func(executorName string) ([]string, []string, []byte, bool) {
-			peer, ok := disc.GetExecutor(executorName)
-			if !ok || peer.Capabilities == nil {
+			service, ok := disc.GetExecutor(executorName)
+			if !ok || service.Capabilities == nil {
 				return nil, nil, nil, false
 			}
-			return peer.Capabilities.DeclaredTags,
-				peer.Capabilities.DeclaredErrorClasses,
-				peer.Capabilities.ExpectedAttributesSchema,
+			return service.Capabilities.DeclaredTags,
+				service.Capabilities.DeclaredErrorClasses,
+				service.Capabilities.ExpectedAttributesSchema,
 				true
 		},
 		ClaimProducerDeclaredErrorClasses: func(producerName string) ([]string, bool) {
-			peer, ok := disc.GetClaimProducer(producerName)
-			if !ok || peer.Capabilities == nil {
+			service, ok := disc.GetClaimProducer(producerName)
+			if !ok || service.Capabilities == nil {
 				return nil, false
 			}
-			return peer.Capabilities.DeclaredErrorClasses, true
+			return service.Capabilities.DeclaredErrorClasses, true
 		},
 		Observability: func(r chi.Router) {
 			observability.Routes(r, observability.Deps{
 				Tables:         persistStore,
 				Queue:          persistQueue,
 				Driver:         cfg.Driver,
-				Executors:      execPeers,
-				ClaimProducers: storePeers,
+				Executors:      execServices,
+				ClaimProducers: storeServices,
 				Discovery:      disc,
 			})
 		},
@@ -291,7 +309,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		DataProcessors:             dataProcessorReg,
 		LateBindServiceProxies:     cfg.LateBindServiceProxies,
 		KindAliases:                buildKindAliases(),
-		PeerAuth:                   cfg.PeerAuth,
+		ServiceAuth:                cfg.ServiceAuth,
 		Enroll:                     enrollDeps,
 	}
 	app := controlapi.NewApp(deps)
@@ -301,42 +319,44 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		cancelDiscovery()
 		registry.Close()
 		lifecycleReg.Close()
-		for _, c := range peerClosers {
+		for _, c := range serviceClosers {
 			c()
 		}
 		return nil, fmt.Errorf("StartControlAPI: listen: %w", err)
 	}
 	srv := &http.Server{Handler: app}
-	// @decision: peer-auth-mtls
-	if tlsCfg := peer.TLSControlAPIServerConfig(cfg.PeerAuth, mtlsIdentity, caPoolOrNil(mtlsCA)); tlsCfg != nil {
+	// @decision: service-auth-mtls
+	if tlsCfg := service.TLSControlAPIServerConfig(cfg.ServiceAuth, mtlsIdentity, caPoolOrNil(mtlsCA)); tlsCfg != nil {
 		srv.TLSConfig = tlsCfg
 		listener = tls.NewListener(listener, tlsCfg)
 	}
-	lifecycleReconciler := controlapi.NewLifecycleReconciler(deps, 0)
 	loopCtx, cancelLoops := context.WithCancel(context.Background())
-	closersWithIdentity := append([]func(){stopIdentity}, peerClosers...)
+	closersWithIdentity := append([]func(){stopIdentity}, serviceClosers...)
 	h := &controlAPIHandle{
-		srv:                 srv,
-		addr:                listener.Addr().String(),
-		serveErr:            make(chan error, 1),
-		registry:            registry,
-		lifecycleReg:        lifecycleReg,
-		lifecycleReconciler: lifecycleReconciler,
-		cancelLoops:         cancelLoops,
-		cancelDiscovery:     cancelDiscovery,
-		peerClosers:         closersWithIdentity,
+		srv:             srv,
+		addr:            listener.Addr().String(),
+		serveErr:        make(chan error, 1),
+		registry:        registry,
+		lifecycleReg:    lifecycleReg,
+		cancelLoops:     cancelLoops,
+		cancelDiscovery: cancelDiscovery,
+		serviceClosers:  closersWithIdentity,
+	}
+	// @decision: lifecycle-drain-per-role
+	if cfg.SharedLifecycleDrain == nil {
+		h.lifecycleDrain = lifecycleDrain
+		h.goWG(func() { lifecycleDrain.Run(loopCtx) })
 	}
 	h.goWG(func() { disc.RefreshLoop(discoveryCtx, cfg.ObservabilityRefreshInterval, obsLogger) })
 	h.goWG(func() {
 		defer close(h.serveErr)
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			if cfg.Logger != nil {
-				cfg.Logger.Error("controlapi serve", "error", err.Error())
+				cfg.Logger.Error("CONTROLAPI.SERVER.SERVEFAILED", "error", err.Error())
 			}
 			h.serveErr <- err
 		}
 	})
-	h.goWG(func() { lifecycleReconciler.Run(loopCtx) })
 	h.goWG(func() { controlapi.WatchAnonymousMode(loopCtx, authState, controlapi.DefaultBannerInterval) })
 	resyncLog := cfg.Logger
 	if resyncLog == nil {
@@ -348,13 +368,21 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Clock:      cfg.Clock,
 		Logger:     resyncLog,
 	}
+	resyncPublishers := cfg.ResyncPublishers
+	if resyncPublishers == nil {
+		resyncPublishers = runtime.ResyncPublisherSubscriptions
+	}
+	reconcileSubscriptions := cfg.ReconcilePublisherSubscriptions
+	if reconcileSubscriptions == nil {
+		reconcileSubscriptions = runtime.RunPublisherSubscriptionReconciler
+	}
 	h.goWG(func() {
-		if err := resyncPublishersAtStartup(loopCtx, publisherDeps); err != nil {
-			resyncLog.Warn("controlapi.publisher_resync.failed", "error", err.Error())
+		if err := resyncPublishers(loopCtx, publisherDeps); err != nil {
+			resyncLog.Warn("CONTROLAPI.PUBLISHERRESYNC.FAILED", "error", err.Error())
 		}
 	})
 	h.goWG(func() {
-		runPublisherSubscriptionReconciler(loopCtx, publisherDeps,
+		reconcileSubscriptions(loopCtx, publisherDeps,
 			runtime.DefaultPublisherSubscriptionReconcileInterval)
 	})
 	return h, nil
@@ -428,7 +456,7 @@ func (h *sharedLoggerHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h *sharedLoggerHandler) WithGroup(_ string) slog.Handler { return h }
 
-// @decision: peer-auth-mtls
+// @decision: service-auth-mtls
 func caPoolOrNil(ca *pki.CA) *x509.CertPool {
 	if ca == nil {
 		return nil

@@ -15,8 +15,8 @@ import (
 	"google.golang.org/grpc"
 
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/lifecycle"
 	dataprocessing "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/dataprocessing"
-	"github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/lifecycle"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -50,7 +50,7 @@ func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis,
 	RegisterObservability(grpcSrv)
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
-			slog.Warn("stub store: grpc serve", "error", err.Error())
+			slog.Warn("STUBSTORE.GRPC.SERVEFAILED", "error", err.Error())
 		}
 	}()
 	mux := http.NewServeMux()
@@ -61,7 +61,7 @@ func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis,
 	httpSrv := &http.Server{Handler: mux}
 	go func() {
 		if err := httpSrv.Serve(httpLis); err != nil && err != http.ErrServerClosed {
-			slog.Warn("stub store: http serve", "error", err.Error())
+			slog.Warn("STUBSTORE.HTTP.SERVEFAILED", "error", err.Error())
 		}
 	}()
 	<-ctx.Done()

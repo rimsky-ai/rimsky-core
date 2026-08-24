@@ -41,14 +41,14 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 	for _, n := range ready {
 		def, err := lookupTemplateNodeDefByType(ctx, sb, n.InstanceID, n.NodeType)
 		if err != nil {
-			log.Warn("ProcessPureCascade: lookup template node def failed; skipping this pass, will retry next tick",
+			log.Warn("CASCADE.TEMPLATENODEDEF.LOOKUPFAILED", "site", "ProcessPureCascade", "detail", "skipping this pass; the next tick retries",
 				"node_id", n.NodeID.String(), "node_type", n.NodeType, "error", err.Error())
 			continue
 		}
 		if graphsched.AcquiresClaims(def) {
 			prepared, err := graphsched.PrepareNativeClaimRouting(ctx, sb, n, def)
 			if err != nil {
-				log.Warn("ProcessPureCascade: prepare native claim routing failed",
+				log.Warn("CASCADE.NATIVECLAIMROUTING.PREPAREFAILED", "site", "ProcessPureCascade",
 					"node_id", n.NodeID.String(), "error", err.Error())
 				continue
 			}
@@ -83,12 +83,12 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		}
 		return runtime.EmitTerminalSuccessAndDrainInTx(ctx, runArgs, n.NodeID, n.NodeType, n.NodeRunID, n.InstanceID, n.FrameID, "pure_cascade", tx)
 	}); err != nil {
-		log.Warn("ProcessPureCascade: state transition + cascade failed",
+		log.Warn("CASCADE.STATETRANSITION.FAILED", "site", "ProcessPureCascade",
 			"node_id", n.NodeID.String(), "error", err.Error())
 		return err
 	}
 	if _, err := runtime.PropagateIfChildAfterTerminal(ctx, runArgs, n.NodeRunID); err != nil {
-		log.Warn("ProcessPureCascade: run-tree propagation failed",
+		log.Warn("RUNTREE.PROPAGATION.FAILED", "site", "ProcessPureCascade",
 			"node_id", n.NodeID.String(), "error", err.Error())
 	}
 	evaluateAfterTerminalBreakpoint(ctx, runArgs, n, log)
@@ -108,7 +108,7 @@ func evaluateAfterTerminalBreakpoint(ctx context.Context, runArgs runtime.RunArg
 		}
 		return nil
 	}); err != nil {
-		log.Warn("ProcessPureCascade: resolve run scope for breakpoint eval failed; continuing",
+		log.Warn("CASCADE.BREAKPOINTRUNSCOPE.RESOLVEFAILED", "site", "ProcessPureCascade", "detail", "continuing",
 			"node_id", n.NodeID.String(), "error", err.Error())
 	}
 	terminalSig := signalpkg.BuildTerminalSuccessSignal(false, nil, "", nil)
@@ -123,7 +123,7 @@ func evaluateAfterTerminalBreakpoint(ctx context.Context, runArgs runtime.RunArg
 		Checkpoint:     persistence.CheckpointAfterTerminal,
 		TerminalSignal: &terminalSig,
 	}); err != nil {
-		log.Warn("ProcessPureCascade: breakpoint after_terminal eval failed; continuing",
+		log.Warn("BREAKPOINT.AFTERTERMINALEVAL.FAILED", "site", "ProcessPureCascade", "detail", "continuing",
 			"node_id", n.NodeID.String(), "error", err.Error())
 	}
 }

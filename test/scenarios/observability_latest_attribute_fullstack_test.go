@@ -119,11 +119,11 @@ func latestAttrRow(h *scenario.Harness, nodeID, runScopeID shared.UUID) *persist
 func createPausedInstanceLatestAttr(t *testing.T, h *scenario.Harness, templateHash, consumerKey string) shared.UUID {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
-		"template":     templateHash,
-		"params":       map[string]any{},
-		"instance_key": consumerKey,
-		"paused":       true,
-		"target_agent": "scenario-default-agent",
+		"template":      templateHash,
+		"params":        map[string]any{},
+		"instance_key":  consumerKey,
+		"paused":        true,
+		"target_daemon": "scenario-default-daemon",
 	})
 	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)

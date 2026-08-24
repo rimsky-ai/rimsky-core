@@ -16,7 +16,7 @@ type CreateInstanceRequest struct {
 	Params          map[string]any         `json:"params,omitempty"`
 	ServiceBindings map[string]bindingSpec `json:"service_bindings,omitempty"`
 	// @concept: anonymous-mode
-	TargetAgent string `json:"target_agent,omitempty"`
+	TargetDaemon string `json:"target_daemon,omitempty"`
 }
 
 type bindingSpec struct {

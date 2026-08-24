@@ -152,3 +152,30 @@ func (c *ControllableClock) flushDueLocked() {
 		close(p.done)
 	}
 }
+
+type AutoAdvanceClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func NewAutoAdvanceClock(start time.Time) *AutoAdvanceClock {
+	return &AutoAdvanceClock{t: start}
+}
+
+func (c *AutoAdvanceClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *AutoAdvanceClock) Sleep(ctx context.Context, d time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if d > 0 {
+		c.t = c.t.Add(d)
+	}
+	return nil
+}

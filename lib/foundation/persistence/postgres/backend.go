@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -33,25 +32,10 @@ func unwrapTx(tx persistence.Tx) (pgx.Tx, error) {
 }
 
 type tablesImpl struct {
-	pool          *pgxpool.Pool
-	blob          persistence.BlobBackend
-	blobThreshold int
-	blobRetention time.Duration
+	pool *pgxpool.Pool
 }
 
 func newTables(pool *pgxpool.Pool) *tablesImpl { return &tablesImpl{pool: pool} }
-
-func (s *tablesImpl) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
-	s.blob = bb
-	s.blobThreshold = threshold
-	s.blobRetention = retention
-}
-
-func (s *tablesImpl) BlobBackend() persistence.BlobBackend { return s.blob }
-
-func (s *tablesImpl) BlobSpillThreshold() int { return s.blobThreshold }
-
-func (s *tablesImpl) BlobRetention() time.Duration { return s.blobRetention }
 
 func (s *tablesImpl) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	pgT, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -92,40 +76,35 @@ func (s *tablesImpl) q(tx persistence.Tx) querier {
 }
 
 type (
-	templatesImpl            tablesImpl
-	templateTagsImpl         tablesImpl
-	instancesImpl            tablesImpl
-	lifecycleIdempotencyImpl tablesImpl
-	nodesImpl                tablesImpl
-	claimHandlesImpl         tablesImpl
-	nodeAttributesImpl       tablesImpl
-	claimHoldersImpl         tablesImpl
-	eventsImpl               tablesImpl
-	supervisorsImpl          tablesImpl
-	framesImpl               tablesImpl
+	templatesImpl      tablesImpl
+	templateTagsImpl   tablesImpl
+	instancesImpl      tablesImpl
+	nodesImpl          tablesImpl
+	claimHandlesImpl   tablesImpl
+	nodeAttributesImpl tablesImpl
+	claimHoldersImpl   tablesImpl
+	eventsImpl         tablesImpl
+	supervisorsImpl    tablesImpl
+	framesImpl         tablesImpl
 )
 
 var (
-	_ persistence.Tables                    = (*tablesImpl)(nil)
-	_ persistence.TemplateTable             = (*templatesImpl)(nil)
-	_ persistence.TemplateTagTable          = (*templateTagsImpl)(nil)
-	_ persistence.InstanceTable             = (*instancesImpl)(nil)
-	_ persistence.LifecycleIdempotencyTable = (*lifecycleIdempotencyImpl)(nil)
-	_ persistence.NodeTable                 = (*nodesImpl)(nil)
-	_ persistence.ClaimHandleTable          = (*claimHandlesImpl)(nil)
-	_ persistence.NodeAttributeTable        = (*nodeAttributesImpl)(nil)
-	_ persistence.ClaimHolderTable          = (*claimHoldersImpl)(nil)
-	_ persistence.EventTable                = (*eventsImpl)(nil)
-	_ persistence.SupervisorTable           = (*supervisorsImpl)(nil)
-	_ persistence.FrameTable                = (*framesImpl)(nil)
+	_ persistence.Tables             = (*tablesImpl)(nil)
+	_ persistence.TemplateTable      = (*templatesImpl)(nil)
+	_ persistence.TemplateTagTable   = (*templateTagsImpl)(nil)
+	_ persistence.InstanceTable      = (*instancesImpl)(nil)
+	_ persistence.NodeTable          = (*nodesImpl)(nil)
+	_ persistence.ClaimHandleTable   = (*claimHandlesImpl)(nil)
+	_ persistence.NodeAttributeTable = (*nodeAttributesImpl)(nil)
+	_ persistence.ClaimHolderTable   = (*claimHoldersImpl)(nil)
+	_ persistence.EventTable         = (*eventsImpl)(nil)
+	_ persistence.SupervisorTable    = (*supervisorsImpl)(nil)
+	_ persistence.FrameTable         = (*framesImpl)(nil)
 )
 
-func (s *tablesImpl) Templates() persistence.TemplateTable       { return (*templatesImpl)(s) }
-func (s *tablesImpl) TemplateTags() persistence.TemplateTagTable { return (*templateTagsImpl)(s) }
-func (s *tablesImpl) Instances() persistence.InstanceTable       { return (*instancesImpl)(s) }
-func (s *tablesImpl) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
-	return (*lifecycleIdempotencyImpl)(s)
-}
+func (s *tablesImpl) Templates() persistence.TemplateTable           { return (*templatesImpl)(s) }
+func (s *tablesImpl) TemplateTags() persistence.TemplateTagTable     { return (*templateTagsImpl)(s) }
+func (s *tablesImpl) Instances() persistence.InstanceTable           { return (*instancesImpl)(s) }
 func (s *tablesImpl) Nodes() persistence.NodeTable                   { return (*nodesImpl)(s) }
 func (s *tablesImpl) ClaimHandles() persistence.ClaimHandleTable     { return (*claimHandlesImpl)(s) }
 func (s *tablesImpl) NodeAttributes() persistence.NodeAttributeTable { return (*nodeAttributesImpl)(s) }
@@ -135,14 +114,13 @@ func (s *tablesImpl) Supervisors() persistence.SupervisorTable       { return (*
 
 func (s *tablesImpl) Frames() persistence.FrameTable { return (*framesImpl)(s) }
 
-func (b *templatesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }
-func (b *templateTagsImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
-func (b *instancesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }
-func (b *lifecycleIdempotencyImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
-func (b *nodesImpl) q(tx persistence.Tx) querier                { return (*tablesImpl)(b).q(tx) }
-func (b *claimHandlesImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
-func (b *nodeAttributesImpl) q(tx persistence.Tx) querier       { return (*tablesImpl)(b).q(tx) }
-func (b *claimHoldersImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
-func (b *eventsImpl) q(tx persistence.Tx) querier               { return (*tablesImpl)(b).q(tx) }
-func (b *supervisorsImpl) q(tx persistence.Tx) querier          { return (*tablesImpl)(b).q(tx) }
-func (b *framesImpl) q(tx persistence.Tx) querier               { return (*tablesImpl)(b).q(tx) }
+func (b *templatesImpl) q(tx persistence.Tx) querier      { return (*tablesImpl)(b).q(tx) }
+func (b *templateTagsImpl) q(tx persistence.Tx) querier   { return (*tablesImpl)(b).q(tx) }
+func (b *instancesImpl) q(tx persistence.Tx) querier      { return (*tablesImpl)(b).q(tx) }
+func (b *nodesImpl) q(tx persistence.Tx) querier          { return (*tablesImpl)(b).q(tx) }
+func (b *claimHandlesImpl) q(tx persistence.Tx) querier   { return (*tablesImpl)(b).q(tx) }
+func (b *nodeAttributesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
+func (b *claimHoldersImpl) q(tx persistence.Tx) querier   { return (*tablesImpl)(b).q(tx) }
+func (b *eventsImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
+func (b *supervisorsImpl) q(tx persistence.Tx) querier    { return (*tablesImpl)(b).q(tx) }
+func (b *framesImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }

@@ -248,11 +248,11 @@ func postDebugOverride(t *testing.T, controlBase string, instanceID shared.UUID,
 func createInstanceWithPaused(t *testing.T, controlBase, templateHash, instanceKey string) shared.UUID {
 	t.Helper()
 	body := map[string]any{
-		"template":     templateHash,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-		"paused":       true,
-		"target_agent": "scenario-default-agent",
+		"template":      templateHash,
+		"instance_key":  instanceKey,
+		"params":        map[string]any{},
+		"paused":        true,
+		"target_daemon": "scenario-default-daemon",
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)

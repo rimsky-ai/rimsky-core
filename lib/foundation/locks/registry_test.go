@@ -140,7 +140,7 @@ func TestRegistryAddNameDisagreementLogsWarning(t *testing.T) {
 	r.Add("registration-name", mockProducer{name: "internal-name"})
 
 	logged := buf.String()
-	if !strings.Contains(logged, "registration name disagrees with ClaimProducer.Name()") {
+	if !strings.Contains(logged, "CLAIMPRODUCERREGISTRY.REGISTRATIONNAME.MISMATCHED") {
 		t.Fatalf("expected name-disagreement warning, got: %q", logged)
 	}
 	if !strings.Contains(logged, "registration-name") || !strings.Contains(logged, "internal-name") {
@@ -249,7 +249,7 @@ func TestRegistryResolveWithContextBindingsLookupError(t *testing.T) {
 		t.Fatalf("ResolveWithContext with bindings lookup error = (%v, %v, %v), want (nil, false, nil)", got, ok, err)
 	}
 	logged := buf.String()
-	if !strings.Contains(logged, "instance-bindings lookup failed") || !strings.Contains(logged, "boom") {
+	if !strings.Contains(logged, "CLAIMPRODUCERREGISTRY.INSTANCEBINDINGS.LOOKUPFAILED") || !strings.Contains(logged, "boom") {
 		t.Fatalf("expected a lookup-failure warning naming the underlying error, got: %q", logged)
 	}
 }
@@ -366,10 +366,12 @@ func TestRegistryCloseDispatchesToImplementers(t *testing.T) {
 	}
 }
 
-func TestRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
+func TestRegistryConcurrentAddsAllLandAndEveryNameResolves(t *testing.T) {
+	const producers = 20
 	r := NewRegistry()
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	snapshots := make([][]string, producers)
+	for i := 0; i < producers; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -377,16 +379,35 @@ func TestRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
 			r.Add(name, mockProducer{name: name})
 		}(i)
 	}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < producers; i++ {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			r.Get("producer-0")
-			r.Names()
-			r.Producers()
-		}()
+			snapshots[i] = r.Names()
+		}(i)
 	}
 	wg.Wait()
+
+	for i := 0; i < producers; i++ {
+		name := "producer-" + strconv.Itoa(i)
+		p, ok := r.Get(name)
+		if !ok {
+			t.Fatalf("Get(%q) after %d concurrent Add calls found nothing; an add was lost", name, producers)
+		}
+		if p.Name() != name {
+			t.Fatalf("Get(%q) returned the producer named %q", name, p.Name())
+		}
+	}
+	if got := len(r.Producers()); got != producers {
+		t.Fatalf("Producers() holds %d entries after %d concurrent Add calls, want %d", got, producers, producers)
+	}
+	for i, snapshot := range snapshots {
+		for _, name := range snapshot {
+			if _, ok := r.Get(name); !ok {
+				t.Fatalf("the concurrent Names() snapshot %d named %q, which Get does not resolve", i, name)
+			}
+		}
+	}
 }
 
 func TestNamedLocksConfigGet(t *testing.T) {

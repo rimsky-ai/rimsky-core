@@ -15,6 +15,6 @@ import (
 
 func main() {
 	roleboot.Main(func(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig) (launch.StopFunc, <-chan error, error) {
-		return launch.RunSupervisor(ctx, logger, driver, cfg, nil, nil)
+		return launch.RunSupervisor(ctx, logger, driver, cfg, launch.RoleOptions{})
 	})
 }

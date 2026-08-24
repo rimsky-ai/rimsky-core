@@ -56,7 +56,7 @@ Each release archive carries the `rimsky` CLI binary together with `LICENSE.agpl
 
 Fifteen images are published to `docker.io/rimskyai`. Every one of them carries AGPL-3.0-or-later-or-commercial rimsky code, because every one of them is a rimsky binary.
 
-Core images: `rimsky`, `rimsky-all-in-one`, `rimsky-host-agent-proxy`, `rimsky-conformance`.
+Core images: `rimsky`, `rimsky-all-in-one`, `rimsky-host-daemon-proxy`, `rimsky-conformance`.
 
 Bundled-service images: `rimsky-claim-producer-filesystem`, `rimsky-claim-producer-postgres`, `rimsky-sensor-cron`, `rimsky-sensor-http`, `rimsky-sensor-object-store`, `rimsky-sensor-webhook`, `rimsky-subscriber-openlineage`, `rimsky-executor-http-node`, `rimsky-executor-verifier-http`, `rimsky-executor-verifier-shape-checks`, `rimsky-executor-claude-agent`.
 

@@ -10,10 +10,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 )
 
 type slogAdapter struct{ l *slog.Logger }
@@ -27,15 +27,15 @@ const defaultGRPCPort = 9081
 
 func main() {
 	host := envOr("RIMSKY_SENSOR_CRON_HOST", "0.0.0.0")
-	port, err := agentport.Resolve("RIMSKY_SENSOR_CRON_PORT", defaultGRPCPort)
+	port, err := daemonport.Resolve("RIMSKY_SENSOR_CRON_PORT", defaultGRPCPort)
 	if err != nil {
-		slog.Error("sensor-cron port", "error", err.Error())
+		slog.Error("SENSORCRON.PORT.INVALID", "error", err.Error())
 		os.Exit(1)
 	}
 	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 
 	slog.SetDefault(serverkit.NewJSONLogger())
-	slog.Info("sensor-cron starting",
+	slog.Info("SENSORCRON.PROCESS.STARTING",
 		"grpc_port", port,
 		"rimsky_endpoint", rimskyEndpoint)
 
@@ -45,9 +45,9 @@ func main() {
 	ctx, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
 	defer stopSignals()
 
-	identity, err := peerauth.LoadFromEnv(ctx, "sensor-cron")
+	identity, err := serviceauth.LoadFromEnv(ctx, "sensor-cron")
 	if err != nil {
-		slog.Error("sensor-cron peer-auth", "error", err.Error())
+		slog.Error("SENSORCRON.SERVICEAUTH.ENROLLFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	svc.SetPublishClient(identity.OutboundHTTPClient(10 * time.Second))
@@ -55,20 +55,20 @@ func main() {
 
 	state, err := openStateDB(ctx)
 	if err != nil {
-		slog.Error("open state db", "error", err.Error())
+		slog.Error("SENSORCRON.STATEDB.OPENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	if state != nil {
 		svc.AttachStateDB(state)
 		defer func() { _ = state.Close() }()
-		slog.Info("sensor-cron state db attached")
+		slog.Info("SENSORCRON.STATEDB.ATTACHED")
 	}
 
 	go svc.Run(ctx)
 
 	lis, err := serverkit.Listen(host, port)
 	if err != nil {
-		slog.Error("grpc listen", "error", err.Error())
+		slog.Error("SENSORCRON.GRPC.LISTENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	srv := identity.GRPCServer()

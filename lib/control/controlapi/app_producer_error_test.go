@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 func classedGRPCError(t *testing.T, code codes.Code, class, msg string) error {
@@ -42,7 +42,7 @@ func TestWriteErrorProducerFailureIs502WithClassAndMessage(t *testing.T) {
 	grpcErr := classedGRPCError(t, codes.Internal,
 		"fs/root_unavailable",
 		"filesystem store: Release: configured root \"/workspace/data\" is not accessible")
-	pcErr := peer.NewProducerCallError("docs-store", "Release", grpcErr)
+	pcErr := service.NewProducerCallError("docs-store", "Release", grpcErr)
 
 	rec := httptest.NewRecorder()
 	writeError(rec, pcErr)
@@ -62,7 +62,7 @@ func TestWriteErrorProducerRejectionIs422(t *testing.T) {
 	t.Parallel()
 	for _, code := range []codes.Code{codes.InvalidArgument, codes.FailedPrecondition, codes.OutOfRange} {
 		grpcErr := classedGRPCError(t, code, "pg/swap_failed", "store rejected the operator request")
-		pcErr := peer.NewProducerCallError("analytics-store", "Commit", grpcErr)
+		pcErr := service.NewProducerCallError("analytics-store", "Commit", grpcErr)
 
 		rec := httptest.NewRecorder()
 		writeError(rec, pcErr)
@@ -78,7 +78,7 @@ func TestWriteErrorProducerRejectionIs422(t *testing.T) {
 func TestWriteErrorProducerUnclassedFailure(t *testing.T) {
 	t.Parallel()
 	grpcErr := status.Error(codes.Unavailable, "connection refused")
-	pcErr := peer.NewProducerCallError("docs-store", "Open", grpcErr)
+	pcErr := service.NewProducerCallError("docs-store", "Open", grpcErr)
 
 	rec := httptest.NewRecorder()
 	writeError(rec, pcErr)
@@ -94,7 +94,7 @@ func TestWriteErrorRecognizesWrappedProducerError(t *testing.T) {
 	t.Parallel()
 	grpcErr := classedGRPCError(t, codes.Internal, "fs/root_unavailable", "root gone")
 	wrapped := fmt.Errorf("releasing asset: %w",
-		peer.NewProducerCallError("docs-store", "Release", grpcErr))
+		service.NewProducerCallError("docs-store", "Release", grpcErr))
 
 	rec := httptest.NewRecorder()
 	writeError(rec, wrapped)

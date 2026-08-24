@@ -15,7 +15,7 @@ import (
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type recordingValidationServer struct {
@@ -59,7 +59,7 @@ func TestCrossTableVerifier_ClaimAliasesPassThroughExecutorContext(t *testing.T)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
-	client, err := peer.DialValidation(ctx, "content-checker", "grpc://"+lis.Addr().String(), peer.TLSModeOff, []string{"executor"})
+	client, err := service.DialValidation(ctx, "content-checker", "grpc://"+lis.Addr().String(), service.TLSModeOff, []string{"executor"})
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 

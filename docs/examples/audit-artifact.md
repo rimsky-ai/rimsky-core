@@ -33,7 +33,7 @@ instances:
     name: oops
 
 executors:
-  peer:
+  local-executor:
     transport: grpc
     endpoint: "127.0.0.1:9091"
 ```
@@ -47,7 +47,7 @@ version: "1"
 message_queue_mode: backlog
 nodes:
   - type: worker
-    executor: peer
+    executor: local-executor
     attributes:
       schema:
         type: object
@@ -59,7 +59,7 @@ nodes:
 Run it, binding the executor to a local binary:
 
 ```bash
-rimsky compose run --service peer=/path/to/peer-host ./rimsky-compose.yml
+rimsky compose run --service local-executor=/path/to/local-executor ./rimsky-compose.yml
 ```
 
 The invocation finishes the run. It exits 1 for the mixed roster and reports
@@ -70,9 +70,8 @@ audit-artifact/ok: success
 audit-artifact/oops: failure
 ```
 
-It leaves `.rimsky/latest` pointing at a run directory holding `state.db`,
-`blobs/` and the `rimsky.yml` the run used. The executor process the run spawned
-is gone.
+It leaves `.rimsky/latest` pointing at a run directory holding `state.db` and
+the `rimsky.yml` the run used. The executor process the run spawned is gone.
 
 ## The ad-hoc one-shot
 
@@ -84,7 +83,7 @@ version: "1"
 message_queue_mode: backlog
 nodes:
   - type: okworker
-    executor: peer
+    executor: local-executor
     attributes:
       schema:
         type: object
@@ -92,7 +91,7 @@ nodes:
           outcome: {type: string, default: ok}
           echo: {type: string, default: adhoc-success-leg}
   - type: failworker
-    executor: peer
+    executor: local-executor
     attributes:
       schema:
         type: object
@@ -102,7 +101,7 @@ nodes:
 ```
 
 ```bash
-rimsky run --service peer=/path/to/peer-host ./template.yml
+rimsky run --service local-executor=/path/to/local-executor ./template.yml
 ```
 
 Same shape: exit 1 for the mixed outcome, and its own artifact directory holding

@@ -18,7 +18,6 @@ import (
 	"log/slog"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
-	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -51,6 +50,13 @@ type Harness struct {
 	ControlAPI         config.ControlAPIHandle
 	ControlBase        string
 	Clock              shared.Clock
+
+	lateBindServiceProxies map[string]string
+}
+
+// @decision: lifecycle-fanout-after-commit
+func (h *Harness) frameLifecycleDelivery() frame.LifecycleDelivery {
+	return frame.LifecycleDelivery{LateBindServiceProxies: h.lateBindServiceProxies}
 }
 
 type HarnessOpts struct {
@@ -79,12 +85,12 @@ type HarnessOpts struct {
 	// @concept: executor
 	ExtraInprocHandlers map[string]executor.InProcessHandler
 
-	// @concept: peer-auth
-	PeerAuth string
+	// @concept: service-auth
+	ServiceAuth string
 }
 
 // @concept: anonymous-mode
-const defaultHarnessTargetAgent = "scenario-default-agent"
+const defaultHarnessTargetDaemon = "scenario-default-daemon"
 
 func scenarioDebugLogger() shared.Logger {
 	if os.Getenv("SCENARIO_DEBUG") == "" {
@@ -170,33 +176,28 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		Stub:     s,
 		StubAddr: stubAddr,
 		Clock:    clock,
-	}
 
-	lateBindProxies := opts.LateBindServiceProxies
-	peersForSpec := func(tplSpec node.TemplateSpec) []string {
-		return controlapi.LifecyclePeersForSpec(
-			controlapi.AppDeps{LateBindServiceProxies: lateBindProxies},
-			tplSpec,
-		)
+		lateBindServiceProxies: opts.LateBindServiceProxies,
 	}
 
 	if !opts.NoScheduler {
 		sh, err := config.StartScheduler(config.SchedulerConfig{
-			Driver:                driver,
-			Clock:                 clock,
-			Logger:                shared.SilentLogger{},
-			TickInterval:          schedulerTick,
-			MaxQuietPeriodDefault: maxQuietPeriod,
-			ClaimProducers:        opts.ClaimProducers,
-			NamedLocks:            opts.NamedLocks,
-			SupervisorID:          "scenario-scheduler",
-			LifecyclePeersForSpec: peersForSpec,
-			PeerAuth:              opts.PeerAuth,
+			Driver:                 driver,
+			Clock:                  clock,
+			Logger:                 shared.SilentLogger{},
+			TickInterval:           schedulerTick,
+			MaxQuietPeriodDefault:  maxQuietPeriod,
+			ClaimProducers:         opts.ClaimProducers,
+			NamedLocks:             opts.NamedLocks,
+			SupervisorID:           "scenario-scheduler",
+			LateBindServiceProxies: opts.LateBindServiceProxies,
+			ServiceAuth:            opts.ServiceAuth,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start scheduler: %v", err)
 		}
 		t.Cleanup(func() {
+			//nolint:testwallclock-pacing the teardown discards the shutdown error, so no verdict reads this grace
 			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = sh.Shutdown(sctx)
@@ -243,14 +244,14 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			ExpectedAttributesSchemaFor: expectedSchemaFor,
 			Executors:                   executorsCfg,
 			LateBindServiceProxies:      opts.LateBindServiceProxies,
-			LifecyclePeersForSpec:       peersForSpec,
 			ExtraInprocHandlers:         opts.ExtraInprocHandlers,
-			PeerAuth:                    opts.PeerAuth,
+			ServiceAuth:                 opts.ServiceAuth,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start supervisor: %v", err)
 		}
 		t.Cleanup(func() {
+			//nolint:testwallclock-pacing the teardown discards the shutdown error, so no verdict reads this grace
 			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = sv.Shutdown(sctx)
@@ -270,12 +271,13 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		NamedLocks:             opts.NamedLocks,
 		Executors:              executorsCfg,
 		LateBindServiceProxies: opts.LateBindServiceProxies,
-		PeerAuth:               opts.PeerAuth,
+		ServiceAuth:            opts.ServiceAuth,
 	})
 	if err != nil {
 		t.Fatalf("scenario: start controlapi: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the shutdown error, so no verdict reads this grace
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = ca.Shutdown(sctx)
@@ -401,9 +403,9 @@ func (h *Harness) CreateInstanceWithOverrides(
 ) shared.UUID {
 	h.T.Helper()
 	bodyMap := map[string]any{
-		"template":     templateHash,
-		"params":       params,
-		"target_agent": defaultHarnessTargetAgent,
+		"template":      templateHash,
+		"params":        params,
+		"target_daemon": defaultHarnessTargetDaemon,
 	}
 	if consumerKey != "" {
 		bodyMap["instance_key"] = consumerKey
@@ -506,11 +508,11 @@ func (h *Harness) CreateInstanceWithServiceBindingsAndTarget(
 	templateHash, consumerKey, bearerKey string,
 	params map[string]any,
 	serviceBindings map[string]any,
-	targetAgent string,
+	targetDaemon string,
 ) shared.UUID {
 	h.T.Helper()
-	if targetAgent == "" {
-		targetAgent = defaultHarnessTargetAgent
+	if targetDaemon == "" {
+		targetDaemon = defaultHarnessTargetDaemon
 	}
 	bodyMap := map[string]any{
 		"template": templateHash,
@@ -522,8 +524,8 @@ func (h *Harness) CreateInstanceWithServiceBindingsAndTarget(
 	if len(serviceBindings) > 0 {
 		bodyMap["service_bindings"] = serviceBindings
 	}
-	if targetAgent != "" {
-		bodyMap["target_agent"] = targetAgent
+	if targetDaemon != "" {
+		bodyMap["target_daemon"] = targetDaemon
 	}
 	body, err := json.Marshal(bodyMap)
 	if err != nil {
@@ -653,7 +655,7 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID) {
 func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	h.T.Helper()
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil, nil); err != nil {
+	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, h.frameLifecycleDelivery(), nil); err != nil {
 		h.T.Logf("driveFrameAndEnqueue: frame.RunTick (pre-sweep) failed; retrying next tick: %v", err)
 	}
 	// @decision: empty-message-as-root-trigger
@@ -667,7 +669,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	}); err != nil {
 		h.T.Logf("driveFrameAndEnqueue: ProcessPureCascade failed; retrying next tick: %v", err)
 	}
-	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, nil, nil); err != nil {
+	if err := frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger, h.frameLifecycleDelivery(), nil); err != nil {
 		h.T.Logf("driveFrameAndEnqueue: frame.RunTick (post-cascade) failed; retrying next tick: %v", err)
 	}
 	var (

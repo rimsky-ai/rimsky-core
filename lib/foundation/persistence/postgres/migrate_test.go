@@ -105,7 +105,7 @@ func TestMigrationTagsColumn(t *testing.T) {
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO rimsky_instances (id, template_hash, instance_key, target_routing_identity)
-		 VALUES ($1, 'tpl-1', 'ck-1', 'migration-test-agent')`, instUUID); err != nil {
+		 VALUES ($1, 'tpl-1', 'ck-1', 'migration-test-daemon')`, instUUID); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
 	if _, err := tx.Exec(ctx,

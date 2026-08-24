@@ -138,7 +138,7 @@ func stringMapOrNil(v any) map[string]string {
 	return out
 }
 
-func ParseCliConfig(v any) (*CliConfig, error) {
+func ParseCliConfig(v any, modules map[string]ModuleMcpFactory) (*CliConfig, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -182,7 +182,7 @@ func ParseCliConfig(v any) (*CliConfig, error) {
 		return nil, err
 	}
 	out.MaxSchemaCorrections = msc
-	servers, err := parseMcpServers(cli["mcp_servers"])
+	servers, err := parseMcpServers(cli["mcp_servers"], modules)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +227,7 @@ func nonNegativeIntOrNil(v any, field string) (*int, error) {
 	return &i, nil
 }
 
-func parseMcpServers(v any) ([]McpServerInput, error) {
+func parseMcpServers(v any, modules map[string]ModuleMcpFactory) ([]McpServerInput, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -282,9 +282,9 @@ func parseMcpServers(v any) ([]McpServerInput, error) {
 			if entry.Module == "" {
 				return nil, &CliConfigError{Message: fmt.Sprintf("cli.mcp_servers[%d] (%s) requires a non-empty module specifier", i, transport)}
 			}
-			if _, ok := lookupMcpModule(entry.Module); !ok {
+			if _, ok := modules[entry.Module]; !ok {
 				return nil, &CliConfigError{Message: fmt.Sprintf(
-					"cli.mcp_servers[%d] (%s) module %q is not a registered MCP module in this binary (register it via claudeagent.RegisterMcpModule before serving)",
+					"cli.mcp_servers[%d] (%s) module %q is not a declared MCP module in this binary (declare it in Opts.McpModules before serving)",
 					i, transport, entry.Module)}
 			}
 		default:

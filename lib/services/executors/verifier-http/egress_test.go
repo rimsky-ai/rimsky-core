@@ -15,7 +15,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @concept: peer-auth
+// @concept: service-auth
 func TestVerifierEgressGuardIsClosedByDefault(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -25,7 +25,7 @@ func TestVerifierEgressGuardIsClosedByDefault(t *testing.T) {
 	for _, k := range []string{
 		"RIMSKY_EXECUTOR_HOST",
 		"RIMSKY_EXECUTOR_PORT_GRPC",
-		"RIMSKY_AGENT_PORT",
+		"RIMSKY_DAEMON_PORT",
 		"RIMSKY_EXECUTOR_STUB_MODE",
 		"RIMSKY_EXECUTOR_VERIFIER_HTTP_EGRESS_ALLOWLIST",
 	} {
@@ -57,7 +57,7 @@ func TestVerifierEgressGuardIsClosedByDefault(t *testing.T) {
 	}
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 func TestVerifierEgressAllowlistOptsALoopbackDestinationBackIn(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -67,7 +67,7 @@ func TestVerifierEgressAllowlistOptsALoopbackDestinationBackIn(t *testing.T) {
 	for _, k := range []string{
 		"RIMSKY_EXECUTOR_HOST",
 		"RIMSKY_EXECUTOR_PORT_GRPC",
-		"RIMSKY_AGENT_PORT",
+		"RIMSKY_DAEMON_PORT",
 		"RIMSKY_EXECUTOR_STUB_MODE",
 	} {
 		t.Setenv(k, "")

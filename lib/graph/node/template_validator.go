@@ -343,7 +343,7 @@ func validateErrorTypes(n TemplateNodeDef, base string, hooks RegistryHooks, res
 			Path: fmt.Sprintf("%s.error_types[%s]", base, className),
 			Msg: fmt.Sprintf("error class %q is not in any declared vocabulary — not declared by executor %q (declared: %v), "+
 				"not in the acquire/* synthetic family, and not declared by any producer in this node's claim_producers: block (declared: %v); "+
-				"the policy registers but will only match if a peer emits this exact class",
+				"the policy registers but will only match if a service emits this exact class",
 				className, executorForClasses, executorClasses, producerClasses),
 		})
 	}
@@ -509,7 +509,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 						Path: sbase + ".type",
 						Msg: fmt.Sprintf("error class %q is not in any vocabulary declared by sender %q "+
 							"(executor %q or its claim_producers: producers); the subscription registers but will only "+
-							"fire if a peer emits this exact class", leaf, s.Node, senderExecutor),
+							"fire if a service emits this exact class", leaf, s.Node, senderExecutor),
 					})
 				}
 			}

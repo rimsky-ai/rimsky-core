@@ -28,7 +28,7 @@ func SweepClaimHandleRetention(
 		return 0, fmt.Errorf("SweepClaimHandleRetention: %w", err)
 	}
 	if log != nil && n > 0 {
-		log.Info("retention.claim_handles.sweep",
+		log.Info("RETENTION.CLAIMHANDLES.SWEPT",
 			"deleted", n,
 			"cutoff", cutoff.Format(time.RFC3339),
 			"trailing", cfg.ClaimHandlesTrailing.String())

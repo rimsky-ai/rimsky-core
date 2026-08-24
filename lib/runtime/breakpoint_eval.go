@@ -220,7 +220,7 @@ func createHitWithinCap(ctx context.Context, args RunArgs, cc CheckpointContext,
 		case persistence.OverflowBlockDispatch, persistence.OverflowAutoResumeAfterTTL:
 		default:
 			if !warnedUnknownPolicy && args.Logger != nil {
-				args.Logger.Warn("breakpoint.overflow.unknown_policy",
+				args.Logger.Warn("BREAKPOINT.OVERFLOWPOLICY.UNKNOWN",
 					"breakpoint_id", bp.ID.String(),
 					"overflow_policy", string(bp.OverflowPolicy),
 					"action", "defaulting to block until queue drains")

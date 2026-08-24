@@ -20,7 +20,7 @@ func signalForTerminal(args RunArgs, acq *acquisition, t terminalEvent) signalpk
 		}
 		return signalpkg.BuildTerminalErrorSignal(t.ErrorClass, t.Payload, 0, 0, t.AttributesDel, t.Tags)
 	case terminalKindPark:
-		return parkTerminalSignal(args, t)
+		return parkTerminalSignal(t)
 	}
 	return signalpkg.Signal{}
 }

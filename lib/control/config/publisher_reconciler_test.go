@@ -46,7 +46,7 @@ func seedInstanceForSubscriptions(t *testing.T, store persistence.Tables) shared
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:                    instanceID,
 			TemplateHash:          templateHash,
-			TargetRoutingIdentity: "test-subscription-agent",
+			TargetRoutingIdentity: "test-subscription-daemon",
 		}, tx)
 		return err
 	}); err != nil {
@@ -240,24 +240,24 @@ func TestStartControlAPI_StartsSubscriptionReconciler(t *testing.T) {
 	db := openMigratedSQLite(t)
 
 	started := make(chan runtime.PublisherLifecycleDeps, 1)
-	orig := runPublisherSubscriptionReconciler
-	t.Cleanup(func() { runPublisherSubscriptionReconciler = orig })
-	runPublisherSubscriptionReconciler = func(ctx context.Context, deps runtime.PublisherLifecycleDeps, interval time.Duration) {
+	reconcileSubscriptions := func(ctx context.Context, deps runtime.PublisherLifecycleDeps, interval time.Duration) {
 		started <- deps
 		runtime.RunPublisherSubscriptionReconciler(ctx, deps, interval)
 	}
 
 	h, err := StartControlAPI(ControlAPIConfig{
-		Driver: db,
-		Clock:  shared.SystemClock{},
-		Logger: shared.SilentLogger{},
-		Host:   "127.0.0.1",
-		Port:   0,
+		Driver:                          db,
+		Clock:                           shared.SystemClock{},
+		Logger:                          shared.SilentLogger{},
+		Host:                            "127.0.0.1",
+		Port:                            0,
+		ReconcilePublisherSubscriptions: reconcileSubscriptions,
 	})
 	if err != nil {
 		t.Fatalf("StartControlAPI: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the shutdown error, so no verdict reads this grace
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = h.Shutdown(shutCtx)

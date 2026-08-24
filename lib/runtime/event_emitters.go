@@ -153,7 +153,7 @@ func emitWorkRejected(
 			Payload: eventpayload.New(payload),
 		}, tx)
 	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("emitWorkRejected: work_rejected event append failed; rejection record lost",
+		args.Logger.Warn("RUNNER.WORKREJECTEDEVENT.APPENDFAILED", "site", "emitWorkRejected", "detail", "the rejection record is lost",
 			"node_id", acq.NodeID.String(),
 			"dispatch_id", acq.NodeRunID.String(),
 			"reason", reason,
@@ -166,7 +166,8 @@ func detailsAsStruct(args RunArgs, acq *acquisition, site, reason string, detail
 	out, err := structpb.NewStruct(jsonSafeMap(details))
 	if err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn(site+": details did not convert to a struct; the event records the transition without them",
+			args.Logger.Warn("RUNNER.EVENTDETAILS.CONVERSIONFAILED", "site", site,
+				"detail", "the event records the transition without the details",
 				"node_id", acq.NodeID.String(),
 				"dispatch_id", acq.NodeRunID.String(),
 				"reason", reason,

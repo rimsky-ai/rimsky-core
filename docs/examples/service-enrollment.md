@@ -4,7 +4,7 @@ release. Read it only when directed here. -->
 
 # One api key is a standing service's whole credential story
 
-Under mTLS peer auth, a service holding one narrowly-scoped api key enrolls at
+Under mTLS service auth, a service holding one narrowly-scoped api key enrolls at
 startup, obtains its own certificate from the deployment CA, renews it without
 the operator touching anything, and loses all access the moment that key is
 revoked.
@@ -45,7 +45,7 @@ svc "$BASE/v1/audit"                                                            
 
 ```bash
 docker run -d --network rimsky-net --network-alias standing -p 9400:9400 \
-  -e RIMSKY_PEER_AUTH=mtls \
+  -e RIMSKY_SERVICE_AUTH=mtls \
   -e RIMSKY_CONTROL_API_URL=https://rimsky-stack:8080 \
   -e RIMSKY_API_KEY="$SVCKEY" \
   -e RIMSKY_CONTROL_API_CA=/etc/rimsky/deployment-ca.pem \
@@ -75,7 +75,7 @@ curl -sS --cacert ca.pem -H "Authorization: Bearer $ADMIN" \
 jq -r .cert_pem client.json > client.crt
 jq -r .key_pem  client.json > client.key
 
-openssl s_client -connect 127.0.0.1:9400 -servername peer.rimsky.internal \
+openssl s_client -connect 127.0.0.1:9400 -servername service.rimsky.internal \
   -CAfile ca.pem -tls1_2 -cert client.crt -key client.key </dev/null
 ```
 

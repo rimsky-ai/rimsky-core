@@ -46,7 +46,7 @@ func TestFrameStartAtomicity(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
-			_ = frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), slog.Default(), nil, nil)
+			_ = frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), slog.Default(), frame.LifecycleDelivery{}, nil)
 		}()
 	}
 	wg.Wait()

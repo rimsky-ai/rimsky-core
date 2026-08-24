@@ -110,7 +110,7 @@ func (h *RegistryHook) refreshGauges(ctx context.Context, persist persistence.Ta
 	if depth, err := queue.CountLive(ctx, persistence.DispatchListFilter{State: "pending"}); err == nil {
 		h.SetNodeRunsPending(float64(depth))
 	} else {
-		log.Debug("metrics gauge refresh: CountLive failed", "error", err.Error())
+		log.Debug("METRICS.GAUGEREFRESH.FAILED", "site", "Instances.CountLive", "error", err.Error())
 	}
 	if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		counts, err := persist.Nodes().CountByState(ctx, tx)
@@ -122,12 +122,12 @@ func (h *RegistryHook) refreshGauges(ctx context.Context, persist persistence.Ta
 		}
 		return nil
 	}); err != nil {
-		log.Debug("metrics gauge refresh: Nodes.CountByState failed", "error", err.Error())
+		log.Debug("METRICS.GAUGEREFRESH.FAILED", "site", "Nodes.CountByState", "error", err.Error())
 	}
 	if n, err := queue.CountParked(ctx); err == nil {
 		h.SetParkedNodes(float64(n))
 	} else {
-		log.Debug("metrics gauge refresh: CountParked failed", "error", err.Error())
+		log.Debug("METRICS.GAUGEREFRESH.FAILED", "site", "Nodes.CountParked", "error", err.Error())
 	}
 	if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		n, err := persist.Frames().CountHeldFrames(ctx, tx)
@@ -137,6 +137,6 @@ func (h *RegistryHook) refreshGauges(ctx context.Context, persist persistence.Ta
 		h.SetHeldFrames(float64(n))
 		return nil
 	}); err != nil {
-		log.Debug("metrics gauge refresh: Frames.CountHeldFrames failed", "error", err.Error())
+		log.Debug("METRICS.GAUGEREFRESH.FAILED", "site", "Frames.CountHeldFrames", "error", err.Error())
 	}
 }

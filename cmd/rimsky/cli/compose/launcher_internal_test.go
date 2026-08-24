@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
@@ -21,18 +20,15 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostdaemon"
 )
 
 func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 	runDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(runDir, "blobs"), 0o755); err != nil {
-		t.Fatalf("mkdir blobs: %v", err)
-	}
 	if err := WriteSyntheticRimskyYAML(runDir, &Manifest{Project: "test-bi"}, nil, nil, 0); err != nil {
 		t.Fatalf("WriteSyntheticRimskyYAML: %v", err)
 	}
-	port, err := hostagent.FreeLocalPort()
+	port, err := hostdaemon.FreeLocalPort()
 	if err != nil {
 		t.Fatalf("FreeLocalPort: %v", err)
 	}
@@ -45,13 +41,10 @@ func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 
 	dbPath := filepath.Join(runDir, "state.db")
 
-	origFn := startRoleStackFn
-	defer func() { startRoleStackFn = origFn }()
-
 	var migrationsTableSeen atomic.Bool
 	var runnerStartCalled atomic.Int32
-	errFakeRunnerStart := errors.New("fake startRoleStackFn: synthetic stop")
-	startRoleStackFn = func(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig, _ *config.BundledRegistrations) (*launch.UnifiedStack, error) {
+	errFakeRunnerStart := errors.New("fake role-stack start: synthetic stop")
+	fakeStart := func(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig, _ *config.BundledRegistrations) (*launch.UnifiedStack, error) {
 		runnerStartCalled.Add(1)
 		db, oerr := sql.Open("sqlite", dbPath)
 		if oerr == nil {
@@ -68,14 +61,14 @@ func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err = StartRoleStack(ctx, logger, filepath.Join(runDir, "rimsky.yml"), endpoint)
+	_, err = startRoleStack(ctx, logger, filepath.Join(runDir, "rimsky.yml"), endpoint, fakeStart)
 	if !errors.Is(err, errFakeRunnerStart) {
 		t.Fatalf("StartRoleStack: got err=%v, want wrapped errFakeRunnerStart (fake runner-start was supposed to fire)", err)
 	}
 	if runnerStartCalled.Load() == 0 {
-		t.Fatal("fake startRoleStackFn was never called — migrate must have failed before the runner-start seam was reached")
+		t.Fatal("the fake role-stack start was never called — migrate must have failed before the runner-start seam was reached")
 	}
 	if !migrationsTableSeen.Load() {
-		t.Fatal("rimsky_migrations was empty at the moment startRoleStackFn fired — migrate did NOT complete before runner-start; the invariant is that migrations finish before any role runner is started")
+		t.Fatal("rimsky_migrations was empty at the moment the role-stack start fired — migrate did NOT complete before runner-start; the invariant is that migrations finish before any role runner is started")
 	}
 }

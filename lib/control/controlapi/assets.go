@@ -500,7 +500,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			}
 			deleted, err := deps.Persist.ClaimHandles().DeleteResolvedIfNoActiveHolders(ctx, row.ID, tx)
 			if err != nil {
-				deps.Logger.Error("asset.delete.inconsistent_after_release",
+				deps.Logger.Error("CONTROLAPI.ASSETDELETE.INCONSISTENT",
 					"claim_id", row.ID.String(),
 					"instance_id", instanceID.String(),
 					"producer_name", *row.ProducerName,
@@ -510,7 +510,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 				return fmt.Errorf("asset delete: producer released but delete failed, manual reconciliation required: %w", err)
 			}
 			if !deleted {
-				deps.Logger.Error("asset.delete.inconsistent_after_release",
+				deps.Logger.Error("CONTROLAPI.ASSETDELETE.INCONSISTENT",
 					"claim_id", row.ID.String(),
 					"instance_id", instanceID.String(),
 					"producer_name", *row.ProducerName,
@@ -525,7 +525,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			writeAssetDeleteError(w, err)
 			return
 		}
-		deps.Logger.Info("asset.deleted",
+		deps.Logger.Info("CONTROLAPI.ASSET.DELETED",
 			"claim_id", row.ID.String(),
 			"instance_id", instanceID.String(),
 			"node_type", nodeType,

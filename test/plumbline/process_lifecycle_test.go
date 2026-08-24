@@ -16,7 +16,7 @@ const roleBootstrapDelegate = "roleboot.Main("
 
 var coreNonMainEntrypoints = []string{
 	"cmd/internal/roleboot/roleboot.go",
-	"cmd/rimsky/cli/agent.go",
+	"cmd/rimsky/cli/daemon.go",
 	"cmd/rimsky/cli/compose/run.go",
 	"cmd/rimsky/cli/compose/template_run.go",
 }

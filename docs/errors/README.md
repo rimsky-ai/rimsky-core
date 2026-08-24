@@ -17,7 +17,7 @@ If you are writing error routing rather than diagnosing a failure, start with
 - **The default is fail-fast.** A class with no matching entry gives up and
   settles the run failed. Retry is opt-in, everywhere.
 - **The vocabulary is per-deployment and unversioned.** Which classes are
-  recognised depends on which peers this deployment configures and which
+  recognised depends on which services this deployment configures and which
   executor a node names. There is no versioned catalog and no deprecation
   marker anywhere in the capabilities handshake.
 
@@ -58,8 +58,8 @@ If you are writing error routing rather than diagnosing a failure, start with
 | `executor_sync_timeout` | [runtime-dispatch.md](runtime-dispatch.md) |
 | `fanout_parallelism_wait_cancelled` | [infra-faults.md](infra-faults.md) |
 | `fs/root_unavailable` | [acquire.md](acquire.md) |
-| `host_agent_disconnected` | [spawn-failed.md](spawn-failed.md) |
-| `host_agent_not_connected` | [spawn-failed.md](spawn-failed.md) |
+| `host_daemon_disconnected` | [spawn-failed.md](spawn-failed.md) |
+| `host_daemon_not_connected` | [spawn-failed.md](spawn-failed.md) |
 | `http/attribute_invalid` | [http-node-classes.md](http-node-classes.md) |
 | `http/expectation_mismatch` | [http-node-classes.md](http-node-classes.md) |
 | `http/internal_error` | [http-node-classes.md](http-node-classes.md) |
@@ -127,5 +127,5 @@ the kind **exactly** — a prefix matches nothing.
 | [agent-classes.md](agent-classes.md) | The thirteen classes the claude-agent executor advertises. |
 | [http-node-classes.md](http-node-classes.md) | The nine classes the http-node executor advertises. |
 | [verifier-classes.md](verifier-classes.md) | The five classes the two verifier executors advertise, and which executor emits which. |
-| [spawn-failed.md](spawn-failed.md) | `spawn_failed` and the five sibling classes the host-agent proxy emits. |
+| [spawn-failed.md](spawn-failed.md) | `spawn_failed` and the five sibling classes the host-daemon proxy emits. |
 | [http-api-rejections.md](http-api-rejections.md) | The control API's synchronous rejections: four envelope shapes, the status codes that depart from convention, and the validation response. |

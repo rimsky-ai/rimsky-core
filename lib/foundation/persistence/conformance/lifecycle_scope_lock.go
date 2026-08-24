@@ -23,10 +23,34 @@ func testLifecycleScopeLockSerializesFanOutSection(t *testing.T, d persistence.D
 	}
 
 	const (
-		peerName = "lifecycle-lock-peer"
-		scopeID  = "lifecycle-lock-scope-1"
+		serviceName = "lifecycle-lock-service"
+		scopeID     = "lifecycle-lock-scope-1"
 	)
-	scopeKind := persistence.LifecycleIdempotencyScopeRunScope
+	scopeKind := persistence.LifecycleScopeRunScope
+
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return store.LifecycleOutbox().Stage(ctx, persistence.LifecycleOutboxRow{
+			ClaimProducerName: serviceName,
+			ScopeKind:         scopeKind,
+			ScopeID:           scopeID,
+			Event:             "EventRunScopeTerminal",
+			Payload:           []byte(`{}`),
+		}, tx)
+	}); err != nil {
+		t.Fatalf("stage the run-scope terminal every racer competes to deliver: %v", err)
+	}
+	var staged []persistence.LifecycleOutboxRow
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := store.LifecycleOutbox().ListPendingForScope(ctx, scopeKind, scopeID, tx)
+		staged = rows
+		return err
+	}); err != nil {
+		t.Fatalf("read the staged row back: %v", err)
+	}
+	if len(staged) != 1 {
+		t.Fatalf("staging left %d rows, want 1", len(staged))
+	}
+	seq := staged[0].Seq
 
 	const racers = 8
 	var deliveries atomic.Int32
@@ -41,20 +65,15 @@ func testLifecycleScopeLockSerializesFanOutSection(t *testing.T, d persistence.D
 				if err := coord.TakeLifecycleScopeLock(ctx, scopeKind, scopeID, tx); err != nil {
 					return err
 				}
-				row, err := store.LifecycleIdempotency().Get(ctx, peerName, scopeKind, scopeID, tx)
+				row, err := store.LifecycleOutbox().GetBySeq(ctx, seq, tx)
 				if err != nil {
 					return err
 				}
-				if row != nil && row.State == persistence.LifecycleIdempotencyStateRunScopeTerminal {
+				if row == nil {
 					return nil
 				}
 				deliveries.Add(1)
-				return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-					ClaimProducerName: peerName,
-					ScopeKind:         scopeKind,
-					ScopeID:           scopeID,
-					State:             persistence.LifecycleIdempotencyStateRunScopeTerminal,
-				}, tx)
+				return store.LifecycleOutbox().DeleteBySeq(ctx, seq, tx)
 			})
 		}()
 	}
@@ -62,12 +81,12 @@ func testLifecycleScopeLockSerializesFanOutSection(t *testing.T, d persistence.D
 
 	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("racer %d: fan-out section tx: %v", i, err)
+			t.Fatalf("racer %d: delivery section tx: %v", i, err)
 		}
 	}
 	if got := deliveries.Load(); got != 1 {
 		t.Fatalf("deliveries = %d, want exactly 1: the lifecycle scope lock must serialize the "+
-			"[check row, deliver, mark row] section across concurrent transactions so racing "+
-			"fan-outs for one scope converge to a single delivery", got)
+			"[re-read row, deliver, delete row] section across concurrent transactions so racing "+
+			"drains converge to a single delivery", got)
 	}
 }

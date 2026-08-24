@@ -81,7 +81,7 @@ func (f *fakeProber) ProbeClaimProducerDeclaredErrorClasses(_ context.Context, _
 func TestRunHandshake_ReachableExecutor(t *testing.T) {
 	prober := newFakeProber()
 	disc := RunHandshake(context.Background(), prober,
-		[]PeerSpec{{Name: "claude-agent", Endpoint: "claude-agent:9090"}},
+		[]ServiceSpec{{Name: "claude-agent", Endpoint: "claude-agent:9090"}},
 		nil,
 		slog.Default(),
 	)
@@ -102,7 +102,7 @@ func TestRunHandshake_ClaimProducerDeclaredErrorClasses(t *testing.T) {
 	prober.producerClasses = []string{"pg/claim_unavailable", "pg/swap_failed"}
 	disc := RunHandshake(context.Background(), prober,
 		nil,
-		[]PeerSpec{{Name: "items-store", Endpoint: "items-store:9090"}},
+		[]ServiceSpec{{Name: "items-store", Endpoint: "items-store:9090"}},
 		slog.Default(),
 	)
 	got, ok := disc.GetClaimProducer("items-store")
@@ -126,7 +126,7 @@ func TestRunHandshake_ClaimProducerDeclaredErrorClasses_ObsUnreachable(t *testin
 	prober.producerClasses = []string{"pg/claim_unavailable"}
 	disc := RunHandshake(context.Background(), prober,
 		nil,
-		[]PeerSpec{{Name: "items-store", Endpoint: "items-store:9090"}},
+		[]ServiceSpec{{Name: "items-store", Endpoint: "items-store:9090"}},
 		slog.Default(),
 	)
 	got, _ := disc.GetClaimProducer("items-store")
@@ -142,7 +142,7 @@ func TestRunHandshake_UnreachableExecutor_NoError(t *testing.T) {
 	prober := newFakeProber()
 	prober.setExecutorErr(errors.New("dial timeout"))
 	disc := RunHandshake(context.Background(), prober,
-		[]PeerSpec{{Name: "x", Endpoint: "host:9090"}},
+		[]ServiceSpec{{Name: "x", Endpoint: "host:9090"}},
 		nil,
 		slog.Default(),
 	)
@@ -162,7 +162,7 @@ func TestRefreshLoop_HealsUnreachable(t *testing.T) {
 	prober := newFakeProber()
 	prober.setExecutorErr(errors.New("initial fail"))
 	disc := RunHandshake(context.Background(), prober,
-		[]PeerSpec{{Name: "x", Endpoint: "host:9090"}},
+		[]ServiceSpec{{Name: "x", Endpoint: "host:9090"}},
 		nil,
 		slog.Default(),
 	)
@@ -183,13 +183,13 @@ func TestRefreshLoop_HealsUnreachable(t *testing.T) {
 func TestRefreshLoop_SkipsStaticEntries(t *testing.T) {
 	prober := newFakeProber()
 	disc := NewDiscovery(prober)
-	disc.SetExecutor(PeerEntry{
+	disc.SetExecutor(ServiceEntry{
 		Name:         "static-exec",
 		Endpoint:     "static-exec:9090",
 		Reachability: ReachabilityUnreachable,
 		Static:       true,
 	})
-	disc.SetClaimProducer(PeerEntry{
+	disc.SetClaimProducer(ServiceEntry{
 		Name:         "static-store",
 		Endpoint:     "static-store:9090",
 		Reachability: ReachabilityUnreachable,
@@ -215,7 +215,7 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 	srv, addr := stubtest.Listen(t, stub.New())
 
 	disc := RunHandshake(context.Background(), NewGRPCProber(),
-		[]PeerSpec{{Name: "x", Endpoint: addr}},
+		[]ServiceSpec{{Name: "x", Endpoint: addr}},
 		nil,
 		slog.Default(),
 	)
@@ -252,8 +252,8 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 func TestRunHandshake_ThreadsTLSMode(t *testing.T) {
 	prober := newFakeProber()
 	_ = RunHandshake(context.Background(), prober,
-		[]PeerSpec{{Name: "exec-tls", Endpoint: "exec:9090", TLS: "required"}},
-		[]PeerSpec{{Name: "store-tls", Endpoint: "store:9090", TLS: "required"}},
+		[]ServiceSpec{{Name: "exec-tls", Endpoint: "exec:9090", TLS: "required"}},
+		[]ServiceSpec{{Name: "store-tls", Endpoint: "store:9090", TLS: "required"}},
 		slog.Default(),
 	)
 	prober.mu.Lock()

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 )
 
 type Allowlist struct {
@@ -68,6 +68,7 @@ type Opts struct {
 	ExposeEnvAllowlist         Allowlist
 	ObservabilityHTTPBridgeURL string
 	StubMode                   bool
+	McpModules                 map[string]ModuleMcpFactory
 }
 
 // @decision: default-port-allocation
@@ -97,7 +98,7 @@ func LoadOptsFromEnv() (Opts, error) {
 	if err != nil {
 		return Opts{}, err
 	}
-	grpcPort, err = agentport.Override(grpcPort)
+	grpcPort, err = daemonport.Override(grpcPort)
 	if err != nil {
 		return Opts{}, err
 	}

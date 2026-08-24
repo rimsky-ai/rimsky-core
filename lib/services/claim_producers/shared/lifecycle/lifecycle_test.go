@@ -62,7 +62,8 @@ func TestServer_AllSevenRPCsImplemented(t *testing.T) {
 			t.Errorf("%s: unexpected error %v", c.name, err)
 		}
 		if status.Code(err) == codes.Unimplemented {
-			t.Errorf("%s: falls through to Unimplemented base", c.name)
+			t.Errorf("%s: falls through to Unimplemented base, so a delivery routed at this subscriber retries "+
+				"on backoff forever and reads as a stall", c.name)
 		}
 	}
 }

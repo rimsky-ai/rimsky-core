@@ -20,7 +20,13 @@ import (
 
 const readerOpenTimeout = 2 * time.Second
 
-func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) CheckResult {
+type readerOpenBound func(context.Context) (context.Context, context.CancelFunc)
+
+func boundReaderOpenByTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, readerOpenTimeout)
+}
+
+func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities, bound readerOpenBound) CheckResult {
 	if !caps.Contains(claimproducer.WriteSemanticsStagedAsync) {
 		return CheckResult{Name: "Serialization9bSkipped"}
 	}
@@ -46,7 +52,7 @@ func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, ca
 		_ = c.Abandon(ctx, writerID, writerOut.Result.ClaimScope, writerOut.Result.Address, "")
 	}()
 
-	blocked, probeErr, readerCleanup := openConcurrentReaders(ctx, c, selector, writerOut.Result.ClaimScope)
+	blocked, probeErr, readerCleanup := openConcurrentReaders(ctx, c, selector, writerOut.Result.ClaimScope, bound)
 
 	readerCleanup(ctx, c)
 
@@ -68,13 +74,14 @@ func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, ca
 }
 
 type readerOutcome struct {
-	claimID claimproducer.ClaimID
-	out     claimproducer.OpenOutcome
-	err     error
+	claimID  claimproducer.ClaimID
+	out      claimproducer.OpenOutcome
+	err      error
+	boundErr error
 }
 
 func openConcurrentReaders(
-	ctx context.Context, c claimproducer.ClaimProducer, selector string, writerScope []byte,
+	ctx context.Context, c claimproducer.ClaimProducer, selector string, writerScope []byte, bound readerOpenBound,
 ) (blocked bool, probeErr error, cleanup func(context.Context, claimproducer.ClaimProducer)) {
 	const readerCount = 2
 	outcomes := make([]readerOutcome, readerCount)
@@ -83,7 +90,7 @@ func openConcurrentReaders(
 	for i := range outcomes {
 		go func(idx int) {
 			defer wg.Done()
-			readerCtx, cancel := context.WithTimeout(ctx, readerOpenTimeout)
+			readerCtx, cancel := bound(ctx)
 			defer cancel()
 			readerID := claimproducer.ClaimID(uuid.New().String())
 			spec := claimproducer.ClaimSpec{
@@ -93,14 +100,14 @@ func openConcurrentReaders(
 				Alias:        "conformance-9b-reader",
 			}
 			out, err := c.Open(readerCtx, readerID, spec)
-			outcomes[idx] = readerOutcome{claimID: readerID, out: out, err: err}
+			outcomes[idx] = readerOutcome{claimID: readerID, out: out, err: err, boundErr: readerCtx.Err()}
 		}(i)
 	}
 	wg.Wait()
 
 	for _, o := range outcomes {
 		switch {
-		case errors.Is(o.err, context.DeadlineExceeded) || status.Code(o.err) == codes.DeadlineExceeded:
+		case readerOpenOutlastedItsBound(ctx, o):
 			blocked = true
 		case o.err != nil:
 			if probeErr == nil {
@@ -127,4 +134,17 @@ func openConcurrentReaders(
 		}
 	}
 	return blocked, probeErr, cleanup
+}
+
+func readerOpenOutlastedItsBound(runCtx context.Context, o readerOutcome) bool {
+	if o.err == nil || runCtx.Err() != nil || o.boundErr == nil {
+		return false
+	}
+	if errors.Is(o.err, o.boundErr) {
+		return true
+	}
+	if errors.Is(o.boundErr, context.DeadlineExceeded) {
+		return status.Code(o.err) == codes.DeadlineExceeded
+	}
+	return status.Code(o.err) == codes.Canceled
 }

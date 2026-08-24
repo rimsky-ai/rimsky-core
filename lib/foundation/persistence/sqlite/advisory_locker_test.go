@@ -5,10 +5,10 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/internal/awaited"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -118,10 +118,27 @@ func TestAcquireMigrationLock_HonorsContextCancel(t *testing.T) {
 	}
 	defer func() { _ = releaseA() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if _, err := lockerB.AcquireMigrationLock(ctx); err == nil {
-		t.Fatal("locker B AcquireMigrationLock returned nil error while locker A held the lock and ctx expired")
+	ctx, cancel := context.WithCancel(context.Background())
+	blocked := make(chan error, 1)
+	go func() {
+		rel, err := lockerB.AcquireMigrationLock(ctx)
+		if rel != nil {
+			_ = rel()
+		}
+		blocked <- err
+	}()
+
+	awaited.Until(t, "locker B to find the migration lock contended at least twice", func() bool {
+		return lockerB.contendedPolls() >= 2
+	})
+	cancel()
+
+	err = <-blocked
+	if err == nil {
+		t.Fatal("locker B AcquireMigrationLock returned a nil error after its context was cancelled while locker A held the lock")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("locker B AcquireMigrationLock returned %v, want a context.Canceled error", err)
 	}
 }
 

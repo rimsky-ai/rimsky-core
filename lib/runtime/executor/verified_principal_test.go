@@ -32,7 +32,7 @@ func leafCert(t *testing.T, ca *pki.CA, principal string) *x509.Certificate {
 	return cert
 }
 
-func TestVerifiedPeerPrincipal_ExtractsFromVerifiedChain(t *testing.T) {
+func TestVerifiedServicePrincipal_ExtractsFromVerifiedChain(t *testing.T) {
 	ca, err := pki.GenerateCA(time.Now())
 	if err != nil {
 		t.Fatalf("GenerateCA: %v", err)
@@ -43,16 +43,16 @@ func TestVerifiedPeerPrincipal_ExtractsFromVerifiedChain(t *testing.T) {
 			VerifiedChains: [][]*x509.Certificate{{server, ca.Certificate()}},
 		},
 	}
-	if got := verifiedPeerPrincipal(info); got != "executor-server-1" {
-		t.Fatalf("verifiedPeerPrincipal = %q, want the dispatched executor's verified principal", got)
+	if got := verifiedServicePrincipal(info); got != "executor-server-1" {
+		t.Fatalf("verifiedServicePrincipal = %q, want the dispatched executor's verified principal", got)
 	}
 }
 
-func TestVerifiedPeerPrincipal_EmptyWithoutTLS(t *testing.T) {
-	if got := verifiedPeerPrincipal(nil); got != "" {
-		t.Fatalf("verifiedPeerPrincipal(nil auth info) = %q, want \"\" (plaintext dispatch has no principal)", got)
+func TestVerifiedServicePrincipal_EmptyWithoutTLS(t *testing.T) {
+	if got := verifiedServicePrincipal(nil); got != "" {
+		t.Fatalf("verifiedServicePrincipal(nil auth info) = %q, want \"\" (plaintext dispatch has no principal)", got)
 	}
-	if got := verifiedPeerPrincipal(credentials.TLSInfo{}); got != "" {
-		t.Fatalf("verifiedPeerPrincipal(no verified chains) = %q, want \"\"", got)
+	if got := verifiedServicePrincipal(credentials.TLSInfo{}); got != "" {
+		t.Fatalf("verifiedServicePrincipal(no verified chains) = %q, want \"\"", got)
 	}
 }

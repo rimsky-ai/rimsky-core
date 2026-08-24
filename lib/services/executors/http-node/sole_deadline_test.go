@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -28,7 +27,7 @@ func TestOutboundCallBoundedOnlyByDispatchDeadline(t *testing.T) {
 	for _, k := range []string{
 		"RIMSKY_EXECUTOR_HOST",
 		"RIMSKY_EXECUTOR_PORT_GRPC",
-		"RIMSKY_AGENT_PORT",
+		"RIMSKY_DAEMON_PORT",
 		"RIMSKY_EXECUTOR_PORT_HTTP",
 		"RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES",
 		"RIMSKY_EXECUTOR_STUB_MODE",
@@ -48,8 +47,10 @@ func TestOutboundCallBoundedOnlyByDispatchDeadline(t *testing.T) {
 			"bound to the per-node deadline exactly as the Opts path does", timeout)
 	}
 
+	entered := make(chan struct{})
 	blocked := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
 		<-r.Context().Done()
 		close(blocked)
 	}))
@@ -65,8 +66,11 @@ func TestOutboundCallBoundedOnlyByDispatchDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("structpb.NewStruct: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
+	ctx, expireDeadline := newFiredDeadlineContext(context.Background())
+	go func() {
+		<-entered
+		expireDeadline()
+	}()
 	outcome, err := s.Execute(ctx, &genv1.ExecuteRequest{
 		NodeId: "n", InstanceId: "i", NodeType: "http",
 		Attributes: attrs,

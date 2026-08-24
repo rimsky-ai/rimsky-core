@@ -51,7 +51,7 @@ func (c *advisoryLockerImpl) TrySchedulerTick(ctx context.Context) (bool, func()
 	}
 	release := func() {
 		if _, err := conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", RimskySchedulerTickLockKey); err != nil {
-			slog.Default().Warn("scheduler tick advisory unlock failed",
+			slog.Default().Warn("PERSISTENCE.SCHEDULERTICKADVISORYLOCK.UNLOCKFAILED",
 				"lock_key", RimskySchedulerTickLockKey, "err", err)
 		}
 		conn.Release()
@@ -73,7 +73,7 @@ func (c *advisoryLockerImpl) AcquireMigrationLock(ctx context.Context) (func() e
 		_, err := conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", advisoryMigrationLockKey)
 		conn.Release()
 		if err != nil {
-			slog.Default().Warn("migration advisory unlock failed",
+			slog.Default().Warn("PERSISTENCE.MIGRATIONADVISORYLOCK.UNLOCKFAILED",
 				"lock_key", advisoryMigrationLockKey, "err", err)
 			return fmt.Errorf("postgres.AcquireMigrationLock: unlock: %w", err)
 		}
@@ -104,7 +104,7 @@ func (c *advisoryLockerImpl) TakeClaimScopeLock(ctx context.Context, claimProduc
 	return nil
 }
 
-func (c *advisoryLockerImpl) TakeLifecycleScopeLock(ctx context.Context, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) error {
+func (c *advisoryLockerImpl) TakeLifecycleScopeLock(ctx context.Context, scopeKind persistence.LifecycleScopeKind, scopeID string, tx persistence.Tx) error {
 	pgT, err := unwrapTx(tx)
 	if err != nil {
 		return fmt.Errorf("postgres.TakeLifecycleScopeLock: %w", err)

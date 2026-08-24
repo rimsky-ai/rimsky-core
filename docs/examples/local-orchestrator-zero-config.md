@@ -43,7 +43,7 @@ rimsky run template.yml
 ```
 
 Nothing else needs to be standing. The transcript records
-`bundled executor registered in-process` for `http-node`, `verifier-http` and
+`BUNDLED.EXECUTOR.REGISTERED` for `http-node`, `verifier-http` and
 `verifier-shape-checks`. The claude-agent executor and the claim producers are
 skipped as unconfigured, which costs nothing because the template does not name
 them.

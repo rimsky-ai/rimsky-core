@@ -6,7 +6,6 @@ package claudeagent
 import (
 	"encoding/json"
 	"log/slog"
-	"sync"
 
 	"github.com/google/uuid"
 )
@@ -22,24 +21,6 @@ type ModuleMcpServer struct {
 }
 
 type ModuleMcpFactory func() *ModuleMcpServer
-
-var (
-	moduleRegistryMu sync.RWMutex
-	moduleRegistry   = map[string]ModuleMcpFactory{}
-)
-
-func RegisterMcpModule(specifier string, factory ModuleMcpFactory) {
-	moduleRegistryMu.Lock()
-	defer moduleRegistryMu.Unlock()
-	moduleRegistry[specifier] = factory
-}
-
-func lookupMcpModule(specifier string) (ModuleMcpFactory, bool) {
-	moduleRegistryMu.RLock()
-	defer moduleRegistryMu.RUnlock()
-	factory, ok := moduleRegistry[specifier]
-	return factory, ok
-}
 
 type moduleToolProvider struct {
 	module *ModuleMcpServer
@@ -75,11 +56,11 @@ func (p *moduleToolProvider) callTool(name string, arguments json.RawMessage) (m
 	return nil, &jsonRPCError{Code: -32602, Message: "Unknown tool: " + name}
 }
 
-func standUpModuleLoopback(serverName string, specifier string, logger *slog.Logger) (url string, bearerToken string, teardown func() error, err error) {
-	factory, ok := lookupMcpModule(specifier)
+func standUpModuleLoopback(serverName string, specifier string, modules map[string]ModuleMcpFactory, logger *slog.Logger) (url string, bearerToken string, teardown func() error, err error) {
+	factory, ok := modules[specifier]
 	if !ok {
 		return "", "", nil, &CliConfigError{Message: "mcp server \"" + serverName + "\" module \"" + specifier +
-			"\" is not a registered MCP module (register it via RegisterMcpModule)"}
+			"\" is not a declared MCP module (declare it in Opts.McpModules)"}
 	}
 	module := factory()
 	token := uuid.NewString()

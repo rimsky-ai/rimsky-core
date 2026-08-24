@@ -10,10 +10,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 )
 
 type slogAdapter struct{ l *slog.Logger }
@@ -27,31 +27,31 @@ const defaultGRPCPort = 9083
 
 func main() {
 	host := envOr("RIMSKY_SENSOR_OBJECT_STORE_HOST", "0.0.0.0")
-	port, err := agentport.Resolve("RIMSKY_SENSOR_OBJECT_STORE_PORT", defaultGRPCPort)
+	port, err := daemonport.Resolve("RIMSKY_SENSOR_OBJECT_STORE_PORT", defaultGRPCPort)
 	if err != nil {
-		slog.Error("sensor-object-store port", "error", err.Error())
+		slog.Error("SENSOROBJECTSTORE.PORT.INVALID", "error", err.Error())
 		os.Exit(1)
 	}
 	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 
 	slog.SetDefault(serverkit.NewJSONLogger())
-	slog.Info("sensor-object-store starting",
+	slog.Info("SENSOROBJECTSTORE.PROCESS.STARTING",
 		"grpc_port", port,
 		"rimsky_endpoint", rimskyEndpoint)
 
 	svc := NewSensorService(rimskyEndpoint, slogAdapter{l: slog.Default()})
 
 	for _, name := range registerBackendsFromEnv(svc) {
-		slog.Info("sensor-object-store backend registered", "backend", name)
+		slog.Info("SENSOROBJECTSTORE.BACKEND.REGISTERED", "backend", name)
 	}
 
 	// @decision: graceful-shutdown
 	ctx, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
 	defer stopSignals()
 
-	identity, err := peerauth.LoadFromEnv(ctx, "sensor-object-store")
+	identity, err := serviceauth.LoadFromEnv(ctx, "sensor-object-store")
 	if err != nil {
-		slog.Error("sensor-object-store peer-auth", "error", err.Error())
+		slog.Error("SENSOROBJECTSTORE.SERVICEAUTH.ENROLLFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	svc.SetPublishClient(identity.OutboundHTTPClient(30 * time.Second))
@@ -59,20 +59,20 @@ func main() {
 
 	state, err := openStateDB(ctx)
 	if err != nil {
-		slog.Error("open state db", "error", err.Error())
+		slog.Error("SENSOROBJECTSTORE.STATEDB.OPENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	if state != nil {
 		svc.AttachStateDB(state)
 		defer func() { _ = state.Close() }()
-		slog.Info("sensor-object-store state db attached")
+		slog.Info("SENSOROBJECTSTORE.STATEDB.ATTACHED")
 	}
 
 	go svc.Run(ctx)
 
 	lis, err := serverkit.Listen(host, port)
 	if err != nil {
-		slog.Error("grpc listen", "error", err.Error())
+		slog.Error("SENSOROBJECTSTORE.GRPC.LISTENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	srv := identity.GRPCServer()

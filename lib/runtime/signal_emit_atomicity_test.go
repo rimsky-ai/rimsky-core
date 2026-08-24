@@ -89,7 +89,7 @@ func seedSignalAtomicityFixture(t *testing.T) (tables persistence.Tables, sender
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instanceID, TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err

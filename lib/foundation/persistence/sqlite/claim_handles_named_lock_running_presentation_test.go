@@ -41,7 +41,7 @@ func TestCountByNamedLock_DrivenSolelyByClaimHandleStateNotNodeRunState(t *testi
 		t.Fatalf("seed template: %v", err)
 	}
 	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES (?, ?, 'test-agent')`,
+		`INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES (?, ?, 'test-daemon')`,
 		instanceID, templateID,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)

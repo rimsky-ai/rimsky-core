@@ -16,14 +16,14 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func producerErrorClassOf(err error) string {
-	var pcErr *peer.ProducerCallError
+	var pcErr *service.ProducerCallError
 	if errors.As(err, &pcErr) {
 		return pcErr.ErrorClass
 	}
@@ -218,7 +218,7 @@ func tryAcquireBatch(
 			}
 			return nil
 		}); err != nil {
-			args.Logger.Warn("tryAcquire: post-acquisition audit tx failed; work_started/lock_acquired events lost",
+			args.Logger.Warn("RUNNER.POSTACQUISITIONAUDIT.FAILED", "site", "tryAcquire", "detail", "the work_started and lock_acquired events are lost",
 				"dispatch_id", acq.NodeRunID.String(),
 				"node_id", acq.NodeID.String(),
 				"error", err.Error())
@@ -271,7 +271,7 @@ func acquireOneCandidateWithRetry(
 			return acquisition{}, false, nil
 		}
 		if err == errAcquireRestampLost {
-			args.Logger.Info("tryAcquire: sub-claim holder restamp lost CAS to concurrent supervisor; skipping candidate",
+			args.Logger.Info("RUNNER.SUBCLAIMHOLDERRESTAMP.RACED", "site", "tryAcquire", "detail", "a concurrent supervisor won the compare-and-set; skipping the candidate",
 				"dispatch_id", cand.NodeRunID.String(),
 				"node_id", cand.NodeID.String())
 			return acquisition{}, false, nil
@@ -434,7 +434,7 @@ func tryAcquire(
 			return acquisition{}, false, fmt.Errorf("tryAcquire: run-tree GetByID: %w", err)
 		}
 		if row == nil {
-			args.Logger.Info("tryAcquire: run row absent (retired between selection and acquire); skipping candidate",
+			args.Logger.Info("RUNNER.RUNROW.ABSENT", "site", "tryAcquire", "detail", "the row retired between selection and acquire; skipping the candidate",
 				"dispatch_id", cand.NodeRunID.String(),
 				"node_id", cand.NodeID.String())
 			return acquisition{}, false, nil
@@ -671,7 +671,7 @@ func bindLeafCandidateHandles(ctx context.Context, args RunArgs, out *acquisitio
 	}
 	rows, err := ch.ListByNodeRun(ctx, cand.NodeRunID, tx)
 	if err != nil {
-		args.Logger.Warn("bindLeafCandidateHandles: ListByNodeRun failed; leaf candidate_handle left empty",
+		args.Logger.Warn("RUNNER.LEAFCANDIDATEHANDLES.LISTFAILED", "site", "bindLeafCandidateHandles", "detail", "the leaf candidate_handle is left empty",
 			"run_id", cand.NodeRunID.String(),
 			"error", err.Error())
 		return

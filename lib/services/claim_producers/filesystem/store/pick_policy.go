@@ -26,12 +26,12 @@ const batchLeaseIDPrefix = "batchlease~"
 func fsyncDir(dir string) {
 	d, err := os.Open(dir)
 	if err != nil {
-		slog.Warn("filesystem store: fsync dir: open", "dir", dir, "error", err.Error())
+		slog.Warn("FILESYSTEMSTORE.DIRFSYNC.OPENFAILED", "dir", dir, "error", err.Error())
 		return
 	}
 	defer func() { _ = d.Close() }()
 	if err := d.Sync(); err != nil {
-		slog.Warn("filesystem store: fsync dir", "dir", dir, "error", err.Error())
+		slog.Warn("FILESYSTEMSTORE.DIRFSYNC.FAILED", "dir", dir, "error", err.Error())
 	}
 }
 

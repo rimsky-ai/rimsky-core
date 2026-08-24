@@ -383,7 +383,7 @@ func (c *queryErrConn) Query(ctx context.Context, sql string, args ...any) (Rows
 }
 
 func TestRun_QueryErrorIsInfraNotCheckFailure(t *testing.T) {
-	conn := &queryErrConn{err: errors.New("connection reset by peer")}
+	conn := &queryErrConn{err: errors.New("connection reset by service")}
 	specs := []CheckSpec{
 		{Kind: "row_count_absolute", Config: map[string]any{"min": 1000}},
 	}
@@ -398,7 +398,7 @@ func TestRun_QueryErrorIsInfraNotCheckFailure(t *testing.T) {
 	if r.Error == "" {
 		t.Fatal("expected Result.Error to be populated for a query infrastructure failure")
 	}
-	if !strings.Contains(r.Error, "connection reset by peer") {
+	if !strings.Contains(r.Error, "connection reset by service") {
 		t.Fatalf("Result.Error = %q, want it to mention the underlying error", r.Error)
 	}
 	if r.Message != "" {

@@ -17,30 +17,30 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/mtlstest"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 )
 
 const bridgeServerName = "http-node"
 
-func mtlsBridgeIdentity(t *testing.T, ca *mtlstest.CA) *peerauth.Identity {
+func mtlsBridgeIdentity(t *testing.T, ca *mtlstest.CA) *serviceauth.Identity {
 	t.Helper()
 	enrollSrv := ca.EnrollServer(bridgeServerName, "bridge-key")
 	t.Cleanup(enrollSrv.Close)
-	cfg := peerauth.Config{
-		Mode:          enroll.PeerAuthMTLS,
+	cfg := serviceauth.Config{
+		Mode:          enroll.ServiceAuthMTLS,
 		ControlAPIURL: enrollSrv.URL,
 		APIKey:        "bridge-key",
 		Label:         bridgeServerName,
 	}
 	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
-	id, err := peerauth.Load(context.Background(), cfg, client, time.Now)
+	id, err := serviceauth.Load(context.Background(), cfg, client, time.Now)
 	if err != nil {
 		t.Fatalf("load mtls bridge identity: %v", err)
 	}
 	return id
 }
 
-func serveBridge(t *testing.T, s *Server, id *peerauth.Identity) string {
+func serveBridge(t *testing.T, s *Server, id *serviceauth.Identity) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -146,7 +146,7 @@ func TestBridgeMTLS_RejectsPlaintext(t *testing.T) {
 }
 
 func TestBridgeNone_ServesPlaintext(t *testing.T) {
-	id, err := peerauth.Load(context.Background(), peerauth.Config{Mode: enroll.PeerAuthNone}, nil, time.Now)
+	id, err := serviceauth.Load(context.Background(), serviceauth.Config{Mode: enroll.ServiceAuthNone}, nil, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}

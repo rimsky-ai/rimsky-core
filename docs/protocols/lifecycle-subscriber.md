@@ -22,7 +22,7 @@ All seven return `LifecycleAck`, an empty message. Return it to accept the event
 | `OnInstanceTerminated(OnInstanceTerminatedRequest)` | An instance is terminated |
 | `OnRunScopeTerminal(OnRunScopeTerminalRequest)` | A run scope reaches a terminal state |
 
-`LifecycleSubscriber` declares no `Capabilities` RPC. An operator declares you under any peer block with `protocols: [lifecycle_subscriber]`.
+`LifecycleSubscriber` declares no `Capabilities` RPC. An operator declares you under any service block with `protocols: [lifecycle_subscriber]`.
 
 ## The requests
 
@@ -40,18 +40,18 @@ All seven return `LifecycleAck`, an empty message. Return it to accept the event
 
 ## Who gets called
 
-Rimsky calls only the subscribers a template references. A template names its peers, and rimsky fans an event out to that set, not to every subscriber in the deployment.
+Rimsky calls only the subscribers a template references. A template names its services, and rimsky fans an event out to that set, not to every subscriber in the deployment.
 
 ## Delivery and idempotency
 
-Rimsky keeps a delivery ledger keyed by peer, scope kind, and scope id. Before it calls you, it reads that ledger; when the recorded state already matches the event, it skips the call. After you acknowledge, it records the new state in the same transaction.
+The transaction that performs a transition stages your delivery as a row in a persisted outbox, and a drain delivers it after that transaction commits. The drain deletes the row in the same transaction that records your acknowledgement, and retries a failed delivery on a widening interval.
 
 Two consequences for your implementation:
 
-- **Be idempotent.** Rimsky redelivers an event whose acknowledgement it failed to record.
-- **Your refusal blocks the operation.** An error from your callback fails the control-API request that triggered it. A failed `OnTemplateRegistered` answers the register call with `500` and a `details` map naming each peer and its error, and the template does not register.
+- **Be idempotent.** Rimsky delivers each event at least once: a crash between your acknowledgement and the row's deletion redelivers it, and a genuine re-transition fires the callback again.
+- **Your refusal does not block the operation.** An error from your callback leaves the row pending for retry; the transition it reports has already committed. Refusing a template is validation's job, through the validation protocol.
 
-Answer promptly and acknowledge before doing slow work.
+Answer promptly and acknowledge before doing slow work: a stream is ordered per service and per object, so a slow handler holds up your own later events for that object.
 
 ## The HTTP+JSON bridge
 

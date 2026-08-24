@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/enroll"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 )
 
 func TestMountBridge_RejectsOversizedBody(t *testing.T) {
@@ -21,7 +21,7 @@ func TestMountBridge_RejectsOversizedBody(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	MountBridge(mux, testServer(t, true))
-	id, err := peerauth.Load(t.Context(), peerauth.Config{Mode: enroll.PeerAuthNone}, nil, time.Now)
+	id, err := serviceauth.Load(t.Context(), serviceauth.Config{Mode: enroll.ServiceAuthNone}, nil, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}

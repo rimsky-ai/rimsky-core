@@ -71,6 +71,7 @@ func StartClaudeAgentFakeOnNetwork(
 		if t.Failed() {
 			DumpClaudeAgentFakeLogsForFailure(t, c)
 		}
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)

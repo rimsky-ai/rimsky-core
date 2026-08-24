@@ -40,7 +40,7 @@ func resolveAcqScope(ctx context.Context, args RunArgs, acq *acquisition, tx per
 	}
 	if err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("resolveAcqScope: run-scope GetByID failed; downstream will omit parent_run_id/partition_key",
+			args.Logger.Warn("RUNNER.RUNSCOPE.LOOKUPFAILED", "site", "resolveAcqScope", "detail", "downstream omits parent_run_id and partition_key",
 				"run_scope_id", acq.RunScopeID.String(),
 				"error", err.Error())
 		}

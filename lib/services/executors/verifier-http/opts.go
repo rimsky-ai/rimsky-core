@@ -6,7 +6,7 @@ package verifierhttp
 import (
 	"os"
 
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
@@ -18,12 +18,12 @@ type Opts struct {
 	Port     int
 	StubMode bool
 
-	// @concept: peer-auth
+	// @concept: service-auth
 	Egress egress.Guard
 }
 
 func LoadOptsFromEnv() (Opts, error) {
-	port, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", defaultGRPCPort)
+	port, err := daemonport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", defaultGRPCPort)
 	if err != nil {
 		return Opts{}, err
 	}

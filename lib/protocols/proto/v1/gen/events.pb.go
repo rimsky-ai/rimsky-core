@@ -74,6 +74,8 @@ const (
 	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY             OperationalKind = 76
 	OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED           OperationalKind = 81
 	OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED          OperationalKind = 82
+	OperationalKind_OPERATIONAL_KIND_SERVICE_DELIVERY_STALLED        OperationalKind = 90
+	OperationalKind_OPERATIONAL_KIND_SERVICE_DELIVERY_RECOVERED      OperationalKind = 91
 )
 
 // Enum value maps for OperationalKind.
@@ -124,6 +126,8 @@ var (
 		76: "OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY",
 		81: "OPERATIONAL_KIND_PARKED_RESUME_STARTED",
 		82: "OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED",
+		90: "OPERATIONAL_KIND_SERVICE_DELIVERY_STALLED",
+		91: "OPERATIONAL_KIND_SERVICE_DELIVERY_RECOVERED",
 	}
 	OperationalKind_value = map[string]int32{
 		"OPERATIONAL_KIND_UNSPECIFIED":                     0,
@@ -171,6 +175,8 @@ var (
 		"OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY":             76,
 		"OPERATIONAL_KIND_PARKED_RESUME_STARTED":           81,
 		"OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED":          82,
+		"OPERATIONAL_KIND_SERVICE_DELIVERY_STALLED":        90,
+		"OPERATIONAL_KIND_SERVICE_DELIVERY_RECOVERED":      91,
 	}
 )
 
@@ -3671,6 +3677,126 @@ func (x *InstanceTerminatedPayload) GetReason() string {
 	return ""
 }
 
+type ServiceDeliveryStalledPayload struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	Service                 string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
+	Outbox                  string                 `protobuf:"bytes,2,opt,name=outbox,proto3" json:"outbox,omitempty"`
+	PendingCount            int32                  `protobuf:"varint,3,opt,name=pending_count,json=pendingCount,proto3" json:"pending_count,omitempty"`
+	OldestPendingAgeSeconds int32                  `protobuf:"varint,4,opt,name=oldest_pending_age_seconds,json=oldestPendingAgeSeconds,proto3" json:"oldest_pending_age_seconds,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *ServiceDeliveryStalledPayload) Reset() {
+	*x = ServiceDeliveryStalledPayload{}
+	mi := &file_events_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServiceDeliveryStalledPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServiceDeliveryStalledPayload) ProtoMessage() {}
+
+func (x *ServiceDeliveryStalledPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServiceDeliveryStalledPayload.ProtoReflect.Descriptor instead.
+func (*ServiceDeliveryStalledPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *ServiceDeliveryStalledPayload) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
+func (x *ServiceDeliveryStalledPayload) GetOutbox() string {
+	if x != nil {
+		return x.Outbox
+	}
+	return ""
+}
+
+func (x *ServiceDeliveryStalledPayload) GetPendingCount() int32 {
+	if x != nil {
+		return x.PendingCount
+	}
+	return 0
+}
+
+func (x *ServiceDeliveryStalledPayload) GetOldestPendingAgeSeconds() int32 {
+	if x != nil {
+		return x.OldestPendingAgeSeconds
+	}
+	return 0
+}
+
+type ServiceDeliveryRecoveredPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Service       string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
+	Outbox        string                 `protobuf:"bytes,2,opt,name=outbox,proto3" json:"outbox,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ServiceDeliveryRecoveredPayload) Reset() {
+	*x = ServiceDeliveryRecoveredPayload{}
+	mi := &file_events_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServiceDeliveryRecoveredPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServiceDeliveryRecoveredPayload) ProtoMessage() {}
+
+func (x *ServiceDeliveryRecoveredPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServiceDeliveryRecoveredPayload.ProtoReflect.Descriptor instead.
+func (*ServiceDeliveryRecoveredPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *ServiceDeliveryRecoveredPayload) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
+func (x *ServiceDeliveryRecoveredPayload) GetOutbox() string {
+	if x != nil {
+		return x.Outbox
+	}
+	return ""
+}
+
 type TerminalSuccessSignalPayload struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Changed         bool                   `protobuf:"varint,1,opt,name=changed,proto3" json:"changed,omitempty"`
@@ -3683,7 +3809,7 @@ type TerminalSuccessSignalPayload struct {
 
 func (x *TerminalSuccessSignalPayload) Reset() {
 	*x = TerminalSuccessSignalPayload{}
-	mi := &file_events_proto_msgTypes[42]
+	mi := &file_events_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3695,7 +3821,7 @@ func (x *TerminalSuccessSignalPayload) String() string {
 func (*TerminalSuccessSignalPayload) ProtoMessage() {}
 
 func (x *TerminalSuccessSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[42]
+	mi := &file_events_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3708,7 +3834,7 @@ func (x *TerminalSuccessSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalSuccessSignalPayload.ProtoReflect.Descriptor instead.
 func (*TerminalSuccessSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{42}
+	return file_events_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *TerminalSuccessSignalPayload) GetChanged() bool {
@@ -3753,7 +3879,7 @@ type TerminalErrorSignalPayload struct {
 
 func (x *TerminalErrorSignalPayload) Reset() {
 	*x = TerminalErrorSignalPayload{}
-	mi := &file_events_proto_msgTypes[43]
+	mi := &file_events_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3765,7 +3891,7 @@ func (x *TerminalErrorSignalPayload) String() string {
 func (*TerminalErrorSignalPayload) ProtoMessage() {}
 
 func (x *TerminalErrorSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[43]
+	mi := &file_events_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3778,7 +3904,7 @@ func (x *TerminalErrorSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalErrorSignalPayload.ProtoReflect.Descriptor instead.
 func (*TerminalErrorSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{43}
+	return file_events_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *TerminalErrorSignalPayload) GetErrorClass() string {
@@ -3824,18 +3950,17 @@ func (x *TerminalErrorSignalPayload) GetTags() []string {
 }
 
 type TransientParkSignalPayload struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ResumeAt       *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`
-	Tags           []string               `protobuf:"bytes,2,rep,name=tags,proto3" json:"tags,omitempty"`
-	ScratchSize    int32                  `protobuf:"varint,3,opt,name=scratch_size,json=scratchSize,proto3" json:"scratch_size,omitempty"`
-	ScratchSpilled bool                   `protobuf:"varint,4,opt,name=scratch_spilled,json=scratchSpilled,proto3" json:"scratch_spilled,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ResumeAt      *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`
+	Tags          []string               `protobuf:"bytes,2,rep,name=tags,proto3" json:"tags,omitempty"`
+	ScratchSize   int32                  `protobuf:"varint,3,opt,name=scratch_size,json=scratchSize,proto3" json:"scratch_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TransientParkSignalPayload) Reset() {
 	*x = TransientParkSignalPayload{}
-	mi := &file_events_proto_msgTypes[44]
+	mi := &file_events_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3847,7 +3972,7 @@ func (x *TransientParkSignalPayload) String() string {
 func (*TransientParkSignalPayload) ProtoMessage() {}
 
 func (x *TransientParkSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[44]
+	mi := &file_events_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3860,7 +3985,7 @@ func (x *TransientParkSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransientParkSignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientParkSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{44}
+	return file_events_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *TransientParkSignalPayload) GetResumeAt() *timestamppb.Timestamp {
@@ -3884,13 +4009,6 @@ func (x *TransientParkSignalPayload) GetScratchSize() int32 {
 	return 0
 }
 
-func (x *TransientParkSignalPayload) GetScratchSpilled() bool {
-	if x != nil {
-		return x.ScratchSpilled
-	}
-	return false
-}
-
 type TransientRetrySignalPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Attempt       int32                  `protobuf:"varint,1,opt,name=attempt,proto3" json:"attempt,omitempty"`
@@ -3904,7 +4022,7 @@ type TransientRetrySignalPayload struct {
 
 func (x *TransientRetrySignalPayload) Reset() {
 	*x = TransientRetrySignalPayload{}
-	mi := &file_events_proto_msgTypes[45]
+	mi := &file_events_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3916,7 +4034,7 @@ func (x *TransientRetrySignalPayload) String() string {
 func (*TransientRetrySignalPayload) ProtoMessage() {}
 
 func (x *TransientRetrySignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[45]
+	mi := &file_events_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3929,7 +4047,7 @@ func (x *TransientRetrySignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransientRetrySignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientRetrySignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{45}
+	return file_events_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *TransientRetrySignalPayload) GetAttempt() int32 {
@@ -3977,7 +4095,7 @@ type TransientAwaitAsyncSignalPayload struct {
 
 func (x *TransientAwaitAsyncSignalPayload) Reset() {
 	*x = TransientAwaitAsyncSignalPayload{}
-	mi := &file_events_proto_msgTypes[46]
+	mi := &file_events_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3989,7 +4107,7 @@ func (x *TransientAwaitAsyncSignalPayload) String() string {
 func (*TransientAwaitAsyncSignalPayload) ProtoMessage() {}
 
 func (x *TransientAwaitAsyncSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[46]
+	mi := &file_events_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4002,7 +4120,7 @@ func (x *TransientAwaitAsyncSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransientAwaitAsyncSignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientAwaitAsyncSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{46}
+	return file_events_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *TransientAwaitAsyncSignalPayload) GetAsyncAckId() string {
@@ -4029,7 +4147,7 @@ type TransientInfraSignalPayload struct {
 
 func (x *TransientInfraSignalPayload) Reset() {
 	*x = TransientInfraSignalPayload{}
-	mi := &file_events_proto_msgTypes[47]
+	mi := &file_events_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4041,7 +4159,7 @@ func (x *TransientInfraSignalPayload) String() string {
 func (*TransientInfraSignalPayload) ProtoMessage() {}
 
 func (x *TransientInfraSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[47]
+	mi := &file_events_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4054,7 +4172,7 @@ func (x *TransientInfraSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransientInfraSignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientInfraSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{47}
+	return file_events_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *TransientInfraSignalPayload) GetReason() string {
@@ -4081,7 +4199,7 @@ type TransientReleaseAndRequeueSignalPayload struct {
 
 func (x *TransientReleaseAndRequeueSignalPayload) Reset() {
 	*x = TransientReleaseAndRequeueSignalPayload{}
-	mi := &file_events_proto_msgTypes[48]
+	mi := &file_events_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4093,7 +4211,7 @@ func (x *TransientReleaseAndRequeueSignalPayload) String() string {
 func (*TransientReleaseAndRequeueSignalPayload) ProtoMessage() {}
 
 func (x *TransientReleaseAndRequeueSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[48]
+	mi := &file_events_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4106,7 +4224,7 @@ func (x *TransientReleaseAndRequeueSignalPayload) ProtoReflect() protoreflect.Me
 
 // Deprecated: Use TransientReleaseAndRequeueSignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientReleaseAndRequeueSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{48}
+	return file_events_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *TransientReleaseAndRequeueSignalPayload) GetErrorClass() string {
@@ -4134,7 +4252,7 @@ type AttributeChangedSignalPayload struct {
 
 func (x *AttributeChangedSignalPayload) Reset() {
 	*x = AttributeChangedSignalPayload{}
-	mi := &file_events_proto_msgTypes[49]
+	mi := &file_events_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4146,7 +4264,7 @@ func (x *AttributeChangedSignalPayload) String() string {
 func (*AttributeChangedSignalPayload) ProtoMessage() {}
 
 func (x *AttributeChangedSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[49]
+	mi := &file_events_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4159,7 +4277,7 @@ func (x *AttributeChangedSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttributeChangedSignalPayload.ProtoReflect.Descriptor instead.
 func (*AttributeChangedSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{49}
+	return file_events_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *AttributeChangedSignalPayload) GetKey() string {
@@ -4192,7 +4310,7 @@ type SettlingSignalPayload struct {
 
 func (x *SettlingSignalPayload) Reset() {
 	*x = SettlingSignalPayload{}
-	mi := &file_events_proto_msgTypes[50]
+	mi := &file_events_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4204,7 +4322,7 @@ func (x *SettlingSignalPayload) String() string {
 func (*SettlingSignalPayload) ProtoMessage() {}
 
 func (x *SettlingSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[50]
+	mi := &file_events_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4217,7 +4335,7 @@ func (x *SettlingSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettlingSignalPayload.ProtoReflect.Descriptor instead.
 func (*SettlingSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{50}
+	return file_events_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *SettlingSignalPayload) GetErrorClass() string {
@@ -4538,7 +4656,15 @@ const file_events_proto_rawDesc = "" +
 	"\x0fattribute_value\x18\a \x01(\v2\x16.google.protobuf.ValueR\x0eattributeValue\"I\n" +
 	"\x19InstanceTerminatedPayload\x12\x14\n" +
 	"\x05actor\x18\x01 \x01(\tR\x05actor\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xb7\x01\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xb3\x01\n" +
+	"\x1dServiceDeliveryStalledPayload\x12\x18\n" +
+	"\aservice\x18\x01 \x01(\tR\aservice\x12\x16\n" +
+	"\x06outbox\x18\x02 \x01(\tR\x06outbox\x12#\n" +
+	"\rpending_count\x18\x03 \x01(\x05R\fpendingCount\x12;\n" +
+	"\x1aoldest_pending_age_seconds\x18\x04 \x01(\x05R\x17oldestPendingAgeSeconds\"S\n" +
+	"\x1fServiceDeliveryRecoveredPayload\x12\x18\n" +
+	"\aservice\x18\x01 \x01(\tR\aservice\x12\x16\n" +
+	"\x06outbox\x18\x02 \x01(\tR\x06outbox\"\xb7\x01\n" +
 	"\x1cTerminalSuccessSignalPayload\x12\x18\n" +
 	"\achanged\x18\x01 \x01(\bR\achanged\x12B\n" +
 	"\x10attributes_delta\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\x12%\n" +
@@ -4551,12 +4677,11 @@ const file_events_proto_rawDesc = "" +
 	"\aattempt\x18\x03 \x01(\x05R\aattempt\x12$\n" +
 	"\x0eretries_so_far\x18\x04 \x01(\x05R\fretriesSoFar\x12B\n" +
 	"\x10attributes_delta\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\x12\x12\n" +
-	"\x04tags\x18\x06 \x03(\tR\x04tags\"\xb5\x01\n" +
+	"\x04tags\x18\x06 \x03(\tR\x04tags\"\xa3\x01\n" +
 	"\x1aTransientParkSignalPayload\x127\n" +
 	"\tresume_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bresumeAt\x12\x12\n" +
 	"\x04tags\x18\x02 \x03(\tR\x04tags\x12!\n" +
-	"\fscratch_size\x18\x03 \x01(\x05R\vscratchSize\x12'\n" +
-	"\x0fscratch_spilled\x18\x04 \x01(\bR\x0escratchSpilled\"\xdb\x01\n" +
+	"\fscratch_size\x18\x03 \x01(\x05R\vscratchSizeJ\x04\b\x04\x10\x05R\x0fscratch_spilled\"\xdb\x01\n" +
 	"\x1bTransientRetrySignalPayload\x12\x18\n" +
 	"\aattempt\x18\x01 \x01(\x05R\aattempt\x12\x10\n" +
 	"\x03cap\x18\x02 \x01(\x05R\x03cap\x12\x1f\n" +
@@ -4581,7 +4706,7 @@ const file_events_proto_rawDesc = "" +
 	"\told_value\x18\x03 \x01(\v2\x16.google.protobuf.ValueR\boldValue\"8\n" +
 	"\x15SettlingSignalPayload\x12\x1f\n" +
 	"\verror_class\x18\x01 \x01(\tR\n" +
-	"errorClass*\xda\x0f\n" +
+	"errorClass*\xba\x10\n" +
 	"\x0fOperationalKind\x12 \n" +
 	"\x1cOPERATIONAL_KIND_UNSPECIFIED\x10\x00\x12*\n" +
 	"&OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED\x10\x01\x12'\n" +
@@ -4628,7 +4753,9 @@ const file_events_proto_rawDesc = "" +
 	"$OPERATIONAL_KIND_SUBGRAPH_DISPATCHED\x10K\x12(\n" +
 	"$OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY\x10L\x12*\n" +
 	"&OPERATIONAL_KIND_PARKED_RESUME_STARTED\x10Q\x12+\n" +
-	"'OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED\x10R\"\x04\b\x0e\x10\x0e\"\x04\b*\x10*\"\x04\bP\x10P*\x1fOPERATIONAL_KIND_HEARTBEAT_LOST*-OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED*\x1dOPERATIONAL_KIND_PARK_TIMEOUTBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
+	"'OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED\x10R\x12-\n" +
+	")OPERATIONAL_KIND_SERVICE_DELIVERY_STALLED\x10Z\x12/\n" +
+	"+OPERATIONAL_KIND_SERVICE_DELIVERY_RECOVERED\x10[\"\x04\b\x0e\x10\x0e\"\x04\b*\x10*\"\x04\bP\x10P*\x1fOPERATIONAL_KIND_HEARTBEAT_LOST*-OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED*\x1dOPERATIONAL_KIND_PARK_TIMEOUTBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_events_proto_rawDescOnce sync.Once
@@ -4643,7 +4770,7 @@ func file_events_proto_rawDescGZIP() []byte {
 }
 
 var file_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_events_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
+var file_events_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_events_proto_goTypes = []any{
 	(OperationalKind)(0),                            // 0: rimsky.v1.OperationalKind
 	(*Event)(nil),                                   // 1: rimsky.v1.Event
@@ -4688,21 +4815,23 @@ var file_events_proto_goTypes = []any{
 	(*ParkedResumeStartedPayload)(nil),              // 40: rimsky.v1.ParkedResumeStartedPayload
 	(*DebugOverrideAppliedPayload)(nil),             // 41: rimsky.v1.DebugOverrideAppliedPayload
 	(*InstanceTerminatedPayload)(nil),               // 42: rimsky.v1.InstanceTerminatedPayload
-	(*TerminalSuccessSignalPayload)(nil),            // 43: rimsky.v1.TerminalSuccessSignalPayload
-	(*TerminalErrorSignalPayload)(nil),              // 44: rimsky.v1.TerminalErrorSignalPayload
-	(*TransientParkSignalPayload)(nil),              // 45: rimsky.v1.TransientParkSignalPayload
-	(*TransientRetrySignalPayload)(nil),             // 46: rimsky.v1.TransientRetrySignalPayload
-	(*TransientAwaitAsyncSignalPayload)(nil),        // 47: rimsky.v1.TransientAwaitAsyncSignalPayload
-	(*TransientInfraSignalPayload)(nil),             // 48: rimsky.v1.TransientInfraSignalPayload
-	(*TransientReleaseAndRequeueSignalPayload)(nil), // 49: rimsky.v1.TransientReleaseAndRequeueSignalPayload
-	(*AttributeChangedSignalPayload)(nil),           // 50: rimsky.v1.AttributeChangedSignalPayload
-	(*SettlingSignalPayload)(nil),                   // 51: rimsky.v1.SettlingSignalPayload
-	(*timestamppb.Timestamp)(nil),                   // 52: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                         // 53: google.protobuf.Struct
-	(*structpb.Value)(nil),                          // 54: google.protobuf.Value
+	(*ServiceDeliveryStalledPayload)(nil),           // 43: rimsky.v1.ServiceDeliveryStalledPayload
+	(*ServiceDeliveryRecoveredPayload)(nil),         // 44: rimsky.v1.ServiceDeliveryRecoveredPayload
+	(*TerminalSuccessSignalPayload)(nil),            // 45: rimsky.v1.TerminalSuccessSignalPayload
+	(*TerminalErrorSignalPayload)(nil),              // 46: rimsky.v1.TerminalErrorSignalPayload
+	(*TransientParkSignalPayload)(nil),              // 47: rimsky.v1.TransientParkSignalPayload
+	(*TransientRetrySignalPayload)(nil),             // 48: rimsky.v1.TransientRetrySignalPayload
+	(*TransientAwaitAsyncSignalPayload)(nil),        // 49: rimsky.v1.TransientAwaitAsyncSignalPayload
+	(*TransientInfraSignalPayload)(nil),             // 50: rimsky.v1.TransientInfraSignalPayload
+	(*TransientReleaseAndRequeueSignalPayload)(nil), // 51: rimsky.v1.TransientReleaseAndRequeueSignalPayload
+	(*AttributeChangedSignalPayload)(nil),           // 52: rimsky.v1.AttributeChangedSignalPayload
+	(*SettlingSignalPayload)(nil),                   // 53: rimsky.v1.SettlingSignalPayload
+	(*timestamppb.Timestamp)(nil),                   // 54: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                         // 55: google.protobuf.Struct
+	(*structpb.Value)(nil),                          // 56: google.protobuf.Value
 }
 var file_events_proto_depIdxs = []int32{
-	52, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
+	54, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
 	2,  // 1: rimsky.v1.Event.message_sent:type_name -> rimsky.v1.MessageSentPayload
 	3,  // 2: rimsky.v1.Event.message_received:type_name -> rimsky.v1.MessageReceivedPayload
 	4,  // 3: rimsky.v1.Event.state_transition:type_name -> rimsky.v1.StateTransitionPayload
@@ -4730,27 +4859,27 @@ var file_events_proto_depIdxs = []int32{
 	36, // 25: rimsky.v1.Event.subgraph_internal_cascade_fired:type_name -> rimsky.v1.SubgraphInternalCascadeFiredPayload
 	40, // 26: rimsky.v1.Event.parked_resume_started:type_name -> rimsky.v1.ParkedResumeStartedPayload
 	42, // 27: rimsky.v1.Event.instance_terminated:type_name -> rimsky.v1.InstanceTerminatedPayload
-	53, // 28: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
-	53, // 29: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
-	52, // 30: rimsky.v1.OrphanedClaimReleasedPayload.last_progress_at:type_name -> google.protobuf.Timestamp
-	53, // 31: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
-	52, // 32: rimsky.v1.LockOrphanReapedPayload.expires_at:type_name -> google.protobuf.Timestamp
-	52, // 33: rimsky.v1.LockOrphanReapedPayload.claimed_at:type_name -> google.protobuf.Timestamp
-	53, // 34: rimsky.v1.AuthAccessAttemptedPayload.request_params:type_name -> google.protobuf.Struct
-	53, // 35: rimsky.v1.AuthAccessDeniedPayload.request_params:type_name -> google.protobuf.Struct
-	53, // 36: rimsky.v1.AuthKeyCreatedPayload.permissions:type_name -> google.protobuf.Struct
-	52, // 37: rimsky.v1.AuthKeyCreatedPayload.expires_at:type_name -> google.protobuf.Timestamp
-	52, // 38: rimsky.v1.AuthKeyRotatedPayload.revoke_at:type_name -> google.protobuf.Timestamp
-	54, // 39: rimsky.v1.DebugOverrideAppliedPayload.attribute_value:type_name -> google.protobuf.Value
-	53, // 40: rimsky.v1.TerminalSuccessSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
-	53, // 41: rimsky.v1.TerminalErrorSignalPayload.error_payload:type_name -> google.protobuf.Struct
-	53, // 42: rimsky.v1.TerminalErrorSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
-	52, // 43: rimsky.v1.TransientParkSignalPayload.resume_at:type_name -> google.protobuf.Timestamp
-	53, // 44: rimsky.v1.TransientRetrySignalPayload.error_payload:type_name -> google.protobuf.Struct
-	53, // 45: rimsky.v1.TransientInfraSignalPayload.details:type_name -> google.protobuf.Struct
-	53, // 46: rimsky.v1.TransientReleaseAndRequeueSignalPayload.error_payload:type_name -> google.protobuf.Struct
-	54, // 47: rimsky.v1.AttributeChangedSignalPayload.value:type_name -> google.protobuf.Value
-	54, // 48: rimsky.v1.AttributeChangedSignalPayload.old_value:type_name -> google.protobuf.Value
+	55, // 28: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
+	55, // 29: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
+	54, // 30: rimsky.v1.OrphanedClaimReleasedPayload.last_progress_at:type_name -> google.protobuf.Timestamp
+	55, // 31: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
+	54, // 32: rimsky.v1.LockOrphanReapedPayload.expires_at:type_name -> google.protobuf.Timestamp
+	54, // 33: rimsky.v1.LockOrphanReapedPayload.claimed_at:type_name -> google.protobuf.Timestamp
+	55, // 34: rimsky.v1.AuthAccessAttemptedPayload.request_params:type_name -> google.protobuf.Struct
+	55, // 35: rimsky.v1.AuthAccessDeniedPayload.request_params:type_name -> google.protobuf.Struct
+	55, // 36: rimsky.v1.AuthKeyCreatedPayload.permissions:type_name -> google.protobuf.Struct
+	54, // 37: rimsky.v1.AuthKeyCreatedPayload.expires_at:type_name -> google.protobuf.Timestamp
+	54, // 38: rimsky.v1.AuthKeyRotatedPayload.revoke_at:type_name -> google.protobuf.Timestamp
+	56, // 39: rimsky.v1.DebugOverrideAppliedPayload.attribute_value:type_name -> google.protobuf.Value
+	55, // 40: rimsky.v1.TerminalSuccessSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
+	55, // 41: rimsky.v1.TerminalErrorSignalPayload.error_payload:type_name -> google.protobuf.Struct
+	55, // 42: rimsky.v1.TerminalErrorSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
+	54, // 43: rimsky.v1.TransientParkSignalPayload.resume_at:type_name -> google.protobuf.Timestamp
+	55, // 44: rimsky.v1.TransientRetrySignalPayload.error_payload:type_name -> google.protobuf.Struct
+	55, // 45: rimsky.v1.TransientInfraSignalPayload.details:type_name -> google.protobuf.Struct
+	55, // 46: rimsky.v1.TransientReleaseAndRequeueSignalPayload.error_payload:type_name -> google.protobuf.Struct
+	56, // 47: rimsky.v1.AttributeChangedSignalPayload.value:type_name -> google.protobuf.Value
+	56, // 48: rimsky.v1.AttributeChangedSignalPayload.old_value:type_name -> google.protobuf.Value
 	49, // [49:49] is the sub-list for method output_type
 	49, // [49:49] is the sub-list for method input_type
 	49, // [49:49] is the sub-list for extension type_name
@@ -4804,7 +4933,7 @@ func file_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_events_proto_rawDesc), len(file_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   51,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

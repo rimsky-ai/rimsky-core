@@ -1,0 +1,127 @@
+// Copyright © 2026 Fall Guy Consulting.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package rimsky.v1;
+
+option go_package = "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1";
+
+service HostDaemon {
+  rpc Connect(stream ClientFrame) returns (stream ServerFrame);
+}
+
+message ClientFrame {
+  oneof body {
+    Register            register          = 1;
+    HostDaemonHeartbeat heartbeat         = 2;
+    SpawnAck            spawn_ack         = 3;
+    Reaped              reaped            = 4;
+    DispatchFrame       dispatch_frame    = 5;
+    LocalHttpForward    http_forward      = 6;
+  }
+}
+
+message ServerFrame {
+  oneof body {
+    RegisterAck            register_ack       = 1;
+    HostDaemonHeartbeatAck heartbeat_ack      = 2;
+    Spawn                  spawn              = 3;
+    Reap                   reap               = 4;
+    DispatchFrame          dispatch_frame     = 5;
+    LocalHttpResponse      http_response      = 6;
+  }
+}
+
+message Register {
+  string api_key                = 1;
+  string daemon_label           = 2;
+  string daemon_version         = 3;
+  string local_callback_base_url = 4;
+  string routing_label          = 5;
+}
+
+message RegisterAck {
+  string proxy_version = 1;
+  bool displaced_prior = 2;
+  string routing_identity = 3;
+}
+
+message HostDaemonHeartbeat    { int64 sent_at_unix_ms = 1; }
+message HostDaemonHeartbeatAck { int64 received_at_unix_ms = 1; }
+
+message Spawn {
+  string spawn_id           = 1;
+  Binding binding           = 2;
+  string cwd                = 3;
+  string run_scope_id       = 4;
+  repeated string expected_protocols = 5;
+  int32  ready_timeout_seconds = 6;
+}
+
+message Binding {
+  string path               = 1;
+  repeated string args      = 2;
+  map<string, string> env   = 3;
+  string cwd                = 4;
+  int32 ready_timeout_seconds = 5;
+}
+
+message SpawnAck {
+  string spawn_id           = 1;
+  enum SpawnStatus {
+    SPAWN_STATUS_UNSPECIFIED = 0;
+    SPAWN_STATUS_READY       = 1;
+    SPAWN_STATUS_FAILED      = 2;
+  }
+  SpawnStatus status        = 2;
+  map<string, bytes> capabilities = 3;
+  HostDaemonError error     = 4;
+}
+
+message Reap            { string spawn_id = 1; int32 sigterm_grace_seconds = 2; }
+message Reaped          { string spawn_id = 1; bool clean = 2; HostDaemonError error = 3; }
+
+message DispatchFrame {
+  string spawn_id           = 1;
+  string protocol           = 2;
+  bytes  payload            = 3;
+  string stream_id          = 4;
+  enum DispatchFrameKind {
+    DISPATCH_FRAME_KIND_UNSPECIFIED = 0;
+    DISPATCH_FRAME_KIND_DATA        = 1;
+    DISPATCH_FRAME_KIND_HALF_CLOSE  = 2;
+    DISPATCH_FRAME_KIND_CANCEL      = 3;
+  }
+  DispatchFrameKind kind    = 5;
+  enum ClaimProducerVerb {
+    CLAIM_PRODUCER_VERB_UNSPECIFIED = 0;
+    CLAIM_PRODUCER_VERB_OPEN        = 1;
+    CLAIM_PRODUCER_VERB_COMMIT      = 2;
+    CLAIM_PRODUCER_VERB_ABANDON     = 3;
+    CLAIM_PRODUCER_VERB_RELEASE     = 4;
+  }
+  ClaimProducerVerb claim_producer_verb = 6;
+  string rpc_method = 7;
+}
+
+message LocalHttpForward {
+  string forward_id         = 1;
+  string method             = 2;
+  string url                = 3;
+  bytes  body               = 4;
+  map<string, string> headers = 5;
+  string spawn_id           = 6;
+}
+
+message LocalHttpResponse {
+  string forward_id         = 1;
+  int32  status             = 2;
+  bytes  body               = 3;
+  map<string, string> headers = 4;
+}
+
+message HostDaemonError {
+  string class              = 1;
+  string message            = 2;
+}

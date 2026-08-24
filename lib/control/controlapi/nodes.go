@@ -195,7 +195,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			if auditLogger == nil {
 				auditLogger = shared.NewSlogLogger(slog.Default())
 			}
-			auditLogger.Warn("handleResetNode: append operator_override audit event failed",
+			auditLogger.Warn("CONTROLAPI.OPERATOROVERRIDEAUDITEVENT.APPENDFAILED", "site", "handleResetNode",
 				"node_id", id.String(),
 				"error", err.Error())
 		}

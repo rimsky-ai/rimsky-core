@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	protocol "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type fakeHandler struct {
@@ -164,9 +164,9 @@ func TestHandlerErrorsWrapAsProducerCallError(t *testing.T) {
 	for _, v := range verbs {
 		t.Run(v.method, func(t *testing.T) {
 			err := v.call()
-			var pcErr *peer.ProducerCallError
+			var pcErr *service.ProducerCallError
 			if !errors.As(err, &pcErr) {
-				t.Fatalf("want *peer.ProducerCallError, got %T: %v", err, err)
+				t.Fatalf("want *service.ProducerCallError, got %T: %v", err, err)
 			}
 			if pcErr.ProducerName != "items" || pcErr.Method != v.method {
 				t.Fatalf("ProducerCallError fields: got (%q, %q), want (items, %s)", pcErr.ProducerName, pcErr.Method, v.method)
@@ -188,9 +188,9 @@ func TestHandlerErrorWithoutClassYieldsEmptyErrorClass(t *testing.T) {
 	h := &fakeHandler{openErr: errors.New("plain failure")}
 	c := clientOver(h, coreCapabilities())
 	_, err := c.Open(context.Background(), "claim-1", protocol.ClaimSpec{})
-	var pcErr *peer.ProducerCallError
+	var pcErr *service.ProducerCallError
 	if !errors.As(err, &pcErr) {
-		t.Fatalf("want *peer.ProducerCallError, got %T: %v", err, err)
+		t.Fatalf("want *service.ProducerCallError, got %T: %v", err, err)
 	}
 	if pcErr.ErrorClass != "" {
 		t.Fatalf("ErrorClass: got %q, want empty", pcErr.ErrorClass)
@@ -209,9 +209,9 @@ func TestHandlerStatusErrorYieldsErrorClassFromDetails(t *testing.T) {
 	h := &fakeHandler{openErr: withInfo.Err()}
 	c := clientOver(h, coreCapabilities())
 	_, callErr := c.Open(context.Background(), "claim-1", protocol.ClaimSpec{})
-	var pcErr *peer.ProducerCallError
+	var pcErr *service.ProducerCallError
 	if !errors.As(callErr, &pcErr) {
-		t.Fatalf("want *peer.ProducerCallError, got %T: %v", callErr, callErr)
+		t.Fatalf("want *service.ProducerCallError, got %T: %v", callErr, callErr)
 	}
 	if pcErr.ErrorClass != "fs/root_unavailable" {
 		t.Fatalf("ErrorClass: got %q, want fs/root_unavailable (status-details channel)", pcErr.ErrorClass)

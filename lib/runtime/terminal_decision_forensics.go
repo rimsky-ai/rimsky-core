@@ -48,7 +48,7 @@ func subClaimHandleIDsFor(
 	children, err := args.ClaimHandles.ListChildClaimHandles(ctx, claimHandleID, tx)
 	if err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("ResolveClaimHandleTerminal: ListChildClaimHandles failed",
+			args.Logger.Warn("CLAIMHANDLE.CHILDHANDLES.LISTFAILED", "site", "ResolveClaimHandleTerminal",
 				"claim_handle_id", claimHandleID.String(),
 				"error", err.Error())
 		}
@@ -105,7 +105,7 @@ func emitTerminalForensics(
 			marshalled, err := json.Marshal(rec)
 			if err != nil {
 				if args.Logger != nil {
-					args.Logger.Warn("ResolveClaimHandleTerminal: staging the promotion's lineage record failed; rimsky writes it at settlement without a version",
+					args.Logger.Warn("CLAIMHANDLE.PROMOTIONLINEAGE.STAGEFAILED", "site", "ResolveClaimHandleTerminal", "detail", "rimsky writes the lineage record at settlement without a version",
 						"claim_handle_id", td.ClaimHandleID.String(),
 						"error", err.Error())
 				}
@@ -115,7 +115,7 @@ func emitTerminalForensics(
 		}
 		if pending == nil {
 			if err := WriteClaimTerminalLineage(ctx, lt, td.LineageHint.InstanceID, td.LineageHint.FrameID, now, rec, tx); err != nil && args.Logger != nil {
-				args.Logger.Warn("ResolveClaimHandleTerminal: lineage write failed",
+				args.Logger.Warn("CLAIMHANDLE.PROMOTIONLINEAGE.WRITEFAILED", "site", "ResolveClaimHandleTerminal",
 					"claim_handle_id", td.ClaimHandleID.String(),
 					"outcome", rec.Outcome,
 					"error", err.Error())
@@ -147,7 +147,7 @@ func emitTerminalForensics(
 		Kind:       kind,
 		Payload:    eventpayload.New(payload),
 	}, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("ResolveClaimHandleTerminal: event append failed",
+		args.Logger.Warn("CLAIMHANDLE.TERMINALEVENT.APPENDFAILED", "site", "ResolveClaimHandleTerminal",
 			"claim_handle_id", td.ClaimHandleID.String(),
 			"kind", kind.String(),
 			"error", err.Error())

@@ -9,12 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
@@ -26,29 +24,27 @@ type Config struct {
 	Logger         shared.Logger
 	TickInterval   time.Duration
 	// @decision: three-dispatch-deadlines
-	MaxQuietPeriodDefault   time.Duration
-	MaxRuntimeDefault       time.Duration
-	ClaimHandles            persistence.ClaimHandleTable
-	SupervisorID            string
-	ParkedSweepInterval     time.Duration
-	ClaimProducerRegistry   *locks.Registry
-	LifecycleSubs           *lifecycle.Registry
-	LifecyclePeersForSpec   func(tplSpec node.TemplateSpec) []string
-	BlobBackend             persistence.BlobBackend
-	BlobOrphans             persistence.BlobOrphanTable
-	OrphanBlobSweepInterval time.Duration
-	Metrics                 runtime.MetricsHook
+	MaxQuietPeriodDefault time.Duration
+	MaxRuntimeDefault     time.Duration
+	ClaimHandles          persistence.ClaimHandleTable
+	SupervisorID          string
+	ParkedSweepInterval   time.Duration
+	ClaimProducerRegistry *locks.Registry
+	// @concept: host-daemon-proxy
+	LateBindServiceProxies map[string]string
+	// @decision: lifecycle-drain-per-role
+	LifecycleKick func()
+	Metrics       runtime.MetricsHook
 	// @concept: claim-lifetime
 	// @concept: claim-handle
 	Retention runtime.RetentionConfig
 }
 
 type Handle struct {
-	stop                chan struct{}
-	stopOnce            sync.Once
-	done                chan struct{}
-	lastOrphanBlobSweep time.Time
-	ticksCompleted      atomic.Uint64
+	stop           chan struct{}
+	stopOnce       sync.Once
+	done           chan struct{}
+	ticksCompleted atomic.Uint64
 }
 
 // @decision: polling-audit
@@ -93,10 +89,6 @@ func Start(cfg Config) *Handle {
 	if cfg.Clock == nil {
 		cfg.Clock = shared.SystemClock{}
 	}
-
-	if cfg.OrphanBlobSweepInterval == 0 {
-		cfg.OrphanBlobSweepInterval = time.Hour
-	}
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{})}
 	go runLoop(cfg, h)
 	return h
@@ -104,26 +96,26 @@ func Start(cfg Config) *Handle {
 
 func runLoop(cfg Config, h *Handle) {
 	defer close(h.done)
-	cfg.Logger.Info("scheduler started",
+	cfg.Logger.Info("SCHEDULER.LOOP.STARTED",
 		"tick_ms", cfg.TickInterval.Milliseconds(),
 		"max_quiet_period_default_ms", cfg.MaxQuietPeriodDefault.Milliseconds(),
 	)
 	for {
 		select {
 		case <-h.stop:
-			cfg.Logger.Info("scheduler stopped")
+			cfg.Logger.Info("SCHEDULER.LOOP.STOPPED")
 			return
 		default:
 		}
-		if err := tick(context.Background(), cfg, h); err != nil {
-			cfg.Logger.Error("scheduler tick failed", "error", err.Error())
+		if err := tick(context.Background(), cfg); err != nil {
+			cfg.Logger.Error("SCHEDULER.TICK.FAILED", "error", err.Error())
 		}
 		h.ticksCompleted.Add(1)
 		timer := time.NewTimer(cfg.TickInterval)
 		select {
 		case <-h.stop:
 			timer.Stop()
-			cfg.Logger.Info("scheduler stopped")
+			cfg.Logger.Info("SCHEDULER.LOOP.STOPPED")
 			return
 		case <-timer.C:
 		}
@@ -131,10 +123,10 @@ func runLoop(cfg Config, h *Handle) {
 }
 
 func Tick(ctx context.Context, cfg Config) error {
-	return tick(ctx, cfg, nil)
+	return tick(ctx, cfg)
 }
 
-func tick(ctx context.Context, cfg Config, h *Handle) error {
+func tick(ctx context.Context, cfg Config) error {
 	log := cfg.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
@@ -145,12 +137,12 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		held, release, err := cfg.AdvisoryLocker.TrySchedulerTick(ctx)
 		// @decision: sweep-lock-skip-on-error
 		if err != nil {
-			log.Warn("tick: TrySchedulerTick failed; skipping sweep pass",
+			log.Warn("SCHEDULER.TICKLOCK.ACQUIREFAILED", "detail", "skipping the sweep pass",
 				"error", err.Error())
 			return nil
 		}
 		if !held {
-			log.Debug("tick: another replica holds the lock, skipping")
+			log.Debug("SCHEDULER.TICKLOCK.HELDELSEWHERE", "detail", "another replica holds the lock")
 			return nil
 		}
 		defer release()
@@ -160,7 +152,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		Persist: cfg.Persist, Queue: cfg.Queue,
 		Clock: cfg.Clock, Logger: log,
 	}); err != nil {
-		log.Warn("tick: ProcessPureCascade failed", "error", err.Error())
+		log.Warn("SCHEDULER.PURECASCADEPASS.FAILED", "error", err.Error())
 	}
 
 	conductorArgs := runtime.ConductorArgs{
@@ -173,7 +165,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	if err := runtime.SweepExecutorDeadlines(ctx, conductorArgs); err != nil {
-		log.Warn("tick: SweepExecutorDeadlines failed", "error", err.Error())
+		log.Warn("SCHEDULER.EXECUTORDEADLINESWEEP.FAILED", "error", err.Error())
 	}
 
 	if cfg.ClaimHandles != nil {
@@ -182,42 +174,42 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 			ClaimHandles: cfg.ClaimHandles,
 			Logger:       log,
 		}); err != nil {
-			log.Warn("tick: SweepOrphanedClaimHandles failed", "error", err.Error())
+			log.Warn("SCHEDULER.ORPHANEDCLAIMHANDLESWEEP.FAILED", "error", err.Error())
 		}
 	}
 
 	if cfg.ClaimHandles != nil && cfg.Retention.ClaimHandlesTrailing > 0 {
 		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepClaimHandleRetention(ctx, cfg.ClaimHandles, cfg.Retention, now, log); err != nil {
-			log.Warn("tick: SweepClaimHandleRetention failed", "error", err.Error())
+			log.Warn("SCHEDULER.CLAIMHANDLERETENTIONSWEEP.FAILED", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && cfg.Retention.MessageIdempotenciesTrailing > 0 {
 		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepMessageIdempotencies(ctx, cfg.Persist.MessageIdempotencies(), cfg.Retention, now, log); err != nil {
-			log.Warn("tick: SweepMessageIdempotencies failed", "error", err.Error())
+			log.Warn("SCHEDULER.MESSAGEIDEMPOTENCYSWEEP.FAILED", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && cfg.Retention.LifecycleOutboxTrailing > 0 {
 		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepLifecycleOutbox(ctx, cfg.Persist, cfg.Retention, now, log); err != nil {
-			log.Warn("tick: SweepLifecycleOutbox failed", "error", err.Error())
+			log.Warn("SCHEDULER.LIFECYCLEOUTBOXSWEEP.FAILED", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && cfg.Retention.LineageTrailing > 0 {
 		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepLineageRetention(ctx, cfg.Persist.Lineage(), cfg.Retention, now, log); err != nil {
-			log.Warn("tick: SweepLineageRetention failed", "error", err.Error())
+			log.Warn("SCHEDULER.LINEAGERETENTIONSWEEP.FAILED", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && (cfg.Retention.RecentFramesKept > 0 || cfg.Retention.TraceTrailing > 0) {
 		now := resolveNow(cfg.Clock)
 		if _, err := runtime.SweepRunTreeRetention(ctx, cfg.Retention, cfg.Persist, now, log); err != nil {
-			log.Warn("tick: SweepRunTreeRetention failed", "error", err.Error())
+			log.Warn("SCHEDULER.RUNTREERETENTIONSWEEP.FAILED", "error", err.Error())
 		}
 	}
 
@@ -230,38 +222,21 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 			SupervisorID: cfg.SupervisorID,
 			Metrics:      cfg.Metrics,
 		}); err != nil {
-			log.Warn("tick: SweepParkedNodes failed", "error", err.Error())
-		}
-	}
-
-	if cfg.BlobBackend != nil && cfg.BlobOrphans != nil {
-		now := resolveNow(cfg.Clock)
-		if h == nil || h.lastOrphanBlobSweep.IsZero() || now.Sub(h.lastOrphanBlobSweep) >= cfg.OrphanBlobSweepInterval {
-			if err := runtime.SweepOrphanedBlobs(ctx, runtime.OrphanBlobsArgs{
-				Persist:     cfg.Persist,
-				BlobOrphans: cfg.BlobOrphans,
-				Backend:     cfg.BlobBackend,
-				Clock:       cfg.Clock,
-				Logger:      log,
-			}); err != nil {
-				log.Warn("tick: SweepOrphanedBlobs failed", "error", err.Error())
-			}
-			if h != nil {
-				h.lastOrphanBlobSweep = now
-			}
+			log.Warn("SCHEDULER.PARKEDNODESWEEP.FAILED", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && cfg.Clock != nil {
 		if err := runtime.SweepDeliverTriggeringMessagesForRunningFrames(ctx, cfg.Persist, log, cfg.Clock.Now()); err != nil {
-			log.Warn("tick: SweepDeliverTriggeringMessagesForRunningFrames failed", "error", err.Error())
+			log.Warn("SCHEDULER.TRIGGERINGMESSAGESWEEP.FAILED", "error", err.Error())
 		}
 	}
 
 	if cfg.Persist != nil && cfg.Queue != nil {
-		scopeFanout := runtime.FrameRunScopeTerminalFanout(cfg.Persist, cfg.AdvisoryLocker, cfg.LifecycleSubs, cfg.LifecyclePeersForSpec)
-		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log, scopeFanout, frameMetricsAdapter(cfg.Metrics)); err != nil {
-			log.Warn("tick: frame.RunTick failed", "error", err.Error())
+		// @decision: lifecycle-fanout-after-commit
+		delivery := frame.LifecycleDelivery{LateBindServiceProxies: cfg.LateBindServiceProxies, Kick: cfg.LifecycleKick}
+		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log, delivery, frameMetricsAdapter(cfg.Metrics)); err != nil {
+			log.Warn("SCHEDULER.FRAMETICK.FAILED", "error", err.Error())
 		}
 	}
 
@@ -274,26 +249,26 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 				return err
 			}
 			if deleted > 0 {
-				log.Info("tick: SweepExpired breakpoints", "deleted", deleted)
+				log.Info("SCHEDULER.EXPIREDBREAKPOINTSWEEP.COMPLETED", "deleted", deleted)
 			}
 			resumed, err := cfg.Persist.BreakpointHits().AutoResumeStale(ctx, bpNow, tx)
 			if err != nil {
 				return err
 			}
 			if resumed > 0 {
-				log.Info("tick: AutoResumeStale breakpoint hits", "resumed", resumed)
+				log.Info("SCHEDULER.STALEBREAKPOINTRESUME.COMPLETED", "resumed", resumed)
 			}
 			orphaned, err := cfg.Persist.BreakpointHits().SweepOrphanedUnresumed(ctx, orphanedHitCutoff, tx)
 			if err != nil {
 				return err
 			}
 			if orphaned > 0 {
-				log.Info("tick: SweepOrphanedUnresumed breakpoint hits",
+				log.Info("SCHEDULER.ORPHANEDBREAKPOINTHITSWEEP.COMPLETED",
 					"reaped", orphaned, "cutoff", orphanedHitCutoff.Format(time.RFC3339))
 			}
 			return nil
 		}); err != nil {
-			log.Warn("tick: breakpoint sweeps failed", "error", err.Error())
+			log.Warn("SCHEDULER.BREAKPOINTSWEEP.FAILED", "error", err.Error())
 		}
 	}
 	return nil

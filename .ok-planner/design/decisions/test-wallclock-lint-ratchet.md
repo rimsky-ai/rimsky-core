@@ -7,9 +7,11 @@ decision: test-wallclock-lint-ratchet
 ## Choice
 
 A lint forbids wall-clock verdict idioms in test code: fail-on-timeout
-selects, deadline-bounded poll loops that fail on expiry, and
+selects, deadline-bounded poll loops that fail on expiry,
 deadline-polling helpers — including third-party ones such as
-`require.Eventually`, whose deadline is a verdict input. The gate
+`require.Eventually`, whose deadline is a verdict input — a context
+deadline whose expiry feeds a verdict, and a test that writes a
+package-level variable. The gate
 fails on any violation. Its recorded baseline is empty. Every wait the
 lint admits carries a class marker per `decision:polling-audit`. A
 per-site suppression marker exists for sleeps that are genuinely not
@@ -24,7 +26,10 @@ load-dependent verdict, not a verdict. Prose alone let roughly two
 hundred sites accumulate. A ratchet stopped new instances while the
 backlog stood. One sweep drained the backlog once the class marker
 made every site classifiable. An empty baseline keeps the gate
-absolute, so the banned dialect cannot re-enter with a new test.
+absolute, so the banned dialect cannot re-enter with a new test. A
+reading audit later found the same verdict hiding behind a context
+deadline and behind shared package state, two constructs the lint
+did not read; the lint reads them now, for the same reason.
 
 ## Alternatives
 
@@ -37,3 +42,6 @@ absolute, so the banned dialect cannot re-enter with a new test.
 - Loosen the rule to sanction generous documented timeouts —
   rejected: "why 30 and not 29?" has no answer; any finite bound is
   an unprovable load guess.
+- Leave the context-deadline and shared-state shapes to reading
+  audits — rejected: a construct the lint does not read is a
+  construct the next test re-introduces.

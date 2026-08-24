@@ -318,7 +318,7 @@ func transitionHolderIfFullyResolved(
 	); err != nil {
 		if errors.Is(err, cascade.ErrIllegalTransition) {
 			if args.Logger != nil {
-				args.Logger.Warn("transitionHolderIfFullyResolved: raced with another terminal writer; leaving the settled verdict as-is",
+				args.Logger.Warn("CASCADE.HOLDERTRANSITION.RACED", "site", "transitionHolderIfFullyResolved", "detail", "another terminal writer won; leaving the settled verdict as-is",
 					"node_run_id", holderNodeRunID.String(), "error", err.Error())
 			}
 			return nil, nil
@@ -352,7 +352,7 @@ func transitionHolderIfFullyResolved(
 	post := func(ctx context.Context) {
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, runID); err != nil {
 			if args.Logger != nil {
-				args.Logger.Warn("transitionHolderIfFullyResolved: run-tree propagation failed",
+				args.Logger.Warn("RUNTREE.PROPAGATION.FAILED", "site", "transitionHolderIfFullyResolved",
 					"run_id", runID.String(), "error", err.Error())
 			}
 		}

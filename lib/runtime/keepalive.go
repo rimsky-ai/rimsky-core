@@ -35,8 +35,8 @@ func (c *CallbackServer) authorizeCancelToken(r *http.Request, runID shared.UUID
 
 // @decision: keepalive-endpoint
 func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request) {
-	if authErr := c.authorizePeer(r); authErr != nil {
-		c.Logger.Warn("keepalive: unauthorized",
+	if authErr := c.authorizeService(r); authErr != nil {
+		c.Logger.Warn("KEEPALIVE.REQUEST.UNAUTHORIZED",
 			"error", authErr.Error())
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
@@ -49,7 +49,7 @@ func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request)
 	}
 	runID := shared.UUID(parsed)
 	if !c.authorizeCancelToken(r, runID) {
-		c.Logger.Warn("keepalive: cancel_token rejected",
+		c.Logger.Warn("KEEPALIVE.CANCELTOKEN.REJECTED",
 			"run_id", runID.String())
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
@@ -64,7 +64,7 @@ func (c *CallbackServer) handleKeepalive(w http.ResponseWriter, r *http.Request)
 		}
 		return c.renewClaimExpiryForRun(ctx, runID, tx)
 	}); txErr != nil {
-		c.Logger.Error("keepalive: bump failed",
+		c.Logger.Error("KEEPALIVE.DEADLINE.BUMPFAILED",
 			"run_id", runID.String(), "error", txErr.Error())
 		http.Error(w, `{"error":"bump_failed"}`, http.StatusInternalServerError)
 		return

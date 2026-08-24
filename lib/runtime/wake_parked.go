@@ -58,7 +58,7 @@ func WakeParkedNode(ctx context.Context, args WakeParkedArgs, reason WakeReason)
 	}
 	if target == nil {
 		if args.Logger != nil {
-			args.Logger.Debug("WakeParkedNode: target not found",
+			args.Logger.Debug("PARKEDNODE.WAKETARGET.MISSING", "site", "WakeParkedNode",
 				"node_id", args.TargetNodeID.String())
 		}
 		return nil
@@ -101,14 +101,14 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 	}
 	if parked == nil {
 		if args.Logger != nil {
-			args.Logger.Warn("wakeParkedNode: no parked node-run row found",
+			args.Logger.Warn("PARKEDNODE.PARKEDROW.MISSING", "site", "wakeParkedNode",
 				"node_id", target.ID.String())
 		}
 		return nil
 	}
 	if args.NodeRunID != (shared.UUID{}) && parked.NodeRunID != args.NodeRunID {
 		if args.Logger != nil {
-			args.Logger.Warn("wakeParkedNode: parked row no longer matches the run scheduled for wake; skipping",
+			args.Logger.Warn("PARKEDNODE.PARKEDROW.MISMATCHED", "site", "wakeParkedNode", "detail", "the parked row no longer matches the run scheduled for wake; skipping",
 				"node_id", target.ID.String(),
 				"expected_run_id", args.NodeRunID.String(),
 				"found_run_id", parked.NodeRunID.String())

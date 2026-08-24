@@ -264,7 +264,7 @@ func TestBuildSupervisorResolver_LateBindProxiesWrapsInLateBindResolver(t *testi
 	static := executor.NewStaticResolver(map[string]executor.Endpoint{
 		"exec-a": {Transport: "grpc", URL: "host:9090"},
 	})
-	lateBindProxies := map[string]string{"executor": "host-agent-proxy"}
+	lateBindProxies := map[string]string{"executor": "host-daemon-proxy"}
 
 	got := buildSupervisorResolver(static, lateBindProxies, nil)
 

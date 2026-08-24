@@ -52,7 +52,7 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	}
 	defer func() { _ = stx.Rollback() }()
 	if _, err := stx.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES (?, ?, 'test-agent')`,
+		`INSERT INTO rimsky_instances (id, template_hash, target_routing_identity) VALUES (?, ?, 'test-daemon')`,
 		instanceID, templateID,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)

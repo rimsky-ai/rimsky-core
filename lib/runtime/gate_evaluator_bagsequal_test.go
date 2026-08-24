@@ -82,7 +82,7 @@ func TestBagsEqual_ResolvesOnDemandWhenPriorDispatchBagIsNil(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instanceID, TemplateHash: templateHash,
 			Params: map[string]any{"seed": "abc"},
 		}, tx); err != nil {

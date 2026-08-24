@@ -133,10 +133,12 @@ func TestRegistrySubscribers(t *testing.T) {
 	}
 }
 
-func TestRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
+func TestRegistryConcurrentAddsAllLandAndEveryNameResolves(t *testing.T) {
+	const subscribers = 20
 	r := NewRegistry()
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	snapshots := make([][]string, subscribers)
+	for i := 0; i < subscribers; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -144,16 +146,35 @@ func TestRegistryConcurrentAddAndReadIsRaceFree(t *testing.T) {
 			r.Add(name, mockSubscriber{name: name})
 		}(i)
 	}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < subscribers; i++ {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			r.Get("sub-0")
-			r.Names()
-			r.Subscribers()
-		}()
+			snapshots[i] = r.Names()
+		}(i)
 	}
 	wg.Wait()
+
+	for i := 0; i < subscribers; i++ {
+		name := "sub-" + strconv.Itoa(i)
+		sub, ok := r.Get(name)
+		if !ok {
+			t.Fatalf("Get(%q) after %d concurrent Add calls found nothing; an add was lost", name, subscribers)
+		}
+		if sub.Name() != name {
+			t.Fatalf("Get(%q) returned the subscriber named %q", name, sub.Name())
+		}
+	}
+	if got := len(r.Subscribers()); got != subscribers {
+		t.Fatalf("Subscribers() holds %d entries after %d concurrent Add calls, want %d", got, subscribers, subscribers)
+	}
+	for i, snapshot := range snapshots {
+		for _, name := range snapshot {
+			if _, ok := r.Get(name); !ok {
+				t.Fatalf("the concurrent Names() snapshot %d named %q, which Get does not resolve", i, name)
+			}
+		}
+	}
 }
 
 func TestRegistryCloseDispatchesToImplementers(t *testing.T) {

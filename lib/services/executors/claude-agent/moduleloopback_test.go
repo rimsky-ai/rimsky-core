@@ -9,20 +9,12 @@ import (
 	"testing"
 )
 
-func registerTestModule(t *testing.T, specifier string, factory ModuleMcpFactory) {
-	t.Helper()
-	moduleRegistryMu.Lock()
-	moduleRegistry[specifier] = factory
-	moduleRegistryMu.Unlock()
-	t.Cleanup(func() {
-		moduleRegistryMu.Lock()
-		delete(moduleRegistry, specifier)
-		moduleRegistryMu.Unlock()
-	})
+func testModules(specifier string, factory ModuleMcpFactory) map[string]ModuleMcpFactory {
+	return map[string]ModuleMcpFactory{specifier: factory}
 }
 
 func TestStandUpModuleLoopback_UnregisteredModuleErrors(t *testing.T) {
-	_, _, _, err := standUpModuleLoopback("srv", "not-a-registered-module", nil)
+	_, _, _, err := standUpModuleLoopback("srv", "not-a-registered-module", nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for an unregistered module specifier, got nil")
 	}
@@ -33,7 +25,7 @@ func TestStandUpModuleLoopback_UnregisteredModuleErrors(t *testing.T) {
 }
 
 func TestStandUpModuleLoopback_ServesRegisteredModuleToolsOverHTTP(t *testing.T) {
-	registerTestModule(t, "test-module-echo", func() *ModuleMcpServer {
+	modules := testModules("test-module-echo", func() *ModuleMcpServer {
 		return &ModuleMcpServer{
 			Name: "echo-server",
 			Tools: []ModuleMcpTool{{
@@ -46,7 +38,7 @@ func TestStandUpModuleLoopback_ServesRegisteredModuleToolsOverHTTP(t *testing.T)
 		}
 	})
 
-	url, token, teardown, err := standUpModuleLoopback("my-mcp", "test-module-echo", nil)
+	url, token, teardown, err := standUpModuleLoopback("my-mcp", "test-module-echo", modules, nil)
 	if err != nil {
 		t.Fatalf("standUpModuleLoopback: %v", err)
 	}
@@ -68,11 +60,11 @@ func TestStandUpModuleLoopback_ServesRegisteredModuleToolsOverHTTP(t *testing.T)
 }
 
 func TestStandUpModuleLoopback_UnknownToolIsJSONRPCError(t *testing.T) {
-	registerTestModule(t, "test-module-empty", func() *ModuleMcpServer {
+	modules := testModules("test-module-empty", func() *ModuleMcpServer {
 		return &ModuleMcpServer{Name: "empty-server"}
 	})
 
-	url, token, teardown, err := standUpModuleLoopback("my-mcp", "test-module-empty", nil)
+	url, token, teardown, err := standUpModuleLoopback("my-mcp", "test-module-empty", modules, nil)
 	if err != nil {
 		t.Fatalf("standUpModuleLoopback: %v", err)
 	}
@@ -88,7 +80,7 @@ func TestStandUpModuleLoopback_UnknownToolIsJSONRPCError(t *testing.T) {
 }
 
 func TestStandUpModuleLoopback_ToolHandlerErrorMapsToJSONRPCError(t *testing.T) {
-	registerTestModule(t, "test-module-failing", func() *ModuleMcpServer {
+	modules := testModules("test-module-failing", func() *ModuleMcpServer {
 		return &ModuleMcpServer{
 			Name: "failing-server",
 			Tools: []ModuleMcpTool{{
@@ -100,7 +92,7 @@ func TestStandUpModuleLoopback_ToolHandlerErrorMapsToJSONRPCError(t *testing.T) 
 		}
 	})
 
-	url, token, teardown, err := standUpModuleLoopback("my-mcp", "test-module-failing", nil)
+	url, token, teardown, err := standUpModuleLoopback("my-mcp", "test-module-failing", modules, nil)
 	if err != nil {
 		t.Fatalf("standUpModuleLoopback: %v", err)
 	}
@@ -116,11 +108,11 @@ func TestStandUpModuleLoopback_ToolHandlerErrorMapsToJSONRPCError(t *testing.T) 
 }
 
 func TestStandUpModuleLoopback_RejectsUnauthenticatedRequests(t *testing.T) {
-	registerTestModule(t, "test-module-auth", func() *ModuleMcpServer {
+	modules := testModules("test-module-auth", func() *ModuleMcpServer {
 		return &ModuleMcpServer{Name: "auth-server"}
 	})
 
-	url, _, teardown, err := standUpModuleLoopback("my-mcp", "test-module-auth", nil)
+	url, _, teardown, err := standUpModuleLoopback("my-mcp", "test-module-auth", modules, nil)
 	if err != nil {
 		t.Fatalf("standUpModuleLoopback: %v", err)
 	}

@@ -27,7 +27,7 @@ func TestTemplateIDTargets_LogsWarningOnPersistenceError(t *testing.T) {
 
 	found := false
 	for _, rec := range logger.Records() {
-		if rec.Level == "warn" && rec.Msg == "auth.template_targets_lookup_failed" {
+		if rec.Level == "warn" && rec.Msg == "AUTH.TEMPLATETARGETS.LOOKUPFAILED" {
 			found = true
 			if rec.Fields["template_id"] != hash {
 				t.Fatalf("log field template_id: got %v want %q", rec.Fields["template_id"], hash)
@@ -50,7 +50,7 @@ func TestTemplateIDTargets_NoRowsDoesNotLog(t *testing.T) {
 		t.Fatalf("targets: got %v want a single empty target", targets)
 	}
 	for _, rec := range logger.Records() {
-		if rec.Msg == "auth.template_targets_lookup_failed" {
+		if rec.Msg == "AUTH.TEMPLATETARGETS.LOOKUPFAILED" {
 			t.Fatalf("no-rows case must not be logged as a persistence error: %+v", rec)
 		}
 	}

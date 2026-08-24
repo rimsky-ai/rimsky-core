@@ -19,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type acquisitionMetricsSpy struct {
@@ -77,7 +77,7 @@ func TestAcquireClaim_ProducerCallErrorOnOpenRecordsErroredMetrics(t *testing.T)
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instanceID, TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
@@ -106,7 +106,7 @@ func TestAcquireClaim_ProducerCallErrorOnOpenRecordsErroredMetrics(t *testing.T)
 
 	fake := storetest.NewFake(producer, claimproducer.Capabilities{})
 	fake.OpenFunc = func(_ claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
-		return claimproducer.OpenOutcome{}, peer.NewProducerCallError(producer, "Open", errors.New("upstream unreachable"))
+		return claimproducer.OpenOutcome{}, service.NewProducerCallError(producer, "Open", errors.New("upstream unreachable"))
 	}
 	reg := locks.NewRegistry()
 	reg.Add(producer, fake)
@@ -135,9 +135,9 @@ func TestAcquireClaim_ProducerCallErrorOnOpenRecordsErroredMetrics(t *testing.T)
 	if err == nil {
 		t.Fatal("acquireClaim: expected a ProducerCallError, got nil")
 	}
-	var pcErr *peer.ProducerCallError
+	var pcErr *service.ProducerCallError
 	if !errors.As(err, &pcErr) {
-		t.Fatalf("acquireClaim error = %v, want a *peer.ProducerCallError", err)
+		t.Fatalf("acquireClaim error = %v, want a *service.ProducerCallError", err)
 	}
 	if res != openResultErrored {
 		t.Fatalf("acquireClaim result = %v, want openResultErrored", res)

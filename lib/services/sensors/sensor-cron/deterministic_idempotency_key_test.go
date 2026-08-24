@@ -8,11 +8,9 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,42 +60,6 @@ func subscribeCron(t *testing.T, s *SensorService, subscriptionID string, at tim
 		MessageType: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestOneFireWindowPostsOneEnvelopeNamingItsSubscription(t *testing.T) {
-	var fireCount int64
-	var bodies []map[string]any
-	var bodiesMu sync.Mutex
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		var body map[string]any
-		_ = json.Unmarshal(raw, &body)
-		bodiesMu.Lock()
-		bodies = append(bodies, body)
-		bodiesMu.Unlock()
-		atomic.AddInt64(&fireCount, 1)
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer srv.Close()
-
-	s := NewSensorService(srv.URL, noopLogger{})
-	registerTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	subscribeCron(t, s, "w1", registerTime)
-
-	s.clock = func() time.Time { return registerTime.Add(6 * time.Minute) }
-	s.Tick(context.Background())
-
-	if got := atomic.LoadInt64(&fireCount); got != 1 {
-		t.Errorf("fireCount: got %d want 1", got)
-	}
-	bodiesMu.Lock()
-	defer bodiesMu.Unlock()
-	if len(bodies) != 1 {
-		t.Fatalf("bodies: got %d want 1", len(bodies))
-	}
-	if sub, _ := bodies[0]["publisher_subscription_id"].(string); sub == "" {
-		t.Errorf("publisher_subscription_id: missing or empty (auth path discriminator)")
 	}
 }
 

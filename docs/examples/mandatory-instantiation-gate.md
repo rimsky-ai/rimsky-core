@@ -28,7 +28,7 @@ not in a node schema.
 
 ```bash
 curl -sS -X POST "$BASE/v1/instances" -H 'content-type: application/json' \
-  -d '{"template":"'"$TPL"'","target_agent":"my-agent"}'
+  -d '{"template":"'"$TPL"'","target_daemon":"my-daemon"}'
 ```
 
 Create is refused with 400. The body names the node

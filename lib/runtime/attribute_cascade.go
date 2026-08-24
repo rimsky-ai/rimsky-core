@@ -85,7 +85,7 @@ func firstRunAttributeBaseline(
 		if raw, ok := args.ExpectedAttributesSchemaFor(nodeDef.Executor); ok && len(raw) > 0 {
 			if err := json.Unmarshal(raw, &execSchema); err != nil {
 				if args.Logger != nil {
-					args.Logger.Warn("firstRunAttributeBaseline: executor schema unmarshal failed",
+					args.Logger.Warn("RUNNER.EXECUTORSCHEMA.UNMARSHALFAILED", "site", "firstRunAttributeBaseline",
 						"executor", nodeDef.Executor, "error", err.Error())
 				}
 				execSchema = nil

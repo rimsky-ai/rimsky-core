@@ -6,22 +6,18 @@ package scenarios
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
-	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
-const singleProcessSpillThreshold = 256
-
-var singleProcessPayload = strings.Repeat("rimsky-memory-blob-roundtrip/", 300)
+var singleProcessPayload = strings.Repeat("rimsky-all-in-one-roundtrip/", 4000)
 
 // @story: single-process-all-in-one
-func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
+// @decision: attribute-bytes-in-the-row
+func TestSingleProcessAllInOne_OneProcessServesAllThreeRoles(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -32,7 +28,6 @@ func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 		harness.WithSQLite(),
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("stub", "executor-stub:9300"),
-		harness.WithBlobConfig("memory", singleProcessSpillThreshold, time.Second, time.Second),
 		harness.WithContainerEnv("RIMSKY_LOG_LEVEL", "debug"),
 	)
 	ep := h.Endpoint
@@ -68,21 +63,8 @@ func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 
 	if got := readWorkerPayload(t, ep, instanceID); got != singleProcessPayload {
 		h.DumpRimskyLogs(t)
-		t.Fatalf("cross-role memory-blob read-back mismatch: got %d bytes (want %d) — an empty/short payload means the control-api could not read the blob the supervisor spilled, i.e. the roles are not sharing one in-process blob map",
+		t.Fatalf("cross-role attribute read-back mismatch: got %d bytes, want %d — the control-api role did not read back the bag the supervisor role wrote",
 			len(got), len(singleProcessPayload))
-	}
-
-	logs := waitForLogLine(ctx, t, h, "reaped blob orphan")
-	if strings.Contains(logs, "reap blob orphan failed") {
-		t.Fatalf("orphan-blob sweep logged reap failures — the scheduler role cannot delete blobs the supervisor role wrote:\n%s", logs)
-	}
-	if strings.Contains(logs, "SweepOrphanedBlobs failed") {
-		t.Fatalf("orphan-blob sweep itself failed:\n%s", logs)
-	}
-
-	if got := readWorkerPayload(t, ep, instanceID); got != singleProcessPayload {
-		h.DumpRimskyLogs(t)
-		t.Fatalf("attribute payload lost after orphan-blob sweep: got %d bytes (want %d) — the sweep reaped a live handle", len(got), len(singleProcessPayload))
 	}
 }
 
@@ -134,14 +116,4 @@ func readWorkerPayload(t *testing.T, ep harness.RimskyEndpoint, instanceID strin
 	}
 	payload, _ := resp.LatestAttributes["payload"].(string)
 	return payload
-}
-
-func waitForLogLine(ctx context.Context, t *testing.T, h *harness.RimskyHandle, needle string) string {
-	t.Helper()
-	var logs string
-	awaited.Until(t, fmt.Sprintf("the container logs to carry %q", needle), func() bool {
-		logs = h.ReadLogs(ctx, t)
-		return strings.Contains(logs, needle)
-	})
-	return logs
 }

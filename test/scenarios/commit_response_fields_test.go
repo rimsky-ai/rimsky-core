@@ -188,7 +188,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 
 	var writebackJSON string
 	h.QueryRowSQL(`
-		SELECT COALESCE(a.data::text, '{}')
+		SELECT COALESCE(convert_from(a.data, 'UTF8'), '{}')
 		  FROM rimsky_node_attributes a
 		 WHERE a.node_run_id = (
 		   SELECT node_run_id

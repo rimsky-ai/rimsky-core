@@ -10,6 +10,9 @@ import (
 	"sync"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
@@ -22,12 +25,14 @@ type fake9bProducer struct {
 	writerOpen bool
 	writerID   claimproducer.ClaimID
 	unlock     chan struct{}
+	parked     chan struct{}
 }
 
 func newFake9bProducer(dishonestSerializeReaders bool) *fake9bProducer {
 	return &fake9bProducer{
 		dishonestSerializeReaders: dishonestSerializeReaders,
 		unlock:                    make(chan struct{}),
+		parked:                    make(chan struct{}, 8),
 	}
 }
 
@@ -60,6 +65,7 @@ func (f *fake9bProducer) Open(ctx context.Context, claimID claimproducer.ClaimID
 		blocked := f.writerOpen
 		f.mu.Unlock()
 		if blocked {
+			f.parked <- struct{}{}
 			select {
 			case <-f.unlock:
 			case <-ctx.Done():
@@ -97,8 +103,25 @@ func (f *fake9bProducer) ScopesConflict(_ context.Context, a, b []byte) (bool, e
 }
 
 func TestCheckSerialization9b_DetectsReaderLeaseSerialization(t *testing.T) {
-	results := Run(context.Background(), newFake9bProducer(true))
-	r := findRow(t, results, "Serialization9b")
+	f := newFake9bProducer(true)
+	caps, err := f.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("fake Capabilities: %v", err)
+	}
+
+	readerCtx, endTheBound := context.WithCancel(context.Background())
+	defer endTheBound()
+	checked := make(chan CheckResult, 1)
+	go func() {
+		checked <- checkSerialization9b(context.Background(), f, caps,
+			func(context.Context) (context.Context, context.CancelFunc) { return readerCtx, func() {} })
+	}()
+
+	<-f.parked
+	<-f.parked
+	endTheBound()
+
+	r := <-checked
 	if r.Err == nil {
 		t.Fatal("Serialization9b must fail when the producer blocks a concurrent read Open behind an open writer on the byte-equal scope (reader-lease pattern), got PASS")
 	}
@@ -112,5 +135,36 @@ func TestCheckSerialization9b_PassesHonestMVCCPassThrough(t *testing.T) {
 	r := findRow(t, results, "Serialization9b")
 	if r.Err != nil {
 		t.Fatalf("Serialization9b must pass when concurrent reads proceed without waiting on an open writer, got Err: %v", r.Err)
+	}
+}
+
+type cancellingReadProducer struct {
+	fake9bProducer
+}
+
+func (p *cancellingReadProducer) Open(ctx context.Context, claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
+	if spec.Intent == claimproducer.IntentRead && strings.HasPrefix(spec.Selector, nineBSelectorPrefix) {
+		return claimproducer.OpenOutcome{}, status.Error(codes.Canceled, "the server cancelled this read")
+	}
+	return p.fake9bProducer.Open(ctx, claimID, spec)
+}
+
+func TestCheckSerialization9b_ReportsAServerCancellationAsAnInconclusiveProbe(t *testing.T) {
+	p := &cancellingReadProducer{fake9bProducer: *newFake9bProducer(false)}
+	caps, err := p.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("fake Capabilities: %v", err)
+	}
+
+	r := checkSerialization9b(context.Background(), p, caps, boundReaderOpenByTimeout)
+	if r.Err == nil {
+		t.Fatal("a reader Open that fails outright must not pass Serialization9b")
+	}
+	if strings.Contains(r.Err.Error(), "reader Open did not return") {
+		t.Fatalf("a server-side cancellation, with the reader's bound still live, is not the reader-lease "+
+			"pattern; the probe must report itself inconclusive, got: %v", r.Err)
+	}
+	if !strings.Contains(r.Err.Error(), "cannot conclude serialization") {
+		t.Fatalf("Serialization9b must report the probe inconclusive, got: %v", r.Err)
 	}
 }

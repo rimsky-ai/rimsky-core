@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -415,7 +416,7 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 					return err
 				}
 			}
-			return StageTemplateLifecycleEvent(ctx, deps, EventTemplateRegistered, hash, spec, TemplatePayload{Spec: canonBytes}, tx)
+			return lifecycle.StageTemplateEvent(ctx, deps.Persist.LifecycleOutbox(), lifecycle.EventTemplateRegistered, hash, spec, lifecycle.TemplatePayload{Spec: canonBytes}, tx)
 		})
 		if errors.Is(err, errTagMoveForbidden) {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": errTagMoveForbidden.Error()})
@@ -425,8 +426,8 @@ func handleRegisterTemplate(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleIdempotencyScopeTemplate, hash,
-			"template_hash", hash, "event", EventTemplateRegistered.String())
+		deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleScopeTemplate, hash,
+			"template_hash", hash, "event", lifecycle.EventTemplateRegistered.String())
 		tags := tagsForTemplate(req.Context(), deps, hash)
 		writeJSON(w, http.StatusCreated, templateRegisterResponse{
 			TemplateID:         hash,
@@ -749,14 +750,14 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			if err := deps.Persist.Templates().DeleteByHash(ctx, hash, tx); err != nil {
 				return err
 			}
-			return StageTemplateLifecycleEvent(ctx, deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}, tx)
+			return lifecycle.StageTemplateEvent(ctx, deps.Persist.LifecycleOutbox(), lifecycle.EventTemplateDeregistered, hash, row.Spec, lifecycle.TemplatePayload{}, tx)
 		})
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleIdempotencyScopeTemplate, hash,
-			"template_hash", hash, "event", EventTemplateDeregistered.String())
+		deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleScopeTemplate, hash,
+			"template_hash", hash, "event", lifecycle.EventTemplateDeregistered.String())
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 	}
 }
@@ -811,7 +812,7 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			outState = "deployed"
-			return StageTemplateLifecycleEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec, TemplatePayload{Tags: tags}, tx)
+			return lifecycle.StageTemplateEvent(ctx, deps.Persist.LifecycleOutbox(), lifecycle.EventTemplateDeployed, hash, row.Spec, lifecycle.TemplatePayload{Tags: tags}, tx)
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_deployed", map[string]any{
@@ -832,8 +833,8 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if !noOp {
-			deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleIdempotencyScopeTemplate, hash,
-				"template_hash", hash, "event", EventTemplateDeployed.String())
+			deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleScopeTemplate, hash,
+				"template_hash", hash, "event", lifecycle.EventTemplateDeployed.String())
 		}
 		resp := map[string]any{"state": outState}
 		if noOp {
@@ -896,7 +897,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			outState = "undeployed"
-			return StageTemplateLifecycleEvent(ctx, deps, EventTemplateUndeployed, hash, row.Spec, TemplatePayload{}, tx)
+			return lifecycle.StageTemplateEvent(ctx, deps.Persist.LifecycleOutbox(), lifecycle.EventTemplateUndeployed, hash, row.Spec, lifecycle.TemplatePayload{}, tx)
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_undeployed", map[string]any{
@@ -921,8 +922,8 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if !noOp {
-			deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleIdempotencyScopeTemplate, hash,
-				"template_hash", hash, "event", EventTemplateUndeployed.String())
+			deliverStagedLifecycleAfterCommit(req.Context(), deps, persistence.LifecycleScopeTemplate, hash,
+				"template_hash", hash, "event", lifecycle.EventTemplateUndeployed.String())
 		}
 		resp := map[string]any{"state": outState}
 		if noOp {
@@ -988,7 +989,7 @@ func tagsForTemplate(ctx context.Context, deps AppDeps, templateHash string) []s
 		return err
 	}); err != nil {
 		if deps.Logger != nil {
-			deps.Logger.Warn("tagsForTemplate: list tags failed; presenting template as untagged",
+			deps.Logger.Warn("TEMPLATE.TAGS.LISTFAILED", "site", "tagsForTemplate", "detail", "presenting the template as untagged",
 				"template_hash", templateHash,
 				"error", err.Error())
 		}

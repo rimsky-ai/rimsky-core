@@ -6,7 +6,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -25,23 +24,9 @@ func (d *database) Queue() persistence.Queue                   { return d.q }
 func (d *database) Tables() persistence.Tables                 { return d.s }
 func (d *database) AdvisoryLocker() persistence.AdvisoryLocker { return d.c }
 
-func (d *database) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
-	if d.s != nil {
-		d.s.SetBlobBackend(bb, threshold, retention)
-	}
-}
-
 func (d *database) Close() error { d.pool.Close(); return nil }
 
 func (d *database) Pool() *pgxpool.Pool { return d.pool }
-
-func NewBlobBackendForDatabase(db persistence.Database) (persistence.BlobBackend, bool) {
-	pd, ok := db.(*database)
-	if !ok {
-		return nil, false
-	}
-	return NewPgLargeObjectBackend(pd.pool), true
-}
 
 func (d *database) Ping(ctx context.Context) error { return d.pool.Ping(ctx) }
 

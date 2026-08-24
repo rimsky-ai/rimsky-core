@@ -61,7 +61,7 @@ REFERENCE: THE PROTOCOLS YOU IMPLEMENT
   protocols/validation.md — How to implement Validation so your service rejects bad templates at registration rather than at dispatch.
   protocols/publisher.md — How to implement Publisher so external events wake instances, and how a sensor kind fits that shape.
   protocols/lifecycle-subscriber.md — How to answer the seven callbacks that report template, instance, and run-scope state changes.
-  protocols/host-agent.md — How to write your own host agent that dials rimsky's proxy and runs work on a developer's machine.
+  protocols/host-daemon.md — How to write your own host daemon that dials rimsky's proxy and runs work on a developer's machine.
   protocols/events.md — The declared shapes of rimsky's event-log rows and cascade signal payloads, for a consumer of the event log or an author of a signal predicate.
   protocols/conformance.md — How to prove your service against the protocol contract with rimsky conformance.
 
@@ -92,8 +92,8 @@ ERROR CATALOG
   errors/runtime-dispatch.md — The three classes the runtime raises when it cannot reach an executor, the call runs past its deadline, or the answer breaks the protocol.
   errors/runtime-attributes.md — The four classes the runtime raises while building a node's attribute bag and checking it against the executor's schema.
   errors/infra-faults.md — The dispatch faults error_types cannot route.
-  errors/spawn-failed.md — spawn_failed and the other classes the host-agent proxy raises for a late-bound local binary.
-  errors/agent-classes.md — The thirteen agent/ classes the bundled claude-agent executor advertises.
+  errors/spawn-failed.md — spawn_failed and the other classes the host-daemon proxy raises for a late-bound local binary.
+  errors/agent-classes.md — The thirteen `agent/` classes the bundled claude-agent executor advertises.
   errors/http-node-classes.md — The nine http/ classes the bundled http-node executor advertises.
   errors/verifier-classes.md — The five verifier/ classes, and which bundled verifier declares which.
   errors/http-api-rejections.md — The synchronous rejections the control API returns to a caller before any work starts.
@@ -186,10 +186,10 @@ EXAMPLES: ONE BEHAVIOUR EACH
     examples/lifecycle-subscriber-author.md — What a service is told when templates, instances, and run-scopes change state.
     examples/data-processing-author.md — What a claim producer gains from the typed-data mix-in.
     examples/validation-author.md — How a service's own validator is consulted at template registration.
-    examples/validation-mixin-uniform.md — Which peer roles the validation mix-in covers.
+    examples/validation-mixin-uniform.md — Which service roles the validation mix-in covers.
     examples/validation-warnings-surfaced.md — Where static-validator advisories surface, and how to make them blocking.
     examples/claim-producer-conformance.md — How to prove a claim producer before you ship it.
-    examples/permissive-peer-build.md — How to build a peer with only the permissive protocols module.
+    examples/permissive-service-build.md — How to build a service with only the permissive protocols module.
     examples/mandatory-instantiation-gate.md — Where by-executor attribute config is checked against every referenced service.
 
   Local development and one-shot runs
@@ -199,19 +199,19 @@ EXAMPLES: ONE BEHAVIOUR EACH
     examples/script-friendly-outcome.md — How a script branches on a one-shot run's outcome without parsing output.
     examples/audit-artifact.md — What record a one-shot run leaves behind, and how to read it.
     examples/spawned-local-services.md — How to serve a run from a local binary with nothing installed.
-    examples/host-agent-control-plane.md — How to drive the host agent from the rimsky CLI.
-    examples/host-agent-anonymous-mode.md — How the late-bind dev loop runs with no credential minted.
-    examples/host-agent-per-binding-overrides.md — Which spawn settings a service binding declares.
-    examples/host-agent-per-run-scope-isolation.md — How sibling run-scopes are kept out of one another's processes.
-    examples/anonymous-agents-isolated.md — How two developers share one anonymous deployment without colliding.
+    examples/host-daemon-control-plane.md — How to drive the host daemon from the rimsky CLI.
+    examples/host-daemon-anonymous-mode.md — How the late-bind dev loop runs with no credential minted.
+    examples/host-daemon-per-binding-overrides.md — Which spawn settings a service binding declares.
+    examples/host-daemon-per-run-scope-isolation.md — How sibling run-scopes are kept out of one another's processes.
+    examples/anonymous-daemons-isolated.md — How two developers share one anonymous deployment without colliding.
     examples/operator-onboarding.md — What the first-steps walkthrough runs.
 
   Operating a deployment
     examples/rimsky-deployment-bootstrap.md — Which entrypoint command runs which roles, and who runs migrations.
     examples/single-process-all-in-one.md — What running all three roles in one process makes possible.
     examples/rimsky-health-check.md — How to probe whether a deployment is healthy without a credential.
-    examples/peer-auth-mtls-mutual.md — What one configuration change does to the internal plane.
-    examples/peer-tls-enforced.md — What requiring transport security on a peer entry enforces.
+    examples/service-auth-mtls-mutual.md — What one configuration change does to the internal plane.
+    examples/service-tls-enforced.md — What requiring transport security on a service entry enforces.
     examples/service-enrollment.md — How one api key covers a standing service's whole credential story.
     examples/compose-lifecycle.md — How to apply a manifest to a running deployment and tear it down.
     examples/template-lifecycle.md — A template from registered to removed, and which steps are refused out of order.

@@ -37,13 +37,6 @@ func TestWriteSyntheticRimskyYAML_PathsCorrect(t *testing.T) {
 	if cfg.Persistence.SQLite.Path != wantSQLitePath {
 		t.Fatalf("persistence.sqlite.path: got %q, want %q", cfg.Persistence.SQLite.Path, wantSQLitePath)
 	}
-	if cfg.Blob.Backend != "filesystem" {
-		t.Fatalf("persistence.blob.backend: got %q, want %q", cfg.Blob.Backend, "filesystem")
-	}
-	wantBlobRoot := filepath.Join(runDir, "blobs")
-	if cfg.Blob.Filesystem.Root != wantBlobRoot {
-		t.Fatalf("persistence.blob.filesystem.root: got %q, want %q", cfg.Blob.Filesystem.Root, wantBlobRoot)
-	}
 }
 
 func TestWriteSyntheticRimskyYAML_MergedExecutors(t *testing.T) {

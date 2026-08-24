@@ -44,7 +44,7 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 			return err
 		}
 		ck := "ck-" + instanceID.String()[:8]
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 			InstanceKey:  &ck,
@@ -66,7 +66,7 @@ func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persist
 }
 
 func runTickAgainstDriver(ctx context.Context, d persistence.Database, log frame.Logger) error {
-	return frame.RunTick(ctx, d.Tables(), d.Queue(), log, nil, nil)
+	return frame.RunTick(ctx, d.Tables(), d.Queue(), log, frame.LifecycleDelivery{}, nil)
 }
 
 func quietLogger() *slog.Logger {
@@ -149,8 +149,7 @@ func markMessageDelivered(t *testing.T, ctx context.Context, d persistence.Datab
 }
 
 func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -183,8 +182,7 @@ func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 }
 
 func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -210,8 +208,7 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 }
 
 func TestRunTick_FrameEndDetection_ObservesDBStampedDuration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -223,7 +220,7 @@ func TestRunTick_FrameEndDetection_ObservesDBStampedDuration(t *testing.T) {
 	markMessageDelivered(t, ctx, d, msgID)
 
 	metrics := &fakeMetricsHook{}
-	require.NoError(t, frame.RunTick(ctx, d.Tables(), d.Queue(), quietLogger(), nil, metrics))
+	require.NoError(t, frame.RunTick(ctx, d.Tables(), d.Queue(), quietLogger(), frame.LifecycleDelivery{}, metrics))
 
 	require.Len(t, metrics.observed, 1, "exactly one frame-duration observation expected")
 
@@ -242,8 +239,7 @@ func TestRunTick_FrameEndDetection_ObservesDBStampedDuration(t *testing.T) {
 
 // @concept: run-scope
 func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -283,8 +279,7 @@ func TestRunTick_FrameEndDetection_ClosesRootScopeTreeAtSettlement(t *testing.T)
 }
 
 func TestRunTick_FrameEndDetection_UndeliveredTriggerNotCompleted(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -303,8 +298,7 @@ func TestRunTick_FrameEndDetection_UndeliveredTriggerNotCompleted(t *testing.T) 
 }
 
 func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -352,8 +346,7 @@ func TestRunTick_OpenNewFrames_PicksOldestPendingMessage(t *testing.T) {
 }
 
 func TestRunTick_ReapOrphanDispatch(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -376,8 +369,7 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 }
 
 func TestEndFrameIfSettled_RefusesFrameWithInFlightRun(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -408,8 +400,7 @@ type endFrameOutcome struct {
 }
 
 func TestEndFrameIfSettled_ConcurrentRunInsertCannotEndFrame(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 
@@ -463,8 +454,7 @@ func TestEndFrameIfSettled_ConcurrentRunInsertCannotEndFrame(t *testing.T) {
 }
 
 func TestRunTick_NoOp_EmptyDB(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	d := pgdbtest.OpenDriver(ctx, t)
 

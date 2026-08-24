@@ -61,7 +61,7 @@ func StartPublisherSubscriptionsForInstance(
 		_, registered := publisherFromRegistry(deps, p.Name)
 		switch {
 		case resolveErr != nil:
-			deps.Logger.Warn("publisher.subscribe.resolve_failed",
+			deps.Logger.Warn("PUBLISHER.SUBSCRIBE.RESOLVEFAILED",
 				"publisher_name", p.Name,
 				"instance_id", instanceID.String(),
 				"publisher_subscription_id", subID.String(),
@@ -69,7 +69,7 @@ func StartPublisherSubscriptionsForInstance(
 			row.State = persistence.PublisherSubscriptionStateFailed
 			row.FailureReason = fmt.Sprintf("publisher config resolution failed: %s", resolveErr.Error())
 		case !registered:
-			deps.Logger.Warn("publisher.subscribe.unknown_publisher",
+			deps.Logger.Warn("PUBLISHER.SUBSCRIBE.UNKNOWNPUBLISHER",
 				"publisher_name", p.Name,
 				"instance_id", instanceID.String(),
 				"publisher_subscription_id", subID.String())
@@ -77,7 +77,7 @@ func StartPublisherSubscriptionsForInstance(
 			row.FailureReason = unknownPublisherReason(p.Name)
 		}
 		if err := deps.Persist.PublisherSubscriptions().Insert(ctx, row, tx); err != nil {
-			deps.Logger.Warn("publisher.subscribe.row_insert_failed",
+			deps.Logger.Warn("PUBLISHER.SUBSCRIBE.ROWINSERTFAILED",
 				"publisher_name", p.Name,
 				"instance_id", instanceID.String(),
 				"publisher_subscription_id", subID.String(),
@@ -87,7 +87,7 @@ func StartPublisherSubscriptionsForInstance(
 			continue
 		}
 		if row.State == persistence.PublisherSubscriptionStateFailed {
-			deps.Logger.Warn("publisher.subscribe.failed",
+			deps.Logger.Warn("PUBLISHER.SUBSCRIBE.FAILED",
 				"publisher_subscription_id", subID.String(),
 				"reason", row.FailureReason)
 		}
@@ -134,7 +134,7 @@ func runPublisherSubscriptionReconcilerLoop(ctx context.Context, deps PublisherL
 
 func reconcilePublisherSubscriptionsOnce(ctx context.Context, deps PublisherLifecycleDeps) {
 	if err := ResyncPublisherSubscriptions(ctx, deps); err != nil {
-		deps.Logger.Warn("publisher.subscribe.reconcile_failed", "error", err.Error())
+		deps.Logger.Warn("PUBLISHER.SUBSCRIBE.RECONCILEFAILED", "error", err.Error())
 	}
 }
 
@@ -170,7 +170,7 @@ func retryRPCWithBackoff(
 
 func callListSubscriptionsWithRetry(ctx context.Context, client PublisherClient, log shared.Logger) ([]ListedPublisherSubscription, error) {
 	var live []ListedPublisherSubscription
-	err := retryRPCWithBackoff(ctx, log, "publisher.resync.list_retry",
+	err := retryRPCWithBackoff(ctx, log, "PUBLISHER.RESYNCLIST.RETRIED",
 		func(attempt int, err error) []any {
 			return []any{"publisher_name", client.Name(), "attempt", attempt, "error", err.Error()}
 		},
@@ -190,7 +190,7 @@ func callListSubscriptionsWithRetry(ctx context.Context, client PublisherClient,
 }
 
 func callSubscribeWithRetry(ctx context.Context, client PublisherClient, req SubscribeRequest, log shared.Logger) error {
-	return retryRPCWithBackoff(ctx, log, "publisher.subscribe.retry",
+	return retryRPCWithBackoff(ctx, log, "PUBLISHER.SUBSCRIBE.RETRIED",
 		func(attempt int, err error) []any {
 			return []any{"publisher_subscription_id", req.PublisherSubscriptionID.String(), "attempt", attempt, "error", err.Error()}
 		},
@@ -223,7 +223,7 @@ func StopPublisherSubscriptionsForInstance(
 		}
 		client, ok := publisherFromRegistry(deps, s.PublisherName)
 		if !ok {
-			deps.Logger.Warn("publisher.unsubscribe.unknown_publisher",
+			deps.Logger.Warn("PUBLISHER.UNSUBSCRIBE.UNKNOWNPUBLISHER",
 				"publisher_name", s.PublisherName,
 				"instance_id", instanceID.String(),
 				"publisher_subscription_id", s.ID.String())
@@ -234,7 +234,7 @@ func StopPublisherSubscriptionsForInstance(
 		err := client.Unsubscribe(rpcCtx, s.ID)
 		cancel()
 		if err != nil {
-			deps.Logger.Warn("publisher.unsubscribe.rpc_failed",
+			deps.Logger.Warn("PUBLISHER.UNSUBSCRIBE.RPCFAILED",
 				"publisher_name", s.PublisherName,
 				"instance_id", instanceID.String(),
 				"publisher_subscription_id", s.ID.String(),
@@ -275,7 +275,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 	for _, client := range deps.Publishers.All() {
 		live, err := callListSubscriptionsWithRetry(ctx, client, deps.Logger)
 		if err != nil {
-			deps.Logger.Warn("publisher.resync.list_failed",
+			deps.Logger.Warn("PUBLISHER.RESYNC.LISTFAILED",
 				"publisher_name", client.Name(),
 				"error", err.Error())
 			continue
@@ -287,7 +287,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 		for _, s := range expectedByPublisher[client.Name()] {
 			gone, goneErr := instanceTerminatedOrMissingMemo(ctx, deps, s.InstanceID, goneMemo)
 			if goneErr != nil {
-				deps.Logger.Warn("publisher.resync.instance_read_failed",
+				deps.Logger.Warn("PUBLISHER.RESYNC.INSTANCEREADFAILED",
 					"publisher_name", client.Name(),
 					"instance_id", s.InstanceID.String(),
 					"publisher_subscription_id", s.ID.String(),
@@ -295,7 +295,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 				continue
 			}
 			if gone {
-				deps.Logger.Info("publisher.resync.instance_terminated_skip",
+				deps.Logger.Info("PUBLISHER.RESYNC.INSTANCETERMINATEDSKIPPED",
 					"publisher_name", client.Name(),
 					"instance_id", s.InstanceID.String(),
 					"publisher_subscription_id", s.ID.String())
@@ -315,7 +315,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 			}
 			fresh, err := getSubscriptionRow(ctx, deps, s.ID)
 			if err != nil {
-				deps.Logger.Warn("publisher.resync.row_read_failed",
+				deps.Logger.Warn("PUBLISHER.RESYNC.ROWREADFAILED",
 					"publisher_name", client.Name(),
 					"publisher_subscription_id", s.ID.String(),
 					"error", err.Error())
@@ -335,7 +335,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 				MessageType:             fresh.MessageType,
 			}
 			if err := callSubscribeWithRetry(ctx, client, req, deps.Logger); err != nil {
-				deps.Logger.Warn("publisher.resync.subscribe_failed",
+				deps.Logger.Warn("PUBLISHER.RESYNC.SUBSCRIBEFAILED",
 					"publisher_name", client.Name(),
 					"publisher_subscription_id", s.ID.String(),
 					"error", err.Error())
@@ -359,7 +359,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 			}
 			fresh, err := getSubscriptionRow(ctx, deps, l.PublisherSubscriptionID)
 			if err != nil {
-				deps.Logger.Warn("publisher.resync.orphan_read_failed",
+				deps.Logger.Warn("PUBLISHER.RESYNC.ORPHANREADFAILED",
 					"publisher_name", client.Name(),
 					"publisher_subscription_id", l.PublisherSubscriptionID.String(),
 					"error", err.Error())
@@ -370,7 +370,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 					fresh.State == persistence.PublisherSubscriptionStateActive) {
 				continue
 			}
-			deps.Logger.Warn("publisher.resync.orphan_subscription",
+			deps.Logger.Warn("PUBLISHER.RESYNC.ORPHANFOUND",
 				"publisher_name", client.Name(),
 				"publisher_subscription_id", l.PublisherSubscriptionID.String(),
 				"instance_id", l.InstanceID.String(),
@@ -379,7 +379,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 			err = client.Unsubscribe(rpcCtx, l.PublisherSubscriptionID)
 			cancel()
 			if err != nil {
-				deps.Logger.Warn("publisher.resync.unsubscribe_orphan_failed",
+				deps.Logger.Warn("PUBLISHER.RESYNC.ORPHANUNSUBSCRIBEFAILED",
 					"publisher_name", client.Name(),
 					"publisher_subscription_id", l.PublisherSubscriptionID.String(),
 					"error", err.Error())
@@ -406,7 +406,7 @@ func recoverUnknownPublisherFailures(ctx context.Context, deps PublisherLifecycl
 			persistence.PublisherSubscriptionStateFailed,
 			persistence.PublisherSubscriptionStateMounting, "")
 		if err != nil {
-			deps.Logger.Warn("publisher.resync.recover_failed_row",
+			deps.Logger.Warn("PUBLISHER.RESYNC.ROWRECOVERFAILED",
 				"publisher_name", s.PublisherName,
 				"publisher_subscription_id", s.ID.String(),
 				"error", err.Error())
@@ -415,7 +415,7 @@ func recoverUnknownPublisherFailures(ctx context.Context, deps PublisherLifecycl
 		if !flipped {
 			continue
 		}
-		deps.Logger.Info("publisher.resync.recovered_failed_row",
+		deps.Logger.Info("PUBLISHER.RESYNC.ROWRECOVERED",
 			"publisher_name", s.PublisherName,
 			"publisher_subscription_id", s.ID.String())
 		s.State = persistence.PublisherSubscriptionStateMounting
@@ -528,13 +528,13 @@ func markSubscriptionActive(ctx context.Context, deps PublisherLifecycleDeps, su
 		persistence.PublisherSubscriptionStateMounting,
 		persistence.PublisherSubscriptionStateActive, "")
 	if err != nil && deps.Logger != nil {
-		deps.Logger.Warn("publisher.markSubscriptionActive.update_failed",
+		deps.Logger.Warn("PUBLISHER.SUBSCRIPTIONACTIVE.UPDATEFAILED",
 			"publisher_subscription_id", subID.String(),
 			"error", err.Error())
 		return false
 	}
 	if flipped && deps.Logger != nil {
-		deps.Logger.Info("publisher.subscribe.active",
+		deps.Logger.Info("PUBLISHER.SUBSCRIPTION.ACTIVE",
 			"publisher_subscription_id", subID.String())
 	}
 	return flipped
@@ -582,7 +582,7 @@ func unsubscribeIfRowStopped(ctx context.Context, deps PublisherLifecycleDeps, c
 	row, err := getSubscriptionRow(ctx, deps, subID)
 	if err != nil {
 		if deps.Logger != nil {
-			deps.Logger.Warn("publisher.unsubscribe.compensate_read_failed",
+			deps.Logger.Warn("PUBLISHER.UNSUBSCRIBECOMPENSATION.READFAILED",
 				"publisher_subscription_id", subID.String(),
 				"error", err.Error())
 		}
@@ -594,7 +594,7 @@ func unsubscribeIfRowStopped(ctx context.Context, deps PublisherLifecycleDeps, c
 	rpcCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
 	defer cancel()
 	if err := client.Unsubscribe(rpcCtx, subID); err != nil && deps.Logger != nil {
-		deps.Logger.Warn("publisher.unsubscribe.compensate_failed",
+		deps.Logger.Warn("PUBLISHER.UNSUBSCRIBECOMPENSATION.FAILED",
 			"publisher_name", client.Name(),
 			"publisher_subscription_id", subID.String(),
 			"error", err.Error())
@@ -606,14 +606,14 @@ func markSubscriptionStopped(ctx context.Context, deps PublisherLifecycleDeps, s
 		fromState, persistence.PublisherSubscriptionStateStopped, "")
 	if err != nil {
 		if deps.Logger != nil {
-			deps.Logger.Warn("publisher.markSubscriptionStopped.update_failed",
+			deps.Logger.Warn("PUBLISHER.SUBSCRIPTIONSTOPPED.UPDATEFAILED",
 				"publisher_subscription_id", subID.String(),
 				"error", err.Error())
 		}
 		return
 	}
 	if !flipped && deps.Logger != nil {
-		deps.Logger.Info("publisher.markSubscriptionStopped.already_settled",
+		deps.Logger.Info("PUBLISHER.SUBSCRIPTIONSTOPPED.ALREADYSETTLED",
 			"publisher_subscription_id", subID.String(),
 			"expected_state", fromState)
 	}

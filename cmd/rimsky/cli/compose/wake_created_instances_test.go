@@ -91,7 +91,7 @@ func TestWakeCreatedInstances_NamesTheInstanceItLeavesUndriven(t *testing.T) {
 		t.Fatalf("woken = %v, want the rooted instance alone", woken)
 	}
 	line := logs.String()
-	if !strings.Contains(line, "compose.rootless_instance_not_woken") {
+	if !strings.Contains(line, "COMPOSE.ROOTLESSINSTANCE.NOTWOKEN") {
 		t.Fatalf("logs = %q, want a warning naming the instance compose run leaves undriven", line)
 	}
 	if !strings.Contains(line, "undriven") || !strings.Contains(line, "inst-undriven") {

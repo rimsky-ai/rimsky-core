@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 )
 
 // @decision: graceful-shutdown
@@ -27,7 +27,7 @@ func Serve(opts Opts) error {
 	} else if opts.Auth.ClaudeCodeOauthToken != "" {
 		authMode = "oauth"
 	}
-	slog.Info("claude-agent starting",
+	slog.Info("CLAUDEAGENT.PROCESS.STARTING",
 		"grpc_port", opts.GrpcPort,
 		"http_port", opts.HTTPPort,
 		"stub_mode", opts.StubMode,
@@ -36,7 +36,7 @@ func Serve(opts Opts) error {
 		"expose_env_allowlist_open", opts.ExposeEnvAllowlist.Open(),
 	)
 
-	identity, err := peerauth.LoadFromEnv(context.Background(), "claude-agent")
+	identity, err := serviceauth.LoadFromEnv(context.Background(), "claude-agent")
 	if err != nil {
 		return err
 	}
@@ -57,13 +57,13 @@ func Serve(opts Opts) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("claude-agent gRPC server listening", "addr", grpcSrv.Address, "peer_auth_mtls", identity.Enabled())
+	slog.Info("CLAUDEAGENT.GRPC.LISTENING", "addr", grpcSrv.Address, "service_auth_mtls", identity.Enabled())
 
 	httpBridge, err := StartHTTPBridge(opts.Host, opts.HTTPPort, executor, identity)
 	if err != nil {
 		return err
 	}
-	slog.Info("claude-agent HTTP bridge listening", "addr", httpBridge.Address)
+	slog.Info("CLAUDEAGENT.HTTPBRIDGE.LISTENING", "addr", httpBridge.Address)
 
 	sweepCtx, cancelSweep := context.WithCancel(context.Background())
 	defer cancelSweep()
@@ -85,7 +85,7 @@ func Serve(opts Opts) error {
 	shutdownCtx, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
 	defer stopSignals()
 	<-shutdownCtx.Done()
-	slog.Info("claude-agent stopping")
+	slog.Info("CLAUDEAGENT.PROCESS.STOPPING")
 	cancelSweep()
 	grpcShutdownCtx, cancelGrpcShutdown := context.WithTimeout(context.Background(), grpcShutdownGracePeriod)
 	defer cancelGrpcShutdown()

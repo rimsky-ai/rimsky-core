@@ -33,7 +33,7 @@ type Server struct {
 	client   *http.Client
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 func NewServer(opts Opts) *Server {
 	return &Server{
 		stubMode: opts.StubMode,

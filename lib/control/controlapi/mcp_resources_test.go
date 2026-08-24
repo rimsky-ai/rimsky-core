@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -299,19 +300,18 @@ func TestResources_Read_PermissionDenied(t *testing.T) {
 
 func TestResources_Read_LimitCappedAtMax(t *testing.T) {
 	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-	_, instID := seedBPInstance(t, h, uuid.NewString())
-	instUUID := uuid.MustParse(instID)
-	bpID := createBreakpointForRead(t, h, instID)
-	_, _ = seedBPHit(t, h, bpID, instUUID, time.Now().UTC().Add(-time.Minute))
-
-	cat := buildResourceCatalog(h)
-	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?limit=9999", instID)
-	contents, rpcErr := cat.Read(req, uri)
+	_, limit, rpcErr := parseSinceLimit(url.Values{"limit": []string{"9999"}})
 	require.Nil(t, rpcErr)
-	require.NotNil(t, contents)
+	require.Equal(t, resourceReadMaxLimit, limit,
+		"a limit above the ceiling clamps to it rather than reaching the store")
+
+	_, limit, rpcErr = parseSinceLimit(url.Values{"limit": []string{"7"}})
+	require.Nil(t, rpcErr)
+	require.Equal(t, 7, limit, "a limit under the ceiling is honored as given")
+
+	_, limit, rpcErr = parseSinceLimit(url.Values{})
+	require.Nil(t, rpcErr)
+	require.Equal(t, resourceReadDefaultLimit, limit, "an absent limit takes the default")
 }
 
 func createBreakpointForRead(t *testing.T, h *harness, instID string) foundationshared.UUID {

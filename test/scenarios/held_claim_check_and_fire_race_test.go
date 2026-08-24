@@ -18,7 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
@@ -96,7 +96,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		uuid.New(), chID, acqRunID, uuid.New(), inhRunID,
 	)
 
-	client, err := peer.Dial(h.Ctx, "held-store", "grpc://"+endpoint, peer.TLSModeOff)
+	client, err := service.Dial(h.Ctx, "held-store", "grpc://"+endpoint, service.TLSModeOff)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	registry := locks.NewRegistry()

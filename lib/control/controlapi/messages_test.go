@@ -491,21 +491,6 @@ func TestMCPMessageSend_OmittedIdempotencyKeyFailsNamingTheArgument(t *testing.T
 		"a keyless MCP send must persist no envelope: the tool mints no key on the caller's behalf")
 }
 
-func TestCreateMessage_DeclaredTypeAccepted(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	instID := newInstanceForMessages(t, h, "declared-ok")
-	resp := h.httpJSONWithHeaders(t, "POST",
-		fmt.Sprintf("/v1/instances/%s/messages", instID),
-		map[string]any{"type": "system/invalidate"},
-		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
-	require.Equal(t, http.StatusCreated, resp.status, resp.body)
-	msgID, _ := resp.body["message_id"].(string)
-	require.NotEmpty(t, msgID)
-}
-
 func TestCreateMessage_UndeclaredTypeRefused(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)

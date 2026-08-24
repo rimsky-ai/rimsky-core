@@ -103,7 +103,7 @@ func applyErrorPolicyWithScratchAndSettleHook(
 		requeuePC := func(ctx context.Context) {
 			// @concept: node-run
 			if err := args.Queue.ReleaseClaimWithDisposition(ctx, nodeRunID, supID, "retry_after_error"); err != nil && logger != nil {
-				logger.Warn("applyErrorPolicy: release-and-requeue failed; row may stay claimed until liveness sweep",
+				logger.Warn("RUNNER.ERRORPOLICYREQUEUE.FAILED", "site", "applyErrorPolicy", "detail", "the row may stay claimed until the liveness sweep",
 					"dispatch_id", nodeRunID.String(), "error", err.Error())
 			}
 		}
@@ -236,7 +236,7 @@ func applyErrorPolicyWithScratchAndSettleHook(
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil && args.Logger != nil {
-			args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
+			args.Logger.Warn("RUNTREE.PROPAGATION.FAILED", "site", "applyErrorPolicy",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
@@ -448,7 +448,7 @@ func applyInfraGiveUp(
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil && args.Logger != nil {
-			args.Logger.Warn("applyInfraGiveUp: run-tree propagation failed",
+			args.Logger.Warn("RUNTREE.PROPAGATION.FAILED", "site", "applyInfraGiveUp",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}

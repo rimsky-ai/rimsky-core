@@ -55,7 +55,7 @@ func templateIDTargets(ctx context.Context, persist persistence.Tables, logger f
 	})
 	if err != nil {
 		if logger != nil {
-			logger.Warn("auth.template_targets_lookup_failed", "template_id", idOrTag, "err", err.Error())
+			logger.Warn("AUTH.TEMPLATETARGETS.LOOKUPFAILED", "template_id", idOrTag, "err", err.Error())
 		}
 		return []map[string]string{{}}
 	}

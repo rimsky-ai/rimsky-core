@@ -56,7 +56,7 @@ All 49 actions follow. **Grantable** marks the 46 an api key may hold; the other
 | Action | Route | Behavior |
 | --- | --- | --- |
 | `health:probe` | `GET /v1/health` | Needs no token. Answers success while persistence is reachable. |
-| `peer-auth:ca-root` | `GET /v1/ca-root` | Needs no token. Serves the deployment CA root as PEM so a service can verify the control API before it enrolls. Mounted only when `peer_auth` names a deployment CA. |
+| `service-auth:ca-root` | `GET /v1/ca-root` | Needs no token. Serves the deployment CA root as PEM so a service can verify the control API before it enrolls. Mounted only when `service_auth` names a deployment CA. |
 | `auth:whoami` | `GET /v1/auth/whoami` | Needs a valid token and no permission. Echoes the caller's own identity. |
 
 Naming any of these three in a grant is refused at key creation, because the permission could never be consulted.
@@ -128,7 +128,7 @@ These four halt and mutate live dispatches. Treat them as production-risky.
 | `parked-node:read` | | `GET /v1/admin/diagnostics/parked-nodes` |
 | `waitset:read` | | `GET /v1/admin/diagnostics/wait-sets` |
 | `claim-holders:read` | | `GET /v1/claim-handles/{claim_handle_id}/holders` |
-| `diagnostics:read` | | `GET /v1/admin/diagnostics/held-frames`, `GET /v1/admin/diagnostics/producer-outbox` |
+| `diagnostics:read` | | `GET /v1/admin/diagnostics/held-frames`, `GET /v1/admin/diagnostics/producer-outbox`, `GET /v1/admin/diagnostics/lifecycle-outbox` |
 | `observability:read` | | `GET /v1/observability/*` — mounted only when the deployment configures an observability handler |
 
 `parked-node:read` reads the park roster. `waitset:read` reads the sender and receiver edges of one frame, and requires a `?frame=` query parameter.
@@ -158,7 +158,7 @@ These four halt and mutate live dispatches. Treat them as production-risky.
 | Action | Write | Route |
 | --- | --- | --- |
 | `mcp:read` | | `POST /v1/mcp`, `GET /v1/mcp`, `DELETE /v1/mcp` |
-| `service:enroll` | | `POST /v1/enroll` — mounted only when `peer_auth` names a deployment CA |
+| `service:enroll` | | `POST /v1/enroll` — mounted only when `service_auth` names a deployment CA |
 | `compose:origin` | | no route |
 
 `mcp:read` opens the MCP surface; each tool call is still gated by the action that tool maps to. `service:enroll` exchanges the caller's api key for a short-lived mTLS leaf certificate. `compose:origin` is a capability marker with no route: it grants the bearer the right to create tags and instance keys under the reserved `compose:` prefix, and the control API consults it when a request stamps the compose-origin header. Without it, a `compose:`-prefixed tag or instance key is refused 400.
@@ -213,7 +213,7 @@ Two read-shaped actions fall outside it, because the wildcard matches the whole 
 ]
 ```
 
-Grants 20 actions: the 18 reads plus the two writes a supervising agent needs — recover a failed node, and send typed messages.
+Grants 20 actions: the 18 reads plus the two writes a supervising daemon needs — recover a failed node, and send typed messages.
 
 ### `debug-operator`
 
@@ -289,6 +289,6 @@ Each item below is a reasonable expectation the product does not meet. The parag
 
 **Anonymous mode has no off switch.** A deployment with zero active api keys admits unauthenticated requests, and no configuration key or environment variable disables that. The mode is derived from the key ledger: it ends the moment the first key exists, which is what `rimsky auth init` does. Mint that first key as the first act of bringing a deployment up. Two guards back this. Revoking the last active key answers 409 unless the caller confirms — `rimsky auth revoke <name> --force-leave-anonymous`, or `?force_leave_anonymous=true` over HTTP. Creating the deployment's first key *with* an expiry answers 409 unless `?force_expiring_key=true` accompanies it, because an expiring first key would return the deployment to anonymous mode when it lapsed; the CLI does not send that parameter, so mint the first key without `--expires`.
 
-**Enrollment routes appear only with a deployment CA.** `POST /v1/enroll` and `GET /v1/ca-root` answer 404 on a deployment whose `peer_auth` is absent or `none`, for every caller including one holding `service:enroll`. The 404 comes from the router, not from a handler refusing the caller. Set `peer_auth: mtls` to mount them.
+**Enrollment routes appear only with a deployment CA.** `POST /v1/enroll` and `GET /v1/ca-root` answer 404 on a deployment whose `service_auth` is absent or `none`, for every caller including one holding `service:enroll`. The 404 comes from the router, not from a handler refusing the caller. Set `service_auth: mtls` to mount them.
 
 **`rimsky admin reset` asks nothing.** It requires exactly one argument, and that argument must be a node id — an instance id answers `404 node not found`. It does not prompt for confirmation, and the `--yes` flag it accepts answers no question. The control API narrows the blast radius instead: the reset answers 409 unless the node has a failed terminal run in some scope, and nothing beyond the target node changes.

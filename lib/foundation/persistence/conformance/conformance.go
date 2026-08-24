@@ -128,7 +128,9 @@ func Suite(
 	t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testNodeAttributesGetLatestByNode(t, factory(t)) })
 	t.Run("NodeAttributesCascadeDeleteWithRun", func(t *testing.T) { testNodeAttributesCascadeDeleteWithRun(t, factory(t), rawExec) })
 	t.Run("NodeAttributesPerRunDenormConsistency", func(t *testing.T) { testNodeAttributesPerRunDenormConsistency(t, factory(t)) })
-	t.Run("NodeAttributesSpillUpsertMergeDeltaOrphans", func(t *testing.T) { testNodeAttributesSpillUpsertMergeDeltaOrphans(t, factory(t)) })
+	t.Run("LargeAttributeBagAndScratchRoundTripFromTheRow", func(t *testing.T) {
+		testLargeAttributeBagAndScratchRoundTripFromTheRow(t, factory(t))
+	})
 	t.Run("NodeRunSummaryBucketMapping", func(t *testing.T) { testNodeRunSummaryBucketMapping(t, factory(t)) })
 	t.Run("InstancesFindAnyByInstanceKey", func(t *testing.T) { testInstancesFindAnyByInstanceKey(t, factory(t)) })
 	t.Run("InstancesCreateConflictErrorsDistinguishIDFromKey", func(t *testing.T) { testInstancesCreateConflictErrorsDistinguishIDFromKey(t, factory(t)) })
@@ -139,8 +141,15 @@ func Suite(
 		testInstancesDeleteCascadeRunScopeTree(t, factory(t), rawQuery)
 	})
 	t.Run("CreateChildNodeRunRefusesClosedScope", func(t *testing.T) { testCreateChildNodeRunRefusesClosedScope(t, factory(t)) })
-	t.Run("LifecycleIdempotencyListByClaimProducer", func(t *testing.T) { testLifecycleIdempotencyListByClaimProducer(t, factory(t)) })
+	t.Run("LifecycleOutboxListsWhatOneServiceIsOwed", func(t *testing.T) { testLifecycleOutboxListsWhatOneServiceIsOwed(t, factory(t)) })
+	// @decision: service-delivery-stall-signal
+	t.Run("ServiceDeliveryStallMarkerIsAnEdgePerServiceAndOutbox", func(t *testing.T) {
+		testServiceDeliveryStallMarkerIsAnEdgePerServiceAndOutbox(t, factory(t))
+	})
 	t.Run("LifecycleOutboxDeliversInStagedOrder", func(t *testing.T) { testLifecycleOutboxDeliversInStagedOrder(t, factory(t)) })
+	t.Run("LifecycleOutboxCarriesItsDeliveryFailureState", func(t *testing.T) {
+		testLifecycleOutboxCarriesItsDeliveryFailureState(t, factory(t))
+	})
 	t.Run("LifecycleOutboxDropsRowsPastTheRetentionCutoff", func(t *testing.T) {
 		testLifecycleOutboxDropsRowsPastTheRetentionCutoff(t, factory(t))
 	})
@@ -240,13 +249,6 @@ func Suite(
 	t.Run("RetentionSweep", func(t *testing.T) {
 		t.Run("ClaimHandles", func(t *testing.T) { testRetentionClaimHandleSweep(t, factory(t)) })
 		t.Run("FrameTrace", func(t *testing.T) { testRetentionFrameTracePrune(t, factory(t)) })
-		t.Run("FramePruneBlobOrphans", func(t *testing.T) { testFramePruneEnrollsScratchAndAttributeBlobOrphans(t, factory(t)) })
-		t.Run("DeletePriorCascadeStalesBlobOrphans", func(t *testing.T) { testDeletePriorCascadeStalesEnrollsScratchBlobOrphan(t, factory(t)) })
-		t.Run("DropPendingRunBlobOrphans", func(t *testing.T) { testDropPendingRunEnrollsScratchBlobOrphan(t, factory(t)) })
-	})
-	t.Run("ScratchSpillRoundTrip", func(t *testing.T) {
-		t.Run("OverThresholdSpillsThroughRealBackend", func(t *testing.T) { testScratchOverThresholdSpillsThroughRealBackend(t, factory(t)) })
-		t.Run("AtOrBelowThresholdStaysInlineThroughRealBackend", func(t *testing.T) { testScratchAtOrBelowThresholdStaysInlineThroughRealBackend(t, factory(t)) })
 	})
 	t.Run("CascadeWalkerMethods", func(t *testing.T) {
 		t.Run("TwoLegClaimPromote", func(t *testing.T) { testTwoLegClaimPromoteContract(t, factory(t)) })
@@ -259,7 +261,6 @@ func Suite(
 	t.Run("LineageQueryPaginatesWithCursor", func(t *testing.T) { testLineageQueryPaginatesWithCursor(t, factory(t)) })
 	t.Run("LineageCountOlderThanMatchesDelete", func(t *testing.T) { testLineageCountOlderThanMatchesDelete(t, factory(t)) })
 	t.Run("APIKeys", func(t *testing.T) { testAPIKeys(t, factory(t)) })
-	t.Run("BlobOrphans", func(t *testing.T) { TestBlobOrphans(t, factory(t)) })
 	t.Run("Breakpoints", func(t *testing.T) { TestBreakpoints(t, factory(t)) })
 	t.Run("BreakpointHits", func(t *testing.T) { TestBreakpointHits(t, factory(t)) })
 	t.Run("DeploymentCA", func(t *testing.T) { TestDeploymentCA(t, factory(t)) })

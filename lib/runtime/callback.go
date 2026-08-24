@@ -19,7 +19,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
@@ -27,7 +26,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 var errUnauthorizedCallback = errors.New("callback: unauthorized")
@@ -92,26 +91,25 @@ type CallbackServer struct {
 	SupervisorID                string
 	LivenessInterval            time.Duration
 	ResumeGrace                 time.Duration
-	Blob                        persistence.BlobBackend
-	BlobSpillThreshold          int
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	DeclaredTagsFor             func(executorName string) (tags []string, ok bool)
 	Metrics                     MetricsHook
-	LifecycleSubs               *lifecycle.Registry
-	LifecyclePeersForSpec       func(tplSpec node.TemplateSpec) []string
+	LateBindServiceProxies      map[string]string
+	// @decision: lifecycle-drain-per-role
+	LifecycleKick func()
 	// @concept: data-processing
 	DataProcessors   DataProcessingRegistry
 	ProducerVerbKick func()
-	PeerAuth         string
-	ServerIdentity   *peer.IdentityHolder
+	ServiceAuth      string
+	ServerIdentity   *service.IdentityHolder
 	ClientCAs        *x509.CertPool
 	addr             string
 	srv              *http.Server
 	serveErr         chan error
 }
 
-func (c *CallbackServer) authorizePeer(r *http.Request) error {
-	if c.PeerAuth != peer.PeerAuthMTLS {
+func (c *CallbackServer) authorizeService(r *http.Request) error {
+	if c.ServiceAuth != service.ServiceAuthMTLS {
 		return nil
 	}
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
@@ -124,7 +122,7 @@ func (c *CallbackServer) authorizePeer(r *http.Request) error {
 }
 
 func (c *CallbackServer) enforceCallbackPrincipal(r *http.Request, asyncCtx AsyncContext) error {
-	if c.PeerAuth != peer.PeerAuthMTLS || asyncCtx.AsyncAckPrincipal == "" {
+	if c.ServiceAuth != service.ServiceAuthMTLS || asyncCtx.AsyncAckPrincipal == "" {
 		return nil
 	}
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
@@ -167,21 +165,21 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	}
 	c.addr = listener.Addr().String()
 	c.srv = &http.Server{Handler: r}
-	if c.PeerAuth == peer.PeerAuthMTLS {
+	if c.ServiceAuth == service.ServiceAuthMTLS {
 		if c.ServerIdentity == nil {
 			_ = listener.Close()
-			return "", fmt.Errorf("callback: peer_auth mtls requires a server identity")
+			return "", fmt.Errorf("callback: service_auth mtls requires a server identity")
 		}
 		if c.ClientCAs == nil {
 			_ = listener.Close()
-			return "", fmt.Errorf("callback: peer_auth mtls requires a client CA pool")
+			return "", fmt.Errorf("callback: service_auth mtls requires a client CA pool")
 		}
-		c.srv.TLSConfig = peer.TLSServerConfig(peer.PeerAuthMTLS, c.ServerIdentity, c.ClientCAs)
+		c.srv.TLSConfig = service.TLSServerConfig(service.ServiceAuthMTLS, c.ServerIdentity, c.ClientCAs)
 	}
 	c.serveErr = make(chan error, 1)
 	go func() {
 		var serveErr error
-		if c.PeerAuth == peer.PeerAuthMTLS {
+		if c.ServiceAuth == service.ServiceAuthMTLS {
 			serveErr = c.srv.ServeTLS(listener, "", "")
 		} else {
 			serveErr = c.srv.Serve(listener)
@@ -240,8 +238,8 @@ type asyncCallbackPark struct {
 
 // @decision: run-token-swept
 func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
-	if err := c.authorizePeer(r); err != nil {
-		c.Logger.Warn("callback: unauthorized peer", "error", err.Error())
+	if err := c.authorizeService(r); err != nil {
+		c.Logger.Warn("CALLBACK.SERVICE.UNAUTHORIZED", "error", err.Error())
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
@@ -254,7 +252,7 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		row, err := c.lookupAsyncCtxByAck(r.Context(), ackID)
 		if err != nil {
-			c.Logger.Warn("callback: persistent lookup failed", "async_ack_id", ackID, "error", err.Error())
+			c.Logger.Warn("CALLBACK.ASYNCACK.LOOKUPFAILED", "async_ack_id", ackID, "error", err.Error())
 			http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 			return
 		}
@@ -267,7 +265,7 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := c.enforceCallbackPrincipal(r, asyncCtx); err != nil {
 		c.Registry.Register(ackID, asyncCtx)
-		c.Logger.Warn("callback: principal binding rejected", "async_ack_id", ackID, "error", err.Error())
+		c.Logger.Warn("CALLBACK.PRINCIPALBINDING.REJECTED", "async_ack_id", ackID, "error", err.Error())
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
@@ -287,7 +285,7 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	outcome, err := c.driveTerminal(r.Context(), asyncCtx, t)
 	if err != nil {
 		c.Registry.Register(ackID, asyncCtx)
-		c.Logger.Warn("callback: driveTerminal failed",
+		c.Logger.Warn("CALLBACK.DRIVETERMINAL.FAILED",
 			"node_id", asyncCtx.NodeID.String(), "error", err.Error())
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
@@ -301,7 +299,7 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	}
 	if outcome.Status == ackStatusAccepted {
 		if err := c.Queue.Complete(context.WithoutCancel(r.Context()), asyncCtx.NodeRunID, asyncCtx.SupervisorID); err != nil {
-			c.Logger.Error("callback: queue.Complete failed after applied terminal",
+			c.Logger.Error("CALLBACK.QUEUECOMPLETE.FAILED", "detail", "the terminal was already applied",
 				"node_id", asyncCtx.NodeID.String(),
 				"dispatch_id", asyncCtx.NodeRunID.String(),
 				"supervisor_id", asyncCtx.SupervisorID,
@@ -311,7 +309,7 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		c.Logger.Warn("callback: encode ack body failed",
+		c.Logger.Warn("CALLBACK.ACKBODY.ENCODEFAILED",
 			"dispatch_id", asyncCtx.NodeRunID.String(),
 			"error", err.Error())
 	}
@@ -350,7 +348,7 @@ func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) 
 	}
 	resolvedAttrs, schema, err := recoverResolvedAttributes(ctx, args, &acq)
 	if err != nil {
-		c.Logger.Warn("callback: attribute reconstruction failed; settling with base bag only",
+		c.Logger.Warn("CALLBACK.ATTRIBUTERECONSTRUCTION.FAILED", "detail", "settling with the base bag only",
 			"async_ack_id", ackID,
 			"dispatch_id", row.ID.String(),
 			"error", err.Error())
@@ -530,13 +528,11 @@ func (c *CallbackServer) runArgs(supervisorID string, claimProducerRegistry *loc
 		Logger:                      c.Logger,
 		SupervisorID:                supervisorID,
 		ResumeGrace:                 c.ResumeGrace,
-		Blob:                        c.Blob,
-		BlobSpillThreshold:          c.BlobSpillThreshold,
 		ExpectedAttributesSchemaFor: c.ExpectedAttributesSchemaFor,
 		DeclaredTagsFor:             c.DeclaredTagsFor,
 		Metrics:                     c.Metrics,
-		LifecycleSubs:               c.LifecycleSubs,
-		LifecyclePeersForSpec:       c.LifecyclePeersForSpec,
+		LateBindServiceProxies:      c.LateBindServiceProxies,
+		LifecycleKick:               c.LifecycleKick,
 		DataProcessors:              c.DataProcessors,
 		ProducerVerbKick:            c.ProducerVerbKick,
 	}
@@ -562,7 +558,7 @@ func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncCon
 		successor = &nextID
 		return nil
 	}); err != nil && c.Logger != nil {
-		c.Logger.Warn("callback: findCanonicalSuccessor lookup failed; current_dispatch_id omitted from ack",
+		c.Logger.Warn("CALLBACK.CANONICALSUCCESSOR.LOOKUPFAILED", "site", "findCanonicalSuccessor", "detail", "current_dispatch_id is omitted from the ack",
 			"node_run_id", ac.NodeRunID.String(),
 			"error", err.Error())
 	}
@@ -653,7 +649,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		if row == nil {
 			rejected = true
 			ackStatus = ackStatusRejectedUnknown
-			c.Logger.Warn("callback.late_or_stale_run",
+			c.Logger.Warn("CALLBACK.RUN.LATEORSTALE",
 				"dispatch_id", ac.NodeRunID.String(),
 				"reason", "run_not_found")
 			return true, nil
@@ -662,7 +658,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 			rejected = true
 			phase = string(row.State)
 			ackStatus = ackStatusForState(row.State)
-			c.Logger.Warn("callback.late_or_stale_run",
+			c.Logger.Warn("CALLBACK.RUN.LATEORSTALE",
 				"dispatch_id", ac.NodeRunID.String(),
 				"current_state", string(row.State),
 				"expected_state", "running|held")
@@ -674,7 +670,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 			acq.TemplateHash = inst.TemplateHash
 			acq.InstanceParams = inst.Params
 		} else if err != nil && c.Logger != nil {
-			c.Logger.Warn("driveTerminal: instances.Get failed; lineage will omit template_hash and params",
+			c.Logger.Warn("CALLBACK.INSTANCE.LOOKUPFAILED", "site", "driveTerminal", "detail", "the lineage record omits template_hash and params",
 				"node_id", acq.NodeID.String(),
 				"instance_id", acq.InstanceID.String(),
 				"error", err.Error())
@@ -709,7 +705,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		HeldClaims:       heldClaimsSummaryForBreakpoint(acq),
 		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, acq),
 	}); err != nil && c.Logger != nil {
-		c.Logger.Warn("breakpoint: after_terminal eval failed; continuing",
+		c.Logger.Warn("BREAKPOINT.AFTERTERMINALEVAL.FAILED", "detail", "continuing",
 			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())
 	}

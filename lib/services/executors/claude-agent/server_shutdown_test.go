@@ -41,6 +41,7 @@ func TestRunningGrpcServerShutdownForceStopsPastDeadline(t *testing.T) {
 		t.Fatalf("expected the stream to stay open with no terminal event yet, got %v", err)
 	}
 
+	//nolint:testwallclock-pacing the test hands the server this grace as the input under test; the verdict is that Shutdown returns while a trace stream is open
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancelShutdown()
 	done := make(chan struct{})

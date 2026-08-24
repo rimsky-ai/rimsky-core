@@ -15,7 +15,7 @@ import (
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/store"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 )
 
 const ConfigEnv = "RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG"
@@ -164,7 +164,7 @@ func LoadOptsFromEnv() (Opts, error) {
 	if httpPortCfg == 0 {
 		httpPortCfg = defaultHTTPPort
 	}
-	grpcPort, err := agentport.Override(grpcPortCfg)
+	grpcPort, err := daemonport.Override(grpcPortCfg)
 	if err != nil {
 		return Opts{}, err
 	}

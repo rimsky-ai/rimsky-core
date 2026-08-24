@@ -321,14 +321,20 @@ func TestAwaitTerminal_ContextCancelledWhileAwaiting(t *testing.T) {
 	out := awaitAsyncOutcome("ack-never")
 	env := Env{Callbacks: r}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, err = AwaitTerminal(ctx, out, env)
+	ctx, cancel := context.WithCancel(context.Background())
+	awaiting := make(chan error, 1)
+	go func() {
+		_, awaitErr := AwaitTerminal(ctx, out, env)
+		awaiting <- awaitErr
+	}()
+	cancel()
+
+	err = <-awaiting
 	if err == nil {
-		t.Fatal("expected error when callback never arrives, got nil")
+		t.Fatal("expected error when the await is cancelled and the callback never arrives, got nil")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected DeadlineExceeded, got %v", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected Canceled, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "ack-never") {
 		t.Errorf("expected error to mention ack id, got %v", err)

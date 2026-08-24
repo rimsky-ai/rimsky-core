@@ -48,7 +48,7 @@ func TestDeliverNamedMessageInTx_NoReceiverRecordsDeadLetterAuditEvent(t *testin
 		}, tx); err != nil {
 			return err
 		}
-		_, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		_, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instanceID, TemplateHash: templateHash,
 		}, tx)
 		return err

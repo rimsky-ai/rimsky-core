@@ -59,10 +59,6 @@ func EnsureRunDir(root, timestamp, name string) (string, error) {
 	}
 	base := filepath.Join(runsRoot, timestamp+"-"+name)
 	if err := os.Mkdir(base, 0o700); err == nil {
-		if mkErr := os.MkdirAll(filepath.Join(base, "blobs"), 0o700); mkErr != nil {
-			_ = os.RemoveAll(base)
-			return "", fmt.Errorf("create blobs dir under %q: %w", base, mkErr)
-		}
 		return base, nil
 	} else if !errors.Is(err, os.ErrExist) {
 		return "", fmt.Errorf("claim run dir %q: %w", base, err)
@@ -71,10 +67,6 @@ func EnsureRunDir(root, timestamp, name string) (string, error) {
 		candidate := fmt.Sprintf("%s-%d", base, suffix)
 		err := os.Mkdir(candidate, 0o700)
 		if err == nil {
-			if mkErr := os.MkdirAll(filepath.Join(candidate, "blobs"), 0o700); mkErr != nil {
-				_ = os.RemoveAll(candidate)
-				return "", fmt.Errorf("create blobs dir under %q: %w", candidate, mkErr)
-			}
 			return candidate, nil
 		}
 		if !errors.Is(err, os.ErrExist) {

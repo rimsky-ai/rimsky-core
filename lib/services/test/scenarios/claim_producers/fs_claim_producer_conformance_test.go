@@ -23,17 +23,13 @@ func TestFsStore_ClaimProducerConformance(t *testing.T) {
 	})
 	t.Cleanup(teardown)
 
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer dialCancel()
-	client, err := harness.DialClaimProducer(dialCtx, "conformance-target", "grpc://"+grpcAddr)
+	client, err := harness.DialClaimProducer(context.Background(), "conformance-target", "grpc://"+grpcAddr)
 	if err != nil {
 		t.Fatalf("DialClaimProducer: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 
-	runCtx, runCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer runCancel()
-	results := cpconf.Run(runCtx, client)
+	results := cpconf.Run(context.Background(), client)
 	failed := 0
 	for _, r := range results {
 		if r.Err != nil {

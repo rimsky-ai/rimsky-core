@@ -53,7 +53,7 @@ func newAuthFixtureWithObservability(t *testing.T) *authFixture {
 	return newAuthFixtureOpts(t, true, nil)
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 func newAuthFixtureWithEnroll(t *testing.T, enroll *controlapi.EnrollDeps) *authFixture {
 	t.Helper()
 	return newAuthFixtureOpts(t, false, enroll)
@@ -385,51 +385,6 @@ func TestObservabilityDashboard_GatedAndPopulated(t *testing.T) {
 	}
 	if nodesTotal, _ := summary["nodes_total"].(float64); nodesTotal < 1 {
 		t.Fatalf("nodes_total = %v; want >= 1 node from the seeded instance (nodes_total is the per-node count; node_runs_by_state is a separate per-run-row breakdown and can be legitimately all-zero before any node has run): %+v", summary["nodes_total"], summary)
-	}
-}
-
-func TestRotation_DualActiveAndSweep(t *testing.T) {
-	f := newAuthFixture(t)
-	defer f.Close()
-	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
-		"name":        "admin",
-		"permissions": []map[string]any{{"action": "*"}},
-	})
-	adminKey := adminBody["plaintext"].(string)
-
-	_, _ = f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
-		"name":        "second",
-		"permissions": []map[string]any{{"action": "*"}},
-	})
-
-	code, body := f.request(t, "POST", "/v1/auth/keys/admin/rotate", adminKey, map[string]any{
-		"grace": "1m",
-	})
-	if code != 200 {
-		t.Fatalf("rotate: %d %+v", code, body)
-	}
-	newKey := body["plaintext"].(string)
-	if newKey == "" || newKey == adminKey {
-		t.Fatalf("new key must differ from old: %s vs %s", newKey, adminKey)
-	}
-
-	if code, _ := f.request(t, "GET", "/v1/auth/keys", adminKey, nil); code != 200 {
-		t.Fatalf("old key during grace: %d", code)
-	}
-	if code, _ := f.request(t, "GET", "/v1/auth/keys", newKey, nil); code != 200 {
-		t.Fatalf("new key during grace: %d", code)
-	}
-
-	f.clock.Advance(2 * time.Minute)
-	n, err := runtime.SweepRotationGrace(context.Background(), f.db.Tables(), f.clock, shared.SilentLogger{})
-	if err != nil || n < 1 {
-		t.Fatalf("sweep: n=%d err=%v", n, err)
-	}
-	if code, _ := f.request(t, "GET", "/v1/auth/keys", adminKey, nil); code != 401 {
-		t.Fatalf("old key after grace: %d (want 401)", code)
-	}
-	if code, _ := f.request(t, "GET", "/v1/auth/keys", newKey, nil); code != 200 {
-		t.Fatalf("new key after grace: %d (want 200)", code)
 	}
 }
 

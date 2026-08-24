@@ -229,7 +229,7 @@ func PropagateIfChildAfterTerminal(
 		for _, s := range settlements {
 			if s.FrameID == (shared.UUID{}) {
 				if args.Logger != nil {
-					args.Logger.Warn("PropagateIfChildAfterTerminal: skip cascade bridge: parent frame_id is zero",
+					args.Logger.Warn("RUNTREE.CASCADEBRIDGE.SKIPPED", "site", "PropagateIfChildAfterTerminal", "detail", "the parent frame_id is zero",
 						"parent_run_id", s.ParentNodeRunID.String(),
 						"parent_node_id", s.ParentNodeID.String(),
 						"new_state", string(s.NewState),
@@ -337,7 +337,7 @@ func cancelInFlightRunTreeChild(
 		cascade.NodeStateFailed, cascade.ReasonSiblingCancelled, &sig, tx); err != nil {
 		if errors.Is(err, cascade.ErrIllegalTransition) {
 			if args.Logger != nil {
-				args.Logger.Warn("cancelInFlightRunTreeChild: raced with the sibling's own natural terminal transition; leaving its outcome as-is",
+				args.Logger.Warn("RUNTREE.CHILDCANCEL.RACED", "site", "cancelInFlightRunTreeChild", "detail", "the sibling reached its own natural terminal first; leaving its outcome as-is",
 					"node_run_id", current.NodeRunID.String(), "error", err.Error())
 			}
 			return nil, nil
@@ -362,11 +362,11 @@ func cancelInFlightRunTreeChild(
 	cancelSig := signalpkg.BuildTerminalErrorSignal(cascade.ErrorClassSiblingFailed, nil, 0, 0, nil, nil)
 	if err := emitSignalInTxOnce(ctx, args, current.NodeID, nodeType, current.NodeRunID,
 		instanceID, current.FrameID, cancelSig, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("cancelInFlightRunTreeChild: terminal signal emission failed; cancellation stands",
+		args.Logger.Warn("RUNTREE.CHILDCANCELSIGNAL.EMITFAILED", "site", "cancelInFlightRunTreeChild", "detail", "the cancellation stands",
 			"node_run_id", current.NodeRunID.String(), "error", err.Error())
 	}
 	if err := drainWaitSetOnSettled(ctx, args, current.FrameID, current.NodeRunID, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("cancelInFlightRunTreeChild: wait-set drain failed; cancellation stands",
+		args.Logger.Warn("RUNTREE.CHILDCANCELWAITSET.DRAINFAILED", "site", "cancelInFlightRunTreeChild", "detail", "the cancellation stands",
 			"node_run_id", current.NodeRunID.String(), "error", err.Error())
 	}
 	if current.State == cascade.NodeStateHeld {
@@ -383,7 +383,7 @@ func cancelInFlightRunTreeChild(
 	runID := current.NodeRunID
 	propagate := func(pctx context.Context) {
 		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID); err != nil && args.Logger != nil {
-			args.Logger.Warn("cancelInFlightRunTreeChild: run-tree propagation failed",
+			args.Logger.Warn("RUNTREE.PROPAGATION.FAILED", "site", "cancelInFlightRunTreeChild",
 				"run_id", runID.String(), "error", err.Error())
 		}
 	}

@@ -28,8 +28,8 @@ type Deps struct {
 	Tables         persistence.Tables
 	Queue          persistence.Queue
 	Driver         persistence.Database
-	Executors      []PeerSpec
-	ClaimProducers []PeerSpec
+	Executors      []ServiceSpec
+	ClaimProducers []ServiceSpec
 	Discovery      *Discovery
 }
 
@@ -116,12 +116,12 @@ func internalErr(w http.ResponseWriter, err error) {
 
 func handleListClaimProducers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entries := []PeerEntry{}
+		entries := []ServiceEntry{}
 		seen := map[string]bool{}
 		for _, e := range deps.ClaimProducers {
 			cached, ok := deps.Discovery.GetClaimProducer(e.Name)
 			if !ok {
-				cached = unreachablePeerEntry(e)
+				cached = unreachableServiceEntry(e)
 			}
 			entries = append(entries, cached)
 			seen[e.Name] = true
@@ -141,38 +141,69 @@ func handleGetClaimProducer(deps Deps) http.HandlerFunc {
 		name := chi.URLParam(r, "name")
 		cached, ok := deps.Discovery.GetClaimProducer(name)
 		if !ok {
-			spec, declared := findPeerSpec(deps.ClaimProducers, name)
+			spec, declared := findServiceSpec(deps.ClaimProducers, name)
 			if !declared {
 				notFound(w, "unknown claim producer")
 				return
 			}
-			cached = unreachablePeerEntry(spec)
+			cached = unreachableServiceEntry(spec)
 		}
-		var lifecycle []persistence.LifecycleIdempotencyRow
+		// @decision: service-delivery-stall-signal
+		var pending []persistence.LifecycleOutboxRow
 		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			rows, err := deps.Tables.LifecycleIdempotency().ListByClaimProducer(ctx, name, tx)
-			lifecycle = rows
+			rows, err := deps.Tables.LifecycleOutbox().ListPendingForService(ctx, name, persistence.DefaultServiceOutboxPageSize, tx)
+			pending = rows
 			return err
 		}); err != nil {
 			internalErr(w, err)
 			return
 		}
 		resp := map[string]any{
-			"peer":      cached,
-			"lifecycle": lifecycle,
+			"service":                      cached,
+			"pending_lifecycle_deliveries": pendingLifecycleDeliveries(pending),
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
 
+// @decision: service-delivery-stall-signal
+type PendingLifecycleDelivery struct {
+	Seq           int64     `json:"seq"`
+	ScopeKind     string    `json:"scope_kind"`
+	ScopeID       string    `json:"scope_id"`
+	Event         string    `json:"event"`
+	StagedAt      time.Time `json:"staged_at"`
+	AttemptCount  int       `json:"attempt_count"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error,omitempty"`
+}
+
+// @decision: service-delivery-stall-signal
+func pendingLifecycleDeliveries(rows []persistence.LifecycleOutboxRow) []PendingLifecycleDelivery {
+	out := make([]PendingLifecycleDelivery, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, PendingLifecycleDelivery{
+			Seq:           row.Seq,
+			ScopeKind:     string(row.ScopeKind),
+			ScopeID:       row.ScopeID,
+			Event:         row.Event,
+			StagedAt:      row.StagedAt,
+			AttemptCount:  row.AttemptCount,
+			NextAttemptAt: row.NextAttemptAt,
+			LastError:     row.LastError,
+		})
+	}
+	return out
+}
+
 func handleListExecutors(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entries := []PeerEntry{}
+		entries := []ServiceEntry{}
 		seen := map[string]bool{}
 		for _, e := range deps.Executors {
 			cached, ok := deps.Discovery.GetExecutor(e.Name)
 			if !ok {
-				cached = unreachablePeerEntry(e)
+				cached = unreachableServiceEntry(e)
 			}
 			entries = append(entries, cached)
 			seen[e.Name] = true
@@ -192,28 +223,28 @@ func handleGetExecutor(deps Deps) http.HandlerFunc {
 		name := chi.URLParam(r, "name")
 		cached, ok := deps.Discovery.GetExecutor(name)
 		if !ok {
-			spec, declared := findPeerSpec(deps.Executors, name)
+			spec, declared := findServiceSpec(deps.Executors, name)
 			if !declared {
 				notFound(w, "unknown executor")
 				return
 			}
-			cached = unreachablePeerEntry(spec)
+			cached = unreachableServiceEntry(spec)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"peer": cached})
+		writeJSON(w, http.StatusOK, map[string]any{"service": cached})
 	}
 }
 
-func findPeerSpec(peers []PeerSpec, name string) (PeerSpec, bool) {
-	for _, p := range peers {
+func findServiceSpec(services []ServiceSpec, name string) (ServiceSpec, bool) {
+	for _, p := range services {
 		if p.Name == name {
 			return p, true
 		}
 	}
-	return PeerSpec{}, false
+	return ServiceSpec{}, false
 }
 
-func unreachablePeerEntry(spec PeerSpec) PeerEntry {
-	return PeerEntry{
+func unreachableServiceEntry(spec ServiceSpec) ServiceEntry {
+	return ServiceEntry{
 		Name:                  spec.Name,
 		Endpoint:              spec.Endpoint,
 		ObservabilityEndpoint: chooseObsEndpoint(spec.ObservabilityEndpoint, spec.Endpoint),

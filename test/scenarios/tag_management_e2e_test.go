@@ -84,7 +84,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 		"DELETE response must report deleted:true")
 
 	postDeleteAttempt := postJSON(t, h.ControlBase+"/v1/instances",
-		map[string]any{"template": tagName, "params": map[string]any{}, "target_agent": "scenario-default-agent"})
+		map[string]any{"template": tagName, "params": map[string]any{}, "target_daemon": "scenario-default-daemon"})
 	require.GreaterOrEqual(t, postDeleteAttempt.status, 400,
 		"POST /v1/instances against a deleted tag must be refused (4xx) — "+
 			"got %d: %s — the spec's `tag deletion leaves the name still "+
@@ -102,7 +102,7 @@ type instanceCreateResult struct {
 func createInstanceAgainstTag(t *testing.T, h *scenario.Harness, tag string) instanceCreateResult {
 	t.Helper()
 	resp := postJSON(t, h.ControlBase+"/v1/instances",
-		map[string]any{"template": tag, "params": map[string]any{}, "target_agent": "scenario-default-agent"})
+		map[string]any{"template": tag, "params": map[string]any{}, "target_daemon": "scenario-default-daemon"})
 	require.Equal(t, http.StatusCreated, resp.status,
 		"POST /v1/instances against tag %q must return 201: %s",
 		tag, resp.bodyStr())

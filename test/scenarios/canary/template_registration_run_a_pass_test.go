@@ -75,8 +75,8 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 func createInstanceViaHTTP(t *testing.T, h *scenario.Harness, templateHash string) uuid.UUID {
 	t.Helper()
 	body := map[string]any{
-		"template":     templateHash,
-		"target_agent": "scenario-default-agent",
+		"template":      templateHash,
+		"target_daemon": "scenario-default-daemon",
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)

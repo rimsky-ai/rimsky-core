@@ -10,10 +10,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
@@ -28,22 +28,22 @@ const defaultGRPCPort = 9082
 
 func main() {
 	host := envOr("RIMSKY_SENSOR_HTTP_HOST", "0.0.0.0")
-	port, err := agentport.Resolve("RIMSKY_SENSOR_HTTP_PORT", defaultGRPCPort)
+	port, err := daemonport.Resolve("RIMSKY_SENSOR_HTTP_PORT", defaultGRPCPort)
 	if err != nil {
-		slog.Error("sensor-http port", "error", err.Error())
+		slog.Error("SENSORHTTP.PORT.INVALID", "error", err.Error())
 		os.Exit(1)
 	}
 	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 
 	slog.SetDefault(serverkit.NewJSONLogger())
-	slog.Info("sensor-http starting",
+	slog.Info("SENSORHTTP.PROCESS.STARTING",
 		"grpc_port", port,
 		"rimsky_endpoint", rimskyEndpoint)
 
 	// @decision: destination-allowlists-default-closed
 	pollGuard, err := egress.NewGuardFromEnv("RIMSKY_SENSOR_HTTP_EGRESS_ALLOWLIST")
 	if err != nil {
-		slog.Error("sensor-http egress allowlist", "error", err.Error())
+		slog.Error("SENSORHTTP.EGRESSALLOWLIST.INVALID", "error", err.Error())
 		os.Exit(1)
 	}
 
@@ -53,9 +53,9 @@ func main() {
 	ctx, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
 	defer stopSignals()
 
-	identity, err := peerauth.LoadFromEnv(ctx, "sensor-http")
+	identity, err := serviceauth.LoadFromEnv(ctx, "sensor-http")
 	if err != nil {
-		slog.Error("sensor-http peer-auth", "error", err.Error())
+		slog.Error("SENSORHTTP.SERVICEAUTH.ENROLLFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	svc.SetPublishClient(identity.OutboundHTTPClient(30 * time.Second))
@@ -63,20 +63,20 @@ func main() {
 
 	state, err := openStateDB(ctx)
 	if err != nil {
-		slog.Error("open state db", "error", err.Error())
+		slog.Error("SENSORHTTP.STATEDB.OPENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	if state != nil {
 		svc.AttachStateDB(state)
 		defer func() { _ = state.Close() }()
-		slog.Info("sensor-http state db attached")
+		slog.Info("SENSORHTTP.STATEDB.ATTACHED")
 	}
 
 	go svc.Run(ctx)
 
 	lis, err := serverkit.Listen(host, port)
 	if err != nil {
-		slog.Error("grpc listen", "error", err.Error())
+		slog.Error("SENSORHTTP.GRPC.LISTENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	srv := identity.GRPCServer()

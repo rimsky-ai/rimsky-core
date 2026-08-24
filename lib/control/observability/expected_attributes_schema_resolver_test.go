@@ -13,7 +13,7 @@ import (
 )
 
 func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
-	const executorName = "agent"
+	const executorName = "daemon"
 	advertisedSchema := []byte(`{
 		"type": "object",
 		"properties": {
@@ -23,7 +23,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 	}`)
 
 	disc := NewDiscovery(nil)
-	disc.SetExecutor(PeerEntry{
+	disc.SetExecutor(ServiceEntry{
 		Name:         executorName,
 		Reachability: ReachabilityReachable,
 		Capabilities: &ObservabilityCapabilities{

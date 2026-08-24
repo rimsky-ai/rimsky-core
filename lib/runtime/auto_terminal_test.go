@@ -24,7 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 	"github.com/rimsky-ai/rimsky-core/test/support/pgdbtest"
 )
 
@@ -122,7 +122,7 @@ func seedInstanceWithMainScope(ctx context.Context, t *testing.T, sb persistence
 	}, tx); err != nil {
 		t.Fatalf("seedInstanceWithMainScope: RunScopes.Create: %v", err)
 	}
-	row, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+	row, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 		ID: instID, TemplateHash: templateHash, InstanceKey: ck,
 		Params: map[string]any{},
 	}, tx)
@@ -2494,7 +2494,7 @@ func TestCheckAndFireResolution_ProducerVerbDeliveryFailure_DecisionHoldsAndRetr
 	producerDown := true
 	store.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
 		if producerDown && verb == "commit" {
-			return &peer.ProducerCallError{
+			return &service.ProducerCallError{
 				ProducerName: "verb-err-store",
 				Method:       "Commit",
 				ErrorClass:   "conflict",

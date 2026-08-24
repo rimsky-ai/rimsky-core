@@ -95,7 +95,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		if !ok {
 			t.Fatalf("ClaimDispatchRow(original) did not claim")
 		}
-		if err := q.WriteScratch(ctx, originalNodeRunID, scratchFixture, "", "", tx); err != nil {
+		if err := q.WriteScratch(ctx, originalNodeRunID, scratchFixture, tx); err != nil {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, originalNodeRunID,
@@ -108,22 +108,20 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	}
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		scratchInline, scratchHandle, scratchBackend, lerr := q.LoadScratch(ctx, originalNodeRunID, tx)
+		scratch, lerr := q.LoadScratch(ctx, originalNodeRunID, tx)
 		if lerr != nil {
 			return lerr
 		}
 		return q.Enqueue(ctx, persistence.DispatchRequest{
-			NodeID:                      childNodeID,
-			ExecutorName:                "test-executor",
-			RequiredClaimProducers:      []string{},
-			EnqueuedAt:                  time.Now().Add(-time.Second),
-			FrameID:                     fix.FrameID,
-			RunScopeID:                  partitionScopeID,
-			PriorNodeRunID:              &originalNodeRunID,
-			PriorDispatchDisposition:    "stale_recovery",
-			InitialScratchInline:        scratchInline,
-			InitialScratchHandle:        scratchHandle,
-			InitialScratchHandleBackend: scratchBackend,
+			NodeID:                   childNodeID,
+			ExecutorName:             "test-executor",
+			RequiredClaimProducers:   []string{},
+			EnqueuedAt:               time.Now().Add(-time.Second),
+			FrameID:                  fix.FrameID,
+			RunScopeID:               partitionScopeID,
+			PriorNodeRunID:           &originalNodeRunID,
+			PriorDispatchDisposition: "stale_recovery",
+			InitialScratch:           scratch,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("Enqueue (recovery): %v", err)
@@ -162,23 +160,16 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 		t.Fatalf("Candidate.PriorDispatchDisposition = %q; want stale_recovery", got.PriorDispatchDisposition)
 	}
 
-	var gotInline []byte
-	var gotHandle, gotBackend string
+	var gotScratch []byte
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var lerr error
-		gotInline, gotHandle, gotBackend, lerr = q.LoadScratch(ctx, got.NodeRunID, tx)
+		gotScratch, lerr = q.LoadScratch(ctx, got.NodeRunID, tx)
 		return lerr
 	}); err != nil {
 		t.Fatalf("LoadScratch (recovery): %v", err)
 	}
-	if string(gotInline) != string(scratchFixture) {
-		t.Fatalf("recovery scratch_inline = %q; want %q", string(gotInline), string(scratchFixture))
-	}
-	if gotHandle != "" {
-		t.Fatalf("recovery scratch_handle = %q; want empty", gotHandle)
-	}
-	if gotBackend != "" {
-		t.Fatalf("recovery scratch_handle_backend = %q; want empty", gotBackend)
+	if string(gotScratch) != string(scratchFixture) {
+		t.Fatalf("recovery scratch = %q; want %q", string(gotScratch), string(scratchFixture))
 	}
 }
 
@@ -363,18 +354,12 @@ func testScratchMissingRowContract(t *testing.T, d persistence.Database) {
 	missingID := shared.UUID(uuid.New())
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		inline, handle, backend, lerr := q.LoadScratch(ctx, missingID, tx)
+		scratch, lerr := q.LoadScratch(ctx, missingID, tx)
 		if lerr != nil {
 			t.Fatalf("LoadScratch (missing): unexpected error %v", lerr)
 		}
-		if len(inline) != 0 {
-			t.Fatalf("LoadScratch (missing): inline = %q; want empty", string(inline))
-		}
-		if handle != "" {
-			t.Fatalf("LoadScratch (missing): handle = %q; want empty", handle)
-		}
-		if backend != "" {
-			t.Fatalf("LoadScratch (missing): backend = %q; want empty", backend)
+		if len(scratch) != 0 {
+			t.Fatalf("LoadScratch (missing): scratch = %q; want empty", string(scratch))
 		}
 		return nil
 	}); err != nil {
@@ -382,7 +367,7 @@ func testScratchMissingRowContract(t *testing.T, d persistence.Database) {
 	}
 
 	werr := inTx(ctx, store, func(tx persistence.Tx) error {
-		return q.WriteScratch(ctx, missingID, []byte("bytes"), "", "", tx)
+		return q.WriteScratch(ctx, missingID, []byte("bytes"), tx)
 	})
 	if werr == nil {
 		t.Fatalf("WriteScratch (missing): want ErrNotFound, got nil")

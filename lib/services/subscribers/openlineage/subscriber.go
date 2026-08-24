@@ -209,12 +209,12 @@ func (s *Subscriber) tick(ctx context.Context) error {
 	for _, r := range rows {
 		ev, err := s.toEvent(r)
 		if err != nil {
-			s.logger.Error("openlineage.decode_failed_dead_letter",
+			s.logger.Error("OPENLINEAGE.EVENT.DECODEFAILED", "detail", "dead-lettering the event",
 				"id", r.ID.String(),
 				"record_kind", r.RecordKind,
 				"error", err.Error())
 			if dlErr := s.persistDeadLetter(ctx, r, 0, "decode_failed: "+err.Error()); dlErr != nil {
-				s.logger.Warn("openlineage.dead_letter_persist_failed",
+				s.logger.Warn("OPENLINEAGE.DEADLETTER.PERSISTFAILED",
 					"id", r.ID.String(), "error", dlErr.Error())
 			}
 			if err := s.advanceCursor(ctx, r); err != nil {
@@ -225,13 +225,13 @@ func (s *Subscriber) tick(ctx context.Context) error {
 		if err := s.emitter.Send(ctx, ev); err != nil {
 			var sendErr *SendError
 			if errors.As(err, &sendErr) && sendErr.Permanent() {
-				s.logger.Error("openlineage.emit_rejected_dead_letter",
+				s.logger.Error("OPENLINEAGE.EMIT.REJECTED", "detail", "dead-lettering the event",
 					"id", r.ID.String(),
 					"record_kind", r.RecordKind,
 					"status_code", sendErr.StatusCode,
 					"error", err.Error())
 				if dlErr := s.persistDeadLetter(ctx, r, sendErr.StatusCode, err.Error()); dlErr != nil {
-					s.logger.Warn("openlineage.dead_letter_persist_failed",
+					s.logger.Warn("OPENLINEAGE.DEADLETTER.PERSISTFAILED",
 						"id", r.ID.String(), "error", dlErr.Error())
 				}
 				if err := s.advanceCursor(ctx, r); err != nil {
@@ -239,7 +239,7 @@ func (s *Subscriber) tick(ctx context.Context) error {
 				}
 				continue
 			}
-			s.logger.Warn("openlineage.emit_failed",
+			s.logger.Warn("OPENLINEAGE.EMIT.FAILED",
 				"id", r.ID.String(),
 				"record_kind", r.RecordKind,
 				"error", err.Error())
@@ -284,7 +284,7 @@ func (s *Subscriber) toEvent(r LineageRow) (Event, error) {
 func (s *Subscriber) Run(ctx context.Context) {
 	t := time.NewTicker(s.cfg.PollInterval)
 	defer t.Stop()
-	s.logger.Info("openlineage.starting",
+	s.logger.Info("OPENLINEAGE.PROCESS.STARTING",
 		"namespace", s.cfg.Namespace,
 		"backend_url", s.cfg.BackendURL,
 		"poll_interval", s.cfg.PollInterval.String(),
@@ -296,7 +296,7 @@ func (s *Subscriber) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			if err := s.tick(ctx); err != nil {
-				s.logger.Warn("openlineage.tick_failed", "error", err.Error())
+				s.logger.Warn("OPENLINEAGE.TICK.FAILED", "error", err.Error())
 			}
 		}
 	}

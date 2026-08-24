@@ -50,6 +50,7 @@ func StartSensorWebhookWithState(ctx context.Context, t testing.TB, networkName,
 		if h.container == nil {
 			return
 		}
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = h.container.Terminate(termCtx)
@@ -62,6 +63,7 @@ func (h *SensorWebhookHandle) Stop(ctx context.Context) {
 	if h.container == nil {
 		return
 	}
+	//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 	termCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	_ = h.container.Terminate(termCtx)

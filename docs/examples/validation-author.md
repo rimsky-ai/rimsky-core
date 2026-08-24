@@ -4,7 +4,7 @@ release. Read it only when directed here. -->
 
 # A service's own validator consulted at template registration
 
-A peer that serves the validation protocol alongside its primary one is asked
+A service that serves the validation protocol alongside its primary one is asked
 about every template that names it. Its findings block the registration or
 inform the author, as the service chooses.
 

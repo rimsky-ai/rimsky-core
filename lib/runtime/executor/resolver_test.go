@@ -170,7 +170,7 @@ func TestLateBindResolver_ResolveWithError_SurfacesLookupError(t *testing.T) {
 		func(context.Context, string) (map[string]json.RawMessage, bool, error) {
 			return nil, false, wantErr
 		},
-		map[string]string{"executor": "host-agent-proxy"},
+		map[string]string{"executor": "host-daemon-proxy"},
 	)
 
 	ep, ok, err := r.ResolveWithError("late-bound-executor", DispatchContext{InstanceID: "inst-1"})
@@ -194,7 +194,7 @@ func TestLateBindResolver_Resolve_CompatSwallowsErrorToMiss(t *testing.T) {
 		func(context.Context, string) (map[string]json.RawMessage, bool, error) {
 			return nil, false, errors.New("transient db error")
 		},
-		map[string]string{"executor": "host-agent-proxy"},
+		map[string]string{"executor": "host-daemon-proxy"},
 	)
 
 	if _, ok := r.Resolve("late-bound-executor", DispatchContext{InstanceID: "inst-1"}); ok {
@@ -204,7 +204,7 @@ func TestLateBindResolver_Resolve_CompatSwallowsErrorToMiss(t *testing.T) {
 
 func TestLateBindResolver_ResolveWithError_ProxiesOnSuccessfulBinding(t *testing.T) {
 	proxyEP := Endpoint{Transport: "grpc", URL: "127.0.0.1:9"}
-	static := NewStaticResolver(map[string]Endpoint{"host-agent-proxy": proxyEP})
+	static := NewStaticResolver(map[string]Endpoint{"host-daemon-proxy": proxyEP})
 	r := NewLateBindResolver(
 		static,
 		func(_ context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
@@ -213,7 +213,7 @@ func TestLateBindResolver_ResolveWithError_ProxiesOnSuccessfulBinding(t *testing
 			}
 			return map[string]json.RawMessage{"late-bound-executor": json.RawMessage(`{}`)}, true, nil
 		},
-		map[string]string{"executor": "host-agent-proxy"},
+		map[string]string{"executor": "host-daemon-proxy"},
 	)
 
 	ep, ok, err := r.ResolveWithError("late-bound-executor", DispatchContext{InstanceID: "inst-1"})
@@ -235,7 +235,7 @@ func TestResolveExecutor_PrefersErrorAwarePath(t *testing.T) {
 		func(context.Context, string) (map[string]json.RawMessage, bool, error) {
 			return nil, false, wantErr
 		},
-		map[string]string{"executor": "host-agent-proxy"},
+		map[string]string{"executor": "host-daemon-proxy"},
 	)
 
 	_, ok, err := ResolveExecutor(r, "late-bound-executor", DispatchContext{InstanceID: "inst-1"})

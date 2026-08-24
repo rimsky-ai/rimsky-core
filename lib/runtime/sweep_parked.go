@@ -40,7 +40,7 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 
 	ready, err := args.Queue.ListParkedReadyForResume(ctx, now, limit)
 	if err != nil {
-		log.Warn("SweepParkedNodes: ListParkedReadyForResume failed", "error", err.Error())
+		log.Warn("PARKEDNODE.RESUMELIST.FAILED", "site", "SweepParkedNodes", "error", err.Error())
 	}
 	for _, row := range ready {
 		wakeArgs := WakeParkedArgs{
@@ -55,7 +55,7 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 			args.Metrics.IncInvalidate("scheduler")
 		}
 		if err := WakeParkedNode(ctx, wakeArgs, WakeDeadlineElapsed); err != nil {
-			log.Warn("SweepParkedNodes: wake failed",
+			log.Warn("PARKEDNODE.WAKE.FAILED", "site", "SweepParkedNodes",
 				"node_id", row.NodeID.String(), "error", err.Error())
 		}
 	}

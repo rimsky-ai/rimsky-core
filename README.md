@@ -119,16 +119,16 @@ the userdata, the MCP catalogs the agents access, the audit-trail
 content — lives in the consumer's repository, not in rimsky's.
 
 The platform treats its carrier byte streams as inert: userdata, claim
-scope, claim address, claim payload, blob content, attribute values,
-scratch, executor error payloads, and message payloads.
+scope, claim address, claim payload, attribute values, scratch,
+executor error payloads, and message payloads.
 Rimsky does not log them, normalize them, index them, validate them
 beyond the schema gates, attach them to traces, or include them in
 error messages. Inertness is not minimalism; it is what keeps rimsky
 out of the consumer's domain. Once the platform reads bytes for
 meaning, it becomes a partial participant in the domain and inherits
-bug surface and security surface that belongs to the consumer. Three
-properties lock this in source — userdata opaque, claim content
-inert, blob content inert — and removing them would unwind the design.
+bug surface and security surface that belongs to the consumer. Two
+properties lock this in source — userdata opaque and claim content
+inert — and removing them would unwind the design.
 
 No domain helpers ship. Reference service implementations are
 illustrative — they cover the protocol's shape and the deployment

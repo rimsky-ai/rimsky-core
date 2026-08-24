@@ -56,7 +56,7 @@ func TestSQLiteMigration024RebuildPreservesChildRows(t *testing.T) {
 	}
 	seed := []string{
 		`INSERT INTO rimsky_templates (id, spec, state) VALUES ('tpl-024', '{}', 'deployed')`,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, target_routing_identity) VALUES ('inst-024', 'tpl-024', 'ck-024', 'test-agent')`,
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, target_routing_identity) VALUES ('inst-024', 'tpl-024', 'ck-024', 'test-daemon')`,
 		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id)
 		 VALUES ('scope-024', 'main', '', 'inst-024')`,
 		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
@@ -131,7 +131,7 @@ func TestSQLiteMigration036RebuildPreservesEventsAndAutoincrement(t *testing.T) 
 	}
 	seed := []string{
 		`INSERT INTO rimsky_templates (id, spec, state) VALUES ('tpl-036', '{}', 'deployed')`,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, target_routing_identity) VALUES ('inst-036', 'tpl-036', 'ck-036', 'test-agent')`,
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, target_routing_identity) VALUES ('inst-036', 'tpl-036', 'ck-036', 'test-daemon')`,
 		`INSERT INTO rimsky_events (id, instance_id, kind, payload, occurred_at)
 		 VALUES (500, 'inst-036', 'fixture.kind', '{}', '2026-01-01T00:00:00.000000000Z')`,
 	}
@@ -268,7 +268,7 @@ func TestSQLiteMigrationTagsColumn(t *testing.T) {
 	defer func() { _ = stx.Rollback() }()
 	if _, err := stx.ExecContext(ctx,
 		`INSERT INTO rimsky_instances (id, template_hash, instance_key, target_routing_identity)
-		 VALUES ('inst-1', 'tpl-1', 'ck-1', 'test-agent')`); err != nil {
+		 VALUES ('inst-1', 'tpl-1', 'ck-1', 'test-daemon')`); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
 	if _, err := stx.ExecContext(ctx,

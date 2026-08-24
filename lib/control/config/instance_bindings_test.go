@@ -74,7 +74,7 @@ func TestLookupInstanceBindings_ReturnsServiceBindings(t *testing.T) {
 			ID:                    instID,
 			TemplateHash:          templateHash,
 			ServiceBindings:       bindingsJSON,
-			TargetRoutingIdentity: "test-bindings-agent",
+			TargetRoutingIdentity: "test-bindings-daemon",
 		}, tx)
 		return err
 	}); err != nil {

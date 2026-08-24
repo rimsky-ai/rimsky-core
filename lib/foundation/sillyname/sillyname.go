@@ -1,8 +1,8 @@
 // Copyright © 2026 Fall Guy Consulting.
 // SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
-// @concept: host-agent-proxy
-// @concept: host-agent
+// @concept: host-daemon-proxy
+// @concept: host-daemon
 
 package sillyname
 
@@ -66,7 +66,7 @@ var pattern = regexp.MustCompile(`^[a-z]+(?:-[a-z]+){1,3}$`)
 
 const MaxLength = 64
 
-// @concept: host-agent-proxy
+// @concept: host-daemon-proxy
 // @concept: anonymous-mode
 const AnonymousCredentialSentinel = "anonymous"
 

@@ -200,8 +200,7 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMatch_NoWarn(t *testing.T) 
 	})
 	require.Equal(t, http.StatusOK, status)
 	for _, rec := range h.logger.Records() {
-		if rec.Msg == "instance.attribute_overrides_replaced_by_idempotent_match" ||
-			rec.Msg == "instance.attribute_overrides_ignored_idempotent_match" {
+		if rec.Msg == "INSTANCE.ATTRIBUTEOVERRIDES.REPLACED" {
 			t.Fatalf("expected no idempotent-match WARN; got %+v", rec)
 		}
 	}
@@ -253,7 +252,7 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMismatch_Warns(t *testing.T
 
 	var found bool
 	for _, rec := range h.logger.Records() {
-		if rec.Msg == "instance.attribute_overrides_replaced_by_idempotent_match" {
+		if rec.Msg == "INSTANCE.ATTRIBUTEOVERRIDES.REPLACED" {
 			found = true
 			break
 		}

@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images push-images verify-published-platforms publish-protocols check-clean smoke-all test-all test-root test-foundation test-protocols test-services test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint logkind-lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-check cli-snapshot core-images service-images test-images test-in-stack reap-images push-images verify-published-platforms publish-protocols check-clean smoke-all test-all test-root test-foundation test-protocols test-services test-report build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -7,7 +7,7 @@ proto-gen:
 	  --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
 	  executor.proto events.proto claim_producer.proto lifecycle.proto \
 	  executor_observability.proto claim_producer_observability.proto \
-	  data_processing.proto validation.proto publisher.proto host_agent.proto
+	  data_processing.proto validation.proto publisher.proto host_daemon.proto
 
 test:
 	$(GOTEST_GUARD) -p 2 -parallel 4 ./...
@@ -20,7 +20,7 @@ test:
 build:
 	CGO_ENABLED=0 go build ./...
 
-lint: license-lint
+lint: license-lint logkind-lint
 	golangci-lint run
 	cd lib/foundation && golangci-lint run
 	cd lib/protocols && golangci-lint run
@@ -38,8 +38,19 @@ license-lint:
 license-stamp:
 	go run ./tools/license-check --stamp
 
+# logkind-lint holds every structured process-log emit site to the events
+# standard's SUBSYSTEM.NOUN.VERB kind format, per
+# decision:structured-log-kind-format. Its baseline is empty. The -check flag
+# writes nothing and exits non-zero on any violation.
+# test/plumbline/logkind_ratchet_test.go is the suite's gate on the same scan.
+logkind-lint:
+	go run ./tools/logkind-lint -check
+
 tidy:
 	go mod tidy
+	cd lib/foundation && go mod tidy
+	cd lib/protocols && go mod tidy
+	cd lib/services && go mod tidy
 
 # ── Documentation tooling ──
 #
@@ -194,7 +205,7 @@ endef
 #                             for production (Dockerfile.all-in-one). Built FROM
 #                             rimsky:$(RIMSKY_IMAGE_TAG) — this run's own rimsky
 #                             image — so it follows it here.
-#   rimsky-host-agent-proxy — the late-bound host-agent proxy service
+#   rimsky-host-daemon-proxy — the late-bound host-daemon proxy service
 #                             (Dockerfile.go-base, single binary).
 #   rimsky-conformance      — bundled protocol conformance runners; pick one
 #                             by container command (Dockerfile.conformance).
@@ -205,7 +216,7 @@ endef
 core-images:
 	$(call build-image,dockerfiles/Dockerfile.rimsky,rimsky)
 	$(call build-image,dockerfiles/Dockerfile.all-in-one,rimsky-all-in-one,--build-arg RIMSKY_BASE=rimsky:$(RIMSKY_IMAGE_TAG))
-	$(call build-image,dockerfiles/Dockerfile.go-base,rimsky-host-agent-proxy,--build-arg BINARY=rimsky-host-agent-proxy)
+	$(call build-image,dockerfiles/Dockerfile.go-base,rimsky-host-daemon-proxy,--build-arg BINARY=rimsky-host-daemon-proxy)
 	$(call build-image,dockerfiles/Dockerfile.conformance,rimsky-conformance)
 
 # Bundled-service images: the consumption-side services (claim producers, sensors,
@@ -266,7 +277,7 @@ reap-images:
 # and (in symbolic form) push-images. Order matters for push-images:
 # `rimsky` is the base for `rimsky-all-in-one`, so it must be pushed first.
 IMAGES := \
-    rimsky rimsky-all-in-one rimsky-host-agent-proxy rimsky-conformance \
+    rimsky rimsky-all-in-one rimsky-host-daemon-proxy rimsky-conformance \
     rimsky-claim-producer-filesystem rimsky-claim-producer-postgres \
     rimsky-sensor-cron rimsky-sensor-http rimsky-sensor-object-store rimsky-sensor-webhook \
     rimsky-subscriber-openlineage \
@@ -333,7 +344,7 @@ scan:
 #
 # NOTE: the Docker Hub org is `rimskyai`, NOT `rimsky-ai`. Docker Hub namespaces
 # disallow hyphens (unlike GitHub `rimsky-ai` and the npm `@rimsky-ai` scope);
-# the hyphens survive only in the repo names (rimsky-host-agent-proxy). Do not
+# the hyphens survive only in the repo names (rimsky-host-daemon-proxy). Do not
 # "correct" this to rimsky-ai to match the other namespaces — it does not exist.
 #
 # The floating second tag is `$(LATEST_TAG)`, defaulting to `latest`;
@@ -374,8 +385,8 @@ push-images: check-clean buildx-builder
 	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.all-in-one \
 	  --build-arg RIMSKY_BASE=$(REGISTRY)/rimsky:$(VERSION) \
 	  -t $(REGISTRY)/rimsky-all-in-one:$(VERSION) -t $(REGISTRY)/rimsky-all-in-one:$(LATEST_TAG) .
-	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.go-base --build-arg BINARY=rimsky-host-agent-proxy \
-	  -t $(REGISTRY)/rimsky-host-agent-proxy:$(VERSION) -t $(REGISTRY)/rimsky-host-agent-proxy:$(LATEST_TAG) .
+	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.go-base --build-arg BINARY=rimsky-host-daemon-proxy \
+	  -t $(REGISTRY)/rimsky-host-daemon-proxy:$(VERSION) -t $(REGISTRY)/rimsky-host-daemon-proxy:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.conformance \
 	  -t $(REGISTRY)/rimsky-conformance:$(VERSION) -t $(REGISTRY)/rimsky-conformance:$(LATEST_TAG) .
 	# Bundled-service images.
@@ -406,8 +417,9 @@ push-images: check-clean buildx-builder
 #
 # Order:
 #   lint           — golangci-lint across all four modules, plus license-lint
-#                    (go run ./tools/license-check); both also run on every
-#                    `make lint` invocation, not just release
+#                    (go run ./tools/license-check) and logkind-lint
+#                    (go run ./tools/logkind-lint -check); all three also run
+#                    on every `make lint` invocation, not just release
 #   core-images    — build the 4 core images locally
 #   service-images — build the 11 bundled-service images locally
 #   test-all       — full Go test suite, including testcontainer scenarios
@@ -524,7 +536,11 @@ lint-docker:
 	  cd /src/lib/services && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
 
 tidy-docker:
-	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) go mod tidy
+	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) sh -c '\
+	  go mod tidy && \
+	  cd /src/lib/foundation && go mod tidy && \
+	  cd /src/lib/protocols && go mod tidy && \
+	  cd /src/lib/services && go mod tidy'
 
 proto-gen-docker:
 	$(DOCKER_RUN) -v /var/run/docker.sock:/var/run/docker.sock \

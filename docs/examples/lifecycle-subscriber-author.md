@@ -10,8 +10,8 @@ that caused them returns.
 
 ## Register the subscriber
 
-A lifecycle subscriber is registered as a protocol alongside another peer role,
-and only peers a template names receive the callbacks. Declare both:
+A lifecycle subscriber is registered as a protocol alongside another service role,
+and only services a template names receive the callbacks. Declare both:
 
 ```yaml
 persistence:
@@ -23,7 +23,7 @@ named_locks: {}
 executors:
   "watcher":
     transport: grpc
-    endpoint: "peer:9600"
+    endpoint: "service:9600"
     protocols: ["executor", "lifecycle_subscriber"]
 ```
 
@@ -32,7 +32,7 @@ curl -sS "$BASE/v1/observability/executors/watcher"
 # reachability_status: reachable
 ```
 
-## The template names the peer
+## The template names the service
 
 ```yaml
 name: lifecycle
@@ -62,13 +62,13 @@ curl -sS -X POST "$BASE/v1/templates/$TPL/deploy" -H 'content-type: application/
 # OnInstanceCreated
 curl -sS -X POST "$BASE/v1/instances" -H 'content-type: application/json' \
   -d '{"template":"'"$TPL"'","instance_key":"lifecycle-1","params":{"who":"probe"},
-       "service_bindings":{"helper":"grpc://helper:9000"},"target_agent":"lifecycle-agent"}'
+       "service_bindings":{"helper":"grpc://helper:9000"},"target_daemon":"lifecycle-daemon"}'
 
 # OnRunScopeTerminal — fires from the runtime when the frame settles
 curl -sS -X POST "$BASE/v1/instances/$IID/messages" \
   -H 'content-type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"type":""}'
 
-# OnInstanceTerminated — delivered on the delete that follows a terminate
+# OnInstanceTerminated — delivered by the terminate that stamps terminated_at
 curl -sS -X POST "$BASE/v1/instances/$IID/terminate" \
   -H 'content-type: application/json' -d '{"reason":"done"}'
 curl -sS -X DELETE "$BASE/v1/instances/$IID"
@@ -96,10 +96,13 @@ curl -sS -X DELETE "$BASE/v1/templates/$TPL"
 The seven fire in the order the transitions happened, and nothing fires before
 anything happens.
 
-## Synchronous from the caller's side
+## Delivered after the transition commits
 
-Six of the seven have already been delivered by the time the control-API call
-returns — check the subscriber's record without waiting.
+A control-API call stages your delivery in the transaction that performs the
+transition and delivers it once that transaction has committed, so the
+subscriber's record is there by the time the call returns. When the delivery
+fails, the staged row stays and a drain retries it, so check again rather than
+treating one miss as a drop.
 
-`OnRunScopeTerminal` has no caller call to be synchronous with: it arrives from
-the runtime when the frame settles.
+`OnRunScopeTerminal` also arrives from the runtime when a frame settles or a
+child run scope closes, with no caller call to pair it with.

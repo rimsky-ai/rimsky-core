@@ -138,12 +138,12 @@ func TestHandler_ListClaimProducers_DeclaredOnly(t *testing.T) {
 	d := newSQLiteDriver(t)
 	disc := observability.RunHandshake(context.Background(), &nopProber{},
 		nil,
-		[]observability.PeerSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
+		[]observability.ServiceSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
 		slog.Default())
 	deps := observability.Deps{
 		Tables:         d.Tables(),
 		Queue:          d.Queue(),
-		ClaimProducers: []observability.PeerSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
+		ClaimProducers: []observability.ServiceSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
 		Discovery:      disc,
 	}
 	r := newRouter(t, deps)
@@ -199,7 +199,7 @@ func TestHandler_GetClaimProducer_DeclaredButUncachedSynthesizesUnreachableEntry
 	deps := observability.Deps{
 		Tables:         d.Tables(),
 		Queue:          d.Queue(),
-		ClaimProducers: []observability.PeerSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
+		ClaimProducers: []observability.ServiceSpec{{Name: "topics-ring", Endpoint: "store:9000"}},
 		Discovery:      disc,
 	}
 	r := newRouter(t, deps)
@@ -210,19 +210,19 @@ func TestHandler_GetClaimProducer_DeclaredButUncachedSynthesizesUnreachableEntry
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 	var body struct {
-		Peer map[string]any `json:"peer"`
+		Service map[string]any `json:"service"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body.Peer["name"] != "topics-ring" {
-		t.Fatalf("peer.name = %v, want topics-ring (declared-but-uncached peer must synthesize a real entry, not a zero-value one); peer=%+v", body.Peer["name"], body.Peer)
+	if body.Service["name"] != "topics-ring" {
+		t.Fatalf("service.name = %v, want topics-ring (declared-but-uncached service must synthesize a real entry, not a zero-value one); service=%+v", body.Service["name"], body.Service)
 	}
-	if body.Peer["endpoint"] != "store:9000" {
-		t.Fatalf("peer.endpoint = %v, want store:9000; peer=%+v", body.Peer["endpoint"], body.Peer)
+	if body.Service["endpoint"] != "store:9000" {
+		t.Fatalf("service.endpoint = %v, want store:9000; service=%+v", body.Service["endpoint"], body.Service)
 	}
-	if body.Peer["reachability_status"] != string(observability.ReachabilityUnreachable) {
-		t.Fatalf("peer.reachability_status = %v, want %q; peer=%+v", body.Peer["reachability_status"], observability.ReachabilityUnreachable, body.Peer)
+	if body.Service["reachability_status"] != string(observability.ReachabilityUnreachable) {
+		t.Fatalf("service.reachability_status = %v, want %q; service=%+v", body.Service["reachability_status"], observability.ReachabilityUnreachable, body.Service)
 	}
 }
 

@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostdaemon"
 	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
@@ -55,9 +55,9 @@ import (
 )
 
 func main() {
-	port := os.Getenv("RIMSKY_AGENT_PORT")
+	port := os.Getenv("RIMSKY_DAEMON_PORT")
 	if port == "" {
-		fmt.Fprintln(os.Stderr, "RIMSKY_AGENT_PORT missing")
+		fmt.Fprintln(os.Stderr, "RIMSKY_DAEMON_PORT missing")
 		os.Exit(2)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
@@ -76,8 +76,14 @@ func main() {
 	}()
 	ch := make(chan os.Signal, 4)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+	receipt := os.Getenv("RIMSKY_TEST_SIGTERM_RECEIPT")
 	for sig := range ch {
 		fmt.Fprintln(os.Stderr, "child ignoring:", sig)
+		if sig == syscall.SIGTERM && receipt != "" {
+			if werr := os.WriteFile(receipt, []byte(sig.String()), 0o644); werr != nil {
+				fmt.Fprintln(os.Stderr, "receipt:", werr)
+			}
+		}
 	}
 }
 `
@@ -91,9 +97,9 @@ import (
 )
 
 func main() {
-	port := os.Getenv("RIMSKY_AGENT_PORT")
+	port := os.Getenv("RIMSKY_DAEMON_PORT")
 	if port == "" {
-		fmt.Fprintln(os.Stderr, "RIMSKY_AGENT_PORT missing")
+		fmt.Fprintln(os.Stderr, "RIMSKY_DAEMON_PORT missing")
 		os.Exit(2)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
@@ -139,7 +145,7 @@ func TestDrain_GracefulChildExitBeforeDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	spawned, err := hostagent.SpawnService(ctx, hostagent.SpawnServiceParams{
+	spawned, err := hostdaemon.SpawnService(ctx, hostdaemon.SpawnServiceParams{
 		BinaryPath:   bin,
 		Env:          os.Environ(),
 		ReadyTimeout: 30 * time.Second,
@@ -151,7 +157,7 @@ func TestDrain_GracefulChildExitBeforeDeadline(t *testing.T) {
 
 	var logBuf syncBuffer
 	coord := &compose.ShutdownCoordinator{
-		Services: []*hostagent.SpawnedService{spawned},
+		Services: []*hostdaemon.SpawnedService{spawned},
 		Logger:   slog.New(slog.NewTextHandler(&logBuf, nil)),
 	}
 
@@ -204,8 +210,8 @@ func TestInstallSecondSignalEscalator_HardExitsAndKillsChildren(t *testing.T) {
 
 		sigCh := make(chan os.Signal, 1)
 		done := make(chan struct{})
-		compose.InstallSecondSignalEscalator(sigCh, done, func() []*hostagent.SpawnedService {
-			return []*hostagent.SpawnedService{{Cmd: child, Exited: exited}}
+		compose.InstallSecondSignalEscalator(sigCh, done, func() []*hostdaemon.SpawnedService {
+			return []*hostdaemon.SpawnedService{{Cmd: child, Exited: exited}}
 		}, nil)
 		sigCh <- syscall.SIGINT
 		<-make(chan struct{})
@@ -238,17 +244,18 @@ func TestInstallSecondSignalEscalator_HardExitsAndKillsChildren(t *testing.T) {
 		func() bool { return !processStillAlive(pid) })
 }
 
-func TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime(t *testing.T) {
+func TestDrain_SIGKILLsAChildThatOutlivesTheGraceWindow(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGTERM semantics differ on Windows; drain path is exercised on Unix-only CI")
 	}
 	bin := buildSigtermIgnorer(t)
+	receipt := filepath.Join(t.TempDir(), "sigterm-received")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	spawned, err := hostagent.SpawnService(ctx, hostagent.SpawnServiceParams{
+	spawned, err := hostdaemon.SpawnService(ctx, hostdaemon.SpawnServiceParams{
 		BinaryPath:   bin,
-		Env:          os.Environ(),
+		Env:          append(os.Environ(), "RIMSKY_TEST_SIGTERM_RECEIPT="+receipt),
 		ReadyTimeout: 30 * time.Second,
 	})
 	if err != nil {
@@ -256,12 +263,30 @@ func TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime(t *testing.T) {
 	}
 	pid := spawned.Cmd.Process.Pid
 
+	graceOver := make(chan time.Time)
 	coord := &compose.ShutdownCoordinator{
-		Services: []*hostagent.SpawnedService{spawned},
-		Logger:   slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Services:   []*hostdaemon.SpawnedService{spawned},
+		Logger:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		ChildGrace: func() (<-chan time.Time, func()) { return graceOver, func() {} },
 	}
 
-	code := coord.Drain(context.Background(), compose.ReasonAllSuccess)
+	drained := make(chan int, 1)
+	go func() { drained <- coord.Drain(context.Background(), compose.ReasonAllSuccess) }()
+
+	awaited.Until(t, fmt.Sprintf("child %d to record the drain's SIGTERM", pid),
+		func() bool { _, statErr := os.Stat(receipt); return statErr == nil })
+	if !processStillAlive(pid) {
+		t.Fatalf("pid %d died on the drain's SIGTERM; this test needs a child that outlives it", pid)
+	}
+	select {
+	case code := <-drained:
+		t.Fatalf("Drain returned %d before the grace window elapsed, with the child still alive — "+
+			"a straggler gets the whole window before the SIGKILL escalation", code)
+	default:
+	}
+	close(graceOver)
+
+	code := <-drained
 
 	if processStillAlive(pid) {
 		t.Fatalf("pid %d still alive after Drain returned (a SIGTERM-resistant child must be confirmed dead, via SIGKILL escalation, before Drain returns)", pid)
@@ -363,7 +388,7 @@ func TestArmOnFirstSignal_ObservesTheFirstSignalDuringDrainAndHardExitsOnTheSeco
 	if exitErr.ExitCode() != 130 {
 		t.Fatalf("second-signal exit code = %d, want 130; stderr=%s", exitErr.ExitCode(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "signal while draining") {
+	if !strings.Contains(stderr.String(), "COMPOSE.DRAIN.SIGNALLED") {
 		t.Errorf("the first signal during the drain was swallowed rather than observed; stderr=%s", stderr.String())
 	}
 }

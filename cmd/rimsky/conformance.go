@@ -24,7 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/publisher"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/validation"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	service "github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 func reportConformanceResults[T any](prefix string, results []T, name func(T) string, errOf func(T) error) int {
@@ -62,8 +62,6 @@ func dispatchConformance(args []string) int {
 		return runConformanceValidation(rest)
 	case "data-processing":
 		return runConformanceDataProcessing(rest)
-	case "blob-backend":
-		return runConformanceBlobBackend(rest)
 	case "lifecycle-subscriber":
 		return runConformanceLifecycleSubscriber(rest)
 	case "probe":
@@ -77,7 +75,7 @@ func dispatchConformance(args []string) int {
 }
 
 func printConformanceUsage(w *os.File) {
-	fmt.Fprintln(w, "usage: rimsky conformance <executor|claim-producer|publisher|validation|data-processing|blob-backend|lifecycle-subscriber|probe> ...")
+	fmt.Fprintln(w, "usage: rimsky conformance <executor|claim-producer|publisher|validation|data-processing|lifecycle-subscriber|probe> ...")
 }
 
 // @decision: conformance-suite-per-protocol
@@ -114,7 +112,7 @@ func runConformanceLifecycleSubscriber(args []string) int {
 
 func runConformanceExecutor(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance executor", flag.ContinueOnError)
-	endpoint := fs.String("endpoint", "", "endpoint URL (executor or lifecycle peer)")
+	endpoint := fs.String("endpoint", "", "endpoint URL (executor or lifecycle service)")
 	transport := fs.String("transport", "grpc", "transport: grpc")
 	allowLive := fs.Bool("allow-live", false, "run against a live (non-stub) endpoint; stub-requiring scenarios skip instead of the run refusing to start")
 	only := fs.String("scenarios", "", "comma-list of scenario names to run (default: all)")
@@ -241,7 +239,7 @@ func runConformanceClaimProducer(args []string) int {
 	if *transport == "http" {
 		target = claimproducer.NewHTTPBridgeClaimProducer(*endpoint)
 	} else {
-		client, err := peer.Dial(ctx, "conformance-target", *endpoint, peer.TLSModeOff)
+		client, err := service.Dial(ctx, "conformance-target", *endpoint, service.TLSModeOff)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: dial: %v\n", err)
 			return 1

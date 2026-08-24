@@ -38,7 +38,7 @@ func Evaluate(m Matcher, ctx Context, logger shared.Logger, entryIndex int) bool
 	for k := range m {
 		if _, ok := allowedKeys[k]; !ok {
 			if logger != nil {
-				logger.Warn("matcher.Evaluate: matcher contains unknown key; skipping entry",
+				logger.Warn("MATCHER.UNKNOWNKEY.SKIPPED", "site", "matcher.Evaluate",
 					"entry_index", entryIndex,
 					"unknown_key", k)
 			}
@@ -50,7 +50,7 @@ func Evaluate(m Matcher, ctx Context, logger shared.Logger, entryIndex int) bool
 	}
 	malformed := func(key string) bool {
 		if logger != nil {
-			logger.Warn("matcher.Evaluate: matcher key has the wrong type; skipping entry",
+			logger.Warn("MATCHER.KEYTYPE.SKIPPED", "site", "matcher.Evaluate", "detail", "the matcher key has the wrong type",
 				"entry_index", entryIndex,
 				"key", key)
 		}

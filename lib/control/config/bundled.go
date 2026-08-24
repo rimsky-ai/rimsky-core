@@ -61,7 +61,7 @@ func (b *BundledRegistrations) AdvertiseInto(disc *observability.Discovery, conf
 		if _, overridden := configuredExecutors[name]; overridden {
 			continue
 		}
-		disc.SetExecutor(observability.PeerEntry{
+		disc.SetExecutor(observability.ServiceEntry{
 			Name:         name,
 			Endpoint:     b.ExecutorAliases[name].URL,
 			Reachability: observability.ReachabilityReachable,
@@ -78,7 +78,7 @@ func (b *BundledRegistrations) AdvertiseInto(disc *observability.Discovery, conf
 		if _, overridden := configuredClaimProducers[name]; overridden {
 			continue
 		}
-		disc.SetClaimProducer(observability.PeerEntry{
+		disc.SetClaimProducer(observability.ServiceEntry{
 			Name:         name,
 			Reachability: observability.ReachabilityReachable,
 			Static:       true,

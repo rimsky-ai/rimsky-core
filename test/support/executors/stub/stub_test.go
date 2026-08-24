@@ -122,16 +122,25 @@ func TestScripted_Tags(t *testing.T) {
 
 func TestDelayRespectsContextCancellation(t *testing.T) {
 	s := New()
-	s.WhenType("t.slow").Success(nil, false, "").Delay(500 * time.Millisecond)
+	s.WhenType("t.slow").Success(nil, false, "").Delay(time.Hour)
 	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	executed := make(chan error, 1)
+	go func() {
+		_, err := c.Execute(ctx, &genv1.ExecuteRequest{NodeType: "t.slow"})
+		executed <- err
+	}()
 
-	_, err := c.Execute(ctx, &genv1.ExecuteRequest{NodeType: "t.slow"})
+	awaited.Until(t, "the stub to record the dispatch before it delays", func() bool {
+		return len(s.Observed()) == 1
+	})
+	cancel()
+
+	err := <-executed
 	require.Error(t, err)
-	require.Equal(t, codes.DeadlineExceeded, status.Code(err),
+	require.Equal(t, codes.Canceled, status.Code(err),
 		"the delay must abandon on the caller's cancellation rather than run to completion; got %v", err)
 }
 

@@ -24,7 +24,7 @@ type InstanceRow struct {
 	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
 	CreatedByAPIKeyID *shared.UUID    `json:"created_by_api_key_id,omitempty"`
 	// @concept: instance
-	// @concept: host-agent-proxy
+	// @concept: host-daemon-proxy
 	// @concept: anonymous-mode
 	TargetRoutingIdentity string `json:"target_routing_identity"`
 	// @concept: instance
@@ -40,7 +40,6 @@ type InstanceTable interface {
 	Delete(ctx context.Context, id shared.UUID, tx Tx) error
 	MarkTerminated(ctx context.Context, id shared.UUID, tx Tx) error
 	CountActiveByTemplate(ctx context.Context, templateHash string, tx Tx) (int, error)
-	ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx Tx) ([]InstanceRow, error)
 	CountByActive(ctx context.Context, tx Tx) (active int, terminated int, err error)
 	// @concept: instance
 	SetPaused(ctx context.Context, instanceID shared.UUID, paused bool, tx Tx) (priorValue bool, err error)
@@ -57,7 +56,7 @@ type InstanceCreateInput struct {
 	ServiceBindings   json.RawMessage
 	CreatedByAPIKeyID *shared.UUID
 	// @concept: instance
-	// @concept: host-agent-proxy
+	// @concept: host-daemon-proxy
 	// @concept: anonymous-mode
 	TargetRoutingIdentity string
 	// @concept: instance

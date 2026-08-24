@@ -59,7 +59,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 		preValidateCount, postValidateCount)
 
 	preDeployInstanceAttempt := postJSON(t, h.ControlBase+"/v1/instances",
-		map[string]any{"template": templateHash, "params": map[string]any{}, "target_agent": "scenario-default-agent"})
+		map[string]any{"template": templateHash, "params": map[string]any{}, "target_daemon": "scenario-default-daemon"})
 	require.GreaterOrEqual(t, preDeployInstanceAttempt.status, 400,
 		"POST /v1/instances against a registered (not-yet-deployed) template "+
 			"must be refused (4xx) — got %d: %s",
@@ -105,7 +105,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 		"undeploy response must report state=undeployed")
 
 	postUndeployInstanceAttempt := postJSON(t, h.ControlBase+"/v1/instances",
-		map[string]any{"template": templateHash, "params": map[string]any{}, "target_agent": "scenario-default-agent"})
+		map[string]any{"template": templateHash, "params": map[string]any{}, "target_daemon": "scenario-default-daemon"})
 	require.GreaterOrEqual(t, postUndeployInstanceAttempt.status, 400,
 		"POST /v1/instances against an undeployed template must be refused "+
 			"(4xx) — got %d: %s",

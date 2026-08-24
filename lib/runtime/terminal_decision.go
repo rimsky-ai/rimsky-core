@@ -220,7 +220,7 @@ func promoteHandleState(
 	}
 	if errors.Is(err, spec.ErrIllegalClaimHandleTransition) {
 		if args.Logger != nil {
-			args.Logger.Warn("ResolveClaimHandleTerminal: Promote raced (already resolved or supervisor mismatch)",
+			args.Logger.Warn("CLAIMHANDLE.PROMOTION.RACED", "site", "ResolveClaimHandleTerminal", "detail", "the handle is already resolved or the supervisor does not match",
 				"claim_handle_id", td.ClaimHandleID.String(),
 				"new_state", string(promoteState))
 		}

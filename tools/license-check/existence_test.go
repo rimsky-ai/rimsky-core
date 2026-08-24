@@ -79,14 +79,14 @@ exempt:
 
 func TestVerifyEntriesExist_AllPresent(t *testing.T) {
 	dir := t.TempDir()
-	for _, d := range []string{"protocols", "runtime/peer", "runtime", "bin"} {
+	for _, d := range []string{"protocols", "runtime/service", "runtime", "bin"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
 	cfg := writeLicensingYAML(t, dir, `apache:
   - protocols/
-  - runtime/peer/
+  - runtime/service/
 agpl:
   - runtime/
 exempt:

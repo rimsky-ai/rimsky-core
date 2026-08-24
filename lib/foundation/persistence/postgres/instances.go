@@ -276,39 +276,6 @@ func (s *instancesImpl) CountByActive(ctx context.Context, tx persistence.Tx) (i
 	return active, terminated, nil
 }
 
-func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx persistence.Tx) ([]persistence.InstanceRow, error) {
-	ex := s.q(tx)
-	if limit <= 0 {
-		limit = 100
-	}
-	rows, err := ex.Query(ctx,
-		`SELECT `+instanceCols+`
-		 FROM rimsky_instances i
-		 WHERE i.terminated_at IS NOT NULL
-		   AND EXISTS (
-		     SELECT 1 FROM rimsky_lifecycle_idempotencies l
-		     WHERE l.scope_kind = 'instance' AND l.scope_id = i.id::text
-		   )
-		 ORDER BY i.terminated_at ASC
-		 LIMIT $1`,
-		limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("instances.listTerminatedWithLifecycleRows: %w", err)
-	}
-	defer rows.Close()
-
-	var out []persistence.InstanceRow
-	for rows.Next() {
-		r, err := scanInstanceRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 type scannable interface {
 	Scan(dst ...any) error
 }

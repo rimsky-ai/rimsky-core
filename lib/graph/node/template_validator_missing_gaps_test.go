@@ -541,7 +541,7 @@ func TestCheckAttributeDirectiveBody_Error_UnrecognizedDirectivePrefix(t *testin
 }
 
 // @concept: publisher
-func TestValidatePublishers_Error_KindPeerDoesNotAdvertise(t *testing.T) {
+func TestValidatePublishers_Error_KindServiceDoesNotAdvertise(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:     "demo",
 		Version:  "1",
@@ -563,11 +563,11 @@ func TestValidatePublishers_Error_KindPeerDoesNotAdvertise(t *testing.T) {
 	hasErrorAt(t, res, "publishers[0].kind")
 	require.True(t, findErrorContains(res.Errors, "publisher_unadvertised_kind"))
 	require.True(t, findErrorContains(res.Errors, `[http webhook]`),
-		"the refusal must name what the peer does advertise; got: %+v", res.Errors)
+		"the refusal must name what the service does advertise; got: %+v", res.Errors)
 }
 
 // @concept: publisher
-func TestValidatePublishers_AcceptsKindPeerAdvertises(t *testing.T) {
+func TestValidatePublishers_AcceptsKindServiceAdvertises(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:     "demo",
 		Version:  "1",
@@ -584,7 +584,7 @@ func TestValidatePublishers_AcceptsKindPeerAdvertises(t *testing.T) {
 }
 
 // @concept: publisher
-func TestValidatePublishers_UnreachablePeerDoesNotBlockRegistration(t *testing.T) {
+func TestValidatePublishers_UnreachableServiceDoesNotBlockRegistration(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:     "demo",
 		Version:  "1",
@@ -598,5 +598,5 @@ func TestValidatePublishers_UnreachablePeerDoesNotBlockRegistration(t *testing.T
 		PublisherDeclaredKinds: func(string) ([]string, bool) { return nil, false },
 	})
 	require.True(t, res.Ok(),
-		"a peer whose capabilities could not be read must not turn into a kind refusal; got: %+v", res.Errors)
+		"a service whose capabilities could not be read must not turn into a kind refusal; got: %+v", res.Errors)
 }

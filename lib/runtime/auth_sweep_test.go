@@ -181,12 +181,12 @@ func TestSweepRotationGrace_AuditWriteFailureSurfacedAndAtomic(t *testing.T) {
 
 	var foundErrorLog bool
 	for _, r := range logger.Records() {
-		if r.Level == "error" && r.Msg == "auth.key_revoked.append" {
+		if r.Level == "error" && r.Msg == "AUTH.KEYREVOKEDEVENT.APPENDFAILED" {
 			foundErrorLog = true
 		}
 	}
 	if !foundErrorLog {
-		t.Fatalf("expected an error-level 'auth.key_revoked.append' log record; got %+v", logger.Records())
+		t.Fatalf("expected an error-level AUTH.KEYREVOKEDEVENT.APPENDFAILED log record; got %+v", logger.Records())
 	}
 
 	row, ok, err := tables.APIKeys().GetByID(ctx, keyID, nil)

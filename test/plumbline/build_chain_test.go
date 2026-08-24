@@ -75,10 +75,10 @@ func TestCoreImageSet(t *testing.T) {
 	makefile := readBuildFile(t, "Makefile")
 	repoRoot := findRepoRoot(t)
 	coreImages := map[string]string{
-		"rimsky":                  "dockerfiles/Dockerfile.rimsky",
-		"rimsky-all-in-one":       "dockerfiles/Dockerfile.all-in-one",
-		"rimsky-host-agent-proxy": "dockerfiles/Dockerfile.go-base",
-		"rimsky-conformance":      "dockerfiles/Dockerfile.conformance",
+		"rimsky":                   "dockerfiles/Dockerfile.rimsky",
+		"rimsky-all-in-one":        "dockerfiles/Dockerfile.all-in-one",
+		"rimsky-host-daemon-proxy": "dockerfiles/Dockerfile.go-base",
+		"rimsky-conformance":       "dockerfiles/Dockerfile.conformance",
 	}
 	for image, dockerfile := range coreImages {
 		if !strings.Contains(makefile, dockerfile+","+image) {

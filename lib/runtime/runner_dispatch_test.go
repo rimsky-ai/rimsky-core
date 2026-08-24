@@ -706,7 +706,7 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID:           fx.instanceID,
 			TemplateHash: fx.templateHash,
 		}, tx); err != nil {

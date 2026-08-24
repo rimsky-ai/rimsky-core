@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 	verifiershapechecks "github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks"
 )
 
@@ -18,19 +18,19 @@ func main() {
 	slog.SetDefault(serverkit.NewJSONLogger())
 	opts, err := verifiershapechecks.LoadOptsFromEnv()
 	if err != nil {
-		slog.Error("verifier-shape-checks config", "error", err.Error())
+		slog.Error("VERIFIERSHAPECHECKS.CONFIG.INVALID", "error", err.Error())
 		os.Exit(1)
 	}
-	slog.Info("verifier-shape-checks starting", "grpc_port", opts.Port, "stub_mode", opts.StubMode)
+	slog.Info("VERIFIERSHAPECHECKS.PROCESS.STARTING", "grpc_port", opts.Port, "stub_mode", opts.StubMode)
 
 	lis, err := serverkit.Listen(opts.Host, opts.Port)
 	if err != nil {
-		slog.Error("grpc listen", "error", err.Error())
+		slog.Error("VERIFIERSHAPECHECKS.GRPC.LISTENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
-	srv, identity, err := peerauth.NewGRPCServer(context.Background(), "verifier-shape-checks")
+	srv, identity, err := serviceauth.NewGRPCServer(context.Background(), "verifier-shape-checks")
 	if err != nil {
-		slog.Error("verifier-shape-checks peer-auth", "error", err.Error())
+		slog.Error("VERIFIERSHAPECHECKS.SERVICEAUTH.ENROLLFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	genv1.RegisterExecutorServer(srv, verifiershapechecks.NewServer(opts.StubMode))

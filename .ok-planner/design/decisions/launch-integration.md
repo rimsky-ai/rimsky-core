@@ -6,7 +6,7 @@ decision: launch-integration
 
 ## Choice
 
-One exported launcher runs the three role runners — scheduler, supervisor, control-api: it starts each in order, tracks each runner's stop function, owns the combined role-failure channel, and drains in reverse order. Both the all-in-one entrypoint and the compose verb call it. Each site writes its own signal-versus-failure select, because each has its own signal source. The process-role marker is set so the memory-blob backend gate (per `concept:blob-backend`) permits memory if chosen.
+One exported launcher runs the three role runners — scheduler, supervisor, control-api: it starts each in order, tracks each runner's stop function, owns the combined role-failure channel, and drains in reverse order. Both the all-in-one entrypoint and the compose verb call it. Each site writes its own signal-versus-failure select, because each has its own signal source. Both sites set the process-role marker, so the roles read the unified topology (see `decision:single-process-mode`).
 
 ## Rationale
 

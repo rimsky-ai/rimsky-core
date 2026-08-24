@@ -17,10 +17,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
-	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
@@ -61,28 +59,19 @@ func (f *failureReporter) Close() {
 	close(f.ch)
 }
 
-func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, preOpenedBlob persistence.BlobBackend) (StopFunc, <-chan error, error) {
+func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, opts RoleOptions) (StopFunc, <-chan error, error) {
 	log := shared.NewSlogLogger(logger)
 
 	tickMs, err := positiveIntEnv("RIMSKY_SCHEDULER_TICK_MS", 250)
 	if err != nil {
-		log.Error("scheduler tick_ms resolution", "error", err.Error())
+		log.Error("SCHEDULER.TICKINTERVAL.RESOLVEFAILED", "error", err.Error())
 		return nil, nil, err
 	}
 
 	metricsPort, err := metricsPortFor("scheduler", rimskyCfg.Topology)
 	if err != nil {
-		log.Error("metrics port resolution", "error", err.Error())
+		log.Error("METRICS.PORT.RESOLVEFAILED", "error", err.Error())
 		return nil, nil, err
-	}
-
-	blobBackend := preOpenedBlob
-	if blobBackend == nil {
-		blobBackend, err = config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology)
-		if err != nil {
-			log.Error("config.OpenBlobBackend", "error", err.Error())
-			return nil, nil, err
-		}
 	}
 
 	schedulerID := os.Getenv("RIMSKY_SCHEDULER_ID")
@@ -96,35 +85,29 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 
 	mreg := observability.NewMetricsRegistry()
 
-	lateBindProxies := rimskyCfg.LateBindServiceProxies
-	peersForSpec := func(tplSpec node.TemplateSpec) []string {
-		return controlapi.LifecyclePeersForSpec(
-			controlapi.AppDeps{LateBindServiceProxies: lateBindProxies},
-			tplSpec,
-		)
-	}
-
 	h, err := config.StartScheduler(config.SchedulerConfig{
-		Driver:                  driver,
-		Clock:                   shared.SystemClock{},
-		Logger:                  log,
-		TickInterval:            time.Duration(tickMs) * time.Millisecond,
-		MaxQuietPeriodDefault:   rimskyCfg.Dispatch.MaxQuietPeriodDefault,
-		MaxRuntimeDefault:       rimskyCfg.Dispatch.MaxRuntimeDefault,
-		ClaimProducers:          rimskyCfg.ClaimProducers,
-		Executors:               rimskyCfg.Executors,
-		Publishers:              rimskyCfg.Publishers,
-		NamedLocks:              rimskyCfg.NamedLocks,
-		SupervisorID:            schedulerID,
-		Blob:                    blobBackend,
-		OrphanBlobSweepInterval: rimskyCfg.Blob.Retention.OrphanSweepInterval,
-		Metrics:                 observability.MetricsHookOf(mreg),
-		Retention:               rimskyCfg.Retention,
-		LifecyclePeersForSpec:   peersForSpec,
-		PeerAuth:                rimskyCfg.PeerAuth,
+		Driver:                 driver,
+		Clock:                  shared.SystemClock{},
+		Logger:                 log,
+		TickInterval:           time.Duration(tickMs) * time.Millisecond,
+		MaxQuietPeriodDefault:  rimskyCfg.Dispatch.MaxQuietPeriodDefault,
+		MaxRuntimeDefault:      rimskyCfg.Dispatch.MaxRuntimeDefault,
+		ClaimProducers:         rimskyCfg.ClaimProducers,
+		Executors:              rimskyCfg.Executors,
+		Publishers:             rimskyCfg.Publishers,
+		NamedLocks:             rimskyCfg.NamedLocks,
+		SupervisorID:           schedulerID,
+		Metrics:                observability.MetricsHookOf(mreg),
+		Retention:              rimskyCfg.Retention,
+		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
+		ServiceAuth:            rimskyCfg.ServiceAuth,
+		// @decision: lifecycle-drain-per-role
+		SharedLifecycleDrain: opts.SharedLifecycleDrain,
+		// @decision: lifecycle-subscriber-at-least-once-delivery
+		ServiceDeliveryStallAfter: rimskyCfg.ServiceDelivery.StallAfter,
 	})
 	if err != nil {
-		log.Error("StartScheduler", "error", err.Error())
+		log.Error("SCHEDULER.ROLE.STARTFAILED", "site", "StartScheduler", "error", err.Error())
 		return nil, nil, err
 	}
 
@@ -139,12 +122,12 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 	stop := func(stopCtx context.Context) error {
 		var firstErr error
 		if err := h.Shutdown(stopCtx); err != nil {
-			log.Error("scheduler shutdown", "error", err.Error())
+			log.Error("SCHEDULER.ROLE.SHUTDOWNFAILED", "error", err.Error())
 			firstErr = err
 		}
 		if metricsSrv != nil {
 			if err := metricsSrv.Shutdown(stopCtx); err != nil {
-				log.Warn("metrics server shutdown", "error", err.Error())
+				log.Warn("METRICS.SERVER.SHUTDOWNFAILED", "error", err.Error())
 			}
 		}
 		cancelGauges()
@@ -207,7 +190,7 @@ func startMetricsServer(host, role string, metricsPort int, mreg *observability.
 	addr := fmt.Sprintf("%s:%d", host, metricsPort)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Error("metrics endpoint bind", "error", err.Error(), "role", role, "addr", addr)
+		log.Error("METRICS.ENDPOINT.BINDFAILED", "error", err.Error(), "role", role, "addr", addr)
 		if report != nil {
 			report.Report(fmt.Errorf("%s metrics endpoint bind %s: %w", role, addr, err))
 		}
@@ -225,9 +208,9 @@ func serveMetrics(ln net.Listener, role string, mreg *observability.MetricsRegis
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
-		log.Info("metrics endpoint listening", "addr", srv.Addr, "role", role)
+		log.Info("METRICS.ENDPOINT.LISTENING", "addr", srv.Addr, "role", role)
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Error("metrics endpoint", "error", err.Error(), "role", role)
+			log.Error("METRICS.ENDPOINT.SERVEFAILED", "error", err.Error(), "role", role)
 			if report != nil {
 				report.Report(fmt.Errorf("%s metrics endpoint: %w", role, err))
 			}

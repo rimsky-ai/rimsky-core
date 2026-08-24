@@ -7,7 +7,6 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -55,8 +54,7 @@ func TestPostgresServer_LifecycleDisabled_RPCUnimplemented(t *testing.T) {
 	addr := startPostgresServerForLifecycleGateTest(t, dsn, false)
 	client := dialPostgresLifecycleSubscriberClient(t, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	_, err := client.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{InstanceId: "inst-1"})
 
 	if err == nil {
@@ -76,8 +74,7 @@ func TestPostgresServer_LifecycleEnabled_RPCSucceeds(t *testing.T) {
 	addr := startPostgresServerForLifecycleGateTest(t, dsn, true)
 	client := dialPostgresLifecycleSubscriberClient(t, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 	ack, err := client.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{InstanceId: "inst-1"})
 	if err != nil {
 		t.Fatalf("OnInstanceCreated with EnableLifecycle=true: got err %v, want a successful ack from the "+

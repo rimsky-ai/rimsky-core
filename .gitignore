@@ -14,11 +14,11 @@ vendor/
 /rimsky
 /rimsky-migrate
 /rimsky-entrypoint
-/rimsky-host-agent
-/rimsky-host-agent-proxy
+/rimsky-host-daemon
+/rimsky-host-daemon-proxy
 
 # Test fixture binary — harness_test.go rebuilds it into a temp dir per run
-/lib/runtime/hostagent/testdata/stubchild/stubchild
+/lib/runtime/hostdaemon/testdata/stubchild/stubchild
 
 # Bundled-service node/TS build trees (lib/services/executors/claude-agent)
 lib/services/executors/*/node_modules/
@@ -81,7 +81,7 @@ lib/services/stubexecutor
 # package directory: the example executor binary lands inside
 # examples/executor/; the compose stub-executor binary lands next to
 # its source under examples/compose/; the root-level stubchild is a
-# stray from an out-of-tree build of the hostagent test fixture (whose
+# stray from an out-of-tree build of the hostdaemon test fixture (whose
 # in-tree path is already covered above).
 /examples/executor/executor
 /examples/compose/stub-executor/stub-executor

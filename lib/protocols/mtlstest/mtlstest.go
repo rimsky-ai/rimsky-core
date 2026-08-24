@@ -73,7 +73,7 @@ func (c *CA) Leaf(dnsName string, notAfter time.Time) (certPEM, keyPEM string, e
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		DNSNames:     []string{dnsName, enroll.PeerServerName},
+		DNSNames:     []string{dnsName, enroll.ServiceServerName},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.cert, &key.PublicKey, c.key)
 	if err != nil {

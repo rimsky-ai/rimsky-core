@@ -72,21 +72,22 @@ func dialCapabilities(t *testing.T, addr string, deadline time.Duration) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
+	//nolint:testwallclock-outcome this bound covers one dial attempt inside a poll that returns only on success; the negative assertion dials a port with no listener, so the dial is refused, never timed out
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	_, err = genv1.NewExecutorObservabilityClient(conn).Capabilities(ctx, &genv1.ExecutorCapabilitiesRequest{})
 	return err
 }
 
-func TestClaudeAgentBinaryHonorsRimskyAgentPort(t *testing.T) {
+func TestClaudeAgentBinaryHonorsRimskyDaemonPort(t *testing.T) {
 	bin := buildClaudeAgentBinary(t)
 
-	agentPort := freeTCPPort(t)
+	daemonPort := freeTCPPort(t)
 	ignoredPort := freeTCPPort(t)
 
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
-		"RIMSKY_AGENT_PORT="+strconv.Itoa(agentPort),
+		"RIMSKY_DAEMON_PORT="+strconv.Itoa(daemonPort),
 		"RIMSKY_EXECUTOR_PORT_GRPC="+strconv.Itoa(ignoredPort),
 		"RIMSKY_EXECUTOR_HOST=127.0.0.1",
 		"RIMSKY_EXECUTOR_STUB_MODE=1",
@@ -108,16 +109,16 @@ func TestClaudeAgentBinaryHonorsRimskyAgentPort(t *testing.T) {
 		<-exited
 	})
 
-	awaited.Until(t, fmt.Sprintf("claude-agent to serve capabilities on RIMSKY_AGENT_PORT %d", agentPort), func() bool {
+	awaited.Until(t, fmt.Sprintf("claude-agent to serve capabilities on RIMSKY_DAEMON_PORT %d", daemonPort), func() bool {
 		select {
 		case <-exited:
-			t.Fatalf("claude-agent exited before binding RIMSKY_AGENT_PORT %d", agentPort)
+			t.Fatalf("claude-agent exited before binding RIMSKY_DAEMON_PORT %d", daemonPort)
 		default:
 		}
-		return dialCapabilities(t, "127.0.0.1:"+strconv.Itoa(agentPort), time.Second) == nil
+		return dialCapabilities(t, "127.0.0.1:"+strconv.Itoa(daemonPort), time.Second) == nil
 	})
 
 	if err := dialCapabilities(t, "127.0.0.1:"+strconv.Itoa(ignoredPort), 500*time.Millisecond); err == nil {
-		t.Fatalf("claude-agent unexpectedly bound the fallback RIMSKY_EXECUTOR_PORT_GRPC %d when RIMSKY_AGENT_PORT was set", ignoredPort)
+		t.Fatalf("claude-agent unexpectedly bound the fallback RIMSKY_EXECUTOR_PORT_GRPC %d when RIMSKY_DAEMON_PORT was set", ignoredPort)
 	}
 }

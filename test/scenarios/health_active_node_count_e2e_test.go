@@ -25,13 +25,13 @@ func TestHealthCheck_ActiveNodeCountComputedOnDemand(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
 	const ackID = "ack-health-active-count"
-	h.Stub.WhenType("agent").AwaitAsyncCallback(ackID, 5000)
+	h.Stub.WhenType("daemon").AwaitAsyncCallback(ackID, 5000)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "health-active-node-count", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "agent", Executor: "stub"},
+				node.TemplateNodeDef{Type: "daemon", Executor: "stub"},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -43,12 +43,12 @@ func TestHealthCheck_ActiveNodeCountComputedOnDemand(t *testing.T) {
 	})
 	iid := h.CreateInstance(tid, "ck-health-active-node-count", map[string]any{})
 
-	n := h.FindNode(iid, "agent")
+	n := h.FindNode(iid, "daemon")
 	require.NotNil(t, n)
 	h.WaitForNodeState(n.ID, cascade.NodeStateRunning)
 
 	require.GreaterOrEqual(t, activeNodeCountFor(t, h, healthProbeSupervisorID), 1,
-		"while the 'agent' dispatch is genuinely running, /v1/health's active_node_count for its "+
+		"while the 'daemon' dispatch is genuinely running, /v1/health's active_node_count for its "+
 			"supervisor must reflect it — a cached/stale counter (e.g. one only bumped at claim time "+
 			"and never decremented) could still show a stale value here, so this alone isn't "+
 			"conclusive; the settle-then-recheck below is what proves 'on demand'")

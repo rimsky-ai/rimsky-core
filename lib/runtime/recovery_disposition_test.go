@@ -116,7 +116,7 @@ func TestErrorPolicyRetry_StampsRetryAfterErrorAndBumpsProgressWithScratch(t *te
 
 	var scratch []byte
 	pgdbtest.QueryRowForTest(ctx, t, d,
-		`SELECT scratch_inline FROM rimsky_node_runs WHERE id = $1`, []any{runID}, &scratch)
+		`SELECT scratch FROM rimsky_node_runs WHERE id = $1`, []any{runID}, &scratch)
 	require.Equal(t, "scratch-after-error", string(scratch))
 }
 

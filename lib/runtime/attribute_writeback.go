@@ -26,8 +26,8 @@ type attributeWritebackBody struct {
 
 // @decision: writeback-bumps-progress
 func (c *CallbackServer) handleAttributeWriteback(w http.ResponseWriter, r *http.Request) {
-	if authErr := c.authorizePeer(r); authErr != nil {
-		c.Logger.Warn("attribute writeback: unauthorized",
+	if authErr := c.authorizeService(r); authErr != nil {
+		c.Logger.Warn("ATTRIBUTEWRITEBACK.REQUEST.UNAUTHORIZED",
 			"error", authErr.Error())
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
@@ -40,7 +40,7 @@ func (c *CallbackServer) handleAttributeWriteback(w http.ResponseWriter, r *http
 	}
 	runID := shared.UUID(parsed)
 	if !c.authorizeCancelToken(r, runID) {
-		c.Logger.Warn("attribute writeback: cancel_token rejected",
+		c.Logger.Warn("ATTRIBUTEWRITEBACK.CANCELTOKEN.REJECTED",
 			"run_id", runID.String())
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
@@ -93,7 +93,7 @@ func (c *CallbackServer) handleAttributeWriteback(w http.ResponseWriter, r *http
 		}
 		return c.renewClaimExpiryForRun(ctx, runID, tx)
 	}); txErr != nil {
-		c.Logger.Error("attribute writeback: apply failed",
+		c.Logger.Error("ATTRIBUTEWRITEBACK.APPLY.FAILED",
 			"run_id", runID.String(), "error", txErr.Error())
 		http.Error(w, `{"error":"writeback_failed"}`, http.StatusInternalServerError)
 		return

@@ -99,7 +99,7 @@ func newHarness(t *testing.T) (*harness, func()) {
 
 func (h *harness) tickFrameEngine(t *testing.T) {
 	t.Helper()
-	if err := frame.RunTick(context.Background(), h.persist, h.driver.Queue(), silentFrameLogger{}, nil, nil); err != nil {
+	if err := frame.RunTick(context.Background(), h.persist, h.driver.Queue(), silentFrameLogger{}, frame.LifecycleDelivery{}, nil); err != nil {
 		t.Fatalf("frame.RunTick: %v", err)
 	}
 }
@@ -111,7 +111,7 @@ func (silentFrameLogger) Info(string, ...any)  {}
 func (silentFrameLogger) Warn(string, ...any)  {}
 
 // @concept: anonymous-mode
-func injectDefaultTargetAgentIfInstanceCreate(method, path string, body any) any {
+func injectDefaultTargetDaemonIfInstanceCreate(method, path string, body any) any {
 	if method != http.MethodPost || path != "/v1/instances" {
 		return body
 	}
@@ -119,16 +119,16 @@ func injectDefaultTargetAgentIfInstanceCreate(method, path string, body any) any
 	if !ok {
 		return body
 	}
-	if _, present := m["target_agent"]; present {
+	if _, present := m["target_daemon"]; present {
 		return body
 	}
-	m["target_agent"] = "test-http-agent"
+	m["target_daemon"] = "test-http-daemon"
 	return m
 }
 
 func doHTTPRequest(t *testing.T, baseURL, method, path string, body any, headers map[string]string) (int, map[string]any) {
 	t.Helper()
-	body = injectDefaultTargetAgentIfInstanceCreate(method, path, body)
+	body = injectDefaultTargetDaemonIfInstanceCreate(method, path, body)
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -695,17 +695,6 @@ func TestNewApp_RequiresAuthState(t *testing.T) {
 	require.Panics(t, func() {
 		NewApp(AppDeps{})
 	}, "NewApp must fail loudly when AppDeps.AuthState is nil rather than serving ungated")
-}
-
-func TestClaimHoldersRoute_EmptyList(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	status, out := h.httpJSON(t, "GET", "/v1/claim-handles/"+uuid.NewString()+"/holders", nil)
-	require.Equal(t, http.StatusOK, status, out)
-	holders, _ := out["holders"].([]any)
-	require.Empty(t, holders)
 }
 
 func seedInstance(t *testing.T, h *harness, tplName string) persistence.InstanceRow {

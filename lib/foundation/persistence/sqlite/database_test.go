@@ -3,16 +3,45 @@
 
 package sqlite
 
-import "testing"
+import (
+	"context"
+	"path/filepath"
+	"testing"
 
-func TestSQLiteUnifiedStackMaxOpenConnsAvoidsBeginStarvation(t *testing.T) {
-	if sqliteUnifiedStackMaxOpenConns < 2 {
-		t.Fatalf("sqliteUnifiedStackMaxOpenConns=%d: a pool of 1 starves goroutines "+
-			"waiting on Begin while another goroutine holds a long-running tx; "+
-			"the unified in-process stack (rimsky compose run, all-in-one entrypoint) "+
-			"requires at least 2 slots so the supervisor's settle tx does not block "+
-			"the control-api's request handlers. The SQLite writer slot at the FILE "+
-			"level remains 1 (writers serialize via busy_timeout=5000ms), so widening "+
-			"the SQL pool does not break writer serialization.", sqliteUnifiedStackMaxOpenConns)
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+)
+
+func TestOpenWriteTransactionDoesNotStarveAConcurrentReader(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := open(ctx, persistence.SQLiteConfig{Path: filepath.Join(t.TempDir(), "starvation.db")})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	writeOpen := make(chan struct{})
+	release := make(chan struct{})
+	txDone := make(chan error, 1)
+	go func() {
+		txDone <- d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			close(writeOpen)
+			<-release
+			return nil
+		})
+	}()
+	<-writeOpen
+
+	var one int
+	if err := d.(*database).db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+		t.Fatalf("a reader on a second pool connection could not run while a write transaction was open: %v", err)
+	}
+	if one != 1 {
+		t.Fatalf("the concurrent reader returned %d, want 1", one)
+	}
+
+	close(release)
+	if err := <-txDone; err != nil {
+		t.Fatalf("the write transaction: %v", err)
 	}
 }

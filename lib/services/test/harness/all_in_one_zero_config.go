@@ -67,6 +67,7 @@ func (s *ZeroConfigStack) Stop(ctx context.Context) {
 	if s.container == nil {
 		return
 	}
+	//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 	termCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	_ = s.container.Terminate(termCtx)

@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
@@ -35,8 +36,9 @@ func FanOutPartitions(subClaims []SubClaim) []PartitionDescriptor {
 }
 
 type FanOutParallelismSemaphore struct {
-	cap   int
-	slots chan struct{}
+	cap     int
+	slots   chan struct{}
+	waiting atomic.Int64
 }
 
 func NewFanOutParallelismSemaphore(cap int) *FanOutParallelismSemaphore {
@@ -56,6 +58,13 @@ func (s *FanOutParallelismSemaphore) Acquire(ctx context.Context) error {
 	select {
 	case s.slots <- struct{}{}:
 		return nil
+	default:
+	}
+	s.waiting.Add(1)
+	defer s.waiting.Add(-1)
+	select {
+	case s.slots <- struct{}{}:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -66,6 +75,13 @@ func (s *FanOutParallelismSemaphore) Release() {
 		return
 	}
 	<-s.slots
+}
+
+func (s *FanOutParallelismSemaphore) Waiting() int {
+	if s == nil || s.cap == 0 {
+		return 0
+	}
+	return int(s.waiting.Load())
 }
 
 func (s *FanOutParallelismSemaphore) InFlight() int {

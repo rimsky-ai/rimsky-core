@@ -30,6 +30,7 @@ var Classes = []string{ClassOutcome, ClassOrdering, ClassPacing}
 
 const (
 	KindUnclassified   = "unclassified-wait"
+	KindPackageState   = "test-writes-package-state"
 	KindOrdering       = "ordering-dependent-wait"
 	KindUnknownClass   = "unknown-wait-class"
 	KindNoJustifiation = "unjustified-marker"
@@ -48,6 +49,7 @@ var detectors = []struct {
 	{"sleep", true, false, regexp.MustCompile(`\btime\.Sleep\(`)},
 	{"deadline-poll", false, false, regexp.MustCompile(`for\s+time\.Now\(\)\.Before\(`)},
 	{"deadline-poll", false, false, regexp.MustCompile(`for\s+time\.Since\(`)},
+	{"context-deadline", true, false, regexp.MustCompile(`context\.With(Timeout|Deadline)\(`)},
 }
 
 var armFailsTest = []*regexp.Regexp{
@@ -146,7 +148,7 @@ func (v Violation) Baselineable() bool {
 }
 
 func TestCodeViolations(repoRoot string) ([]Violation, error) {
-	var out []Violation
+	byDir := map[string]map[string]string{}
 	for _, root := range scanRoots {
 		rootPath := filepath.Join(repoRoot, root)
 		if _, err := os.Stat(rootPath); err != nil {
@@ -162,23 +164,45 @@ func TestCodeViolations(repoRoot string) ([]Violation, error) {
 				}
 				return nil
 			}
+			if !strings.HasSuffix(path, ".go") {
+				return nil
+			}
 			rel, rerr := filepath.Rel(repoRoot, path)
 			if rerr != nil {
 				return rerr
 			}
 			rel = filepath.ToSlash(rel)
-			if !isTestCode(rel) {
+			if strings.HasPrefix(rel, ScannerOwnPackage) {
 				return nil
 			}
 			src, rerr := os.ReadFile(path)
 			if rerr != nil {
 				return rerr
 			}
-			out = append(out, violationsInFile(rel, strings.Split(string(src), "\n"))...)
+			dir := filepath.ToSlash(filepath.Dir(rel))
+			if byDir[dir] == nil {
+				byDir[dir] = map[string]string{}
+			}
+			byDir[dir][rel] = string(src)
 			return nil
 		})
 		if err != nil {
 			return nil, err
+		}
+	}
+
+	var out []Violation
+	for _, sources := range byDir {
+		holdsTestCode := false
+		for rel, src := range sources {
+			if !isTestCode(rel) {
+				continue
+			}
+			holdsTestCode = true
+			out = append(out, violationsInFile(rel, strings.Split(src, "\n"))...)
+		}
+		if holdsTestCode {
+			out = append(out, packageStateViolations(sources)...)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

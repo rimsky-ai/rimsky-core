@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -21,12 +22,19 @@ type MetricsHook interface {
 }
 
 // @concept: run-scope
-type RunScopeTerminalFanout func(ctx context.Context, instanceID, runScopeID shared.UUID, terminalReason string)
+// @concept: lifecycle-subscriber
+// @decision: lifecycle-fanout-after-commit
+type LifecycleDelivery struct {
+	LateBindServiceProxies map[string]string
+
+	// @decision: lifecycle-drain-per-role
+	Kick func()
+}
 
 const settledScopeTerminalReason = "frame_settled"
 
-func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger, scopeFanout RunScopeTerminalFanout, metrics MetricsHook) error {
-	if err := runFrameEndDetection(ctx, store, logger, scopeFanout, metrics); err != nil {
+func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger, delivery LifecycleDelivery, metrics MetricsHook) error {
+	if err := runFrameEndDetection(ctx, store, logger, delivery, metrics); err != nil {
 		return fmt.Errorf("frame.RunTick: frame-end: %w", err)
 	}
 	if err := runOpenNewFrames(ctx, store, logger); err != nil {
@@ -38,7 +46,7 @@ func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Qu
 	return nil
 }
 
-func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger Logger, scopeFanout RunScopeTerminalFanout, metrics MetricsHook) error {
+func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger Logger, delivery LifecycleDelivery, metrics MetricsHook) error {
 	var pendings []persistence.FramePending
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ps, err := store.Frames().ListRunningFramesNoPendingNodes(ctx, tx)
@@ -52,8 +60,8 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 	}
 
 	for _, p := range pendings {
-		if err := transitionFrameEnd(ctx, store, p.FrameID, p.InstanceID, logger, scopeFanout, metrics); err != nil {
-			logger.Warn("frame.end.transition_failed",
+		if err := transitionFrameEnd(ctx, store, p.FrameID, p.InstanceID, logger, delivery, metrics); err != nil {
+			logger.Warn("FRAME.ENDTRANSITION.FAILED",
 				"frame_id", p.FrameID,
 				"instance_id", p.InstanceID,
 				"error", err.Error())
@@ -63,7 +71,7 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 	return nil
 }
 
-func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, instanceID shared.UUID, logger Logger, scopeFanout RunScopeTerminalFanout, metrics MetricsHook) error {
+func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, instanceID shared.UUID, logger Logger, delivery LifecycleDelivery, metrics MetricsHook) error {
 	var result persistence.FrameEndResult
 	var settledScopes []shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -91,19 +99,25 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 				return err
 			}
 			settledScopes = scopes
+			// @concept: run-scope
+			// @decision: lifecycle-fanout-after-commit
+			for _, scopeID := range settledScopes {
+				if err := lifecycle.StageRunScopeTerminal(ctx, store, instanceID, scopeID,
+					settledScopeTerminalReason, delivery.LateBindServiceProxies, tx); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
-	// @decision: lifecycle-fanout-after-commit
-	if scopeFanout != nil {
-		for _, scopeID := range settledScopes {
-			scopeFanout(ctx, instanceID, scopeID, settledScopeTerminalReason)
-		}
+	// @decision: lifecycle-drain-per-role
+	if len(settledScopes) > 0 && delivery.Kick != nil {
+		delivery.Kick()
 	}
 	if result.Transitioned {
-		logger.Info("frame.end",
+		logger.Info("FRAME.FRAME.ENDED",
 			"frame_id", frameID,
 			"instance_id", instanceID,
 			"final_state", result.FinalState)
@@ -125,17 +139,18 @@ func closeSettledFrameScopeTree(
 	}
 	closed := make([]shared.UUID, 0, len(tree))
 	for _, scope := range tree {
-		if scope.ClosedAt == nil {
-			if scope.ID != rootRunScopeID {
-				logger.Warn("frame.end.orphan_child_scope_closed_at_settlement",
-					"frame_id", frameID,
-					"instance_id", instanceID,
-					"run_scope_id", scope.ID,
-					"root_run_scope_id", rootRunScopeID)
-			}
-			if err := store.RunScopes().Close(ctx, scope.ID, tx); err != nil {
-				return nil, fmt.Errorf("close run scope %s for settled frame %s: %w", scope.ID, frameID, err)
-			}
+		if scope.ClosedAt != nil {
+			continue
+		}
+		if scope.ID != rootRunScopeID {
+			logger.Warn("FRAME.ORPHANCHILDSCOPE.CLOSED", "detail", "closed at settlement",
+				"frame_id", frameID,
+				"instance_id", instanceID,
+				"run_scope_id", scope.ID,
+				"root_run_scope_id", rootRunScopeID)
+		}
+		if err := store.RunScopes().Close(ctx, scope.ID, tx); err != nil {
+			return nil, fmt.Errorf("close run scope %s for settled frame %s: %w", scope.ID, frameID, err)
 		}
 		closed = append(closed, scope.ID)
 	}
@@ -167,13 +182,13 @@ func runOpenNewFrames(ctx context.Context, store persistence.Tables, logger Logg
 			return nil
 		})
 		if err != nil {
-			logger.Warn("frame.start.open_failed",
+			logger.Warn("FRAME.STARTTRANSITION.FAILED",
 				"instance_id", p.InstanceID,
 				"triggering_message_id", p.MessageID,
 				"error", err.Error())
 			continue
 		}
-		logger.Info("frame.start",
+		logger.Info("FRAME.FRAME.STARTED",
 			"frame_id", frameID,
 			"instance_id", p.InstanceID,
 			"triggering_message_id", p.MessageID)
@@ -196,14 +211,14 @@ func runReapOrphanFrameDispatches(ctx context.Context, store persistence.Tables,
 
 	for _, o := range orphans {
 		if err := queue.ReleaseClaim(ctx, o.NodeRunID, o.ClaimedBy); err != nil {
-			logger.Warn("frame.orphan_dispatch.release_failed",
+			logger.Warn("FRAME.ORPHANDISPATCH.RELEASEFAILED",
 				"dispatch_id", o.NodeRunID,
 				"frame_id", o.FrameID,
 				"prior_claimed_by", o.ClaimedBy,
 				"error", err.Error())
 			continue
 		}
-		logger.Warn("frame.orphan_dispatch.reaped",
+		logger.Warn("FRAME.ORPHANDISPATCH.REAPED",
 			"dispatch_id", o.NodeRunID,
 			"frame_id", o.FrameID,
 			"prior_claimed_by", o.ClaimedBy)

@@ -31,7 +31,7 @@ func (r Role) OwnsMigration() bool { return r == RoleControlAPI }
 
 var roles = []string{string(RoleScheduler), string(RoleSupervisor), string(RoleControlAPI)}
 
-var binaryDir = "/usr/local/bin"
+const defaultBinaryDir = "/usr/local/bin"
 
 type LaunchPlan struct {
 	Roles        []string
@@ -98,48 +98,48 @@ func main() {
 	args := os.Args[1:]
 	plan, err := newLaunchPlan(args)
 	if err != nil {
-		slog.Error("invalid launch arguments", "err", err)
+		slog.Error("ENTRYPOINT.ARGUMENTS.INVALID", "err", err)
 		os.Exit(2)
 	}
-	slog.Info("selected roles", "roles", plan.Roles)
+	slog.Info("ENTRYPOINT.ROLES.SELECTED", "roles", plan.Roles)
 
 	if plan.Topology.Unified() {
 		if err := os.Setenv(persistence.ProcessRoleEnv, string(persistence.TopologyUnified)); err != nil {
-			slog.Error("set RIMSKY_PROCESS_ROLE", "err", err)
+			slog.Error("ENTRYPOINT.PROCESSROLE.SETFAILED", "err", err)
 			os.Exit(1)
 		}
-		runMigrateIfOwned(plan, sigCh)
+		runMigrateIfOwned(defaultBinaryDir, plan, sigCh)
 		runUnified(sigCh)
 		return
 	}
 
-	runMigrateIfOwned(plan, sigCh)
-	runSingleRole(plan.Roles[0], sigCh)
+	runMigrateIfOwned(defaultBinaryDir, plan, sigCh)
+	runSingleRole(defaultBinaryDir, plan.Roles[0], sigCh)
 }
 
-func runMigrateIfOwned(plan LaunchPlan, sigCh <-chan os.Signal) {
+func runMigrateIfOwned(binaryDir string, plan LaunchPlan, sigCh <-chan os.Signal) {
 	if !plan.MigrateOwner {
-		slog.Info("skipping migrations for this role", "roles", plan.Roles)
+		slog.Info("ENTRYPOINT.MIGRATE.SKIPPED", "roles", plan.Roles)
 		return
 	}
-	slog.Info("running migrations")
-	cmd, exitCh, err := startOnce("rimsky-migrate")
+	slog.Info("ENTRYPOINT.MIGRATE.STARTED")
+	cmd, exitCh, err := startOnce(binaryDir, "rimsky-migrate")
 	if err != nil {
-		slog.Error("migrate failed", "err", err)
+		slog.Error("ENTRYPOINT.MIGRATE.FAILED", "err", err)
 		os.Exit(1)
 	}
 	select {
 	case sig := <-sigCh:
-		slog.Info("received signal during migrate; shutting down", "signal", sig.String())
+		slog.Info("ENTRYPOINT.MIGRATE.INTERRUPTED", "detail", "shutting down", "signal", sig.String())
 		shutdownChild(cmd, exitCh, sigCh)
 		os.Exit(0)
 	case ce := <-exitCh:
 		if ce.err != nil {
-			slog.Error("migrate failed", "err", ce.err)
+			slog.Error("ENTRYPOINT.MIGRATE.FAILED", "err", ce.err)
 			os.Exit(1)
 		}
 	}
-	slog.Info("migrations complete")
+	slog.Info("ENTRYPOINT.MIGRATE.COMPLETED")
 }
 
 func runUnified(sigCh <-chan os.Signal) {
@@ -149,21 +149,21 @@ func runUnified(sigCh <-chan os.Signal) {
 
 	driver, cfg, err := launch.OpenDriverFromEnv(ctx, base)
 	if err != nil {
-		slog.Error("open persistence driver", "err", err)
+		slog.Error("ENTRYPOINT.PERSISTENCE.OPENFAILED", "err", err)
 		os.Exit(1)
 	}
 	closeDriver := func() { _ = driver.Close() }
 
 	bundledRegs, err := bundledwire.CollectBundled(ctx, base.With("role", "bundled"))
 	if err != nil {
-		slog.Error("bundled service registration failed", "err", err)
+		slog.Error("ENTRYPOINT.BUNDLEDSERVICE.REGISTERFAILED", "err", err)
 		closeDriver()
 		os.Exit(1)
 	}
 
 	stack, err := launch.StartUnifiedStack(ctx, base, driver, cfg, bundledRegs)
 	if err != nil {
-		slog.Error("role failed to start", "err", err)
+		slog.Error("ENTRYPOINT.ROLE.STARTFAILED", "err", err)
 		closeDriver()
 		os.Exit(1)
 	}
@@ -179,45 +179,45 @@ func runUnified(sigCh <-chan os.Signal) {
 
 	select {
 	case sig := <-sigCh:
-		slog.Info("received signal; shutting down", "signal", sig.String())
+		slog.Info("ENTRYPOINT.PROCESS.SIGNALLED", "detail", "shutting down", "signal", sig.String())
 		drain(0)
 	case rf := <-stack.FailCh():
-		slog.Error("role failed; shutting down", "role", rf.Role, "err", rf.Err)
+		slog.Error("ENTRYPOINT.ROLE.FAILED", "detail", "shutting down", "role", rf.Role, "err", rf.Err)
 		drain(1)
 	}
 }
 
-func runSingleRole(name string, sigCh <-chan os.Signal) {
-	cmd, exitCh, err := spawnRole(name)
+func runSingleRole(binaryDir string, name string, sigCh <-chan os.Signal) {
+	cmd, exitCh, err := spawnRole(binaryDir, name)
 	if err != nil {
-		slog.Error("spawn failed", "err", err)
+		slog.Error("ENTRYPOINT.CHILD.SPAWNFAILED", "err", err)
 		os.Exit(1)
 	}
 
 	select {
 	case sig := <-sigCh:
-		slog.Info("received signal; shutting down", "signal", sig.String())
+		slog.Info("ENTRYPOINT.PROCESS.SIGNALLED", "detail", "shutting down", "signal", sig.String())
 		shutdownChild(cmd, exitCh, sigCh)
 		os.Exit(0)
 	case ce := <-exitCh:
 		if ce.err == nil {
-			slog.Info("child exited", "binary", ce.name)
+			slog.Info("ENTRYPOINT.CHILD.EXITED", "binary", ce.name)
 		} else {
-			slog.Error("child exited unexpectedly", "binary", ce.name, "err", ce.err)
+			slog.Error("ENTRYPOINT.CHILD.EXITEDUNEXPECTEDLY", "binary", ce.name, "err", ce.err)
 		}
 		os.Exit(exitCode(ce.err))
 	}
 }
 
-func spawnRole(name string) (*exec.Cmd, chan childExit, error) {
-	return spawn(name, envWithoutProcessRole())
+func spawnRole(binaryDir string, name string) (*exec.Cmd, chan childExit, error) {
+	return spawn(binaryDir, name, envWithoutProcessRole())
 }
 
-func startOnce(binary string) (*exec.Cmd, chan childExit, error) {
-	return spawn(binary, os.Environ())
+func startOnce(binaryDir string, binary string) (*exec.Cmd, chan childExit, error) {
+	return spawn(binaryDir, binary, os.Environ())
 }
 
-func spawn(binary string, baseEnv []string) (*exec.Cmd, chan childExit, error) {
+func spawn(binaryDir string, binary string, baseEnv []string) (*exec.Cmd, chan childExit, error) {
 	c := exec.Command(binaryDir + "/" + binary)
 	c.Env = append(baseEnv, "RIMSKY_LOG_BINARY="+nameOf(binary))
 	c.Stdout = os.Stdout

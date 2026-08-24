@@ -341,7 +341,7 @@ func writeRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
 	w.Header().Set("Content-Type", "application/json")
 	resp := Response{JSONRPC: "2.0", ID: normalizeID(id), Result: result}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Default().Error("mcp.write_response_failed", "error", err.Error())
+		slog.Default().Error("CONTROLAPIMCP.RESPONSE.WRITEFAILED", "error", err.Error())
 	}
 }
 
@@ -353,7 +353,7 @@ func writeRPCErrorObj(w http.ResponseWriter, id json.RawMessage, e *Error) {
 	w.Header().Set("Content-Type", "application/json")
 	resp := Response{JSONRPC: "2.0", ID: normalizeID(id), Error: e}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Default().Error("mcp.write_response_failed", "error", err.Error())
+		slog.Default().Error("CONTROLAPIMCP.RESPONSE.WRITEFAILED", "error", err.Error())
 	}
 }
 
@@ -362,6 +362,6 @@ func writeRPCErrorStatus(w http.ResponseWriter, status int, id json.RawMessage, 
 	w.WriteHeader(status)
 	resp := Response{JSONRPC: "2.0", ID: normalizeID(id), Error: &Error{Code: code, Message: msg}}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Default().Error("mcp.write_response_failed", "error", err.Error())
+		slog.Default().Error("CONTROLAPIMCP.RESPONSE.WRITEFAILED", "error", err.Error())
 	}
 }

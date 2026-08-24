@@ -119,7 +119,7 @@ func cancelInFlightSiblings(
 	policy, err := persistence.UnmarshalAggregationPolicy(parent.AggregationPolicy)
 	if err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("cancelInFlightSiblings: malformed aggregation_policy on parent claim_handle; treating as non-strict",
+			args.Logger.Warn("CLAIMHANDLE.AGGREGATIONPOLICY.MALFORMED", "site", "cancelInFlightSiblings", "detail", "treating the parent claim_handle as non-strict",
 				"parent_claim_handle_id", parentID.String(),
 				"error", err.Error())
 		}

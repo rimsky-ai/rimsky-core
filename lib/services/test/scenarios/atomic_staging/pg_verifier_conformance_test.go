@@ -22,17 +22,13 @@ func TestPGFusedStore_ClaimProducerConformance(t *testing.T) {
 	endpoint, teardown := startPgStore(t, dsn, true)
 	t.Cleanup(teardown)
 
-	dialCtx, dialCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer dialCancel()
-	client, err := harness.DialClaimProducer(dialCtx, "conformance-target", "grpc://"+endpoint)
+	client, err := harness.DialClaimProducer(ctx, "conformance-target", "grpc://"+endpoint)
 	if err != nil {
 		t.Fatalf("DialClaimProducer: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 
-	runCtx, runCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer runCancel()
-	results := cpconf.Run(runCtx, client)
+	results := cpconf.Run(ctx, client)
 	failed := 0
 	for _, r := range results {
 		if r.Err != nil {
@@ -82,9 +78,7 @@ func TestPGFusedStore_ExecutorConformance(t *testing.T) {
 	endpoint, teardown := startPgStore(t, dsn, true)
 	t.Cleanup(teardown)
 
-	runCtx, runCancel := context.WithTimeout(ctx, 90*time.Second)
-	defer runCancel()
-	results, err := executorconf.Run(runCtx, executorconf.RunnerOpts{
+	results, err := executorconf.Run(ctx, executorconf.RunnerOpts{
 		Endpoint:  executorconf.Endpoint{Transport: "grpc", URL: endpoint},
 		AllowLive: true,
 		Timeout:   15 * time.Second,

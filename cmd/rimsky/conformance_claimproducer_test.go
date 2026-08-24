@@ -10,7 +10,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	cpconformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
-	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	service "github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 )
@@ -24,7 +24,7 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 	t.Cleanup(teardown)
 
 	ctx := context.Background()
-	client, err := peer.Dial(ctx, "stub", "grpc://"+endpoint, peer.TLSModeOff)
+	client, err := service.Dial(ctx, "stub", "grpc://"+endpoint, service.TLSModeOff)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

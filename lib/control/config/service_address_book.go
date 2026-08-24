@@ -14,7 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 const inprocTransport = "inproc"
@@ -108,7 +108,7 @@ func addressBookStoreDialer() locks.DialProducer {
 	return func(ctx context.Context, name string, ep locks.ProducerEndpoint) (locks.ClaimProducer, error) {
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
 		defer cancel()
-		client, err := peer.Dial(dialCtx, name, ep.Endpoint, ep.TLS)
+		client, err := service.Dial(dialCtx, name, ep.Endpoint, ep.TLS)
 		if err != nil {
 			return nil, err
 		}

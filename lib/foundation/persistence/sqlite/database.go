@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -54,12 +53,6 @@ func (d *database) AdvisoryLocker() persistence.AdvisoryLocker {
 		return nil
 	}
 	return d.c
-}
-
-func (d *database) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
-	if d.s != nil {
-		d.s.SetBlobBackend(bb, threshold, retention)
-	}
 }
 
 func (d *database) Close() error { return d.db.Close() }
@@ -109,7 +102,7 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 
-	slog.Warn("persistence driver in use",
+	slog.Warn("PERSISTENCE.SQLITEDRIVER.INUSE",
 		"driver", "sqlite",
 		"path", cfg.Path,
 		"warning", "SQLite driver is for local development only — not supported for production. Use the postgres driver for deployed rimsky instances.")

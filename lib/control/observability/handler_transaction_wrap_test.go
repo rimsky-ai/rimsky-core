@@ -68,13 +68,14 @@ func TestObservabilityHandlers_ReadEachThroughATransaction(t *testing.T) {
 		Queue:          d.Queue(),
 		Driver:         d,
 		Discovery:      disc,
-		ClaimProducers: []observability.PeerSpec{{Name: producer, Endpoint: "store:9000"}},
-		Executors:      []observability.PeerSpec{{Name: "worker", Endpoint: "exec:9000"}},
+		ClaimProducers: []observability.ServiceSpec{{Name: producer, Endpoint: "store:9000"}},
+		Executors:      []observability.ServiceSpec{{Name: "worker", Endpoint: "exec:9000"}},
 	}
 	r := newRouter(t, deps)
 
 	paths := []string{
 		"/v1/observability/claim-producers/" + producer,
+		"/v1/observability/executors/worker",
 		"/v1/observability/templates/" + fix.TemplateHash,
 		"/v1/observability/frames/" + frameID.String(),
 		"/v1/observability/node-runs/" + runID.String(),

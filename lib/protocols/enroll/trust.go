@@ -12,7 +12,7 @@ import (
 
 const EnvControlAPICA = "RIMSKY_CONTROL_API_CA"
 
-const PeerServerName = "peer.rimsky.internal"
+const ServiceServerName = "service.rimsky.internal"
 
 func CAPoolFromPEM(source string, pemBytes []byte) (*x509.CertPool, error) {
 	pool := x509.NewCertPool()
@@ -34,6 +34,6 @@ func PinnedTLSConfig(pool *x509.CertPool) *tls.Config {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		RootCAs:    pool,
-		ServerName: PeerServerName,
+		ServerName: ServiceServerName,
 	}
 }

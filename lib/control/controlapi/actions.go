@@ -240,12 +240,12 @@ var v1Actions = []ActionEntry{
 		Posture:     PostureUnauthenticated,
 		Description: "Liveness probe for infrastructure. Requires no token: it answers success while persistence is reachable and non-success when it is not, and persistence availability is the one dependency it checks."},
 
-	// @concept: peer-auth
-	{Action: "peer-auth:ca-root", IsWrite: false,
+	// @concept: service-auth
+	{Action: "service-auth:ca-root", IsWrite: false,
 		Routes:      []Route{{Method: "GET", Path: "/v1/ca-root"}},
-		MCPTools:    []string{"peer_auth_ca_root"},
+		MCPTools:    []string{"service_auth_ca_root"},
 		Posture:     PostureUnauthenticated,
-		MountedWhen: "peer authentication is configured with a deployment CA",
+		MountedWhen: "service authentication is configured with a deployment CA",
 		Description: "Serve the deployment CA root certificate as PEM. Unauthenticated by necessity: a service needs this root to verify the control API's certificate before it can present a token to enroll, so requiring a token would be a chicken-and-egg. The root is a public certificate; nothing secret is disclosed."},
 
 	// @concept: api-key
@@ -449,13 +449,15 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"asset_delete"},
 		Description: "Delete an asset on an instance: releases the claim through its producer, then removes the claim-handle row. Refused while any holder of the claim is still active, and refused when the producer cannot be resolved."},
 
+	// @decision: service-delivery-stall-signal
 	{Action: "diagnostics:read", IsWrite: false,
 		Routes: []Route{
 			{Method: "GET", Path: "/v1/admin/diagnostics/held-frames"},
 			{Method: "GET", Path: "/v1/admin/diagnostics/producer-outbox"},
+			{Method: "GET", Path: "/v1/admin/diagnostics/lifecycle-outbox"},
 		},
 		MCPTools:    []string{"held_frames_list"},
-		Description: "List frames held by a parked node-run (held-claim holds are not reported here) and undelivered producer-verb outbox entries."},
+		Description: "List frames held by a parked node-run (held-claim holds are not reported here), undelivered producer-verb outbox entries, and what each lifecycle subscriber is still owed."},
 
 	{Action: "auth:read", IsWrite: false,
 		Routes: []Route{
@@ -494,6 +496,6 @@ var v1Actions = []ActionEntry{
 	{Action: "service:enroll", IsWrite: false,
 		Routes:      []Route{{Method: "POST", Path: "/v1/enroll"}},
 		MCPTools:    []string{"service_enroll"},
-		MountedWhen: "peer authentication is configured with a deployment CA",
-		Description: "Exchange the caller's api-key for a short-lived mTLS leaf certificate (peer authentication enrollment)."},
+		MountedWhen: "service authentication is configured with a deployment CA",
+		Description: "Exchange the caller's api-key for a short-lived mTLS leaf certificate (service authentication enrollment)."},
 }

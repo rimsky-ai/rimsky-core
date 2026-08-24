@@ -1009,9 +1009,6 @@ func (f *fakeInstancesDeps) MarkTerminated(_ context.Context, _ shared.UUID, _ p
 func (f *fakeInstancesDeps) CountActiveByTemplate(_ context.Context, _ string, _ persistence.Tx) (int, error) {
 	return 0, nil
 }
-func (f *fakeInstancesDeps) ListTerminatedWithLifecycleRows(_ context.Context, _ int, _ persistence.Tx) ([]persistence.InstanceRow, error) {
-	return nil, nil
-}
 func (f *fakeInstancesDeps) CountByActive(_ context.Context, _ persistence.Tx) (int, int, error) {
 	return 0, 0, nil
 }

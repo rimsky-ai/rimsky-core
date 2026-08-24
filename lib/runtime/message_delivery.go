@@ -156,7 +156,7 @@ func SweepDeliverTriggeringMessagesForRunningFrames(
 		for _, f := range page.Rows {
 			if err := deliverForRunningFrame(ctx, persist, logger, f.InstanceID, f.FrameID, now); err != nil {
 				if logger != nil {
-					logger.Warn("SweepDeliverTriggeringMessagesForRunningFrames: deliver failed",
+					logger.Warn("MESSAGE.TRIGGERINGDELIVERY.FAILED", "site", "SweepDeliverTriggeringMessagesForRunningFrames",
 						"frame_id", f.FrameID.String(),
 						"instance_id", f.InstanceID.String(),
 						"error", err.Error())
@@ -218,7 +218,7 @@ func deliverNamedMessageInTx(
 	}
 	if receiver == nil {
 		if logger != nil {
-			logger.Warn("deliverNamedMessageInTx: no message-receiver-node found; recording dead-letter audit event",
+			logger.Warn("MESSAGE.RECEIVERNODE.MISSING", "site", "deliverNamedMessageInTx", "detail", "recording a dead-letter audit event",
 				"instance_id", instanceID.String(),
 				"message_type", msg.Type,
 				"message_id", msg.ID.String())

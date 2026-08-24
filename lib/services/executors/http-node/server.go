@@ -33,14 +33,20 @@ type Server struct {
 	client   *http.Client
 	stubMode bool
 	obs      *ObservabilityServer
+	now      func() time.Time
 }
 
 func NewServer(cfg Opts) *Server {
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Server{
 		cfg: cfg,
 		// @decision: three-dispatch-deadlines
 		client:   cfg.Egress.HTTPClient(0),
 		stubMode: cfg.StubMode,
+		now:      now,
 	}
 }
 
@@ -187,7 +193,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests && !statusOK(resp.StatusCode, expectStatus) {
-		resumeAt := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now)
+		resumeAt := parseRetryAfter(resp.Header.Get("Retry-After"), s.now)
 		return parkedOutcome(resumeAt), nil
 	}
 

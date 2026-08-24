@@ -17,7 +17,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -72,7 +72,7 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 		chID, runID, owner, worker.ID, frameID,
 	)
 
-	client, err := peer.Dial(h.Ctx, "reap-store", "grpc://"+endpoint, peer.TLSModeOff)
+	client, err := service.Dial(h.Ctx, "reap-store", "grpc://"+endpoint, service.TLSModeOff)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	registry := locks.NewRegistry()

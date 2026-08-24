@@ -60,7 +60,7 @@ func TestKeepalive_RenewsTheRunsClaimExpiries(t *testing.T) {
 			return err
 		}
 		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
-			TargetRoutingIdentity: "test-agent", ID: instanceID, TemplateHash: templateHash,
+			TargetRoutingIdentity: "test-daemon", ID: instanceID, TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
 		}

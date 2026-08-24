@@ -82,10 +82,10 @@ func createScenarioInstanceFromSource(t *testing.T, ep harness.RimskyEndpoint, t
 func createScenarioInstanceNoWake(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-		"target_agent": "scenario-default-agent",
+		"template":      templateID,
+		"instance_key":  instanceKey,
+		"params":        map[string]any{},
+		"target_daemon": "scenario-default-daemon",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST /instances: %d %s", status, string(raw))

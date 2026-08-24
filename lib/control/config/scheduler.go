@@ -12,31 +12,34 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/scheduler"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type SchedulerConfig struct {
-	Driver                  persistence.Database
-	Clock                   shared.Clock
-	Logger                  shared.Logger
-	TickInterval            time.Duration
-	MaxQuietPeriodDefault   time.Duration
-	MaxRuntimeDefault       time.Duration
-	ClaimProducers          RemoteClaimProducersConfig
-	Executors               ExecutorsConfig
-	Publishers              RemotePublishersConfig
-	NamedLocks              locks.NamedLocksConfig
-	SupervisorID            string
-	Blob                    persistence.BlobBackend
-	OrphanBlobSweepInterval time.Duration
-	AuthSweepInterval       time.Duration
-	Metrics                 runtime.MetricsHook
-	Retention               runtime.RetentionConfig
-	LifecyclePeersForSpec   func(tplSpec node.TemplateSpec) []string
-	PeerAuth                string
+	Driver                 persistence.Database
+	Clock                  shared.Clock
+	Logger                 shared.Logger
+	TickInterval           time.Duration
+	MaxQuietPeriodDefault  time.Duration
+	MaxRuntimeDefault      time.Duration
+	ClaimProducers         RemoteClaimProducersConfig
+	Executors              ExecutorsConfig
+	Publishers             RemotePublishersConfig
+	NamedLocks             locks.NamedLocksConfig
+	SupervisorID           string
+	AuthSweepInterval      time.Duration
+	Metrics                runtime.MetricsHook
+	Retention              runtime.RetentionConfig
+	LateBindServiceProxies map[string]string
+	ServiceAuth            string
+
+	// @decision: lifecycle-drain-per-role
+	SharedLifecycleDrain *runtime.LifecycleReconciler
+
+	// @decision: lifecycle-subscriber-at-least-once-delivery
+	ServiceDeliveryStallAfter time.Duration
 }
 
 type SchedulerHandle interface {
@@ -58,8 +61,8 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		return nil, fmt.Errorf("StartScheduler: Database.Tables() returned nil — driver did not initialize the Tables accessor")
 	}
 	stopIdentity := func() {}
-	if cfg.PeerAuth == peer.PeerAuthMTLS {
-		_, _, cancel, err := installPeerIdentity(context.Background(), persistStore, cfg.SupervisorID, cfg.Clock, cfg.Logger)
+	if cfg.ServiceAuth == service.ServiceAuthMTLS {
+		_, _, cancel, err := installServiceIdentity(context.Background(), persistStore, cfg.SupervisorID, cfg.Clock, cfg.Logger)
 		if err != nil {
 			return nil, fmt.Errorf("StartScheduler: %w", err)
 		}
@@ -80,31 +83,42 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: Driver.AdvisoryLocker() returned nil")
 	}
-	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
-	if err != nil {
-		stopIdentity()
-		registry.Close()
-		return nil, fmt.Errorf("StartScheduler: dial lifecycle subscribers: %w", err)
+	// @decision: lifecycle-drain-per-role
+	lifecycleDrain := cfg.SharedLifecycleDrain
+	var lifecycleSubs *lifecycle.Registry
+	if lifecycleDrain == nil {
+		subs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
+		if err != nil {
+			stopIdentity()
+			registry.Close()
+			return nil, fmt.Errorf("StartScheduler: dial lifecycle subscribers: %w", err)
+		}
+		lifecycleSubs = subs
+		lifecycleDrain = runtime.NewLifecycleReconciler(runtime.LifecycleReconcilerConfig{
+			Persist:        persistStore,
+			AdvisoryLocker: advisoryLocker,
+			Subscribers:    lifecycleSubs,
+			Clock:          cfg.Clock,
+			Logger:         cfg.Logger,
+			StallAfter:     cfg.ServiceDeliveryStallAfter,
+		})
 	}
 	inner := scheduler.Config{
-		Persist:                 persistStore,
-		Queue:                   persistQueue,
-		AdvisoryLocker:          advisoryLocker,
-		Clock:                   cfg.Clock,
-		Logger:                  cfg.Logger,
-		TickInterval:            cfg.TickInterval,
-		MaxQuietPeriodDefault:   cfg.MaxQuietPeriodDefault,
-		MaxRuntimeDefault:       cfg.MaxRuntimeDefault,
-		ClaimHandles:            persistStore.ClaimHandles(),
-		SupervisorID:            cfg.SupervisorID,
-		ClaimProducerRegistry:   registry,
-		LifecycleSubs:           lifecycleSubs,
-		LifecyclePeersForSpec:   cfg.LifecyclePeersForSpec,
-		BlobBackend:             cfg.Blob,
-		BlobOrphans:             persistStore.BlobOrphans(),
-		OrphanBlobSweepInterval: cfg.OrphanBlobSweepInterval,
-		Metrics:                 cfg.Metrics,
-		Retention:               cfg.Retention,
+		Persist:                persistStore,
+		Queue:                  persistQueue,
+		AdvisoryLocker:         advisoryLocker,
+		Clock:                  cfg.Clock,
+		Logger:                 cfg.Logger,
+		TickInterval:           cfg.TickInterval,
+		MaxQuietPeriodDefault:  cfg.MaxQuietPeriodDefault,
+		MaxRuntimeDefault:      cfg.MaxRuntimeDefault,
+		ClaimHandles:           persistStore.ClaimHandles(),
+		SupervisorID:           cfg.SupervisorID,
+		ClaimProducerRegistry:  registry,
+		LateBindServiceProxies: cfg.LateBindServiceProxies,
+		LifecycleKick:          lifecycleDrain.Kick,
+		Metrics:                cfg.Metrics,
+		Retention:              cfg.Retention,
 	}
 	authSweepEvery := cfg.AuthSweepInterval
 	if authSweepEvery == 0 {
@@ -116,14 +130,22 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		defer close(sweepDone)
 		runAuthSweepLoop(sweepCtx, persistStore, cfg.Clock, cfg.Logger, authSweepEvery)
 	}()
-	return schedulerHandleWithRegistry{
+	handle := schedulerHandleWithRegistry{
 		inner:         scheduler.Start(inner),
 		registry:      registry,
 		lifecycleSubs: lifecycleSubs,
 		sweepCancel:   sweepCancel,
 		sweepDone:     sweepDone,
 		stopIdentity:  stopIdentity,
-	}, nil
+	}
+	// @decision: lifecycle-drain-per-role
+	if cfg.SharedLifecycleDrain == nil {
+		drainCtx, drainCancel := context.WithCancel(context.Background())
+		go lifecycleDrain.Run(drainCtx)
+		handle.lifecycleDrain = lifecycleDrain
+		handle.drainCancel = drainCancel
+	}
+	return handle, nil
 }
 
 const authSweepInterval = 1 * time.Minute
@@ -138,23 +160,25 @@ func runAuthSweepLoop(ctx context.Context, tables persistence.Tables, clock shar
 		case <-ticker.C:
 			n, err := runtime.SweepRotationGrace(ctx, tables, clock, log)
 			if err != nil && log != nil {
-				log.Error("auth.sweep.failed", "err", err.Error())
+				log.Error("AUTH.SWEEP.FAILED", "err", err.Error())
 				continue
 			}
 			if n > 0 && log != nil {
-				log.Info("auth.sweep.done", "swept", n)
+				log.Info("AUTH.SWEEP.COMPLETED", "swept", n)
 			}
 		}
 	}
 }
 
 type schedulerHandleWithRegistry struct {
-	inner         SchedulerHandle
-	registry      *locks.Registry
-	lifecycleSubs *lifecycle.Registry
-	sweepCancel   context.CancelFunc
-	sweepDone     <-chan struct{}
-	stopIdentity  func()
+	inner          SchedulerHandle
+	registry       *locks.Registry
+	lifecycleSubs  *lifecycle.Registry
+	sweepCancel    context.CancelFunc
+	sweepDone      <-chan struct{}
+	stopIdentity   func()
+	lifecycleDrain *runtime.LifecycleReconciler
+	drainCancel    context.CancelFunc
 }
 
 // @decision: polling-audit
@@ -164,6 +188,12 @@ func (h schedulerHandleWithRegistry) TicksCompleted() uint64 {
 
 func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
 	err := h.inner.Shutdown(ctx)
+	if h.lifecycleDrain != nil {
+		h.lifecycleDrain.Stop()
+	}
+	if h.drainCancel != nil {
+		h.drainCancel()
+	}
 	if h.sweepCancel != nil {
 		h.sweepCancel()
 	}

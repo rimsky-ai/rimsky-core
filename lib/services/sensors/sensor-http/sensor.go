@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -55,7 +56,10 @@ type SensorService struct {
 	logger         logger
 	tickInterval   time.Duration
 	state          *stateDB
+	pollsInFlight  atomic.Int64
 }
+
+func (s *SensorService) PollsInFlight() int { return int(s.pollsInFlight.Load()) }
 
 func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
@@ -66,7 +70,7 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 	}
 	rows, err := state.ListAll(context.Background())
 	if err != nil {
-		s.logger.Warn("sensor-http.attach_state_db.list_failed", "error", err.Error())
+		s.logger.Warn("SENSORHTTP.STATEDBATTACH.LISTFAILED", "error", err.Error())
 		return
 	}
 	for _, r := range rows {
@@ -83,7 +87,7 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			LastHash:       r.LastHash,
 			LastPollAt:     r.LastPollAt,
 		}
-		s.logger.Info("sensor-http.state_recovered",
+		s.logger.Info("SENSORHTTP.STATE.RECOVERED",
 			"publisher_subscription_id", r.SubscriptionID,
 			"url", r.URL,
 			"poll_interval", r.PollInterval.String(),
@@ -199,7 +203,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.mu.Unlock()
 	if state != nil {
 		if persisted, err := state.GetSubscription(ctx, w.SubscriptionID); err != nil {
-			s.logger.Warn("sensor-http.subscribe.state_get_failed",
+			s.logger.Warn("SENSORHTTP.SUBSCRIBE.STATEGETFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		} else if persisted != nil {
 			w.LastHash = persisted.LastHash
@@ -213,7 +217,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	}
 	s.watches[w.SubscriptionID] = w
 	s.mu.Unlock()
-	s.logger.Info("sensor-http.subscribe",
+	s.logger.Info("SENSORHTTP.SUBSCRIPTION.MOUNTED",
 		"publisher_subscription_id", w.SubscriptionID,
 		"instance_id", w.InstanceID,
 		"url", w.URL,
@@ -226,7 +230,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 				delete(s.watches, w.SubscriptionID)
 			}
 			s.mu.Unlock()
-			s.logger.Warn("sensor-http.subscribe.state_upsert_failed",
+			s.logger.Warn("SENSORHTTP.SUBSCRIBE.STATEUPSERTFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 			return nil, fmt.Errorf("sensor-http: persist subscription %s: %w", w.SubscriptionID, err)
 		}
@@ -239,10 +243,10 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 	defer s.mu.Unlock()
 	if _, ok := s.watches[req.GetPublisherSubscriptionId()]; ok {
 		delete(s.watches, req.GetPublisherSubscriptionId())
-		s.logger.Info("sensor-http.unsubscribe", "publisher_subscription_id", req.GetPublisherSubscriptionId())
+		s.logger.Info("SENSORHTTP.SUBSCRIPTION.STOPPED", "publisher_subscription_id", req.GetPublisherSubscriptionId())
 		if s.state != nil {
 			if err := s.state.DeleteSubscription(context.Background(), req.GetPublisherSubscriptionId()); err != nil {
-				s.logger.Warn("sensor-http.unsubscribe.state_delete_failed",
+				s.logger.Warn("SENSORHTTP.UNSUBSCRIBE.STATEDELETEFAILED",
 					"publisher_subscription_id", req.GetPublisherSubscriptionId(), "error", err.Error())
 			}
 		}
@@ -289,31 +293,33 @@ func (s *SensorService) Tick(ctx context.Context) {
 }
 
 func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
+	s.pollsInFlight.Add(1)
+	defer s.pollsInFlight.Add(-1)
 	s.mu.Lock()
 	w.LastPollAt = now
 	s.mu.Unlock()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.URL, nil)
 	if err != nil {
-		s.logger.Warn("sensor-http.poll_build_request_failed",
+		s.logger.Warn("SENSORHTTP.POLL.BUILDREQUESTFAILED",
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		return
 	}
 	resp, err := s.pollClient.Do(req)
 	if err != nil {
-		s.logger.Warn("sensor-http.poll_dial_failed",
+		s.logger.Warn("SENSORHTTP.POLL.DIALFAILED",
 			"publisher_subscription_id", w.SubscriptionID, "url", w.URL, "error", err.Error())
 		return
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPollBodyBytes+1))
 	if err != nil {
-		s.logger.Warn("sensor-http.poll_read_failed",
+		s.logger.Warn("SENSORHTTP.POLL.READFAILED",
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		return
 	}
 	if int64(len(body)) > maxPollBodyBytes {
-		s.logger.Warn("sensor-http.poll_body_too_large",
+		s.logger.Warn("SENSORHTTP.POLL.BODYTOOLARGE",
 			"publisher_subscription_id", w.SubscriptionID, "url", w.URL, "limit_bytes", maxPollBodyBytes)
 		return
 	}
@@ -352,11 +358,11 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
 		var rejected *publisherkit.RejectedError
 		if !errors.As(err, &rejected) {
-			s.logger.Warn("sensor-http.message_post_failed",
+			s.logger.Warn("SENSORHTTP.MESSAGE.POSTFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 			return
 		}
-		s.logger.Error("sensor-http.message_rejected_dropped",
+		s.logger.Error("SENSORHTTP.MESSAGE.REJECTED", "detail", "the message was dropped",
 			"publisher_subscription_id", w.SubscriptionID, "status", rejected.Status, "error", err.Error())
 	}
 
@@ -371,7 +377,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	s.mu.Unlock()
 	if state != nil {
 		if err := state.UpdateLastHash(ctx, w.SubscriptionID, hash); err != nil {
-			s.logger.Warn("sensor-http.poll.state_update_failed",
+			s.logger.Warn("SENSORHTTP.POLL.STATEUPDATEFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		}
 	}

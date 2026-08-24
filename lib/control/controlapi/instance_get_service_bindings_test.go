@@ -63,7 +63,7 @@ func TestInstanceGet_ExposesServiceBindings(t *testing.T) {
 	}
 	if got := codegen["path"]; got != "/usr/local/bin/codegen-service" {
 		t.Fatalf("service_bindings.codegen.path: got %v, want %q "+
-			"(the cache-miss GET /instances/{id} fallback the host-agent-proxy dials on a cold cache "+
+			"(the cache-miss GET /instances/{id} fallback the host-daemon-proxy dials on a cold cache "+
 			"depends on this field round-tripping exactly)", got, "/usr/local/bin/codegen-service")
 	}
 }

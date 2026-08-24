@@ -13,14 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type Config struct {
@@ -45,17 +43,19 @@ type Config struct {
 	CallbackAdvertiseHost  string
 	CallbackAdvertisePort  int
 
-	Blob               persistence.BlobBackend
-	BlobSpillThreshold int
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	// @concept: node
 	DeclaredTagsFor func(executorName string) (tags []string, ok bool)
 	Metrics         MetricsHook
 
-	LifecycleSubs          *lifecycle.Registry
-	LifecyclePeersForSpec  func(tplSpec node.TemplateSpec) []string
 	LateBindServiceProxies map[string]string
+
+	// @decision: lifecycle-drain-per-role
+	LifecycleKick func()
+
+	// @decision: service-delivery-stall-signal
+	ServiceDeliveryStallAfter time.Duration
 
 	// @concept: data-processing
 	DataProcessors DataProcessingRegistry
@@ -63,8 +63,8 @@ type Config struct {
 	// @concept: executor
 	ExtraInprocHandlers map[string]executor.InProcessHandler
 
-	PeerAuth       string
-	ServerIdentity *peer.IdentityHolder
+	ServiceAuth    string
+	ServerIdentity *service.IdentityHolder
 	ClientCAs      *x509.CertPool
 }
 
@@ -134,7 +134,7 @@ func Start(cfg Config) (*Handle, error) {
 	if p, ok := cfg.Persist.(producerVerbOutboxProvider); ok {
 		verbDispatcher = NewProducerVerbDispatcher(
 			p.ProducerVerbOutbox(), cfg.Persist,
-			cfg.ClaimProducerRegistry, cfg.Clock, cfg.Logger)
+			cfg.ClaimProducerRegistry, cfg.Clock, cfg.Logger, cfg.ServiceDeliveryStallAfter)
 	}
 
 	callbackReg := NewCallbackRegistry()
@@ -169,15 +169,13 @@ func Start(cfg Config) (*Handle, error) {
 		Logger:                      cfg.Logger,
 		SupervisorID:                cfg.SupervisorID,
 		LivenessInterval:            cfg.LivenessInterval,
-		Blob:                        cfg.Blob,
-		BlobSpillThreshold:          cfg.BlobSpillThreshold,
 		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
 		DeclaredTagsFor:             cfg.DeclaredTagsFor,
 		Metrics:                     cfg.Metrics,
-		LifecycleSubs:               cfg.LifecycleSubs,
-		LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
+		LateBindServiceProxies:      cfg.LateBindServiceProxies,
+		LifecycleKick:               cfg.LifecycleKick,
 		DataProcessors:              cfg.DataProcessors,
-		PeerAuth:                    cfg.PeerAuth,
+		ServiceAuth:                 cfg.ServiceAuth,
 		ServerIdentity:              cfg.ServerIdentity,
 		ClientCAs:                   cfg.ClientCAs,
 		ProducerVerbKick:            verbDispatcher.Kick,
@@ -202,7 +200,7 @@ func Start(cfg Config) (*Handle, error) {
 			return nil, fmt.Errorf("supervisor: register extra inproc handler %q: %w", url, err)
 		}
 		if !seedInprocExecutorAlias(cfg.Resolver, url, executor.Endpoint{Transport: "inproc", URL: url}) {
-			cfg.Logger.Warn("supervisor: inproc executor alias seed skipped: resolver shape unrecognised",
+			cfg.Logger.Warn("SUPERVISOR.INPROCEXECUTORALIAS.SEEDSKIPPED", "detail", "the resolver shape is unrecognised",
 				"alias", url,
 				"resolver_type", fmt.Sprintf("%T", cfg.Resolver))
 		}
@@ -210,7 +208,7 @@ func Start(cfg Config) (*Handle, error) {
 
 	for alias, endpoint := range builtin.BuiltinExecutorAliases() {
 		if !seedInprocExecutorAlias(cfg.Resolver, alias, endpoint) {
-			cfg.Logger.Warn("supervisor: builtin inproc executor alias seed skipped: resolver shape unrecognised",
+			cfg.Logger.Warn("SUPERVISOR.BUILTININPROCEXECUTORALIAS.SEEDSKIPPED", "detail", "the resolver shape is unrecognised",
 				"alias", alias,
 				"resolver_type", fmt.Sprintf("%T", cfg.Resolver))
 		}
@@ -247,7 +245,7 @@ func Start(cfg Config) (*Handle, error) {
 		return hctx
 	})
 	clientPool := executor.NewClientPoolWithInProcess(inprocReg, newHctx)
-	advertised := advertisedCallbackURL(host, port, cfg.PeerAuth)
+	advertised := advertisedCallbackURL(host, port, cfg.ServiceAuth)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
 	fanOutSems := NewFanOutSemaphoreRegistry()
 	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, claimHandles, verbDispatcher, fanOutSems)
@@ -302,9 +300,9 @@ func effectiveCallbackHostPort(listenerAddr, advertiseHost string, advertisePort
 	return advertiseHost, advertisePort, nil
 }
 
-func advertisedCallbackURL(host string, port int, peerAuth string) string {
+func advertisedCallbackURL(host string, port int, serviceAuth string) string {
 	scheme := "http://"
-	if peerAuth == peer.PeerAuthMTLS {
+	if serviceAuth == service.ServiceAuthMTLS {
 		scheme = "https://"
 	}
 	return scheme + net.JoinHostPort(host, strconv.Itoa(port))
@@ -321,7 +319,7 @@ func runLoop(
 	fanOutSems *FanOutSemaphoreRegistry,
 ) {
 	defer close(h.done)
-	cfg.Logger.Info("supervisor started",
+	cfg.Logger.Info("SUPERVISOR.LOOP.STARTED",
 		"supervisor_id", cfg.SupervisorID,
 		"concurrency", cfg.Concurrency)
 
@@ -368,20 +366,17 @@ func runLoop(
 				SyncRPCDeadlineDefault:      cfg.SyncRPCDeadlineDefault,
 				MaxQuietPeriodDefault:       cfg.MaxQuietPeriodDefault,
 				MaxRuntimeDefault:           cfg.MaxRuntimeDefault,
-				Blob:                        cfg.Blob,
-				BlobSpillThreshold:          cfg.BlobSpillThreshold,
 				ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
 				DeclaredTagsFor:             cfg.DeclaredTagsFor,
 				Metrics:                     cfg.Metrics,
-				LifecycleSubs:               cfg.LifecycleSubs,
-				LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
 				LateBindServiceProxies:      cfg.LateBindServiceProxies,
+				LifecycleKick:               cfg.LifecycleKick,
 				DataProcessors:              cfg.DataProcessors,
 				ProducerVerbKick:            verbDispatcher.Kick,
 				FanOutSemaphores:            fanOutSems,
 			}, reg.Register)
 			if runErr != nil {
-				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())
+				cfg.Logger.Warn("SUPERVISOR.RUNNODE.FAILED", "error", runErr.Error())
 			}
 
 			if result.Async {
@@ -389,7 +384,7 @@ func runLoop(
 			}
 			if result.Ran && result.NodeRunID != (shared.UUID{}) {
 				if err := cfg.Queue.Complete(context.Background(), result.NodeRunID, cfg.SupervisorID); err != nil {
-					cfg.Logger.Warn("supervisor: Queue.Complete failed",
+					cfg.Logger.Warn("SUPERVISOR.QUEUECOMPLETE.FAILED",
 						"dispatch_id", result.NodeRunID.String(), "error", err.Error())
 				}
 			}
@@ -411,7 +406,7 @@ func runLoop(
 			case <-waitCtx.Done():
 				remaining := gate.activeCount()
 				if remaining > 0 {
-					cfg.Logger.Warn("supervisor shutdown timed out with active runs",
+					cfg.Logger.Warn("SUPERVISOR.SHUTDOWN.TIMEDOUT", "detail", "runs were still active",
 						"active", remaining)
 				}
 			}
@@ -420,10 +415,10 @@ func runLoop(
 			if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 				return cfg.Persist.Supervisors().Unregister(ctx, cfg.SupervisorID, tx)
 			}); err != nil {
-				cfg.Logger.Warn("supervisor: Unregister failed", "error", err.Error())
+				cfg.Logger.Warn("SUPERVISOR.UNREGISTER.FAILED", "error", err.Error())
 			}
 			_ = pool.Close()
-			cfg.Logger.Info("supervisor stopped", "supervisor_id", cfg.SupervisorID)
+			cfg.Logger.Info("SUPERVISOR.LOOP.STOPPED", "supervisor_id", cfg.SupervisorID)
 			return
 		case <-claimTick.C:
 			tryClaim()

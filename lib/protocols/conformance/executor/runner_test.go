@@ -231,21 +231,19 @@ func TestRun_RefusesLiveEndpointByDefault(t *testing.T) {
 }
 
 func TestRun_AllowLiveSkipsStubRequiringScenarios(t *testing.T) {
-	Register(Scenario{
-		Name:         "allow-live-stub-required-probe",
-		RequiresStub: true,
-		Run: func(context.Context, Env) error {
-			t.Fatal("a stub-requiring scenario must not execute under AllowLive against a live executor")
-			return nil
-		},
-	})
-	t.Cleanup(func() { registered = registered[:len(registered)-1] })
-
 	addr := startFakeExecutorGRPC(t, nonStubFakeExecutor{})
 	results, err := Run(context.Background(), RunnerOpts{
 		Endpoint:  Endpoint{Transport: "grpc", URL: addr},
 		AllowLive: true,
 		Timeout:   5 * time.Second,
+		Scenarios: []Scenario{{
+			Name:         "allow-live-stub-required-probe",
+			RequiresStub: true,
+			Run: func(context.Context, Env) error {
+				t.Error("a stub-requiring scenario must not execute under AllowLive against a live executor")
+				return nil
+			},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("Run with AllowLive against a live executor: %v", err)

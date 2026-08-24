@@ -69,11 +69,10 @@ type configBuilder struct {
 	hostAccessPorts []int
 	existingNetwork string
 	rimskyAlias     string
-	blob            *blobCfg
 	extraEnv        map[string]string
 	sqlite          bool
 	bundledFS       *bundledFSCfg
-	peerAuthMTLS    bool
+	serviceAuthMTLS bool
 }
 
 type bundledFSCfg struct {
@@ -82,13 +81,6 @@ type bundledFSCfg struct {
 }
 
 const sqliteStatePath = "/var/lib/rimsky/state.db"
-
-type blobCfg struct {
-	backend                    string
-	spillThresholdBytes        int
-	orphanSweepInterval        time.Duration
-	retentionAfterUnreferenced time.Duration
-}
 
 type producerCfg struct {
 	endpoint              string
@@ -136,7 +128,7 @@ func WithExecutor(name, endpoint string) Option {
 	}
 }
 
-// @decision: peer-auth-mtls
+// @decision: service-auth-mtls
 func WithExecutorTLS(name, mode string) Option {
 	return func(cb *configBuilder) {
 		entry, ok := cb.executors[name]
@@ -180,17 +172,6 @@ func WithSQLite() Option {
 	}
 }
 
-func WithBlobConfig(backend string, spillThresholdBytes int, orphanSweepInterval, retentionAfterUnreferenced time.Duration) Option {
-	return func(cb *configBuilder) {
-		cb.blob = &blobCfg{
-			backend:                    backend,
-			spillThresholdBytes:        spillThresholdBytes,
-			orphanSweepInterval:        orphanSweepInterval,
-			retentionAfterUnreferenced: retentionAfterUnreferenced,
-		}
-	}
-}
-
 func WithContainerEnv(key, value string) Option {
 	return func(cb *configBuilder) {
 		if cb.extraEnv == nil {
@@ -212,10 +193,10 @@ func WithBundledFilesystemClaimProducer(hostDir, configYAML string) Option {
 	}
 }
 
-// @concept: peer-auth
-func WithPeerAuthMTLS(caEncryptionKeyBase64 string) Option {
+// @concept: service-auth
+func WithServiceAuthMTLS(caEncryptionKeyBase64 string) Option {
 	return func(cb *configBuilder) {
-		cb.peerAuthMTLS = true
+		cb.serviceAuthMTLS = true
 		if cb.extraEnv == nil {
 			cb.extraEnv = map[string]string{}
 		}
@@ -310,6 +291,7 @@ func (h *RimskyHandle) ReadLogs(ctx context.Context, t testing.TB) string {
 func (h *RimskyHandle) Restart(ctx context.Context, t testing.TB) {
 	t.Helper()
 	if h.container != nil {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		_ = h.container.Terminate(termCtx)
 		cancel()
@@ -409,6 +391,7 @@ func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName, alia
 		t.Fatalf("harness: start postgres: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = pgContainer.Terminate(termCtx)
@@ -465,6 +448,7 @@ func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT 
 		t.Fatalf("harness: start rimsky/all: %v", err)
 	}
 	cleanupT.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = rimsky.Terminate(termCtx)
@@ -577,10 +561,10 @@ func (e RimskyEndpoint) DeployTemplate(t testing.TB, body map[string]any) string
 func (e RimskyEndpoint) CreateInstance(t testing.TB, templateID, instanceKey, wakeIdempotencyKeyPrefix string) string {
 	t.Helper()
 	status, raw := e.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-		"target_agent": "scenario-default-agent",
+		"template":      templateID,
+		"instance_key":  instanceKey,
+		"params":        map[string]any{},
+		"target_daemon": "scenario-default-daemon",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST /instances: %d %s", status, string(raw))
@@ -724,9 +708,8 @@ func renderRimskyYAML(internalDSN string, cb *configBuilder) string {
 	b.WriteString("  driver: postgres\n")
 	b.WriteString("  postgres:\n")
 	fmt.Fprintf(&b, "    dsn: %q\n", internalDSN)
-	writeBlobBlock(&b, cb)
 	writeSupervisorBlock(&b)
-	writePeerBlocks(&b, cb)
+	writeServiceBlocks(&b, cb)
 	return b.String()
 }
 
@@ -740,35 +723,14 @@ func writeSupervisorBlock(b *strings.Builder) {
 	b.WriteString("    port: 8081\n")
 }
 
-func writeBlobBlock(b *strings.Builder, cb *configBuilder) {
-	if cb.blob == nil {
-		return
-	}
-	b.WriteString("  blob:\n")
-	fmt.Fprintf(b, "    backend: %s\n", cb.blob.backend)
-	if cb.blob.spillThresholdBytes > 0 {
-		fmt.Fprintf(b, "    spill_threshold_bytes: %d\n", cb.blob.spillThresholdBytes)
-	}
-	if cb.blob.orphanSweepInterval > 0 || cb.blob.retentionAfterUnreferenced > 0 {
-		b.WriteString("    retention:\n")
-		if cb.blob.orphanSweepInterval > 0 {
-			fmt.Fprintf(b, "      orphan_sweep_interval: %s\n", cb.blob.orphanSweepInterval)
-		}
-		if cb.blob.retentionAfterUnreferenced > 0 {
-			fmt.Fprintf(b, "      retention_after_unreferenced: %s\n", cb.blob.retentionAfterUnreferenced)
-		}
-	}
-}
-
 func renderRimskyYAMLSQLite(cb *configBuilder) string {
 	var b strings.Builder
 	b.WriteString("persistence:\n")
 	b.WriteString("  driver: sqlite\n")
 	b.WriteString("  sqlite:\n")
 	fmt.Fprintf(&b, "    path: %q\n", sqliteStatePath)
-	writeBlobBlock(&b, cb)
 	writeSupervisorBlock(&b)
-	writePeerBlocks(&b, cb)
+	writeServiceBlocks(&b, cb)
 	return b.String()
 }
 
@@ -780,9 +742,9 @@ func writeQuotedList(b *strings.Builder, first string, rest []string) {
 	b.WriteString("]\n")
 }
 
-func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
-	if cb.peerAuthMTLS {
-		b.WriteString("peer_auth: mtls\n")
+func writeServiceBlocks(b *strings.Builder, cb *configBuilder) {
+	if cb.serviceAuthMTLS {
+		b.WriteString("service_auth: mtls\n")
 	}
 	if len(cb.claimProducers) == 0 {
 		b.WriteString("claim_producers: {}\n")
@@ -837,15 +799,15 @@ func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 	}
 }
 
-// @decision: peer-auth-mtls
+// @decision: service-auth-mtls
 func controlAPIScheme(cb *configBuilder) string {
-	if cb != nil && cb.peerAuthMTLS {
+	if cb != nil && cb.serviceAuthMTLS {
 		return "https"
 	}
 	return "http"
 }
 
-// @decision: peer-auth-mtls
+// @decision: service-auth-mtls
 func harnessHTTPClient(scheme string) *http.Client {
 	if scheme != "https" {
 		return http.DefaultClient

@@ -33,8 +33,9 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostdaemon"
 )
 
 type composeRunFlags struct {
@@ -105,7 +106,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		fmt.Fprintln(os.Stderr, "rimsky compose run: ensure run dir:", err)
 		return 2
 	}
-	logger.Info("run dir", "path", runDir)
+	logger.Info("COMPOSE.RUNDIR.CREATED", "path", runDir)
 
 	services, spawnOverlay, err := spawnServices(bootCtx, flags.services, logger)
 	spawned.Set(services)
@@ -136,7 +137,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return 2
 	}
 
-	controlAPIPort, err := hostagent.FreeLocalPort()
+	controlAPIPort, err := hostdaemon.FreeLocalPort()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: allocate control-api port:", err)
 		reapSpawnedFatal(services, logger)
@@ -166,7 +167,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		Logger:   logger,
 	}
 
-	if err := WaitForControlAPIReady(bootCtx, stack.Endpoint(), 10*time.Second); err != nil {
+	if err := WaitForControlAPIReady(bootCtx, shared.SystemClock{}, stack.Endpoint(), 10*time.Second); err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: control-api not ready:", err)
 		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
@@ -205,7 +206,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 
 	instanceIDs, keyByID := extractInstanceIDs(created)
 	if err := UpdateLatestSymlink(root, runDir); err != nil {
-		logger.Warn("compose run: update latest symlink", "err", err.Error())
+		logger.Warn("COMPOSE.LATESTSYMLINK.UPDATEFAILED", "err", err.Error())
 	}
 	if len(instanceIDs) == 0 {
 		return coord.Drain(context.Background(), ReasonAllSuccess)
@@ -243,7 +244,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 type oneShotWait struct {
 	client       instanceClient
 	stack        *RoleStack
-	services     []*hostagent.SpawnedService
+	services     []*hostdaemon.SpawnedService
 	sigCh        chan os.Signal
 	escalation   *SignalEscalation
 	printer      ProgressPrinter
@@ -291,19 +292,19 @@ func waitOneShotToTerminal(bootCtx context.Context, w oneShotWait) ShutdownReaso
 			return ReasonAllSuccess
 		}
 	case sig := <-w.sigCh:
-		w.logger.Info(w.verb+": signal received; draining", "signal", sig.String())
+		w.logger.Info("COMPOSE.WAIT.SIGNALLED", "verb", w.verb, "detail", "draining", "signal", sig.String())
 		cancelWait()
 		armEscalator()
 		waitForOrTimeout(waitDone, waitDrainTimeout, "signal")
 		return ReasonSignal
 	case <-timeoutCh:
-		w.logger.Info(w.verb+": timeout fired; draining", "timeout", w.timeout.String())
+		w.logger.Info("COMPOSE.WAIT.TIMEDOUT", "verb", w.verb, "detail", "draining", "timeout", w.timeout.String())
 		cancelWait()
 		armEscalator()
 		waitForOrTimeout(waitDone, waitDrainTimeout, "timeout")
 		return ReasonTimeout
 	case rf := <-w.stack.FailCh():
-		w.logger.Error(w.verb+": role runner failed", "role", rf.Role, "err", rf.Err.Error())
+		w.logger.Error("COMPOSE.ROLERUNNER.FAILED", "verb", w.verb, "role", rf.Role, "err", rf.Err.Error())
 		cancelWait()
 		armEscalator()
 		waitForOrTimeout(waitDone, waitDrainTimeout, "role-failure")
@@ -336,7 +337,7 @@ func WakeCreatedInstances(ctx context.Context, c *cli.Client, created []CreatedI
 			hasRoot = h
 		}
 		if !hasRoot {
-			logger.Warn("compose.rootless_instance_not_woken",
+			logger.Warn("COMPOSE.ROOTLESSINSTANCE.NOTWOKEN",
 				"instance_key", ci.Key,
 				"instance_id", ci.ID,
 				"template_hash", ci.TemplateHash,
@@ -377,13 +378,13 @@ func spawnServices(
 	ctx context.Context,
 	values cli.RepeatedFlag,
 	logger *slog.Logger,
-) ([]*hostagent.SpawnedService, map[string]ManifestExecutorEntry, error) {
+) ([]*hostdaemon.SpawnedService, map[string]ManifestExecutorEntry, error) {
 	spawnOverlay := map[string]ManifestExecutorEntry{}
 	if len(values) == 0 {
 		return nil, spawnOverlay, nil
 	}
 
-	spawns := make([]*hostagent.SpawnedService, 0, len(values))
+	spawns := make([]*hostdaemon.SpawnedService, 0, len(values))
 	var aliases map[string]string
 	for _, raw := range values {
 		if cerr := ctx.Err(); cerr != nil {
@@ -418,7 +419,7 @@ func spawnServices(
 			reapSpawnedFatal(spawns, logger)
 			return nil, nil, fmt.Errorf("--service %q: resolve absolute path: %w", raw, err)
 		}
-		spawned, err := hostagent.SpawnService(ctx, hostagent.SpawnServiceParams{
+		spawned, err := hostdaemon.SpawnService(ctx, hostdaemon.SpawnServiceParams{
 			BinaryPath:   abs,
 			Env:          os.Environ(),
 			ReadyTimeout: 30 * time.Second,
@@ -432,7 +433,7 @@ func spawnServices(
 			Transport: "grpc",
 			Endpoint:  fmt.Sprintf("127.0.0.1:%d", spawned.Port),
 		}
-		logger.Info("spawned service",
+		logger.Info("COMPOSE.SERVICE.SPAWNED",
 			"name", name,
 			"path", abs,
 			"pid", spawned.Cmd.Process.Pid,
@@ -442,7 +443,7 @@ func spawnServices(
 	return spawns, spawnOverlay, nil
 }
 
-func reapSpawnedFatal(spawns []*hostagent.SpawnedService, logger *slog.Logger) {
+func reapSpawnedFatal(spawns []*hostdaemon.SpawnedService, logger *slog.Logger) {
 	for _, s := range spawns {
 		if s == nil || s.Cmd == nil || s.Cmd.Process == nil {
 			continue
@@ -452,7 +453,7 @@ func reapSpawnedFatal(spawns []*hostagent.SpawnedService, logger *slog.Logger) {
 			<-s.Exited
 		}
 		if logger != nil {
-			logger.Warn("compose run: reaped spawned child during fatal error path",
+			logger.Warn("COMPOSE.SPAWNEDCHILD.REAPED", "detail", "reaped on the fatal error path",
 				"pid", s.Cmd.Process.Pid,
 			)
 		}
@@ -508,7 +509,7 @@ func waitForOrTimeout(waitDone <-chan struct{}, d time.Duration, trigger string)
 	select {
 	case <-waitDone:
 	case <-time.After(d):
-		slog.Default().Warn("compose run: wait goroutine did not exit within drain budget; proceeding",
+		slog.Default().Warn("COMPOSE.WAITGOROUTINE.DRAINBUDGETEXCEEDED", "detail", "proceeding without it",
 			"trigger", trigger,
 			"budget", d.String(),
 		)
@@ -522,7 +523,7 @@ func terminateInstancesForOneShot(ctx context.Context, c instanceClient, instanc
 	for _, id := range instanceIDs {
 		if _, err := c.TerminateInstance(ctx, id, "one_shot_workflow_complete"); err != nil {
 			if logger != nil {
-				logger.Warn(verb+": terminate instance after wait failed",
+				logger.Warn("COMPOSE.INSTANCETERMINATE.FAILED", "verb", verb,
 					"instance_id", id, "err", err.Error())
 			}
 		}
@@ -537,7 +538,7 @@ func watchBootSignal(sigCh <-chan os.Signal, done <-chan struct{}, cancel contex
 	case sig := <-sigCh:
 		escalation.Arm()
 		if logger != nil {
-			logger.Info("compose run: signal during boot; cancelling", "signal", sig.String())
+			logger.Info("COMPOSE.BOOT.SIGNALLED", "detail", "cancelling", "signal", sig.String())
 		}
 		cancel()
 	}
@@ -558,14 +559,14 @@ func startRoleStackWithBindRetry(ctx context.Context, logger *slog.Logger, runDi
 		if attempt == maxAttempts {
 			break
 		}
-		newPort, perr := hostagent.FreeLocalPort()
+		newPort, perr := hostdaemon.FreeLocalPort()
 		if perr != nil {
 			return nil, fmt.Errorf("start role stack: re-pick port after bind failure: %w", perr)
 		}
 		*port = newPort
 		*endpoint = fmt.Sprintf("http://127.0.0.1:%d", newPort)
 		_ = os.Setenv("RIMSKY_CONTROL_API_PORT", strconv.Itoa(newPort))
-		logger.Warn("compose run: control-api bind hit address-in-use; retrying on fresh port",
+		logger.Warn("COMPOSE.CONTROLAPIBIND.RETRIED", "detail", "the control-api bind hit address-in-use; retrying on a fresh port",
 			"attempt", attempt,
 			"new_port", newPort,
 		)

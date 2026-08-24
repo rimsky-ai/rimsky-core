@@ -11,4 +11,4 @@ A service author implementing a rimsky protocol in their own process opens the g
 - every public gRPC RPC, grouped by the protocol a third party implements
 - every public proto file
 - every public published package a service implementer imports
-- the public environment variables a peer service reads to enroll
+- the public environment variables a service reads to enroll

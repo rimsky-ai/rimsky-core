@@ -13,12 +13,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-func shouldSpillBlob(args RunArgs, size int) bool {
-	return persistence.ShouldSpillBlob(args.Blob, args.BlobSpillThreshold, size)
-}
-
 // @concept: executor
 // @decision: scratch-protocol
+// @decision: scratch-column
 func applyTerminalScratchInTx(
 	ctx context.Context, args RunArgs, acq *acquisition, scratch []byte, tx persistence.Tx,
 ) error {
@@ -28,33 +25,7 @@ func applyTerminalScratchInTx(
 	if isSubgraphExitNode(acq) {
 		return nil
 	}
-	var (
-		inline        []byte
-		handle        string
-		handleBackend string
-	)
-	if shouldSpillBlob(args, len(scratch)) {
-		key := persistence.BlobKey{
-			NodeID: acq.NodeID.String(),
-			Hint:   "scratch",
-		}
-		h, err := args.Blob.Write(ctx, key, scratch)
-		if err != nil {
-			if args.Logger != nil {
-				args.Logger.Warn("applyTerminalScratchInTx: blob spill failed; falling back to inline",
-					"node_id", acq.NodeID.String(),
-					"dispatch_id", acq.NodeRunID.String(),
-					"error", err.Error())
-			}
-			inline = scratch
-		} else {
-			handle = string(h)
-			handleBackend = args.Blob.Name()
-		}
-	} else {
-		inline = scratch
-	}
-	if err := args.Queue.WriteScratch(ctx, acq.NodeRunID, inline, handle, handleBackend, tx); err != nil {
+	if err := args.Queue.WriteScratch(ctx, acq.NodeRunID, scratch, tx); err != nil {
 		return fmt.Errorf("applyTerminalScratchInTx: %w", err)
 	}
 	now := time.Now().UTC()

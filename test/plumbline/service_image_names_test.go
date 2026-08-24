@@ -73,7 +73,7 @@ func TestEveryShippedServiceImageNameIsDerivableFromItsKindAndName(t *testing.T)
 	}
 
 	coreImages := imageNamesFromTarget(t, root, "core-images")
-	want := []string{"rimsky", "rimsky-all-in-one", "rimsky-conformance", "rimsky-host-agent-proxy"}
+	want := []string{"rimsky", "rimsky-all-in-one", "rimsky-conformance", "rimsky-host-daemon-proxy"}
 	if strings.Join(coreImages, ",") != strings.Join(want, ",") {
 		t.Fatalf("core images = %v, want %v", coreImages, want)
 	}

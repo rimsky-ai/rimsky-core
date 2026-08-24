@@ -25,8 +25,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/store"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/listarray"
@@ -76,7 +76,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		return err
 	}
 
-	identity, err := peerauth.LoadFromEnv(ctx, "claim-producer-filesystem")
+	identity, err := serviceauth.LoadFromEnv(ctx, "claim-producer-filesystem")
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	obsSrv.SetHTTPBridgeURL(cfg.HTTPBridgeURL)
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
-			slog.Warn("filesystem store: grpc serve", "error", err.Error())
+			slog.Warn("FILESYSTEMSTORE.GRPC.SERVEFAILED", "error", err.Error())
 		}
 	}()
 
@@ -106,7 +106,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	httpSrv := identity.HTTPServer(mux)
 	go func() {
 		if err := identity.RunHTTP(httpSrv, httpLis); err != nil && err != http.ErrServerClosed {
-			slog.Warn("filesystem store: http serve", "error", err.Error())
+			slog.Warn("FILESYSTEMSTORE.HTTP.SERVEFAILED", "error", err.Error())
 		}
 	}()
 
@@ -115,7 +115,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		adminSrv = &http.Server{Handler: srv.store.AdminHandler()}
 		go func() {
 			if err := adminSrv.Serve(adminLis); err != nil && err != http.ErrServerClosed {
-				slog.Warn("filesystem store: admin serve", "error", err.Error())
+				slog.Warn("FILESYSTEMSTORE.ADMINHTTP.SERVEFAILED", "error", err.Error())
 			}
 		}()
 	}
@@ -127,12 +127,12 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), gracefulStopBudget)
 	defer cancelShutdown()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		slog.Warn("filesystem store: http graceful shutdown", "error", err.Error())
+		slog.Warn("FILESYSTEMSTORE.HTTP.SHUTDOWNFAILED", "error", err.Error())
 		_ = httpSrv.Close()
 	}
 	if adminSrv != nil {
 		if err := adminSrv.Shutdown(shutdownCtx); err != nil {
-			slog.Warn("filesystem store: admin graceful shutdown", "error", err.Error())
+			slog.Warn("FILESYSTEMSTORE.ADMINHTTP.SHUTDOWNFAILED", "error", err.Error())
 			_ = adminSrv.Close()
 		}
 	}

@@ -31,11 +31,8 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 	if cb.sqlite {
 		t.Fatalf("harness: BringUpRimskySplit: WithSQLite is not a split-topology option — three containers cannot share one in-container SQLite file; use Postgres (the default)")
 	}
-	if cb.blob != nil && cb.blob.backend == "memory" {
-		t.Fatalf("harness: BringUpRimskySplit: the memory blob backend requires the single-process all-in-one mode (RIMSKY_PROCESS_ROLE=unified); per-role containers would refuse to start")
-	}
 	if len(cb.hostAccessPorts) > 0 {
-		t.Fatalf("harness: BringUpRimskySplit: WithHostPortAccess is not wired for the split mode (it would need per-container tunnels); start the peer as a network sibling instead")
+		t.Fatalf("harness: BringUpRimskySplit: WithHostPortAccess is not wired for the split mode (it would need per-container tunnels); start the service as a network sibling instead")
 	}
 
 	networkName := cb.existingNetwork
@@ -64,7 +61,7 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 		alias:   schedulerAlias,
 		yaml:    yamlBytes,
 		network: networkName,
-		waitFor: wait.ForLog("scheduler started").WithStartupTimeout(120 * time.Second),
+		waitFor: wait.ForLog("SCHEDULER.LOOP.STARTED").WithStartupTimeout(120 * time.Second),
 	})
 	startSplitRole(ctx, t, cb, splitRoleSpec{
 		role:          "rimsky-supervisor",
@@ -72,7 +69,7 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 		advertiseHost: supervisorAlias,
 		yaml:          yamlBytes,
 		network:       networkName,
-		waitFor:       wait.ForLog("supervisor started").WithStartupTimeout(120 * time.Second),
+		waitFor:       wait.ForLog("SUPERVISOR.ROLE.STARTED").WithStartupTimeout(120 * time.Second),
 	})
 
 	return RimskyEndpoint{
@@ -117,6 +114,7 @@ func startSplitControlAPI(ctx context.Context, t testing.TB, cb *configBuilder, 
 		t.Fatalf("harness: start split control-api: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)
@@ -165,6 +163,7 @@ func startSplitRole(ctx context.Context, t testing.TB, cb *configBuilder, spec s
 		t.Fatalf("harness: start split %s: %v", spec.role, err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)

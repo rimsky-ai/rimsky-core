@@ -94,14 +94,14 @@ func intAttr(req *genv1.ExecuteRequest, name string) int {
 }
 
 func main() {
-	portStr := os.Getenv("RIMSKY_AGENT_PORT")
+	portStr := os.Getenv("RIMSKY_DAEMON_PORT")
 	if portStr == "" {
-		fmt.Fprintln(os.Stderr, "stub-executor: RIMSKY_AGENT_PORT not set")
+		fmt.Fprintln(os.Stderr, "stub-executor: RIMSKY_DAEMON_PORT not set")
 		os.Exit(2)
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "stub-executor: invalid RIMSKY_AGENT_PORT %q: %v\n", portStr, err)
+		fmt.Fprintf(os.Stderr, "stub-executor: invalid RIMSKY_DAEMON_PORT %q: %v\n", portStr, err)
 		os.Exit(2)
 	}
 	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
@@ -113,7 +113,7 @@ func main() {
 	srv := grpc.NewServer()
 	genv1.RegisterExecutorServer(srv, executor{})
 	genv1.RegisterExecutorObservabilityServer(srv, observability{})
-	slog.Info("stub-executor listening", "port", port)
+	slog.Info("COMPOSESTUB.GRPC.LISTENING", "port", port)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)

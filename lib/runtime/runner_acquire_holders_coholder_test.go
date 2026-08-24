@@ -44,7 +44,7 @@ func seedCoHolderInstance(
 		}, tx); err != nil {
 			return err
 		}
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instID, TemplateHash: tmplHash, InstanceKey: &ck, Params: map[string]any{},
 		}, tx)
 		if err != nil {

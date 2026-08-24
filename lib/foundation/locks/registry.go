@@ -86,7 +86,7 @@ func NewRegistry(opts ...Option) *Registry {
 func (r *Registry) Add(name string, p ClaimProducer) {
 	if p != nil {
 		if got := p.Name(); got != "" && got != name {
-			slog.Warn("producer registry: registration name disagrees with ClaimProducer.Name()",
+			slog.Warn("CLAIMPRODUCERREGISTRY.REGISTRATIONNAME.MISMATCHED", "detail", "the registration name disagrees with the name the producer reports",
 				"registration_name", name,
 				"producer_internal_name", got,
 				"hint", "registration name and producer-internal name should agree; check the wiring path that constructed this producer")
@@ -113,7 +113,7 @@ func (r *Registry) ResolveWithContext(ctx context.Context, name string, instance
 }
 
 // @concept: service-address-book
-// @story: host-agent-late-bind-all-protocols
+// @story: host-daemon-late-bind-all-protocols
 func (r *Registry) getLateBound(ctx context.Context, name string, instanceID string, tx persistence.Tx) (ClaimProducer, bool, error) {
 	if instanceID == "" {
 		return nil, false, nil
@@ -130,7 +130,7 @@ func (r *Registry) getLateBound(ctx context.Context, name string, instanceID str
 	}
 	bindings, ok, err := r.lookupInstanceBindings(ctx, instanceID, tx)
 	if err != nil {
-		slog.Warn("producer registry: instance-bindings lookup failed; classifying as unknown claim producer",
+		slog.Warn("CLAIMPRODUCERREGISTRY.INSTANCEBINDINGS.LOOKUPFAILED", "detail", "classifying the row as an unknown claim producer",
 			"instance_id", instanceID,
 			"producer_name", name,
 			"error", err.Error())

@@ -69,16 +69,16 @@ func main() {
 	}
 	lis, err := net.Listen("tcp", bind)
 	if err != nil {
-		slog.Error("stubexecutor listen", "error", err.Error(), "bind", bind)
+		slog.Error("STUBEXECUTOR.GRPC.LISTENFAILED", "error", err.Error(), "bind", bind)
 		os.Exit(1)
 	}
 	forceError := os.Getenv("EXECUTOR_STUB_FORCE_ERROR") == "1"
 	srv := grpc.NewServer()
 	genv1.RegisterExecutorServer(srv, server{forceError: forceError})
 	genv1.RegisterExecutorObservabilityServer(srv, observability{forceError: forceError})
-	slog.Info("stubexecutor listening", "bind", bind, "force_error", forceError)
+	slog.Info("STUBEXECUTOR.GRPC.LISTENING", "bind", bind, "force_error", forceError)
 	if err := srv.Serve(lis); err != nil {
-		slog.Error("stubexecutor serve", "error", err.Error())
+		slog.Error("STUBEXECUTOR.GRPC.SERVEFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 }

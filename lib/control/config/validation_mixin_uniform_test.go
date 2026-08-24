@@ -59,7 +59,7 @@ func (stubPublisherService) Capabilities(context.Context, *emptypb.Empty) (*genv
 	}, nil
 }
 
-func startStubPeer(t *testing.T, register func(*grpc.Server)) string {
+func startStubService(t *testing.T, register func(*grpc.Server)) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -73,35 +73,35 @@ func startStubPeer(t *testing.T, register func(*grpc.Server)) string {
 }
 
 // @story: validation-mixin-uniform
-func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
-	cpEndpoint := startStubPeer(t, func(s *grpc.Server) {
+func TestValidationMixinUniformAcrossServiceKinds(t *testing.T) {
+	cpEndpoint := startStubService(t, func(s *grpc.Server) {
 		genv1.RegisterClaimProducerServer(s, stubClaimProducerService{})
 		genv1.RegisterValidationServer(s, stubValidationService{})
 	})
-	execEndpoint := startStubPeer(t, func(s *grpc.Server) {
+	execEndpoint := startStubService(t, func(s *grpc.Server) {
 		genv1.RegisterExecutorObservabilityServer(s, stubExecutorObservabilityService{})
 		genv1.RegisterValidationServer(s, stubValidationService{})
 	})
-	pubEndpoint := startStubPeer(t, func(s *grpc.Server) {
+	pubEndpoint := startStubService(t, func(s *grpc.Server) {
 		genv1.RegisterPublisherServer(s, stubPublisherService{})
 		genv1.RegisterValidationServer(s, stubValidationService{})
 	})
 
 	producers := RemoteClaimProducersConfig{ClaimProducers: map[string]ClaimProducerEntry{
-		"producer-peer": {
+		"producer-service": {
 			Endpoint:  "grpc://" + cpEndpoint,
 			Protocols: []string{ProtocolClaimProducer, claimproducer.ProtocolValidation},
 		},
 	}}
 	execs := ExecutorsConfig{Executors: map[string]ExecutorEntry{
-		"executor-peer": {
+		"executor-service": {
 			Transport: "grpc",
 			Endpoint:  "grpc://" + execEndpoint,
 			Protocols: []string{ProtocolExecutor, claimproducer.ProtocolValidation},
 		},
 	}}
 	publishers := RemotePublishersConfig{Publishers: map[string]PublisherEntry{
-		"publisher-peer": {
+		"publisher-service": {
 			Endpoint:  "grpc://" + pubEndpoint,
 			Protocols: []string{ProtocolPublisher, claimproducer.ProtocolValidation},
 		},
@@ -121,22 +121,22 @@ func TestValidationMixinUniformAcrossPeerKinds(t *testing.T) {
 
 	want := append([]string(nil), mixinRoles...)
 	sort.Strings(want)
-	for _, peerName := range []string{"producer-peer", "executor-peer", "publisher-peer"} {
-		client, ok := validators.Get(peerName)
+	for _, serviceName := range []string{"producer-service", "executor-service", "publisher-service"} {
+		client, ok := validators.Get(serviceName)
 		if !ok {
-			t.Fatalf("validation registry missing peer %q", peerName)
+			t.Fatalf("validation registry missing service %q", serviceName)
 		}
 		got := append([]string(nil), client.SupportedRoles()...)
 		if len(got) == 0 {
-			t.Fatalf("peer %q: handshake-learned validation roles are empty — the mix-in was dialed but would never be used", peerName)
+			t.Fatalf("service %q: handshake-learned validation roles are empty — the mix-in was dialed but would never be used", serviceName)
 		}
 		sort.Strings(got)
 		if len(got) != len(want) {
-			t.Fatalf("peer %q: roles = %v, want %v", peerName, got, want)
+			t.Fatalf("service %q: roles = %v, want %v", serviceName, got, want)
 		}
 		for i := range want {
 			if got[i] != want[i] {
-				t.Fatalf("peer %q: roles = %v, want %v", peerName, got, want)
+				t.Fatalf("service %q: roles = %v, want %v", serviceName, got, want)
 			}
 		}
 	}

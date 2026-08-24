@@ -181,36 +181,34 @@ func runDispositionVariant(t *testing.T, disposition string) {
 	runScopeID := shared.UUID(runScopeUUIDParsed)
 
 	require.NoError(t, harness.Persist.Transaction(harness.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		inline, handle, backend, lerr := harness.Queue.LoadScratch(ctx, priorRunPtr, tx)
+		scratch, lerr := harness.Queue.LoadScratch(ctx, priorRunPtr, tx)
 		if lerr != nil {
 			return lerr
 		}
 		return harness.Queue.Enqueue(ctx, persistence.DispatchRequest{
-			NodeID:                      n.ID,
-			ExecutorName:                url,
-			RequiredClaimProducers:      []string{},
-			EnqueuedAt:                  time.Now().Add(-time.Second),
-			FrameID:                     frameID,
-			RunScopeID:                  runScopeID,
-			PriorNodeRunID:              &priorRunPtr,
-			PriorDispatchDisposition:    disposition,
-			InitialScratchInline:        inline,
-			InitialScratchHandle:        handle,
-			InitialScratchHandleBackend: backend,
+			NodeID:                   n.ID,
+			ExecutorName:             url,
+			RequiredClaimProducers:   []string{},
+			EnqueuedAt:               time.Now().Add(-time.Second),
+			FrameID:                  frameID,
+			RunScopeID:               runScopeID,
+			PriorNodeRunID:           &priorRunPtr,
+			PriorDispatchDisposition: disposition,
+			InitialScratch:           scratch,
 		}, tx)
 	}), "recovery Enqueue")
 
-	var gotInline []byte
+	var gotScratch []byte
 	harness.QueryRowSQL(`
-		SELECT scratch_inline
+		SELECT scratch
 		  FROM rimsky_node_runs
 		 WHERE node_id = $1
 		   AND prior_dispatch_id = $2
 		   AND prior_dispatch_disposition = $3`,
-		[]any{n.ID, priorRunPtr, disposition}, &gotInline)
-	require.True(t, bytes.Equal(gotInline, scratchBytes),
+		[]any{n.ID, priorRunPtr, disposition}, &gotScratch)
+	require.True(t, bytes.Equal(gotScratch, scratchBytes),
 		"%s recovery row MUST carry prior scratch verbatim: want=%x got=%x",
-		disposition, scratchBytes, gotInline)
+		disposition, scratchBytes, gotScratch)
 
 	awaited.Until(t, "the recovery dispatch to reach the executor handler", func() bool {
 		return atomic.LoadInt64(&h.dispatches) >= 2

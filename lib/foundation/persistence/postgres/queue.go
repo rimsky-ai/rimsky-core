@@ -80,10 +80,10 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 	// @concept: executor
 	var newRunID shared.UUID
 	err := q.q(tx).QueryRow(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch)
 		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'stale', $7,
 		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = $1 AND run_scope_id = $6), 0) + 1,
-		        $5, rs.id, $8, $9, $10, $11, $12
+		        $5, rs.id, $8, $9, $10
 		   FROM rimsky_run_scopes rs
 		  WHERE rs.id = $6
 		    AND rs.closed_at IS NULL
@@ -91,7 +91,7 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 		req.NodeID, executor, claimProducers, req.EnqueuedAt, req.FrameID, req.RunScopeID,
 		string(creationReason),
 		priorRunPtr, priorDisposition,
-		nilIfEmpty(req.InitialScratchInline), nullableString(req.InitialScratchHandle), nullableString(req.InitialScratchHandleBackend),
+		nilIfEmpty(req.InitialScratch),
 	).Scan(&newRunID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var closedAt *time.Time

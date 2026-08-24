@@ -14,7 +14,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 // @concept: executor
@@ -34,11 +34,11 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("executor.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
-	target, err := peer.StripScheme(endpoint.URL, endpoint.URL)
+	target, err := service.StripScheme(endpoint.URL, endpoint.URL)
 	if err != nil {
 		return nil, fmt.Errorf("executor.NewGRPCClient: %w", err)
 	}
-	dialOpts := append(peer.UnaryDialOptions(endpoint.URL, endpoint.TLS),
+	dialOpts := append(service.UnaryDialOptions(endpoint.URL, endpoint.TLS),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSizeBytes)))
 	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
@@ -53,10 +53,10 @@ func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	if err != nil {
 		return nil, "", err
 	}
-	return outcome, verifiedPeerPrincipal(pr.AuthInfo), nil
+	return outcome, verifiedServicePrincipal(pr.AuthInfo), nil
 }
 
-func verifiedPeerPrincipal(authInfo credentials.AuthInfo) string {
+func verifiedServicePrincipal(authInfo credentials.AuthInfo) string {
 	tlsInfo, ok := authInfo.(credentials.TLSInfo)
 	if !ok {
 		return ""

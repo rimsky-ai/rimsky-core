@@ -9,8 +9,11 @@ type Tables interface {
 	Templates() TemplateTable
 	TemplateTags() TemplateTagTable
 	Instances() InstanceTable
-	LifecycleIdempotency() LifecycleIdempotencyTable
 	LifecycleOutbox() LifecycleOutboxTable
+
+	// @decision: service-delivery-stall-signal
+	ServiceDeliveryStalls() ServiceDeliveryStallTable
+
 	Nodes() NodeTable
 	ClaimHandles() ClaimHandleTable
 	NodeAttributes() NodeAttributeTable
@@ -21,7 +24,6 @@ type Tables interface {
 	// @concept: service-address-book
 	ServiceAddressBook() ServiceAddressBookTable
 	Frames() FrameTable
-	BlobOrphans() BlobOrphanTable
 	WaitSet() WaitSetTable
 
 	Messages() MessageTable

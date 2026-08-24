@@ -85,7 +85,7 @@ func applyAttributeOverrides(
 		return m, matched
 	}
 	if logger != nil {
-		logger.Warn("applyAttributeOverrides: merge produced non-map root; falling back to resolved",
+		logger.Warn("ATTRIBUTEOVERRIDE.MERGE.NONMAPROOT", "site", "applyAttributeOverrides", "detail", "falling back to the resolved bag",
 			"executor", executor,
 			"node_name", nodeName)
 	}
@@ -101,7 +101,7 @@ func lookupFragment(overrides map[string]any, key, subkey string, logger shared.
 	m, ok := raw.(map[string]any)
 	if !ok {
 		if logger != nil {
-			logger.Warn("applyAttributeOverrides: override key has malformed shape; skipping",
+			logger.Warn("ATTRIBUTEOVERRIDE.KEY.MALFORMED", "site", "applyAttributeOverrides", "detail", "skipping the entry",
 				"key", key)
 		}
 		return nil, false
@@ -113,7 +113,7 @@ func lookupFragment(overrides map[string]any, key, subkey string, logger shared.
 	fm, ok := frag.(map[string]any)
 	if !ok {
 		if logger != nil {
-			logger.Warn("applyAttributeOverrides: override fragment has malformed shape; skipping",
+			logger.Warn("ATTRIBUTEOVERRIDE.FRAGMENT.MALFORMED", "site", "applyAttributeOverrides", "detail", "skipping the entry",
 				"key", key, "subkey", subkey)
 		}
 		return nil, false
@@ -135,7 +135,7 @@ func lookupMatchList(overrides map[string]any, logger shared.Logger) ([]map[stri
 		m, ok := item.(map[string]any)
 		if !ok {
 			if logger != nil {
-				logger.Warn("applyAttributeOverrides: by_match entry has malformed shape; skipping",
+				logger.Warn("ATTRIBUTEOVERRIDE.BYMATCHENTRY.MALFORMED", "site", "applyAttributeOverrides", "detail", "skipping the entry",
 					"entry_index", i)
 			}
 			continue
@@ -200,7 +200,7 @@ func emitOverrideMatchEventsAfterMerge(
 			for i, m := range matched {
 				indices[i] = m.Index
 			}
-			logger.Warn("instance.attribute_override_match_event_failed",
+			logger.Warn("ATTRIBUTEOVERRIDE.MATCHEVENT.APPENDFAILED",
 				"instance_id", instanceID.String(),
 				"node_type", nodeType,
 				"matched_indices", indices,

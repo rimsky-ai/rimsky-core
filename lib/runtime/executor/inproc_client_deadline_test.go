@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -22,7 +21,7 @@ func (deadlineHonoringHandler) Execute(ctx context.Context, _ *genv1.ExecuteRequ
 	return nil, ctx.Err()
 }
 
-func TestInProcessClient_HonorsCallerDeadline(t *testing.T) {
+func TestInProcessClient_PropagatesCallerCancellationToTheHandler(t *testing.T) {
 	t.Parallel()
 	reg := NewInProcessRegistry()
 	if regErr := reg.Register("inproc://test/slow", deadlineHonoringHandler{}); regErr != nil {
@@ -41,13 +40,16 @@ func TestInProcessClient_HonorsCallerDeadline(t *testing.T) {
 		NodeId:     nodeID,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	executed := make(chan error, 1)
+	go func() {
+		_, _, execErr := client.Execute(ctx, req)
+		executed <- execErr
+	}()
+	cancel()
 
-	_, _, err = client.Execute(ctx, req)
-
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	if err = <-executed; !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled — the handler blocks on the caller's context and the client returns its error", err)
 	}
 }
 

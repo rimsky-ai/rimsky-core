@@ -1164,64 +1164,24 @@ func (s *nodesImpl) GetPriorRunBySequence(
 
 // @concept: cascade
 // @decision: mode-default-most-recent
-// @concept: blob-backend
 func (s *nodesImpl) DeletePriorCascadeStales(
 	ctx context.Context, nodeID, runScopeID foundationshared.UUID, beforeSeq int64, tx persistence.Tx,
 ) (int, error) {
-	ti := (*tablesImpl)(s)
-	rows, err := ti.q(tx).QueryContext(ctx,
+	res, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_node_runs
 		  WHERE node_id = ? AND run_scope_id = ? AND sequence < ?
 		    AND state = 'stale' AND creation_reason = 'cascade' AND claimed_by IS NULL
-		    AND park_resumed_at IS NULL
-		  RETURNING scratch_handle, scratch_handle_backend`,
+		    AND park_resumed_at IS NULL`,
 		nodeID.String(), runScopeID.String(), beforeSeq,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
 	}
-	handles, n, err := drainDeletedScratchHandles(rows)
+	n, err := res.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
+		return 0, fmt.Errorf("DeletePriorCascadeStales: rows affected: %w", err)
 	}
-	if err := enrollScratchOrphans(ctx, ti, handles, tx); err != nil {
-		return 0, fmt.Errorf("DeletePriorCascadeStales: %w", err)
-	}
-	return n, nil
-}
-
-func drainDeletedScratchHandles(rows *sql.Rows) ([]prunedBlobHandle, int, error) {
-	defer rows.Close()
-	var handles []prunedBlobHandle
-	n := 0
-	for rows.Next() {
-		n++
-		var handle, backend sql.NullString
-		if err := rows.Scan(&handle, &backend); err != nil {
-			return nil, 0, fmt.Errorf("scan scratch handle: %w", err)
-		}
-		if !handle.Valid || handle.String == "" {
-			continue
-		}
-		handles = append(handles, prunedBlobHandle{handle: handle.String, backend: backend.String})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterate scratch handles: %w", err)
-	}
-	return handles, n, nil
-}
-
-func enrollScratchOrphans(ctx context.Context, ti *tablesImpl, handles []prunedBlobHandle, tx persistence.Tx) error {
-	if len(handles) == 0 {
-		return nil
-	}
-	now := time.Now().UTC()
-	for _, h := range handles {
-		if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), h.handle, h.backend, now, ti.blobRetention, tx); err != nil {
-			return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
-		}
-	}
-	return nil
+	return int(n), nil
 }
 
 // @concept: cascade
@@ -1259,27 +1219,21 @@ func (s *nodesImpl) GetMostRecentSettledRun(
 }
 
 // @concept: cascade
-// @concept: blob-backend
 func (s *nodesImpl) DropPendingRun(
 	ctx context.Context, runID foundationshared.UUID, tx persistence.Tx,
 ) error {
-	ti := (*tablesImpl)(s)
-	var handle, backend sql.NullString
-	err := ti.q(tx).QueryRowContext(ctx,
-		`DELETE FROM rimsky_node_runs WHERE id = ? AND state = 'pending'
-		 RETURNING scratch_handle, scratch_handle_backend`, runID.String(),
-	).Scan(&handle, &backend)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("DropPendingRun: run %s not in pending state", runID)
-	}
+	res, err := s.q(tx).ExecContext(ctx,
+		`DELETE FROM rimsky_node_runs WHERE id = ? AND state = 'pending'`, runID.String(),
+	)
 	if err != nil {
 		return fmt.Errorf("DropPendingRun: %w", err)
 	}
-	if !handle.Valid || handle.String == "" {
-		return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("DropPendingRun: rows affected: %w", err)
 	}
-	if err := enrollScratchOrphans(ctx, ti, []prunedBlobHandle{{handle: handle.String, backend: backend.String}}, tx); err != nil {
-		return fmt.Errorf("DropPendingRun: %w", err)
+	if n == 0 {
+		return fmt.Errorf("DropPendingRun: run %s not in pending state", runID)
 	}
 	return nil
 }
@@ -1357,26 +1311,26 @@ func (s *nodesImpl) CreateNonCascadeStale(
 	if in.PriorNodeRunID != nil {
 		priorRunPtr = in.PriorNodeRunID.String()
 	}
-	var scratchInline any
-	if len(in.InitialScratchInline) > 0 {
-		scratchInline = in.InitialScratchInline
+	var scratchArg any
+	if len(in.InitialScratch) > 0 {
+		scratchArg = in.InitialScratch
 	}
 	newID := uuid.New()
 	res, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence,
 		    frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition,
-		    scratch_inline, scratch_handle, scratch_handle_backend)
+		    scratch)
 		 SELECT ?, ?, ?, ?, ?, 'stale', ?,
 		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
-		        ?, rs.id, ?, ?, ?, ?, ?
+		        ?, rs.id, ?, ?, ?
 		   FROM rimsky_run_scopes rs
 		  WHERE rs.id = ? AND rs.closed_at IS NULL`,
 		newID.String(), in.NodeID.String(), nullableString(in.ExecutorName), storesJSON, formatTime(in.EnqueuedAt), string(in.CreationReason),
 		in.NodeID.String(), in.RunScopeID.String(),
 		in.FrameID.String(),
 		priorRunPtr, nullableString(in.PriorDispatchDisposition),
-		scratchInline, nullableString(in.InitialScratchHandle), nullableString(in.InitialScratchHandleBackend),
+		scratchArg,
 		in.RunScopeID.String(),
 	)
 	if err != nil {

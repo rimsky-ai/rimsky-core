@@ -17,11 +17,11 @@ const AnonymousModeBannerMessage = "ANONYMOUS MODE: no API keys provisioned; all
 func CheckAnonymousBanner(ctx context.Context, s *AuthState) bool {
 	anon, err := s.IsAnonymousMode(ctx)
 	if err != nil {
-		s.Logger.Error("auth.anonymous_mode.check_failed", "err", err.Error())
+		s.Logger.Error("AUTH.ANONYMOUSMODE.CHECKFAILED", "err", err.Error())
 		return false
 	}
 	if anon {
-		s.Logger.Warn("auth.anonymous_mode", "message", AnonymousModeBannerMessage)
+		s.Logger.Warn("AUTH.ANONYMOUSMODE.ACTIVE", "message", AnonymousModeBannerMessage)
 	}
 	return anon
 }

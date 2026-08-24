@@ -39,7 +39,7 @@ func SweepOrphanedClaimHandles(ctx context.Context, args OrphanReaperArgs) error
 	}
 	for _, lh := range expired {
 		if err := reapOneClaimHandle(ctx, args, lh, log); err != nil {
-			log.Warn("tick: reap claim-handle failed",
+			log.Warn("ORPHANREAPER.CLAIMHANDLE.REAPFAILED",
 				"claim_handle_id", lh.ID.String(),
 				"kind", string(lh.LockKind),
 				"error", err.Error())
@@ -50,7 +50,7 @@ func SweepOrphanedClaimHandles(ctx context.Context, args OrphanReaperArgs) error
 
 func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persistence.ClaimHandleRow, log shared.Logger) error {
 	if lh.HolderSupervisorID == nil {
-		log.Warn("tick: skip claim-handle reap: nil holder_supervisor_id; row will be re-listed by ListExpired every sweep",
+		log.Warn("ORPHANREAPER.CLAIMHANDLE.REAPSKIPPED", "detail", "holder_supervisor_id is nil, so ListExpired re-lists the row every sweep",
 			"claim_handle_id", lh.ID.String(), "kind", string(lh.LockKind))
 		return nil
 	}
@@ -68,7 +68,7 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 		nodeID := lh.HolderNodeID
 		nd, nerr := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
 		if nerr != nil {
-			log.Warn("tick: node lookup failed; lock_orphan_reaped event will omit instance attribution",
+			log.Warn("ORPHANREAPER.NODE.LOOKUPFAILED", "detail", "the lock_orphan_reaped event omits instance attribution",
 				"claim_handle_id", lh.ID.String(), "node_id", nodeID.String(), "error", nerr.Error())
 		}
 		var instanceID *shared.UUID
@@ -82,7 +82,7 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 			Kind:       events.KindLockOrphanReaped(),
 			Payload:    lockReapPayload(lh),
 		}, tx); err != nil {
-			log.Warn("tick: append lock_orphan_reaped failed",
+			log.Warn("ORPHANREAPER.LOCKORPHANREAPEDEVENT.APPENDFAILED",
 				"claim_handle_id", lh.ID.String(), "error", err.Error())
 		}
 		return nil

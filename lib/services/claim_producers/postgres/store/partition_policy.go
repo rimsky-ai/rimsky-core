@@ -45,7 +45,7 @@ func validatePartitionPolicy(name string, pp *PartitionPolicy) error {
 			name)
 	}
 	if firstCol := firstSelectColumn(pp.Select); firstCol != "" && !looksLikeIDColumn(firstCol) {
-		slog.Warn("postgres store: partition_policies: first selected column should be the row id and looks atypical",
+		slog.Warn("POSTGRESSTORE.PARTITIONPOLICYCOLUMNS.ATYPICAL", "detail", "the first selected column should be the row id, and this one does not look like one",
 			"policy", name, "first_column", firstCol,
 			"hint", "the first column is used as the partition_key; non-text columns may produce inconsistent wire shapes")
 	}

@@ -26,12 +26,12 @@ The package ships **no generated stubs**. Its two exports are a directory path a
 | `lifecycle.proto` | `LifecycleSubscriber` | 7 | rimsky calls your service |
 | `publisher.proto` | `Publisher` | 4 | rimsky calls your service |
 | `validation.proto` | `Validation` | 1 | rimsky calls your service |
-| `host_agent.proto` | `HostAgent` | 1 | your agent calls rimsky |
+| `host_daemon.proto` | `HostDaemon` | 1 | your daemon calls rimsky |
 | `events.proto` | none | 0 | payload shapes only |
 
 ## How rimsky reaches your service
 
-Declare the service under one of the five peer blocks in `rimsky.yml` — `claim_producers`, `executors`, `publishers`, `validators`, `data_processors` — keyed by the name templates use.
+Declare the service under one of the five service blocks in `rimsky.yml` — `claim_producers`, `executors`, `publishers`, `validators`, `data_processors` — keyed by the name templates use.
 
 ```yaml
 claim_producers:
@@ -48,15 +48,15 @@ executors:
 
 **`endpoint`.** Write `grpc://host:port`, or a bare `host:port`. Rimsky strips the `grpc://` prefix and dials the rest. An `http://`, `https://`, `tcp://`, or `unix://` endpoint stops the process with `endpoint scheme must be grpc:// (got http://)`.
 
-**`protocols`.** The list of protocols this peer serves on that one endpoint. The six accepted tokens are `claim_producer`, `executor`, `publisher`, `validation`, `data_processing`, and `lifecycle_subscriber`; any other token stops the process with `unknown protocol`. One binary may register several protocol handlers on one gRPC server and list them all here. Each block's own protocol is mandatory in its entries' lists — a `claim_producers` entry must list `claim_producer`, an `executors` entry `executor`, and so on — and omitting the key altogether defaults to exactly that one token.
+**`protocols`.** The list of protocols this service serves on that one endpoint. The six accepted tokens are `claim_producer`, `executor`, `publisher`, `validation`, `data_processing`, and `lifecycle_subscriber`; any other token stops the process with `unknown protocol`. One binary may register several protocol handlers on one gRPC server and list them all here. Each block's own protocol is mandatory in its entries' lists — a `claim_producers` entry must list `claim_producer`, an `executors` entry `executor`, and so on — and omitting the key altogether defaults to exactly that one token.
 
-**`tls`.** Either `off` or `required`. Under `required` rimsky dials with TLS verified against its configured roots. The default is `off`, or `required` when the deployment sets `peer_auth: mtls`.
+**`tls`.** Either `off` or `required`. Under `required` rimsky dials with TLS verified against its configured roots. The default is `off`, or `required` when the deployment sets `service_auth: mtls`.
 
-**`peer_auth: mtls`.** The deployment-wide mutual-TLS posture. Under it your service enrolls with the control API by api-key, receives a leaf certificate from the deployment CA, renews it automatically, and serves TLS requiring client certificates. Configure enrollment through `RIMSKY_PEER_AUTH`, `RIMSKY_CONTROL_API_URL`, `RIMSKY_API_KEY`, and `RIMSKY_CONTROL_API_CA`.
+**`service_auth: mtls`.** The deployment-wide mutual-TLS posture. Under it your service enrolls with the control API by api-key, receives a leaf certificate from the deployment CA, renews it automatically, and serves TLS requiring client certificates. Configure enrollment through `RIMSKY_SERVICE_AUTH`, `RIMSKY_CONTROL_API_URL`, `RIMSKY_API_KEY`, and `RIMSKY_CONTROL_API_CA`.
 
 **`observability_endpoint`.** Where rimsky probes the observability sibling. Leave it unset and rimsky probes the primary `endpoint`.
 
-**When rimsky calls each handshake.** Rimsky calls `ClaimProducer.Capabilities` on every `claim_producers` entry as a role process starts, with a 30-second timeout, and stops the process when the call fails or when the advertised `write_semantics_allowed` does not cover what the operator declared. It probes `ExecutorObservability.Capabilities` and `ClaimProducerObservability.Capabilities` at the same point, best-effort: an unreachable peer is recorded as unreachable and startup continues. It calls `Publisher.Capabilities` later, when a template that names the publisher registers.
+**When rimsky calls each handshake.** Rimsky calls `ClaimProducer.Capabilities` on every `claim_producers` entry as a role process starts, with a 30-second timeout, and stops the process when the call fails or when the advertised `write_semantics_allowed` does not cover what the operator declared. It probes `ExecutorObservability.Capabilities` and `ClaimProducerObservability.Capabilities` at the same point, best-effort: an unreachable service is recorded as unreachable and startup continues. It calls `Publisher.Capabilities` later, when a template that names the publisher registers.
 
 ## Executor — `executor.proto`
 
@@ -132,7 +132,7 @@ Set exactly one of `success`, `error`, or `park`. Zero or two settings return HT
 
 A 200 response carries `{"ack_status": ...}`, one of `accepted`, `rejected_run_terminal`, `rejected_run_stale`, `rejected_run_parked`, or `rejected_unknown`; a rejection other than `rejected_unknown` also names `current_node_run_id` when a successor run exists. An unknown ack id returns 404.
 
-The `async_ack_id` is a correlation key, never a credential — rimsky authenticates the return leg by mTLS peer identity under `peer_auth: mtls`, and binds the callback to the principal it dispatched to. The registry survives supervisor restarts, so retry your POST with backoff rather than dropping an outcome after one failure.
+The `async_ack_id` is a correlation key, never a credential — rimsky authenticates the return leg by mTLS service identity under `service_auth: mtls`, and binds the callback to the principal it dispatched to. The registry survives supervisor restarts, so retry your POST with backoff rather than dropping an outcome after one failure.
 
 Two further routes report progress during a long dispatch, and both require the dispatch's `cancel_token` as `Authorization: Bearer <cancel_token>`:
 
@@ -143,7 +143,7 @@ Both return 401 without the token and 404 for an unknown run.
 
 ### The HTTP+JSON bridge
 
-An executor may serve `POST /v1/Execute` over HTTP with a protojson `ExecuteRequest` body and a protojson `Outcome` response, and rimsky will dispatch over it when the peer entry sets `transport: http`. Under `tls: required` the endpoint must be an `https://` URL.
+An executor may serve `POST /v1/Execute` over HTTP with a protojson `ExecuteRequest` body and a protojson `Outcome` response, and rimsky will dispatch over it when the service entry sets `transport: http`. Under `tls: required` the endpoint must be an `https://` URL.
 
 This is the only protocol rimsky itself dispatches over HTTP+JSON. See "Where the shape is not symmetric" below.
 
@@ -157,7 +157,7 @@ Optional. Rimsky probes it at startup and caches the answer.
 
 `TraceEvent` carries `event_id`, `parent_event_id`, `timestamp`, `severity`, `category`, `message`, and `attributes`. `Severity` is `SEVERITY_UNSPECIFIED`, `DEBUG`, `INFO`, `WARN`, or `ERROR`. `CustomUI` carries `ui_url`, `embed_mode` (`EMBED_MODE_UNSPECIFIED`, `LINK`, `IFRAME`, `BOTH`), and `dispatch_url_template`.
 
-Rimsky reads `validation_supported_roles` from this handshake to decide which validation roles an executor peer will answer.
+Rimsky reads `validation_supported_roles` from this handshake to decide which validation roles an executor service will answer.
 
 ## Claim producer — `claim_producer.proto`
 
@@ -199,7 +199,7 @@ Optional, and reuses `Severity` and `CustomUI` from `executor_observability.prot
 
 ## Data processing — `data_processing.proto`
 
-An optional mix-in on a claim producer, for the typed-data version lifecycle. Advertise `data_processing` in `protocols` — in `ClaimProducer.Capabilities` and in the peer's `rimsky.yml` entry. The protocol carries control plane only: data moves substrate-direct through the address `Open` returned.
+An optional mix-in on a claim producer, for the typed-data version lifecycle. Advertise `data_processing` in `protocols` — in `ClaimProducer.Capabilities` and in the service's `rimsky.yml` entry. The protocol carries control plane only: data moves substrate-direct through the address `Open` returned.
 
 - **`Capabilities(google.protobuf.Empty) → DataProcessingCapabilities`** — `data_shapes`, `materializations`, `partition_kinds`, `aggregators`, all repeated strings rimsky does not interpret. Rimsky does not call this RPC; `rimsky conformance data-processing` does.
 - **`BeginCandidate(BeginCandidateRequest) → BeginCandidateResponse`** — open a candidate version for one sub-claim. Carries `claim_handle_id`, `sub_scope_descriptor`, `idempotency_key`; answers opaque `candidate_handle` bytes. **Idempotent on the `(claim_handle_id, idempotency_key)` pair**: a retry returns the existing handle. Rimsky calls this in the same transaction that inserts the sub-claim row, and passes the handle to the leaf executor.
@@ -223,11 +223,11 @@ Seven control-plane callbacks. Every one answers the empty `LifecycleAck`.
 - **`OnInstanceTerminated(OnInstanceTerminatedRequest)`** — `instance_id`, `template_hash`, `terminated_at_unix_ms`.
 - **`OnRunScopeTerminal(OnRunScopeTerminalRequest)`** — `run_scope_id`, `terminal_reason`, `instance_id`.
 
-**Opt in by protocol list.** Add `lifecycle_subscriber` to the `protocols` of a `claim_producers`, `executors`, or `publishers` entry, and rimsky dials the same endpoint for lifecycle. Entries under `validators` and `data_processors` are not consulted for lifecycle. A peer that does not opt in is silently skipped.
+**Opt in by protocol list.** Add `lifecycle_subscriber` to the `protocols` of a `claim_producers`, `executors`, or `publishers` entry, and rimsky dials the same endpoint for lifecycle. Entries under `validators` and `data_processors` are not consulted for lifecycle. A service that does not opt in is silently skipped.
 
-**Delivery is at-least-once and mostly synchronous.** Rimsky guards each delivery with an idempotency ledger and a per-scope advisory lock, so replicas converge on one delivery per peer. Template events, instance-created, and administrative run-scope terminals fire synchronously from the control API; the ordinary run-scope terminal fires synchronously from the scheduler at frame settlement; sub-graph and fan-out-partition terminals fire synchronously from the supervisor. A slow handler holds up the firing process. Instance-terminated is the exception: a poll loop inside the control API fires it asynchronously, so its latency is the poll interval.
+**Delivery is at-least-once and runs after the transition commits.** The transaction that performs a transition stages the delivery as a row in one persisted outbox. The control API stages the template events, instance-created, instance-terminated, and the run-scope terminals of the scopes a termination closes. The scheduler stages the run-scope terminal of a settling frame. The supervisor stages the sub-graph and fan-out-partition terminals. Every runtime role drains the same outbox, and the role that staged a row wakes its own drain as soon as the staging commits, so a delivery does not wait on the drain interval. A per-scope advisory lock serialises the delivery and the row's deletion, so replicas converge on one delivery per service. A failed delivery keeps its row, records the attempt and the error on it, and retries on a widening interval; the interval is the retry path alone. A slow handler holds up that service's stream for that object, not the transition.
 
-**Make your handlers idempotent.** The ledger suppresses replays, but a genuine re-transition — redeploy after undeploy, re-registration after deregistration — legitimately fires the callback again.
+**Make your handlers idempotent.** A crash between your acknowledgement and the row's deletion redelivers the event, and a genuine re-transition — redeploy after undeploy, re-registration after deregistration — legitimately fires the callback again.
 
 The protocol carries the control plane only. Node-run transitions such as a node parking never arrive here; read the event log for those.
 
@@ -267,27 +267,27 @@ One RPC, advertised by any service alongside its primary protocol. Rimsky calls 
 
 `ValidateResponse` carries `valid`, `errors`, and `warnings`, each finding a `ValidationFinding{class, message, path}`. **Registration is decided by `errors`, not by `valid`** — a non-empty `errors` list rejects the template and warnings surface to the operator. The conformance suite does check `valid`, so set it consistently with your findings.
 
-**Rimsky learns which roles you answer from different places per peer class.** A claim producer's roles come from `ClaimProducer.Capabilities.validation_supported_roles`; an executor's from `ExecutorObservability.Capabilities.validation_supported_roles`; a publisher's from `Publisher.Capabilities.validation_supported_roles`. A standalone entry under `validators` has no capability call at all — its roles are its `protocols` list minus `validation`.
+**Rimsky learns which roles you answer from different places per service class.** A claim producer's roles come from `ClaimProducer.Capabilities.validation_supported_roles`; an executor's from `ExecutorObservability.Capabilities.validation_supported_roles`; a publisher's from `Publisher.Capabilities.validation_supported_roles`. A standalone entry under `validators` has no capability call at all — its roles are its `protocols` list minus `validation`.
 
 Rimsky consults executor and claim-producer validators per node, and publisher and lifecycle-subscriber validators per template — every registered subscriber advertising the lifecycle role is consulted template-wide, since a subscriber is never named by the template. An unreachable validator warns by default; the deployment can set `unreachable_validator_policy: strict` to reject instead.
 
-## Host agent — `host_agent.proto`
+## Host daemon — `host_daemon.proto`
 
-The one protocol where your code dials rimsky. The host-agent proxy serves it; the dev-machine agent connects out.
+The one protocol where your code dials rimsky. The host-daemon proxy serves it; the dev-machine daemon connects out.
 
-**`HostAgent.Connect(stream ClientFrame) → stream ServerFrame`** — one bidirectional stream carrying every interaction.
+**`HostDaemon.Connect(stream ClientFrame) → stream ServerFrame`** — one bidirectional stream carrying every interaction.
 
-`ClientFrame` sends one of `Register`, `HostAgentHeartbeat`, `SpawnAck`, `Reaped`, `DispatchFrame`, or `LocalHttpForward`. `ServerFrame` sends one of `RegisterAck`, `HostAgentHeartbeatAck`, `Spawn`, `Reap`, `DispatchFrame`, or `LocalHttpResponse`.
+`ClientFrame` sends one of `Register`, `HostDaemonHeartbeat`, `SpawnAck`, `Reaped`, `DispatchFrame`, or `LocalHttpForward`. `ServerFrame` sends one of `RegisterAck`, `HostDaemonHeartbeatAck`, `Spawn`, `Reap`, `DispatchFrame`, or `LocalHttpResponse`.
 
-- **`Register`** — `api_key` (the api-key plaintext, or the `anonymous` sentinel), `agent_label`, `agent_version`, `local_callback_base_url`, `routing_label`. The proxy verifies the key against the control API and routes by the key id it reports. **`RegisterAck`** answers `proxy_version`, `displaced_prior`, and the `routing_identity` the proxy adopted — persist it and re-present it on reconnect so existing instances keep reaching you.
-- **`Spawn`** — `spawn_id`, `binding`, `cwd`, `run_scope_id`, `expected_protocols`, `ready_timeout_seconds`. `Binding` carries `path`, `args`, `env`, `cwd`, `ready_timeout_seconds`. The agent picks a free local port, sets `RIMSKY_AGENT_PORT` in the child's environment, and polls it until the child's gRPC server answers. **A spawned binary must read `RIMSKY_AGENT_PORT` and bind there** — there is no port handshake back, and a binary that binds elsewhere fails the readiness poll.
+- **`Register`** — `api_key` (the api-key plaintext, or the `anonymous` sentinel), `daemon_label`, `daemon_version`, `local_callback_base_url`, `routing_label`. The proxy verifies the key against the control API and routes by the key id it reports. **`RegisterAck`** answers `proxy_version`, `displaced_prior`, and the `routing_identity` the proxy adopted — persist it and re-present it on reconnect so existing instances keep reaching you.
+- **`Spawn`** — `spawn_id`, `binding`, `cwd`, `run_scope_id`, `expected_protocols`, `ready_timeout_seconds`. `Binding` carries `path`, `args`, `env`, `cwd`, `ready_timeout_seconds`. The daemon picks a free local port, sets `RIMSKY_DAEMON_PORT` in the child's environment, and polls it until the child's gRPC server answers. **A spawned binary must read `RIMSKY_DAEMON_PORT` and bind there** — there is no port handshake back, and a binary that binds elsewhere fails the readiness poll.
 - **`SpawnAck`** — `spawn_id`, `status` (`SPAWN_STATUS_UNSPECIFIED`, `SPAWN_STATUS_READY`, `SPAWN_STATUS_FAILED`), the child's `capabilities` map, and `error`.
 - **`Reap`** / **`Reaped`** — `spawn_id` plus `sigterm_grace_seconds`, answered with `spawn_id`, `clean`, `error`. Closing the stream reaps every live child.
 - **`DispatchFrame`** — `spawn_id`, `protocol`, `payload`, `stream_id`, `kind` (`DISPATCH_FRAME_KIND_DATA`, `_HALF_CLOSE`, `_CANCEL`), `claim_producer_verb` (`CLAIM_PRODUCER_VERB_OPEN`, `_COMMIT`, `_ABANDON`, `_RELEASE`), and `rpc_method`.
 - **`LocalHttpForward`** / **`LocalHttpResponse`** — relay a child's local HTTP callback: `forward_id`, `method`, `url`, `body`, `headers`, `spawn_id`, answered with `forward_id`, `status`, `body`, `headers`.
-- **`HostAgentError`** — `class` and `message`, carried by `SpawnAck` and `Reaped`.
+- **`HostDaemonError`** — `class` and `message`, carried by `SpawnAck` and `Reaped`.
 
-The agent authenticates by api-key over TLS against the proxy's pinned deployment-CA root, not by mTLS enrollment. The agent-to-child loopback runs its own always-on mutual TLS from a local CA the agent generates itself, separate from the deployment CA.
+The daemon authenticates by api-key over TLS against the proxy's pinned deployment-CA root, not by mTLS enrollment. The daemon-to-child loopback runs its own always-on mutual TLS from a local CA the daemon generates itself, separate from the deployment CA.
 
 ## Event payloads — `events.proto`
 
@@ -301,7 +301,7 @@ Fields whose shape belongs to someone else — an executor's error payload, a te
 
 ## Prove your implementation
 
-`rimsky conformance` runs a suite against a live endpoint. It offers eight subcommands: `executor`, `claim-producer`, `publisher`, `validation`, `data-processing`, `lifecycle-subscriber`, `blob-backend`, and `probe`. Exit 0 means every check passed, 1 means a check failed, 2 means the invocation was wrong.
+`rimsky conformance` runs a suite against a live endpoint. It offers seven subcommands: `executor`, `claim-producer`, `publisher`, `validation`, `data-processing`, `lifecycle-subscriber`, and `probe`. Exit 0 means every check passed, 1 means a check failed, 2 means the invocation was wrong.
 
 ```
 rimsky conformance executor --endpoint grpc://localhost:9091 --check-observability
@@ -322,10 +322,10 @@ The conformance kit ships in the `rimsky` binary and as the `rimsky-conformance`
 
 Four assumptions the protocol set invites, and what it actually does.
 
-**Not every service has `Capabilities`.** Five of the nine services declare it — `ClaimProducer`, `ClaimProducerObservability`, `DataProcessing`, `ExecutorObservability`, and `Publisher`. Four do not: `Executor`, `Validation`, `LifecycleSubscriber`, and `HostAgent`. A client that opens every connection with a `Capabilities` handshake gets `Unimplemented` — "unknown method Capabilities for service …" — against those four. An executor advertises through `ExecutorObservability.Capabilities` instead; a lifecycle subscriber and a host agent advertise nothing.
+**Not every service has `Capabilities`.** Five of the nine services declare it — `ClaimProducer`, `ClaimProducerObservability`, `DataProcessing`, `ExecutorObservability`, and `Publisher`. Four do not: `Executor`, `Validation`, `LifecycleSubscriber`, and `HostDaemon`. A client that opens every connection with a `Capabilities` handshake gets `Unimplemented` — "unknown method Capabilities for service …" — against those four. An executor advertises through `ExecutorObservability.Capabilities` instead; a lifecycle subscriber and a host daemon advertise nothing.
 
 **Only two protocols have an observability sibling.** The shipped set declares `ExecutorObservability` and `ClaimProducerObservability` and nothing else. There is no `PublisherObservability`, `LifecycleSubscriberObservability`, `ValidationObservability`, or `DataProcessingObservability`. An `observability_endpoint` on a publisher, validator, or data-processor entry parses and the stack starts healthy, but nothing reads it: the observability read routes exist for executors and claim producers only, and a publisher never appears in the system summary.
 
-**The `transport` selector is executor-only.** Rimsky dispatches over HTTP+JSON to executors that set `transport: http`, and the conformance kit drives claim producers over their bridge with `--transport http`. Everything else is gRPC. `rimsky conformance` answers `--transport "http" not supported; use grpc` for `executor`, `validation`, `data-processing`, `lifecycle-subscriber`, and `publisher`. A claim-producer entry pointing at an HTTP bridge stops the stack; an `observability_endpoint` pointing at an executor's HTTP bridge fails the gRPC dial with `http2: frame too large`, after which the executor's attribute schema never becomes visible and template registration fails. If you plan to implement `Validation`, `DataProcessing`, `Publisher`, `LifecycleSubscriber`, or `HostAgent` over HTTP+JSON, there is no path.
+**The `transport` selector is executor-only.** Rimsky dispatches over HTTP+JSON to executors that set `transport: http`, and the conformance kit drives claim producers over their bridge with `--transport http`. Everything else is gRPC. `rimsky conformance` answers `--transport "http" not supported; use grpc` for `executor`, `validation`, `data-processing`, `lifecycle-subscriber`, and `publisher`. A claim-producer entry pointing at an HTTP bridge stops the stack; an `observability_endpoint` pointing at an executor's HTTP bridge fails the gRPC dial with `http2: frame too large`, after which the executor's attribute schema never becomes visible and template registration fails. If you plan to implement `Validation`, `DataProcessing`, `Publisher`, `LifecycleSubscriber`, or `HostDaemon` over HTTP+JSON, there is no path.
 
-**The conformance kit does not cover the host-agent protocol.** `rimsky conformance host-agent` prints `unknown subcommand "host-agent"` and exits 2, as do `hostagent`, `host_agent`, and `agent`. Nothing in the kit proves a `HostAgent` implementation. The two observability protocols are covered, but not as subcommands — `--check-observability` on the executor and claim-producer suites runs them.
+**The conformance kit does not cover the host-daemon protocol.** `rimsky conformance host-daemon` prints `unknown subcommand "host-daemon"` and exits 2, as do `hostdaemon`, `host_daemon`, and `daemon`. Nothing in the kit proves a `HostDaemon` implementation. The two observability protocols are covered, but not as subcommands — `--check-observability` on the executor and claim-producer suites runs them.

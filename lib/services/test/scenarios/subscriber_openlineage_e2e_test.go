@@ -262,7 +262,7 @@ func startOpenLineageSubscriber(
 		testcontainers.WithEnv(env),
 		testcontainers.WithHostPortAccess(hostAccessPort),
 		testcontainers.WithWaitStrategy(
-			wait.ForLog("openlineage.starting").WithStartupTimeout(60 * time.Second),
+			wait.ForLog("OPENLINEAGE.PROCESS.STARTING").WithStartupTimeout(60 * time.Second),
 		),
 	}
 	c, err := harness.Run(ctx, harness.ImageRef(openLineageSubscriberImage), opts...)
@@ -270,6 +270,7 @@ func startOpenLineageSubscriber(
 		t.Fatalf("harness: start openlineage subscriber container: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)
@@ -422,10 +423,10 @@ func deployOLTemplate(t *testing.T, ep harness.RimskyEndpoint, name string) stri
 func createOLInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
-		"template":     templateID,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-		"target_agent": "scenario-default-agent",
+		"template":      templateID,
+		"instance_key":  instanceKey,
+		"params":        map[string]any{},
+		"target_daemon": "scenario-default-daemon",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST /v1/instances: %d %s", status, string(raw))

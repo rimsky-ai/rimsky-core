@@ -14,8 +14,9 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostdaemon"
 )
 
 func RunTemplateRun(ctx context.Context, args []string) int {
@@ -86,7 +87,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		fmt.Fprintln(os.Stderr, "rimsky run: ensure run dir:", err)
 		return 2
 	}
-	logger.Info("run dir", "path", runDir)
+	logger.Info("COMPOSE.RUNDIR.CREATED", "path", runDir)
 
 	// @decision: late-bound-services-direct-spawn
 	services, spawnOverlay, err := spawnServices(bootCtx, rf.Services, logger)
@@ -106,7 +107,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		return 2
 	}
 
-	controlAPIPort, err := hostagent.FreeLocalPort()
+	controlAPIPort, err := hostdaemon.FreeLocalPort()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: allocate control-api port:", err)
 		reapSpawnedFatal(services, logger)
@@ -136,7 +137,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		Logger:   logger,
 	}
 
-	if err := WaitForControlAPIReady(bootCtx, stack.Endpoint(), 10*time.Second); err != nil {
+	if err := WaitForControlAPIReady(bootCtx, shared.SystemClock{}, stack.Endpoint(), 10*time.Second); err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky run: control-api not ready:", err)
 		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
@@ -167,7 +168,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		return coord.Drain(context.Background(), ReasonAnyFailure)
 	}
 
-	body := cli.CreateInstanceRequest{Template: hash, Params: rf.Params, TargetAgent: cli.ResolveTargetAgent("", "")}
+	body := cli.CreateInstanceRequest{Template: hash, Params: rf.Params, TargetDaemon: cli.ResolveTargetDaemon("", "")}
 	if rf.Key != "" {
 		key := rf.Key
 		body.InstanceKey = &key
@@ -191,7 +192,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 	}
 
 	if err := UpdateLatestSymlink(root, runDir); err != nil {
-		logger.Warn("rimsky run: update latest symlink", "err", err.Error())
+		logger.Warn("COMPOSE.LATESTSYMLINK.UPDATEFAILED", "err", err.Error())
 	}
 
 	printer := newProgressPrinter(os.Stderr, false, false, common.Format == cli.FormatJSON)

@@ -49,7 +49,7 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 			return err
 		}
 		_ = seedMainRunScopeForInstance(ctx, t, store, id, tx)
-		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID:           id,
 			TemplateHash: tmpl,
 			InstanceKey:  &key,
@@ -69,81 +69,6 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 	}
 	if got == nil || got.ID != id {
 		t.Fatalf("FindAnyByInstanceKey = %+v, want id=%s", got, id)
-	}
-}
-
-func testLifecycleIdempotencyListByClaimProducer(t *testing.T, d persistence.Database) {
-	ctx := context.Background()
-	store := d.Tables()
-
-	var rows []persistence.LifecycleIdempotencyRow
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.LifecycleIdempotency().ListByClaimProducer(ctx, "no-claim-producer", tx)
-		rows = r
-		return err
-	}); err != nil {
-		t.Fatalf("ListByClaimProducer empty: %v", err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("ListByClaimProducer empty returned %d rows", len(rows))
-	}
-
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			ClaimProducerName: "claim-producer-a",
-			ScopeKind:         persistence.LifecycleIdempotencyScopeTemplate,
-			ScopeID:           "tpl-1",
-			State:             persistence.LifecycleIdempotencyStateRegistered,
-		}, tx)
-	}); err != nil {
-		t.Fatalf("upsert tpl: %v", err)
-	}
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			ClaimProducerName: "claim-producer-a",
-			ScopeKind:         persistence.LifecycleIdempotencyScopeInstance,
-			ScopeID:           uuid.New().String(),
-			State:             persistence.LifecycleIdempotencyStateCreated,
-		}, tx)
-	}); err != nil {
-		t.Fatalf("upsert inst: %v", err)
-	}
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.LifecycleIdempotency().ListByClaimProducer(ctx, "claim-producer-a", tx)
-		rows = r
-		return err
-	}); err != nil {
-		t.Fatalf("ListByClaimProducer: %v", err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("ListByClaimProducer = %d rows, want 2", len(rows))
-	}
-
-	explicitLastEventAt := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-			ClaimProducerName: "store-b",
-			ScopeKind:         persistence.LifecycleIdempotencyScopeTemplate,
-			ScopeID:           "tpl-explicit-last-event",
-			State:             persistence.LifecycleIdempotencyStateRegistered,
-			LastEventAt:       explicitLastEventAt,
-		}, tx)
-	}); err != nil {
-		t.Fatalf("upsert with explicit LastEventAt: %v", err)
-	}
-	var got *persistence.LifecycleIdempotencyRow
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.LifecycleIdempotency().Get(ctx, "store-b", persistence.LifecycleIdempotencyScopeTemplate, "tpl-explicit-last-event", tx)
-		got = r
-		return err
-	}); err != nil {
-		t.Fatalf("get after explicit-LastEventAt upsert: %v", err)
-	}
-	if got == nil {
-		t.Fatalf("get after explicit-LastEventAt upsert: row not found")
-	}
-	if !got.LastEventAt.Equal(explicitLastEventAt) {
-		t.Fatalf("Upsert did not honor caller-supplied LastEventAt: got %v, want %v", got.LastEventAt, explicitLastEventAt)
 	}
 }
 

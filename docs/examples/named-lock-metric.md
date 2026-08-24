@@ -37,7 +37,7 @@ named_locks:
 executors:
   "third-party":
     transport: grpc
-    endpoint: "peer:9400"
+    endpoint: "service:9400"
     protocols: ["executor"]
 ```
 

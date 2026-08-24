@@ -83,7 +83,7 @@ curl -sS -X POST "$BASE/v1/templates/$TEMPLATE_ID/deploy" \
 
 curl -sS -X POST "$BASE/v1/instances" \
   -H 'content-type: application/json' \
-  -d '{"template":"'"$TEMPLATE_ID"'","instance_key":"gating-demo","target_agent":"my-agent"}'
+  -d '{"template":"'"$TEMPLATE_ID"'","instance_key":"gating-demo","target_daemon":"my-daemon"}'
 ```
 
 Install a pause-mode breakpoint on `slow_root` before it dispatches, so that

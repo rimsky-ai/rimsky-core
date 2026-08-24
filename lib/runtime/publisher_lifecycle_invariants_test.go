@@ -110,7 +110,7 @@ func seedPublisherSubscription(
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instanceID, TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err
@@ -271,8 +271,8 @@ func TestStopPublisherSubscriptionsForInstance_MountingSubscriptionStopsEvenWhen
 	row := getPublisherSubscriptionRow(t, tables, subID)
 	if row == nil || row.State != persistence.PublisherSubscriptionStateStopped {
 		t.Fatalf("row after stop with failing RPC = %+v, want state=stopped "+
-			"(a mounting subscription must still be marked stopped even when the peer Unsubscribe RPC fails, "+
-			"since the peer may never have completed its own Subscribe)", row)
+			"(a mounting subscription must still be marked stopped even when the service Unsubscribe RPC fails, "+
+			"since the service may never have completed its own Subscribe)", row)
 	}
 }
 

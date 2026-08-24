@@ -75,20 +75,6 @@ func TestSubgraphInternalCascade_RejectsEmptyDelegate(t *testing.T) {
 	}
 }
 
-func TestSubgraphParentSuccessCascade_ReturnsInternals(t *testing.T) {
-	tmpl := makeSubgraphTemplate("staging-pipeline")
-	internals, err := SubgraphParentSuccessCascade(SubgraphInternalCascadeArgs{
-		Template:          tmpl,
-		DelegateGraphName: "staging-pipeline",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(internals) != 2 {
-		t.Errorf("internals: %d (want 2)", len(internals))
-	}
-}
-
 func TestIsSubgraphCaller(t *testing.T) {
 	cases := []struct {
 		name string

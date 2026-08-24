@@ -22,7 +22,7 @@ Nine gRPC services live in ten `.proto` files, all in the protobuf package `rims
 | [Publisher](publisher.md) | `Publisher` | Rimsky calls you to start and stop watches; you push messages back |
 | [Lifecycle subscriber](lifecycle-subscriber.md) | `LifecycleSubscriber` | Rimsky calls you when templates and instances change |
 | [Validation](validation.md) | `Validation` | Rimsky calls you at template registration |
-| [Host agent](host-agent.md) | `HostAgent` | You dial rimsky's proxy and hold the stream open |
+| [Host daemon](host-daemon.md) | `HostDaemon` | You dial rimsky's proxy and hold the stream open |
 
 An observability protocol is a sibling of its primary protocol, served by the same process on the same endpoint. Its guide is the primary protocol's guide.
 
@@ -39,4 +39,4 @@ An observability protocol is a sibling of its primary protocol, served by the sa
 - Wake instances from outside events — a schedule, a poll, a webhook: **Publisher**.
 - React to templates being registered or instances being created: **Lifecycle subscriber**.
 - Reject bad templates at registration rather than at dispatch: **Validation**, as a mix-in on any of the above.
-- Run work on a developer's own machine: **Host agent**.
+- Run work on a developer's own machine: **Host daemon**.

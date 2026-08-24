@@ -110,8 +110,8 @@ func TestObservabilityHandlers_NeverMutateState(t *testing.T) {
 		Queue:          d.Queue(),
 		Driver:         d,
 		Discovery:      disc,
-		ClaimProducers: []observability.PeerSpec{{Name: producer, Endpoint: "store:9000"}},
-		Executors:      []observability.PeerSpec{{Name: "worker", Endpoint: "exec:9000"}},
+		ClaimProducers: []observability.ServiceSpec{{Name: producer, Endpoint: "store:9000"}},
+		Executors:      []observability.ServiceSpec{{Name: "worker", Endpoint: "exec:9000"}},
 	}
 	r := newRouter(t, deps)
 	rawDB, ok := sqlitedriver.DBFromDatabaseForTest(d)

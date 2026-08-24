@@ -72,7 +72,7 @@ func ReleaseCommittedDurableClaims(
 				Err: fmt.Errorf("enqueue release: %w", err),
 			})
 			if log != nil {
-				log.Warn("ReleaseCommittedDurableClaims: enqueue release failed; row preserved for retry",
+				log.Warn("INSTANCE.DURABLECLAIMRELEASE.ENQUEUEFAILED", "site", "ReleaseCommittedDurableClaims", "detail", "the row is preserved for retry",
 					"claim_handle_id", r.ID.String(), "producer", producerName, "err", err.Error())
 			}
 			continue

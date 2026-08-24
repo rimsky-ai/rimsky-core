@@ -17,11 +17,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -218,7 +218,7 @@ func SettleFromDelegate(
 		return nil, fmt.Errorf("SettleFromDelegate: parent run %s not found", parentNodeRunID)
 	}
 	if args.Logger != nil {
-		args.Logger.Info("subgraph: carry exit writeback to parent run",
+		args.Logger.Info("SUBGRAPH.EXITWRITEBACK.CARRIED",
 			"exit_run_id", in.ExitNodeRunID.String(),
 			"parent_run_id", parentNodeRunID.String(),
 			"parent_node_id", parent.NodeID.String(),
@@ -238,25 +238,13 @@ func SettleFromDelegate(
 	if err := scopes.Close(ctx, exit.RunScopeID, tx); err != nil {
 		return nil, fmt.Errorf("SettleFromDelegate: close sub-graph run scope %s: %w", exit.RunScopeID, err)
 	}
-	var fanoutPC postCommitFn
-	if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
-		inst, err := instTbl.Get(ctx, exitScope.InstanceID, tx)
-		if err != nil && args.Logger != nil {
-			args.Logger.Warn("SettleFromDelegate: instance lookup failed; subgraph_exit fan-out skipped",
-				"instance_id", exitScope.InstanceID.String(), "error", err.Error())
-		}
-		if err == nil && inst != nil {
-			tpl, err := tplTbl.GetByHash(ctx, inst.TemplateHash, tx)
-			if err != nil && args.Logger != nil {
-				args.Logger.Warn("SettleFromDelegate: template lookup failed; subgraph_exit fan-out skipped",
-					"template_hash", inst.TemplateHash, "error", err.Error())
-			}
-			if err == nil && tpl != nil {
-				fanoutPC = fanOutRunScopeEventPostCommit(args, tpl.Spec, exit.RunScopeID,
-					exitScope.InstanceID, "subgraph_exit")
-			}
-		}
+	// @concept: run-scope
+	// @decision: lifecycle-fanout-after-commit
+	if err := lifecycle.StageRunScopeTerminal(ctx, args.Persist, exitScope.InstanceID, exit.RunScopeID,
+		"subgraph_exit", args.LateBindServiceProxies, tx); err != nil {
+		return nil, fmt.Errorf("SettleFromDelegate: stage run-scope terminal for %s: %w", exit.RunScopeID, err)
 	}
+	fanoutPC := kickLifecycleDrainPostCommit(args)
 	// @concept: claim-handle
 	// @concept: claim-tree
 	callerClaimsPC, err := resolveDelegateCallerClaimsInTx(ctx, args, *parent, in.InstanceID, OutcomeCommit, tx)
@@ -306,13 +294,12 @@ func SettleFromDelegate(
 	return chainPostCommit(callerClaimsPC, fanoutPC), nil
 }
 
-func fanOutRunScopeEventPostCommit(
-	args RunArgs, tplSpec node.TemplateSpec, runScopeID, instanceID shared.UUID, terminalReason string,
-) postCommitFn {
-	return func(ctx context.Context) {
-		FanOutRunScopeEvent(ctx, args.Persist, args.AdvisoryLocker, args.LifecycleSubs,
-			args.LifecyclePeersForSpec, tplSpec, runScopeID, instanceID, terminalReason, args.Logger)
+// @decision: lifecycle-drain-per-role
+func kickLifecycleDrainPostCommit(args RunArgs) postCommitFn {
+	if args.LifecycleKick == nil {
+		return nil
 	}
+	return func(context.Context) { args.LifecycleKick() }
 }
 
 // @concept: claim-handle
@@ -469,24 +456,14 @@ func SettleFromFanoutChild(
 			if err := scopes.Close(ctx, childRun.RunScopeID, tx); err != nil {
 				return nil, fmt.Errorf("SettleFromFanoutChild: close partition scope %s: %w", childRun.RunScopeID, err)
 			}
-			if instTbl, tplTbl := args.Persist.Instances(), args.Persist.Templates(); instTbl != nil && tplTbl != nil {
-				inst, err := instTbl.Get(ctx, childScope.InstanceID, tx)
-				if err != nil && args.Logger != nil {
-					args.Logger.Warn("SettleFromFanoutChild: instance lookup failed; fanout_partition_terminal fan-out skipped",
-						"instance_id", childScope.InstanceID.String(), "error", err.Error())
-				}
-				if err == nil && inst != nil {
-					tpl, err := tplTbl.GetByHash(ctx, inst.TemplateHash, tx)
-					if err != nil && args.Logger != nil {
-						args.Logger.Warn("SettleFromFanoutChild: template lookup failed; fanout_partition_terminal fan-out skipped",
-							"template_hash", inst.TemplateHash, "error", err.Error())
-					}
-					if err == nil && tpl != nil {
-						post = chainPostCommit(post, fanOutRunScopeEventPostCommit(args, tpl.Spec,
-							childRun.RunScopeID, childScope.InstanceID, "fanout_partition_terminal"))
-					}
-				}
+			// @concept: run-scope
+			// @decision: lifecycle-fanout-after-commit
+			if err := lifecycle.StageRunScopeTerminal(ctx, args.Persist, childScope.InstanceID, childRun.RunScopeID,
+				"fanout_partition_terminal", args.LateBindServiceProxies, tx); err != nil {
+				return nil, fmt.Errorf("SettleFromFanoutChild: stage run-scope terminal for partition scope %s: %w",
+					childRun.RunScopeID, err)
 			}
+			post = chainPostCommit(post, kickLifecycleDrainPostCommit(args))
 		}
 	}
 	outcome := aggregateParentOutcome(parent, in.ChildOutcome)

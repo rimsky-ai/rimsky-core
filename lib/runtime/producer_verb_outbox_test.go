@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 )
 
 func openSQLiteForOutbox(t *testing.T) persistence.Database {
@@ -63,11 +63,19 @@ func newOutboxDispatcher(
 	t *testing.T, tables persistence.Tables, fake *storetest.Fake, clock shared.Clock,
 ) *ProducerVerbDispatcher {
 	t.Helper()
+	return newOutboxDispatcherWithStallAfter(t, tables, fake, clock, DefaultServiceDeliveryStallAfter)
+}
+
+// @decision: service-delivery-stall-signal
+func newOutboxDispatcherWithStallAfter(
+	t *testing.T, tables persistence.Tables, fake *storetest.Fake, clock shared.Clock, stallAfter time.Duration,
+) *ProducerVerbDispatcher {
+	t.Helper()
 	reg := locks.NewRegistry()
 	reg.Add(fake.Name(), fake)
 	return NewProducerVerbDispatcher(
 		outboxOfTables(t, tables), tables,
-		reg, clock, shared.SilentLogger{})
+		reg, clock, shared.SilentLogger{}, stallAfter)
 }
 
 func TestProducerVerbOutbox_EnqueueIsIdempotentPerClaimAndVerb(t *testing.T) {
@@ -230,17 +238,15 @@ func TestProducerVerbDispatcher_RunDeliversOnKickWithoutClockAdvance(t *testing.
 	claimID := shared.UUID(uuid.New())
 	enqueueOutboxVerb(ctx, t, outbox, claimID, "store-a", persistence.ProducerVerbCommit, []byte(`"s"`), start)
 	disp.Kick()
-	for {
-		rows, err := outbox.ListAll(context.Background(), nil)
-		require.NoError(t, err)
-		if len(rows) == 0 {
-			break
-		}
-		runtime.Gosched()
-	}
+	awaited.Until(t, "the kicked dispatcher to deliver the commit verb to the store", func() bool {
+		return callCountFor(fake, claimID, "commit") == 1
+	})
+
 	cancel()
 	<-done
-	require.Equal(t, 1, callCountFor(fake, claimID, "commit"))
+	rows, err := outbox.ListAll(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, rows, "a delivered verb leaves no row behind")
 }
 
 func TestProducerVerbBackoffDoublesToCap(t *testing.T) {

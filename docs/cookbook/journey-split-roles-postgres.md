@@ -37,25 +37,22 @@ retention:
 dispatch_defaults:
   sync_rpc_deadline: 60s
   max_runtime: 30m
-```
-
-```yaml
-# supervisor-config.yml
-concurrency: 16
-claim_poll_interval_ms: 200
-callback:
-  host: 0.0.0.0
-  port: 9100
-  advertise_host: supervisor
+supervisor:
+  concurrency: 16
+  claim_poll_interval_ms: 200
+  callback:
+    host: 0.0.0.0
+    port: 8081
+    advertise_host: supervisor
 ```
 
 `${DB_PASSWORD}` expands from the container's environment when the file loads. An unset reference is a hard error naming the variable, not an empty string.
 
-**`callback.advertise_host` is the setting that most often stops a split deployment.** The supervisor binds the callback listener on `0.0.0.0`, which is not an address an executor can dial back on, so an unset advertise host over a wildcard bind is refused at startup rather than stamped into callback URLs. Set it to a hostname the executor containers can reach the supervisor at — here, the supervisor's own service name.
+**`supervisor.callback.advertise_host` is the setting that most often stops a split deployment.** The supervisor binds the callback listener on `0.0.0.0`, which is not an address an executor can dial back on, so an unset advertise host over a wildcard bind is refused at startup rather than stamped into callback URLs. Set it to a hostname the executor containers can reach the supervisor at — here, the supervisor's own service name.
 
 ## 2. Start the three roles
 
-Mount both files into every role container. The image reads `/etc/rimsky/rimsky.yml` and `/etc/rimsky/supervisor-config.yml` by default.
+Mount the file into every role container. The image reads `/etc/rimsky/rimsky.yml` by default.
 
 ```
 docker run -d --name rimsky-control-api --network rimsky \
@@ -63,7 +60,6 @@ docker run -d --name rimsky-control-api --network rimsky \
   -e RIMSKY_CONTROL_API_HOST=0.0.0.0 \
   -e DB_PASSWORD=... \
   -v ./rimsky.yml:/etc/rimsky/rimsky.yml:ro \
-  -v ./supervisor-config.yml:/etc/rimsky/supervisor-config.yml:ro \
   rimskyai/rimsky rimsky-control-api
 
 docker run -d --name rimsky-scheduler  --network rimsky ... rimskyai/rimsky rimsky-scheduler
@@ -109,7 +105,7 @@ docker run -d --name producer-files --network rimsky \
 
 An executor endpoint under `transport: grpc` is `host:port`. A claim-producer endpoint may carry a `grpc://` prefix and nothing else — `http://`, `https://`, `tcp://`, and `unix://` are rejected. Pointing a producer's configured endpoint at its own HTTP bridge port stops the stack.
 
-**Three default ports collide when the whole bundle shares one network namespace.** The filesystem producer's gRPC default, 9100, is the port the supervisor's callback listener already holds; the host-agent proxy's 9090 is the Claude executor's gRPC port. Give the producer its own `grpc_port` and `http_port`, or move the proxy with `RIMSKY_PROXY_GRPC_PORT`. The other nine services share a namespace at their defaults without complaint.
+**No two shipped default ports collide.** Core listeners take 8080 through 8099 and the bundled services take 9000 through 9199, so the whole bundle shares one network namespace at its defaults.
 
 ## 5. Close the deployment
 
@@ -128,11 +124,11 @@ A grant action accepts `*`, `<noun>:*`, and `*:<verb>` and nothing else — `ins
 
 Roles live in the CLI, not the server: `--role operator` expands into its grant before the CLI contacts the deployment, and no route lists roles.
 
-## 6. Turn on peer authentication (optional)
+## 6. Turn on service authentication (optional)
 
-Set `peer_auth: mtls` in `rimsky.yml`. A per-deployment certificate authority issues short-lived leaf certificates, every standing service enrols, and both peers of every internal leg present and verify certificates. It also flips the default `tls` mode on every service entry from `off` to `required`, and it requires `RIMSKY_CA_ENCRYPTION_KEY` to hold a standard-base64 32-byte key; a missing or malformed key fails startup.
+Set `service_auth: mtls` in `rimsky.yml`. A per-deployment certificate authority issues short-lived leaf certificates, every standing service enrols, and both services of every internal leg present and verify certificates. It also flips the default `tls` mode on every service entry from `off` to `required`, and it requires `RIMSKY_CA_ENCRYPTION_KEY` to hold a standard-base64 32-byte key; a missing or malformed key fails startup.
 
-Under `peer_auth: none`, internal dials are plaintext against a trusted-subnet assumption.
+Under `service_auth: none`, internal dials are plaintext against a trusted-subnet assumption.
 
 ## 7. Watch it
 
@@ -148,13 +144,9 @@ For liveness, the control API answers `GET /v1/health` and the supervisor's call
 
 **SQLite is not an option across roles.** Outside the single-process form, every role process and every replica must share one local, non-network database file, and nothing inside a process can detect a deployment that fails to provide one. A SQLite deployment also warns at every boot that the driver is for local development.
 
-**The `memory` blob backend is illegal here.** It requires the single-process mode, where all three roles share one in-process map. A single-role container refuses it at startup, naming the mode it requires. `pg-largeobject` requires the Postgres driver, and stops a SQLite deployment at boot.
+**Retry policy has no deployment-wide form.** `dispatch_defaults` takes exactly three keys: `sync_rpc_deadline`, `max_quiet_period`, and `max_runtime`. Adding `max_retries` or any `retry_backoff` subkey there fails the migrate step with `field max_retries not found`, and the entrypoint reports `ENTRYPOINT.MIGRATE.FAILED`.
 
-**Switching `persistence.blob.backend` takes previously spilled values offline.** Each spilled row records the backend that holds its value and refuses to read across a switch, failing with HTTP 500 naming both backends. The bytes survive — configuring the original backend again makes the value whole — but nothing migrates them.
-
-**Retry policy has no deployment-wide form.** `dispatch_defaults` takes exactly three keys: `sync_rpc_deadline`, `max_quiet_period`, and `max_runtime`. Adding `max_retries` or any `retry_backoff` subkey there fails the migrate step with `field max_retries not found`, and the entrypoint reports `migrate failed`.
-
-**No bundled service exposes metrics or honors the log level.** The metrics variables and `RIMSKY_LOG_LEVEL` reach the three core roles and the host-agent proxy. All eleven bundled service images ignore both: none opens a metrics port, and all log at info. Dashboards cover the core and nothing else.
+**No bundled service exposes metrics or honors the log level.** The metrics variables and `RIMSKY_LOG_LEVEL` reach the three core roles and the host-daemon proxy. All eleven bundled service images ignore both: none opens a metrics port, and all log at info. Dashboards cover the core and nothing else.
 
 **One HTTP liveness path is not enough.** Three listeners in the shipped set answer an HTTP health route — the control API, the supervisor's callback listener, and the webhook sensor's ingress. One probe specification applied to every rimsky container fails on most of them.
 
@@ -167,9 +159,9 @@ For liveness, the control API answers `GET /v1/health` and the supervisor's call
 - `docs/examples/rimsky-deployment-bootstrap.md` — role selection and migration ownership
 - `docs/examples/single-process-all-in-one.md` — the posture this journey splits apart
 - `docs/examples/service-enrollment.md` — how a standing service joins the deployment
-- `docs/examples/peer-auth-mtls-mutual.md` — both peers presenting and verifying certificates
-- `docs/examples/peer-tls-enforced.md` — what a `required` TLS posture refuses
-- `docs/examples/permissive-peer-build.md` — the plaintext posture, and what it assumes
+- `docs/examples/service-auth-mtls-mutual.md` — both services presenting and verifying certificates
+- `docs/examples/service-tls-enforced.md` — what a `required` TLS posture refuses
+- `docs/examples/permissive-service-build.md` — the plaintext posture, and what it assumes
 - `docs/examples/api-key-management.md` — minting and scoping keys
 - `docs/examples/grant-scope-enforcement.md` — what a scoped key can and cannot reach
 - `docs/examples/anonymous-mode-bootstrap.md` — the state this deployment leaves at `auth init`

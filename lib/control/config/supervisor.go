@@ -13,10 +13,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 // @concept: rimsky-yml
@@ -58,15 +57,12 @@ type SupervisorConfig struct {
 	CallbackAdvertiseHost  string
 	CallbackAdvertisePort  int
 
-	Blob               persistence.BlobBackend
-	BlobSpillThreshold int
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	Metrics                     runtime.MetricsHook
 
-	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
-
-	LifecycleSubs *lifecycle.Registry
+	// @decision: lifecycle-drain-per-role
+	SharedLifecycleDrain *runtime.LifecycleReconciler
 
 	Executors ExecutorsConfig
 
@@ -79,7 +75,10 @@ type SupervisorConfig struct {
 
 	Bundled *BundledRegistrations
 
-	PeerAuth string
+	ServiceAuth string
+
+	// @decision: service-delivery-stall-signal
+	ServiceDeliveryStallAfter time.Duration
 }
 
 type SupervisorHandle interface {
@@ -105,12 +104,12 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	}
 
 	var (
-		serverIdentity *peer.IdentityHolder
+		serverIdentity *service.IdentityHolder
 		clientCAs      *x509.CertPool
 		stopIdentity   = func() {}
 	)
-	if cfg.PeerAuth == peer.PeerAuthMTLS {
-		holder, ca, cancel, err := installPeerIdentity(context.Background(), persistStore, cfg.SupervisorID, cfg.Clock, cfg.Logger)
+	if cfg.ServiceAuth == service.ServiceAuthMTLS {
+		holder, ca, cancel, err := installServiceIdentity(context.Background(), persistStore, cfg.SupervisorID, cfg.Clock, cfg.Logger)
 		if err != nil {
 			return nil, fmt.Errorf("StartSupervisor: %w", err)
 		}
@@ -127,7 +126,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 			logger = shared.SilentLogger{}
 		}
 		mergeBundledClaimProducers(registry, cfg.Bundled.ClaimProducerClients(), func(name string) {
-			logger.Info("bundled claim producer overridden by configured endpoint", "producer", name)
+			logger.Info("BUNDLED.CLAIMPRODUCER.OVERRIDDEN", "producer", name)
 		})
 		merged := make(map[string]executor.InProcessHandler, len(cfg.ExtraInprocHandlers)+len(cfg.Bundled.ExecutorHandlers))
 		for url, h := range cfg.ExtraInprocHandlers {
@@ -143,18 +142,32 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		}
 		cfg.ExtraInprocHandlers = merged
 	}
-	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
-	if err != nil {
-		stopIdentity()
-		registry.Close()
-		return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
+	// @decision: lifecycle-drain-per-role
+	lifecycleDrain := cfg.SharedLifecycleDrain
+	var lifecycleSubs *lifecycle.Registry
+	if lifecycleDrain == nil {
+		subs, err := DialLifecycleSubscribers(context.Background(), cfg.ClaimProducers, cfg.Executors, cfg.Publishers)
+		if err != nil {
+			stopIdentity()
+			registry.Close()
+			return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
+		}
+		lifecycleSubs = subs
+		lifecycleDrain = runtime.NewLifecycleReconciler(runtime.LifecycleReconcilerConfig{
+			Persist:        persistStore,
+			AdvisoryLocker: cfg.Driver.AdvisoryLocker(),
+			Subscribers:    lifecycleSubs,
+			Clock:          cfg.Clock,
+			Logger:         cfg.Logger,
+			StallAfter:     cfg.ServiceDeliveryStallAfter,
+		})
 	}
 	_, _, dataProcessors, dpClosers, err := DialPublisherAndValidationRegistries(
 		context.Background(), cfg.ClaimProducers, cfg.Executors, RemotePublishersConfig{}, cfg.Validators, cfg.DataProcessors)
 	if err != nil {
 		stopIdentity()
 		registry.Close()
-		lifecycleSubs.Close()
+		closeLifecycleSubs(lifecycleSubs)
 		return nil, fmt.Errorf("StartSupervisor: dial data-processing registry: %w", err)
 	}
 	closeDataProcessors := func() {
@@ -165,7 +178,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if err := cfg.NamedLocks.Validate(); err != nil {
 		stopIdentity()
 		registry.Close()
-		lifecycleSubs.Close()
+		closeLifecycleSubs(lifecycleSubs)
 		closeDataProcessors()
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
@@ -173,7 +186,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if persistQueue == nil {
 		stopIdentity()
 		registry.Close()
-		lifecycleSubs.Close()
+		closeLifecycleSubs(lifecycleSubs)
 		closeDataProcessors()
 		return nil, fmt.Errorf("StartSupervisor: Driver.Queue() returned nil")
 	}
@@ -181,7 +194,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if coordinator == nil {
 		stopIdentity()
 		registry.Close()
-		lifecycleSubs.Close()
+		closeLifecycleSubs(lifecycleSubs)
 		closeDataProcessors()
 		return nil, fmt.Errorf("StartSupervisor: Driver.AdvisoryLocker() returned nil")
 	}
@@ -206,33 +219,45 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		CallbackPort:                cfg.CallbackPort,
 		CallbackAdvertiseHost:       cfg.CallbackAdvertiseHost,
 		CallbackAdvertisePort:       cfg.CallbackAdvertisePort,
-		Blob:                        cfg.Blob,
-		BlobSpillThreshold:          cfg.BlobSpillThreshold,
 		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
 		Metrics:                     cfg.Metrics,
-		LifecycleSubs:               lifecycleSubs,
-		LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
 		LateBindServiceProxies:      cfg.LateBindServiceProxies,
+		LifecycleKick:               lifecycleDrain.Kick,
+		ServiceDeliveryStallAfter:   cfg.ServiceDeliveryStallAfter,
 		DataProcessors:              dataProcessors,
 		ExtraInprocHandlers:         cfg.ExtraInprocHandlers,
-		PeerAuth:                    cfg.PeerAuth,
+		ServiceAuth:                 cfg.ServiceAuth,
 		ServerIdentity:              serverIdentity,
 		ClientCAs:                   clientCAs,
 	})
 	if err != nil {
 		stopIdentity()
 		registry.Close()
-		lifecycleSubs.Close()
+		closeLifecycleSubs(lifecycleSubs)
 		closeDataProcessors()
 		return nil, err
 	}
-	return supervisorHandleWithRegistry{
+	handle := supervisorHandleWithRegistry{
 		inner:               inner,
 		registry:            registry,
 		lifecycleSubs:       lifecycleSubs,
 		closeDataProcessors: closeDataProcessors,
 		stopIdentity:        stopIdentity,
-	}, nil
+	}
+	// @decision: lifecycle-drain-per-role
+	if cfg.SharedLifecycleDrain == nil {
+		drainCtx, drainCancel := context.WithCancel(context.Background())
+		go lifecycleDrain.Run(drainCtx)
+		handle.lifecycleDrain = lifecycleDrain
+		handle.drainCancel = drainCancel
+	}
+	return handle, nil
+}
+
+func closeLifecycleSubs(subs *lifecycle.Registry) {
+	if subs != nil {
+		subs.Close()
+	}
 }
 
 type supervisorHandleWithRegistry struct {
@@ -241,10 +266,18 @@ type supervisorHandleWithRegistry struct {
 	lifecycleSubs       *lifecycle.Registry
 	closeDataProcessors func()
 	stopIdentity        func()
+	lifecycleDrain      *runtime.LifecycleReconciler
+	drainCancel         context.CancelFunc
 }
 
 func (h supervisorHandleWithRegistry) Shutdown(ctx context.Context) error {
 	err := h.inner.Shutdown(ctx)
+	if h.lifecycleDrain != nil {
+		h.lifecycleDrain.Stop()
+	}
+	if h.drainCancel != nil {
+		h.drainCancel()
+	}
 	if h.stopIdentity != nil {
 		h.stopIdentity()
 	}

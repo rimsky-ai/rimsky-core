@@ -21,8 +21,8 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
 )
 
@@ -98,7 +98,7 @@ func (s *ExecutorServer) Execute(ctx context.Context, req *genv1.ExecuteRequest)
 	)
 
 	attributes := req.GetAttributes().AsMap()
-	logger.Info("execute.received",
+	logger.Info("CLAUDEAGENT.EXECUTE.RECEIVED",
 		"instance_id", req.GetInstanceId(),
 		"model", stringOrEmpty(attributes["model"]),
 		"cwd_from_claim_producer", stringOrEmpty(attributes["cwd_from_claim_producer"]),
@@ -161,7 +161,7 @@ func (s *ExecutorServer) runAndCallback(
 			s.handleDispatchPanic(inputs, traceID, r, logger, callbackURLFor, decorateBody)
 		}
 	}()
-	cliConfig, err := ParseCliConfig(inputs.Attributes["cli"])
+	cliConfig, err := ParseCliConfig(inputs.Attributes["cli"], s.cfg.Opts.McpModules)
 	if err != nil {
 		s.postFailure(inputs, traceID, err, logger, callbackURLFor, decorateBody)
 		return
@@ -194,6 +194,7 @@ func (s *ExecutorServer) runAndCallback(
 		ToolUseTimeoutMsDefault:      s.cfg.Opts.ToolUseTimeoutMsDefault,
 		Logger:                       logger,
 		SessionToken:                 inputs.SessionToken,
+		McpModules:                   s.cfg.Opts.McpModules,
 	})
 
 	body := OutcomeToCallbackBody(outcome)
@@ -222,7 +223,7 @@ func (s *ExecutorServer) runAndCallback(
 	if inputs.CallbackURL != "" {
 		s.cfg.PostCallback(callbackURLFor(inputs.CallbackURL), body, logger)
 	} else {
-		logger.Warn("no callback_url; outcome dropped", "outcome", outcome.Kind)
+		logger.Warn("CLAUDEAGENT.CALLBACKURL.MISSING", "detail", "the outcome is dropped", "outcome", outcome.Kind)
 	}
 }
 
@@ -239,7 +240,7 @@ func (s *ExecutorServer) postFailure(
 	if errors.As(err, &cliConfigErr) {
 		errorClass = cliConfigErr.ErrorClass()
 	}
-	logger.Error("agent run failed", "error", err.Error(), "error_class", errorClass)
+	logger.Error("CLAUDEAGENT.RUN.FAILED", "error", err.Error(), "error_class", errorClass)
 	if s.cfg.Observability != nil {
 		s.cfg.Observability.AppendEvent(traceID, makeTraceEvent("error", genv1.Severity_ERROR, "", map[string]any{
 			"error":       err.Error(),
@@ -272,7 +273,7 @@ func (s *ExecutorServer) handleDispatchPanic(
 ) {
 	const errorClass = "agent/internal_error"
 	msg := fmt.Sprintf("%v", recovered)
-	logger.Error("agent run panicked", "panic", msg, "error_class", errorClass, "stack", string(debug.Stack()))
+	logger.Error("CLAUDEAGENT.RUN.PANICKED", "panic", msg, "error_class", errorClass, "stack", string(debug.Stack()))
 	if s.cfg.Observability != nil {
 		s.cfg.Observability.AppendEvent(traceID, makeTraceEvent("error", genv1.Severity_ERROR, "", map[string]any{
 			"error":       msg,
@@ -379,7 +380,7 @@ func PostCallbackVia(client *http.Client) PostCallbackFn {
 	return func(callbackURL string, body map[string]any, logger *slog.Logger) {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			logger.Error("callback POST body marshal failed", "error", err.Error(), "url", callbackURL)
+			logger.Error("CLAUDEAGENT.CALLBACKPOST.MARSHALFAILED", "error", err.Error(), "url", callbackURL)
 			return
 		}
 		delay := callbackPostBaseDelay
@@ -388,7 +389,7 @@ func PostCallbackVia(client *http.Client) PostCallbackFn {
 				return
 			}
 			if attempt == callbackPostMaxAttempts {
-				logger.Error("callback POST exhausted retries; outcome dropped", "attempts", attempt, "url", callbackURL)
+				logger.Error("CLAUDEAGENT.CALLBACKPOST.RETRIESEXHAUSTED", "detail", "the outcome is dropped", "attempts", attempt, "url", callbackURL)
 				return
 			}
 			time.Sleep(delay)
@@ -400,12 +401,12 @@ func PostCallbackVia(client *http.Client) PostCallbackFn {
 func postCallbackOnce(client *http.Client, callbackURL string, raw []byte, attempt int, logger *slog.Logger) bool {
 	resp, err := client.Post(callbackURL, "application/json", bytes.NewReader(raw))
 	if err != nil {
-		logger.Warn("callback POST failed", "attempt", attempt, "error", err.Error(), "url", callbackURL)
+		logger.Warn("CLAUDEAGENT.CALLBACKPOST.FAILED", "attempt", attempt, "error", err.Error(), "url", callbackURL)
 		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		logger.Warn("callback POST returned non-2xx", "attempt", attempt, "status", resp.StatusCode, "url", callbackURL)
+		logger.Warn("CLAUDEAGENT.CALLBACKPOST.REJECTED", "detail", "the callback returned a non-2xx status", "attempt", attempt, "status", resp.StatusCode, "url", callbackURL)
 		return false
 	}
 	return true
@@ -430,7 +431,7 @@ func (r *RunningGrpcServer) Shutdown(ctx context.Context) {
 	}
 }
 
-func StartGrpcServer(host string, port int, executor *ExecutorServer, observability *ObservabilityServer, identity *peerauth.Identity) (*RunningGrpcServer, error) {
+func StartGrpcServer(host string, port int, executor *ExecutorServer, observability *ObservabilityServer, identity *serviceauth.Identity) (*RunningGrpcServer, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return nil, err
@@ -442,7 +443,7 @@ func StartGrpcServer(host string, port int, executor *ExecutorServer, observabil
 	}
 	go func() {
 		if serveErr := srv.Serve(listener); serveErr != nil {
-			executor.cfg.Logger.Error("grpc serve", "error", serveErr.Error())
+			executor.cfg.Logger.Error("CLAUDEAGENT.GRPC.SERVEFAILED", "error", serveErr.Error())
 		}
 	}()
 	return &RunningGrpcServer{

@@ -120,7 +120,7 @@ func (p *CompiledPredicate) Eval(s Signal) (bool, error) {
 	}
 	out, _, err := p.program.Eval(in)
 	if err != nil {
-		slog.Default().Warn("signal.CompiledPredicate.Eval: CEL eval error; treating as no-match",
+		slog.Default().Warn("SIGNAL.CELPREDICATE.EVALFAILED", "site", "signal.CompiledPredicate.Eval", "detail", "treating the predicate as no-match",
 			"signal_type", string(s.Type),
 			"subscription_type", string(p.subscriptionType),
 			"when", p.whenSrc,

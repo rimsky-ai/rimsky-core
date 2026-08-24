@@ -32,7 +32,7 @@ type recordedSubscribe struct {
 	ResolvedConfig []byte
 }
 
-type recordingPublisherPeer struct {
+type recordingPublisherService struct {
 	genv1.UnimplementedPublisherServer
 	mu           sync.Mutex
 	subscribes   []recordedSubscribe
@@ -40,18 +40,18 @@ type recordingPublisherPeer struct {
 	live         map[string]recordedSubscribe
 }
 
-func newRecordingPublisherPeer() *recordingPublisherPeer {
-	return &recordingPublisherPeer{live: map[string]recordedSubscribe{}}
+func newRecordingPublisherService() *recordingPublisherService {
+	return &recordingPublisherService{live: map[string]recordedSubscribe{}}
 }
 
-func (s *recordingPublisherPeer) Capabilities(context.Context, *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
+func (s *recordingPublisherService) Capabilities(context.Context, *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
 	return &genv1.PublisherCapabilities{
 		SupportedKinds: []*genv1.PublisherKindCapability{{Kind: "cron"}},
 		Protocols:      []string{"publisher"},
 	}, nil
 }
 
-func (s *recordingPublisherPeer) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
+func (s *recordingPublisherService) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec := recordedSubscribe{
@@ -66,7 +66,7 @@ func (s *recordingPublisherPeer) Subscribe(_ context.Context, req *genv1.Subscri
 	return &genv1.SubscribeResponse{}, nil
 }
 
-func (s *recordingPublisherPeer) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
+func (s *recordingPublisherService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.unsubscribes = append(s.unsubscribes, req.GetPublisherSubscriptionId())
@@ -74,7 +74,7 @@ func (s *recordingPublisherPeer) Unsubscribe(_ context.Context, req *genv1.Unsub
 	return &genv1.UnsubscribeResponse{}, nil
 }
 
-func (s *recordingPublisherPeer) ListSubscriptions(context.Context, *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
+func (s *recordingPublisherService) ListSubscriptions(context.Context, *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]*genv1.PublisherSubscriptionDescriptor, 0, len(s.live))
@@ -90,19 +90,19 @@ func (s *recordingPublisherPeer) ListSubscriptions(context.Context, *emptypb.Emp
 	return &genv1.ListSubscriptionsResponse{Subscriptions: out}, nil
 }
 
-func (s *recordingPublisherPeer) snapshotSubscribes() []recordedSubscribe {
+func (s *recordingPublisherService) snapshotSubscribes() []recordedSubscribe {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]recordedSubscribe(nil), s.subscribes...)
 }
 
-func (s *recordingPublisherPeer) snapshotUnsubscribes() []string {
+func (s *recordingPublisherService) snapshotUnsubscribes() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.unsubscribes...)
 }
 
-func startPublisherPeer(t *testing.T, impl genv1.PublisherServer) string {
+func startPublisherService(t *testing.T, impl genv1.PublisherServer) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -129,8 +129,8 @@ func waitForSubscriptionState(t *testing.T, h *scenario.Harness, instanceID any,
 
 func TestLifecycleStartStop_RealSubscriptionLifecycle(t *testing.T) {
 	t.Parallel()
-	peerImpl := newRecordingPublisherPeer()
-	addr := startPublisherPeer(t, peerImpl)
+	serviceImpl := newRecordingPublisherService()
+	addr := startPublisherService(t, serviceImpl)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
 		Publishers: config.RemotePublishersConfig{
@@ -173,7 +173,7 @@ func TestLifecycleStartStop_RealSubscriptionLifecycle(t *testing.T) {
 	require.Equal(t, "cron", kind)
 	require.Equal(t, "sensor/tick", messageType)
 
-	subs := peerImpl.snapshotSubscribes()
+	subs := serviceImpl.snapshotSubscribes()
 	require.Len(t, subs, 1, "the reconciler must deliver exactly one Subscribe RPC to the remote publisher")
 	require.Equal(t, subID, subs[0].SubscriptionID)
 	require.Equal(t, iid.String(), subs[0].InstanceID)
@@ -188,7 +188,7 @@ func TestLifecycleStartStop_RealSubscriptionLifecycle(t *testing.T) {
 	require.Less(t, resp.StatusCode, 300, "terminate instance must succeed")
 
 	waitForSubscriptionState(t, h, iid, "stopped")
-	unsubs := peerImpl.snapshotUnsubscribes()
+	unsubs := serviceImpl.snapshotUnsubscribes()
 	require.Equal(t, []string{subID}, unsubs,
 		"instance termination must send exactly one Unsubscribe RPC for the live subscription")
 }

@@ -20,6 +20,84 @@ func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/admin/diagnostics/parked-nodes", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
 	r.Get("/admin/diagnostics/wait-sets", gate(deps, "waitset:read", handleAdminWaitSets(deps)))
 	r.Get("/admin/diagnostics/producer-outbox", gate(deps, "diagnostics:read", handleAdminProducerOutbox(deps)))
+	// @decision: service-delivery-stall-signal
+	r.Get("/admin/diagnostics/lifecycle-outbox", gate(deps, "diagnostics:read", handleAdminLifecycleOutbox(deps)))
+}
+
+// @decision: service-delivery-stall-signal
+type LifecycleOutboxResponse struct {
+	Services []LifecycleOutboxService `json:"services"`
+}
+
+// @decision: service-delivery-stall-signal
+type LifecycleOutboxService struct {
+	Service          string                 `json:"service"`
+	Depth            int                    `json:"depth"`
+	OldestStagedAt   time.Time              `json:"oldest_staged_at"`
+	OldestAgeSeconds float64                `json:"oldest_age_seconds"`
+	Entries          []LifecycleOutboxEntry `json:"entries"`
+}
+
+// @decision: service-delivery-stall-signal
+type LifecycleOutboxEntry struct {
+	Seq           int64     `json:"seq"`
+	ScopeKind     string    `json:"scope_kind"`
+	ScopeID       string    `json:"scope_id"`
+	Event         string    `json:"event"`
+	StagedAt      time.Time `json:"staged_at"`
+	AgeSeconds    float64   `json:"age_seconds"`
+	AttemptCount  int       `json:"attempt_count"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error,omitempty"`
+}
+
+// @decision: service-delivery-stall-signal
+// @concept: lifecycle-subscriber
+func handleAdminLifecycleOutbox(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		out := LifecycleOutboxResponse{Services: []LifecycleOutboxService{}}
+		now := deps.Clock.Now()
+		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			summary, err := deps.Persist.LifecycleOutbox().PendingSummaryByService(ctx, tx)
+			if err != nil {
+				return err
+			}
+			for _, s := range summary {
+				rows, err := deps.Persist.LifecycleOutbox().ListPendingForService(ctx, s.Service,
+					persistence.DefaultServiceOutboxPageSize, tx)
+				if err != nil {
+					return err
+				}
+				entry := LifecycleOutboxService{
+					Service:          s.Service,
+					Depth:            s.PendingCount,
+					OldestStagedAt:   s.OldestPendingAt,
+					OldestAgeSeconds: now.Sub(s.OldestPendingAt).Seconds(),
+					Entries:          []LifecycleOutboxEntry{},
+				}
+				for _, row := range rows {
+					entry.Entries = append(entry.Entries, LifecycleOutboxEntry{
+						Seq:           row.Seq,
+						ScopeKind:     string(row.ScopeKind),
+						ScopeID:       row.ScopeID,
+						Event:         row.Event,
+						StagedAt:      row.StagedAt,
+						AgeSeconds:    now.Sub(row.StagedAt).Seconds(),
+						AttemptCount:  row.AttemptCount,
+						NextAttemptAt: row.NextAttemptAt,
+						LastError:     row.LastError,
+					})
+				}
+				out.Services = append(out.Services, entry)
+			}
+			return nil
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
 }
 
 type producerVerbOutboxProvider interface {
@@ -79,7 +157,10 @@ func handleAdminProducerOutbox(deps AppDeps) http.HandlerFunc {
 					enqueuedAt := row.EnqueuedAt
 					out.OldestEnqueuedAt = &enqueuedAt
 				}
-				out.Entries = append(out.Entries, entry)
+				// @decision: service-delivery-stall-signal
+				if len(out.Entries) < persistence.DefaultServiceOutboxPageSize {
+					out.Entries = append(out.Entries, entry)
+				}
 			}
 			return nil
 		})

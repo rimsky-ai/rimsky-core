@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -54,9 +53,6 @@ type RunArgs struct {
 	ResumeGrace           time.Duration
 	SelectCandidatesLimit int
 
-	Blob               persistence.BlobBackend
-	BlobSpillThreshold int
-
 	SyncRPCDeadlineDefault time.Duration
 
 	MaxQuietPeriodDefault time.Duration
@@ -73,9 +69,10 @@ type RunArgs struct {
 
 	DataProcessors DataProcessingRegistry
 
-	LifecycleSubs          *lifecycle.Registry
-	LifecyclePeersForSpec  func(tplSpec node.TemplateSpec) []string
 	LateBindServiceProxies map[string]string
+
+	// @decision: lifecycle-drain-per-role
+	LifecycleKick func()
 
 	// @decision: race-injection-hooks
 	PostCommitHook func(ctx context.Context)
@@ -257,7 +254,7 @@ func RunNode(
 		HeldClaims:       heldClaimsSummaryForBreakpoint(&acq),
 		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, &acq),
 	}); err != nil && log != nil {
-		log.Warn("breakpoint: after_terminal eval failed; continuing",
+		log.Warn("BREAKPOINT.AFTERTERMINALEVAL.FAILED", "detail", "continuing",
 			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())
 	}
@@ -313,7 +310,7 @@ func emitAttributeFailureEvent(
 			}),
 		}, tx)
 	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("emitAttributeFailureEvent: append event failed",
+		args.Logger.Warn("RUNNER.ATTRIBUTEFAILUREEVENT.APPENDFAILED", "site", "emitAttributeFailureEvent",
 			"node_id", nodeID.String(),
 			"instance_id", instanceID.String(),
 			"kind", kind.String(),

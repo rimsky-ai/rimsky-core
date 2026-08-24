@@ -19,10 +19,10 @@ and no fallback entry.
 Three consequences a template author must plan around:
 
 - **A bare `*` entry does nothing.** `error_types: {"*": {action: pass}}`
-  registers, and then never matches, because no peer emits the class `*`. A
+  registers, and then never matches, because no service emits the class `*`. A
   node with that entry behaves exactly like a node with an empty `error_types`
   map. Registration warns — `error class "*" is not in any declared vocabulary
-  … the policy registers but will only match if a peer emits this exact class`
+  … the policy registers but will only match if a service emits this exact class`
   — and the warning does not fail the register.
 - **A trailing-wildcard key such as `http/*` does nothing either.** The
   wildcard convention belongs to the *declaring* side: an executor may
@@ -108,12 +108,12 @@ against the union of the vocabularies the key could legitimately come from:
 
 A key attributable to none of those registers with a **warning**, never a
 rejection. The warning names the executor, lists its declared classes, lists
-the producers' declared classes, and says the policy will only match if a peer
+the producers' declared classes, and says the policy will only match if a service
 emits that exact class. The register succeeds either way, so the warning is
 the only signal you get — read the `validation_warnings` array in the register
 response.
 
-When no peer declares any vocabulary at all, there is nothing to check
+When no service declares any vocabulary at all, there is nothing to check
 against, and every key registers silently.
 
 The check honours a trailing `/*` on the **declared** side. An executor that
@@ -147,7 +147,7 @@ works; `kind=terminal/error/http` matches nothing. `instance_id`, `node_id`,
 
 There is no global catalog of error classes and no version or deprecation
 marker anywhere in the capabilities handshake. The classes a deployment
-recognises are whatever its configured peers advertise at that moment, plus
+recognises are whatever its configured services advertise at that moment, plus
 the runtime-synthesized set. Two consequences:
 
 - **Validity is per node, not global.** `agent/refused` registers clean on a

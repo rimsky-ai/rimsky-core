@@ -13,14 +13,12 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
-	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/ports"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type supervisorResolvedConfig struct {
@@ -104,17 +102,18 @@ func resolveSupervisorConfig(cfg config.SupervisorSection) (supervisorResolvedCo
 	}, nil
 }
 
-func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations, preOpenedBlob persistence.BlobBackend) (StopFunc, <-chan error, error) {
+func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig, opts RoleOptions) (StopFunc, <-chan error, error) {
+	bundledRegs := opts.Bundled
 	log := shared.NewSlogLogger(logger)
 
 	metricsPort, err := metricsPortFor("supervisor", rimskyCfg.Topology)
 	if err != nil {
-		log.Error("metrics port resolution", "error", err.Error())
+		log.Error("METRICS.PORT.RESOLVEFAILED", "error", err.Error())
 		return nil, nil, err
 	}
 
 	if err := rimskyCfg.Executors.Validate(); err != nil {
-		log.Error("executors config validation", "error", err.Error())
+		log.Error("SUPERVISOR.EXECUTORSCONFIG.INVALID", "error", err.Error())
 		return nil, nil, err
 	}
 	storesCfg := rimskyCfg.ClaimProducers
@@ -123,7 +122,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	// @concept: rimsky-yml
 	resolved, err := resolveSupervisorConfig(rimskyCfg.Supervisor)
 	if err != nil {
-		log.Error("resolveSupervisorConfig", "error", err.Error())
+		log.Error("SUPERVISOR.CONFIG.RESOLVEFAILED", "site", "resolveSupervisorConfig", "error", err.Error())
 		return nil, nil, err
 	}
 	supID := resolved.SupervisorID
@@ -145,46 +144,37 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	advertisePort := resolved.AdvertisePort
 
 	if advertiseHost == "" || advertiseHost == "127.0.0.1" || advertiseHost == "localhost" || advertiseHost == "::1" {
-		log.Warn("callback advertise host is loopback or unset — executors on other hosts/containers cannot reach this supervisor",
+		log.Warn("SUPERVISOR.CALLBACKADVERTISEHOST.UNREACHABLE", "detail", "the advertise host is loopback or unset, so executors on other hosts or containers cannot reach this supervisor",
 			"advertise_host", advertiseHost,
 			"source", advertiseHostSource,
 			"bind_host", callbackHost,
 			"bind_port", callbackPort,
 			"hint", "set RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST (or callback.advertise_host) to a hostname executors can reach this supervisor at")
 	} else {
-		log.Info("callback advertise host resolved",
+		log.Info("SUPERVISOR.CALLBACKADVERTISEHOST.RESOLVED",
 			"advertise_host", advertiseHost,
 			"source", advertiseHostSource,
 			"advertise_port", advertisePort)
 	}
 
-	blobBackend := preOpenedBlob
-	if blobBackend == nil {
-		blobBackend, err = config.OpenBlobBackend(rimskyCfg.Blob, driver, rimskyCfg.Topology)
-		if err != nil {
-			log.Error("config.OpenBlobBackend", "error", err.Error())
-			return nil, nil, err
-		}
-	}
-
 	// @concept: service-address-book
 	staticResolver := executor.NewStaticResolver(nil)
 
-	execPeers := make([]observability.PeerSpec, 0, len(rimskyCfg.Executors.Executors))
+	execServices := make([]observability.ServiceSpec, 0, len(rimskyCfg.Executors.Executors))
 	for name, e := range rimskyCfg.Executors.Executors {
-		// @decision: peer-auth-mtls
-		execPeers = append(execPeers, observability.PeerSpec{
+		// @decision: service-auth-mtls
+		execServices = append(execServices, observability.ServiceSpec{
 			Name:                  name,
 			Endpoint:              e.Endpoint,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
 			TLS:                   e.TLS,
 		})
 	}
-	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, logger)
+	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execServices, nil, logger)
 
 	if bundledRegs != nil {
 		mergeBundledExecutorAliases(staticResolver, configuredExecutors, bundledRegs.ExecutorAliases, func(name string) {
-			log.Info("bundled executor overridden by configured endpoint", "executor", name)
+			log.Info("BUNDLED.EXECUTOR.OVERRIDDEN", "executor", name)
 		})
 		bundledRegs.AdvertiseInto(disc, rimskyCfg.Executors.Executors, storesCfg.ClaimProducers)
 	}
@@ -197,12 +187,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	mreg := observability.NewMetricsRegistry()
 
 	lateBindProxies := rimskyCfg.LateBindServiceProxies
-	peersForSpec := func(tplSpec node.TemplateSpec) []string {
-		return controlapi.LifecyclePeersForSpec(
-			controlapi.AppDeps{LateBindServiceProxies: lateBindProxies},
-			tplSpec,
-		)
-	}
 
 	h, err := config.StartSupervisor(config.SupervisorConfig{
 		SupervisorID:                supID,
@@ -225,22 +209,23 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		CallbackPort:                callbackPort,
 		CallbackAdvertiseHost:       advertiseHost,
 		CallbackAdvertisePort:       advertisePort,
-		Blob:                        blobBackend,
-		BlobSpillThreshold:          rimskyCfg.Blob.SpillThresholdBytes,
 		ExpectedAttributesSchemaFor: observability.NewExpectedAttributesSchemaResolver(disc),
 		Metrics:                     observability.MetricsHookOf(mreg),
 		Executors:                   rimskyCfg.Executors,
-		LifecyclePeersForSpec:       peersForSpec,
 		LateBindServiceProxies:      lateBindProxies,
-		Bundled:                     bundledRegs,
-		PeerAuth:                    rimskyCfg.PeerAuth,
+		Bundled:                     opts.Bundled,
+		// @decision: lifecycle-drain-per-role
+		SharedLifecycleDrain: opts.SharedLifecycleDrain,
+		ServiceAuth:          rimskyCfg.ServiceAuth,
+		// @decision: lifecycle-subscriber-at-least-once-delivery
+		ServiceDeliveryStallAfter: rimskyCfg.ServiceDelivery.StallAfter,
 	})
 	if err != nil {
-		log.Error("StartSupervisor", "error", err.Error())
+		log.Error("SUPERVISOR.ROLE.STARTFAILED", "site", "StartSupervisor", "error", err.Error())
 		return nil, nil, err
 	}
-	log.Info("supervisor started", "id", supID, "callback_addr", h.CallbackAddr())
-	reprobePeersNowThatTheIdentityIsInstalled(ctx, disc, rimskyCfg.PeerAuth, logger)
+	log.Info("SUPERVISOR.ROLE.STARTED", "id", supID, "callback_addr", h.CallbackAddr())
+	reprobeServicesNowThatTheIdentityIsInstalled(ctx, disc, rimskyCfg.ServiceAuth, logger)
 
 	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
 	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
@@ -261,12 +246,12 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	stop := func(stopCtx context.Context) error {
 		var firstErr error
 		if err := h.Shutdown(stopCtx); err != nil {
-			log.Error("supervisor shutdown", "error", err.Error())
+			log.Error("SUPERVISOR.ROLE.SHUTDOWNFAILED", "error", err.Error())
 			firstErr = err
 		}
 		if metricsSrv != nil {
 			if err := metricsSrv.Shutdown(stopCtx); err != nil {
-				log.Warn("metrics server shutdown", "error", err.Error())
+				log.Warn("METRICS.SERVER.SHUTDOWNFAILED", "error", err.Error())
 			}
 		}
 		cancelGauges()
@@ -298,10 +283,10 @@ func mergeBundledExecutorAliases(resolver *executor.StaticResolver, configured m
 	}
 }
 
-// @concept: peer-auth
-// @decision: peer-auth-mtls
-func reprobePeersNowThatTheIdentityIsInstalled(ctx context.Context, disc *observability.Discovery, peerAuth string, log *slog.Logger) {
-	if peerAuth != peer.PeerAuthMTLS {
+// @concept: service-auth
+// @decision: service-auth-mtls
+func reprobeServicesNowThatTheIdentityIsInstalled(ctx context.Context, disc *observability.Discovery, serviceAuth string, log *slog.Logger) {
+	if serviceAuth != service.ServiceAuthMTLS {
 		return
 	}
 	disc.Refresh(ctx, log)

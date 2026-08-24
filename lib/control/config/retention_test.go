@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -103,5 +104,50 @@ retention:
 	}
 	if _, err := LoadRimskyConfigYAML(path); err == nil {
 		t.Fatal("expected a validation error for a negative lifecycle_outbox_trailing, got nil")
+	}
+}
+
+// @decision: service-delivery-stall-signal
+func TestRetentionWindowShorterThanTheStallThresholdIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rimsky.yml")
+	body := `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+service_delivery:
+  stall_after: 1h
+retention:
+  lifecycle_outbox_trailing: 30m
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := LoadRimskyConfigYAML(path)
+	if err == nil {
+		t.Fatal("a window that discards a row before the stall signal reports it must be refused at load")
+	}
+	if !strings.Contains(err.Error(), "stall_after") {
+		t.Fatalf("the error must name the threshold it conflicts with, got %v", err)
+	}
+}
+
+// @decision: service-delivery-stall-signal
+func TestRetentionWindowWiderThanTheStallThresholdLoads(t *testing.T) {
+	cfg := mustLoadCfg(t, `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+service_delivery:
+  stall_after: 1h
+retention:
+  lifecycle_outbox_trailing: 24h
+`)
+	if cfg.ServiceDelivery.StallAfter != time.Hour {
+		t.Fatalf("StallAfter = %s, want 1h", cfg.ServiceDelivery.StallAfter)
+	}
+	if cfg.Retention.LifecycleOutboxTrailing != 24*time.Hour {
+		t.Fatalf("LifecycleOutboxTrailing = %s, want 24h", cfg.Retention.LifecycleOutboxTrailing)
 	}
 }

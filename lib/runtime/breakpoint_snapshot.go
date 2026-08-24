@@ -102,7 +102,7 @@ func openWaitSetSummaryForBreakpoint(ctx context.Context, args RunArgs, acq *acq
 		}
 		return nil
 	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("openWaitSetSummaryForBreakpoint: wait-set list failed; snapshot will omit",
+		args.Logger.Warn("BREAKPOINT.WAITSETSUMMARY.LISTFAILED", "site", "openWaitSetSummaryForBreakpoint", "detail", "the snapshot omits the wait-set summary",
 			"dispatch_id", acq.NodeRunID.String(),
 			"frame_id", acq.FrameID.String(),
 			"error", err.Error())

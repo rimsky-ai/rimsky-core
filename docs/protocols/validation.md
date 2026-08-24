@@ -6,7 +6,7 @@ release. Read it only when directed here. -->
 
 A validator rejects bad templates at registration rather than letting them fail at dispatch. Rimsky calls `Validate` once per node, claim binding, publisher, and lifecycle subscriber the template declares.
 
-This is a mix-in. Serve `Validation` from the same process as your executor, claim producer, publisher, or lifecycle subscriber, so you can check a template against the same knowledge your service uses at run time. An operator declares you under `validators.<name>`, or names `validation` in another peer entry's `protocols`.
+This is a mix-in. Serve `Validation` from the same process as your executor, claim producer, publisher, or lifecycle subscriber, so you can check a template against the same knowledge your service uses at run time. An operator declares you under `validators.<name>`, or names `validation` in another service entry's `protocols`.
 
 Proto file: `validation.proto`.
 
@@ -16,7 +16,7 @@ Proto file: `validation.proto`.
 | --- | --- |
 | `Validate(ValidateRequest) → ValidateResponse` | Unary |
 
-`Validation` declares no `Capabilities` RPC. You advertise the roles you answer through `validation_supported_roles` on your primary protocol's capabilities — `ExecutorObservability.Capabilities`, `ClaimProducer.Capabilities`, or `PublisherCapabilities` — or through the `protocols` list on your peer entry. Rimsky calls you only for roles you advertise.
+`Validation` declares no `Capabilities` RPC. You advertise the roles you answer through `validation_supported_roles` on your primary protocol's capabilities — `ExecutorObservability.Capabilities`, `ClaimProducer.Capabilities`, or `PublisherCapabilities` — or through the `protocols` list on your service entry. Rimsky calls you only for roles you advertise.
 
 ## The request
 

@@ -171,7 +171,7 @@ func releaseClaim(
 	}
 	if row != nil && row.State != spec.ClaimHandleStateActive {
 		if args.Logger != nil {
-			args.Logger.Warn("releaseClaim: claim handle already resolved by a concurrent terminal path; skipping duplicate producer verb",
+			args.Logger.Warn("RUNNER.CLAIMHANDLE.ALREADYRESOLVED", "site", "releaseClaim", "detail", "a concurrent terminal path resolved it; skipping the duplicate producer verb",
 				"claim_handle_id", lk.ClaimHandleID.String(), "state", string(row.State))
 		}
 		return nil, emitLockReleased(ctx, args, acq, lk, releaseActionString(success), tx)

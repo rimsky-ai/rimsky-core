@@ -88,7 +88,7 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 			return Result{Status: resp.StatusCode, Attempts: attempt}
 		}
 		if permanentRejection(resp.StatusCode) {
-			log.Warn("publisher.message.rejected",
+			log.Warn("PUBLISHERKIT.MESSAGE.REJECTED",
 				"publisher", req.PublisherName,
 				"publisher_subscription_id", req.SubscriptionID,
 				"status", resp.StatusCode,

@@ -11,10 +11,9 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `atomic-staging` — Atomic staging is the producer-side stage-then-swap discipline behind a held claim.
 - `attribute` — Attributes are the typed inputs, outputs, and configuration of a node, declared by a schema the template carries for that node.
 - `auto-terminal` (aliases: held-claim resolution) — Auto-terminal fires a producer's terminal disposition — commit or abandon — exactly once at the end of a held claim's holding subgraph.
-- `blob-backend` — A blob backend is the store that holds a byte stream rimsky has spilled out of the row that would otherwise carry it.
 - `breakpoint` — A breakpoint is a pause-point an operator installs on a live instance while that instance runs.
 - `cancel-siblings` — Cancel siblings is the proactive cancellation a strict aggregation policy always performs.
-- `cascade-graph` (aliases: operator dashboard backplane) — Cascade graph is the read-only side of the control API: the routes that show an operator rimsky's persisted runtime state and its peers' status.
+- `cascade-graph` (aliases: operator dashboard backplane) — Cascade graph is the read-only side of the control API: the routes that show an operator rimsky's persisted runtime state and its services' status.
 - `cascade-mode` — A cascade mode is a per-node setting that governs how a re-cascade is treated when the receiver already has a round queued or recently settled.
 - `cascade` (aliases: reactive-cascade) — Cascade is the engine that turns one node's state transition into the set of downstream node-state transitions.
 - `child-execution` — Child execution is the umbrella term for the two mechanisms by which a parent node-run dispatches work into child execution contexts.
@@ -25,11 +24,11 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `claim-scope` — A claim scope is the opaque byte stream that says what a claim acquired.
 - `claim-tree` — A claim tree is the tree-shaped relationship across claim handles.
 - `claim` — A claim is a node's request to hold a producer-managed resource while the node runs.
-- `conformance` — Conformance is a runnable battery of checks that proves an independently written service matches one of rimsky's peer protocols.
+- `conformance` — Conformance is a runnable battery of checks that proves an independently written service matches one of rimsky's service protocols.
 - `control-api` — The control API is the operator-facing interface of a rimsky deployment, served by the control-api role.
 - `data-processing` — Data processing is an optional mix-in protocol a claim producer may implement alongside the claim-producer protocol.
 - `delegation` — Delegation is an invocation pattern in which a node names a sub-graph instead of an executor and dispatches that sub-graph as one child execution context.
-- `discovery-cache` — The discovery cache is an in-memory record of what each peer service declares about itself, held by the process that checks those declarations.
+- `discovery-cache` — The discovery cache is an in-memory record of what each service declares about itself, held by the process that checks those declarations.
 - `dry-run` — Dry-run is a request mode — preview without commit — that asks what a write would do without doing it.
 - `error-policy` — An error policy is a template-level routing surface that maps each error class to one runtime action, drawn from a closed action vocabulary.
 - `event-log` (aliases: audit log) — The event log is rimsky's own append-only ledger of what happened.
@@ -37,11 +36,11 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `fan-out` — Fan-out clones the calling node N times.
 - `frame` (aliases: cascade-frame) — A frame is one cascade resolution.
 - `graph` — A graph is rimsky's unit of node connectivity: a named set of nodes and the edges among them, declared by a template.
-- `host-agent-proxy` — The host agent proxy is a rimsky-stack service that stands between a deployment and a developer's machine.
-- `host-agent` — The host agent is a long-running daemon on a developer's machine.
+- `host-daemon-proxy` — The host daemon proxy is a rimsky-stack service that stands between a deployment and a developer's machine.
+- `host-daemon` — The host daemon is a long-running daemon on a developer's machine.
 - `inertness` — Inertness is the discipline under which rimsky neither inspects nor interprets a carrier stream's bytes outside a narrow set of sanctioned read sites.
 - `instance` — An instance is one live deployment of a template.
-- `lifecycle-subscriber` — A lifecycle subscriber is a peer service to which rimsky delivers control-plane and instance-lifecycle transitions.
+- `lifecycle-subscriber` — A lifecycle subscriber is a service to which rimsky delivers control-plane and instance-lifecycle transitions, staged in the transition's transaction and drained from one outbox.
 - `lineage-record` — A lineage record is one append-only entry in the lineage projection.
 - `lineage` — Lineage is a persisted projection of data lineage: what each run's output depended on, and what each claim handle resolved to.
 - `message-schema` — A message-schema is a template's registry of the message types instances of that template accept.
@@ -52,20 +51,20 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `node-run` — A node-run is the record of one execution of one node inside one frame.
 - `node-subscription` (aliases: subscription) — A node-subscription is the receiver-side reactive declaration a node makes in a template.
 - `node` (aliases: graph-node) — A node is one declarative unit of work in a template's graph.
-- `observability` — Observability is the pair of optional service protocols a peer service may implement, together with the startup handshake that probes them.
+- `observability` — Observability is the pair of optional service protocols a service may implement, together with the startup handshake that probes them.
 - `orphan-reaper` — The orphan reaper is a family of sweeps that reclaim orphaned work.
 - `parked-state` (aliases: park, parked node) — Parked is one of the seven states a node-run passes through, entered when the executor ends its dispatch with a park outcome.
-- `peer-auth` (aliases: internal-service-auth, mtls, peer_auth) — Peer authentication is the posture rimsky holds across its four trust boundaries, and the mutual-certificate mechanism that authenticates one of them.
 - `permission` (aliases: grant, action) — A permission is the authorization grant one api-key carries.
 - `persistence-database` (aliases: persistence-driver) — The persistence database is the umbrella over rimsky's whole persistence layer, and the runtime handle a process opens once and holds for its lifetime.
 - `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the binding between rimsky and one publisher for one instance and one message type.
-- `publisher` — A publisher is a peer service that publishes messages into rimsky.
+- `publisher` — A publisher is a service that publishes messages into rimsky.
 - `rimsky-yml` (aliases: unified config) — The unified configuration file is the single configuration file rimsky reads.
 - `rimsky` (aliases: rimsky-cli) — The rimsky CLI is the operator-facing command-line tool: a thin client over the control API for operating a deployed rimsky stack.
 - `role-template` (aliases: bundled role) — A role template is a named bundle of permissions.
 - `run-scope` — A RunScope is the execution context for one graph instantiation inside a single frame.
 - `sensor` — A sensor is a class of publisher implementation that observes state outside rimsky.
-- `service-address-book` — The service address book is the deployment's shared, persisted catalog of its declared dispatch peers and the endpoints that answer them.
+- `service-address-book` — The service address book is the deployment's shared, persisted catalog of its declared dispatch services and the endpoints that answer them.
+- `service-auth` (aliases: internal-service-auth, mtls, service_auth) — Service authentication is the posture rimsky holds across its four trust boundaries, and the optional mutual-certificate mechanism that authenticates one of them.
 - `service` — A service is a rimsky-orchestrated implementation of one or more of rimsky's service protocols.
 - `signal` — A signal is the one emission shape for any transition that affects a node-run.
 - `sub-graph` — A sub-graph is a graph with a declared entry node and a declared exit node, which another node invokes by delegating to it.

@@ -21,7 +21,7 @@ type cliPackage struct {
 }
 
 var cliVerbPackages = []cliPackage{
-	{name: "cli", dir: []string{"cmd", "rimsky", "cli"}, prefixes: []string{"Run", "runAgent"}},
+	{name: "cli", dir: []string{"cmd", "rimsky", "cli"}, prefixes: []string{"Run", "runDaemon"}},
 	{name: "compose", dir: []string{"cmd", "rimsky", "cli", "compose"}, prefixes: []string{"Run"}},
 	{name: "main", dir: []string{"cmd", "rimsky"}, prefixes: []string{"runConformance"}},
 }
@@ -32,9 +32,9 @@ var apiKeyUniversalExceptions = map[string]string{
 	"cli.RunCtxAdd":                          "context management reads and writes local state only",
 	"cli.RunCtxRm":                           "context management reads and writes local state only",
 	"cli.RunCtxCurrent":                      "context management reads and writes local state only",
-	"cli.runAgentStatus":                     "the host-agent status verb reads local state only",
-	"cli.runAgentStop":                       "the host-agent stop verb writes local state only",
-	"cli.runAgentStart":                      "the host-agent start verb hands the key to the proxy under its own flag",
+	"cli.runDaemonStatus":                    "the host-daemon status verb reads local state only",
+	"cli.runDaemonStop":                      "the host-daemon stop verb writes local state only",
+	"cli.runDaemonStart":                     "the host-daemon start verb hands the key to the proxy under its own flag",
 	"cli.RunAuthLogin":                       "the interactive login verb reads the key from the terminal and stores it",
 	"compose.RunComposeRun":                  "the compose one-shot self-hosts its stack and reaches it over loopback",
 	"compose.RunTemplateRun":                 "the ephemeral-run verb reaches its self-hosted stack over loopback on the compose one-shot's own machinery; its remote branch delegates to cli.RunRunRemote, which this test checks",
@@ -43,7 +43,6 @@ var apiKeyUniversalExceptions = map[string]string{
 	"main.runConformancePublisher":           "a conformance verb dials the service under test over that service's own protocol",
 	"main.runConformanceValidation":          "a conformance verb dials the service under test over that service's own protocol",
 	"main.runConformanceDataProcessing":      "a conformance verb dials the service under test over that service's own protocol",
-	"main.runConformanceBlobBackend":         "a conformance verb dials the service under test over that service's own protocol",
 	"main.runConformanceLifecycleSubscriber": "a conformance verb dials the service under test over that service's own protocol",
 	"main.runConformanceProbe":               "a conformance verb dials the service under test over that service's own protocol",
 }

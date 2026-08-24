@@ -181,7 +181,7 @@ func New(cfg Config) (*Store, error) {
 				selector, strings.Join(msgs, "; "))
 		}
 		for _, w := range res.Warnings {
-			slog.Warn(w)
+			slog.Warn("FILESYSTEMSTORE.PICKPOLICY.WARNED", "selector", selector, "detail", w)
 		}
 		dir := PolicyStateDir(cfg.Root, selector)
 		for _, sub := range []string{"available", "in_progress"} {

@@ -54,7 +54,7 @@ func forceFailRunInstanceKilled(
 		cascade.NodeStateFailed, cascade.ReasonInstanceKilled, &sig, tx); err != nil {
 		if errors.Is(err, cascade.ErrIllegalTransition) {
 			if args.Logger != nil {
-				args.Logger.Warn("forceFailRunInstanceKilled: raced with the run's own terminal transition; leaving its outcome as-is",
+				args.Logger.Warn("INSTANCEKILL.RUNTERMINAL.RACED", "site", "forceFailRunInstanceKilled", "detail", "the run reached its own terminal first; leaving its outcome as-is",
 					"node_run_id", run.NodeRunID.String(), "error", err.Error())
 			}
 			return nil, nil
@@ -77,11 +77,11 @@ func forceFailRunInstanceKilled(
 	killSig := signalpkg.BuildTerminalErrorSignal(cascade.ErrorClassInstanceKilled, nil, 0, 0, nil, nil)
 	if err := emitSignalInTxOnce(ctx, args, run.NodeID, nodeType, run.NodeRunID,
 		instanceID, run.FrameID, killSig, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("forceFailRunInstanceKilled: terminal signal emission failed; kill stands",
+		args.Logger.Warn("INSTANCEKILL.TERMINALSIGNAL.EMITFAILED", "site", "forceFailRunInstanceKilled", "detail", "the kill stands",
 			"node_run_id", run.NodeRunID.String(), "error", err.Error())
 	}
 	if err := drainWaitSetOnSettled(ctx, args, run.FrameID, run.NodeRunID, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("forceFailRunInstanceKilled: wait-set drain failed; kill stands",
+		args.Logger.Warn("INSTANCEKILL.WAITSET.DRAINFAILED", "site", "forceFailRunInstanceKilled", "detail", "the kill stands",
 			"node_run_id", run.NodeRunID.String(), "error", err.Error())
 	}
 	if current.State == cascade.NodeStateHeld {
@@ -91,7 +91,7 @@ func forceFailRunInstanceKilled(
 	runID := run.NodeRunID
 	propagate := func(pctx context.Context) {
 		if _, err := PropagateIfChildAfterTerminal(pctx, args, runID); err != nil && args.Logger != nil {
-			args.Logger.Warn("forceFailRunInstanceKilled: run-tree propagation failed",
+			args.Logger.Warn("RUNTREE.PROPAGATION.FAILED", "site", "forceFailRunInstanceKilled",
 				"run_id", runID.String(), "error", err.Error())
 		}
 	}
@@ -109,7 +109,7 @@ func failHeldCoHolderRows(
 	holders, err := args.Persist.ClaimHolders().ListByHolderRun(ctx, holderNodeRunID, tx)
 	if err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("failHeldCoHolderRows: list claim holders failed",
+			args.Logger.Warn("INSTANCEKILL.CLAIMHOLDERS.LISTFAILED", "site", "failHeldCoHolderRows",
 				"holder_run_id", holderNodeRunID.String(), "error", err.Error())
 		}
 		return
@@ -118,7 +118,7 @@ func failHeldCoHolderRows(
 		handle, err := args.ClaimHandles.Get(ctx, h.ClaimHandleID, tx)
 		if err != nil {
 			if args.Logger != nil {
-				args.Logger.Warn("failHeldCoHolderRows: load claim handle failed",
+				args.Logger.Warn("INSTANCEKILL.CLAIMHANDLE.LOADFAILED", "site", "failHeldCoHolderRows",
 					"claim_handle_id", h.ClaimHandleID.String(), "error", err.Error())
 			}
 			continue
@@ -127,7 +127,7 @@ func failHeldCoHolderRows(
 			continue
 		}
 		if err := args.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ClaimHandleID, *handle.HolderSupervisorID, tx); err != nil && args.Logger != nil {
-			args.Logger.Warn("failHeldCoHolderRows: fail active holders failed",
+			args.Logger.Warn("INSTANCEKILL.ACTIVEHOLDERS.FAILFAILED", "site", "failHeldCoHolderRows",
 				"claim_handle_id", h.ClaimHandleID.String(), "error", err.Error())
 		}
 	}
@@ -144,7 +144,7 @@ func abandonRunClaimsThroughProducers(
 	handles, err := args.ClaimHandles.ListByNodeRun(ctx, run.NodeRunID, tx)
 	if err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("abandonRunClaimsThroughProducers: list claim handles failed",
+			args.Logger.Warn("INSTANCEKILL.CLAIMHANDLES.LISTFAILED", "site", "abandonRunClaimsThroughProducers",
 				"node_run_id", run.NodeRunID.String(), "error", err.Error())
 		}
 		return nil
@@ -157,7 +157,7 @@ func abandonRunClaimsThroughProducers(
 		}
 		if h.LockKind == persistence.LockKindNamed {
 			if err := args.ClaimHandles.Delete(ctx, h.ID, *h.HolderSupervisorID, tx); err != nil && args.Logger != nil {
-				args.Logger.Warn("abandonRunClaimsThroughProducers: release named lock failed",
+				args.Logger.Warn("INSTANCEKILL.NAMEDLOCK.RELEASEFAILED", "site", "abandonRunClaimsThroughProducers",
 					"claim_handle_id", h.ID.String(), "error", err.Error())
 			}
 			continue
@@ -181,7 +181,7 @@ func resolveKilledClaimTerminal(
 		p, ok, resolveErr := args.ClaimProducerRegistry.ResolveWithContext(ctx, producerName, "", tx)
 		if resolveErr != nil {
 			if args.Logger != nil {
-				args.Logger.Warn("resolveKilledClaimTerminal: producer resolution failed transiently; record-only abandon",
+				args.Logger.Warn("INSTANCEKILL.PRODUCERRESOLUTION.TRANSIENTFAILURE", "site", "resolveKilledClaimTerminal", "detail", "abandoning the claim in the record only",
 					"claim_handle_id", h.ID.String(), "producer", producerName, "error", resolveErr.Error())
 			}
 		} else {
@@ -215,16 +215,16 @@ func resolveKilledClaimTerminal(
 			return pc
 		}
 		if args.Logger != nil {
-			args.Logger.Warn("resolveKilledClaimTerminal: producer-notified abandon failed; falling back to record-only abandon",
+			args.Logger.Warn("INSTANCEKILL.PRODUCERNOTIFIEDABANDON.FAILED", "site", "resolveKilledClaimTerminal", "detail", "falling back to a record-only abandon",
 				"claim_handle_id", h.ID.String(), "producer", producerName, "error", err.Error())
 		}
 	} else if args.Logger != nil {
-		args.Logger.Warn("resolveKilledClaimTerminal: producer unavailable; record-only abandon",
+		args.Logger.Warn("INSTANCEKILL.PRODUCER.UNAVAILABLE", "site", "resolveKilledClaimTerminal", "detail", "abandoning the claim in the record only",
 			"claim_handle_id", h.ID.String(), "producer", producerName)
 	}
 	if err := args.ClaimHandles.Promote(ctx, h.ID, *h.HolderSupervisorID,
 		spec.ClaimHandleStateAbandoned, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("resolveKilledClaimTerminal: record-only abandon failed",
+		args.Logger.Warn("INSTANCEKILL.RECORDONLYABANDON.FAILED", "site", "resolveKilledClaimTerminal",
 			"claim_handle_id", h.ID.String(), "error", err.Error())
 	}
 	return nil

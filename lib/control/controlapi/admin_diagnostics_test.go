@@ -22,14 +22,12 @@ type noopStore struct{}
 
 type noopTx struct{ persistence.TxMarker }
 
-func (noopStore) Templates() persistence.TemplateTable                    { return nil }
-func (noopStore) ServiceAddressBook() persistence.ServiceAddressBookTable { return nil }
-func (noopStore) TemplateTags() persistence.TemplateTagTable              { return nil }
-func (noopStore) Instances() persistence.InstanceTable                    { return nil }
-func (noopStore) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
-	return nil
-}
+func (noopStore) Templates() persistence.TemplateTable                           { return nil }
+func (noopStore) ServiceAddressBook() persistence.ServiceAddressBookTable        { return nil }
+func (noopStore) TemplateTags() persistence.TemplateTagTable                     { return nil }
+func (noopStore) Instances() persistence.InstanceTable                           { return nil }
 func (noopStore) LifecycleOutbox() persistence.LifecycleOutboxTable              { return nil }
+func (noopStore) ServiceDeliveryStalls() persistence.ServiceDeliveryStallTable   { return nil }
 func (noopStore) Nodes() persistence.NodeTable                                   { return noopNodes{} }
 func (noopStore) ClaimHandles() persistence.ClaimHandleTable                     { return nil }
 func (noopStore) NodeAttributes() persistence.NodeAttributeTable                 { return nil }
@@ -37,7 +35,6 @@ func (noopStore) ClaimHolders() persistence.ClaimHolderTable                    
 func (noopStore) Events() persistence.EventTable                                 { return fakeEvents{} }
 func (noopStore) Supervisors() persistence.SupervisorTable                       { return nil }
 func (noopStore) Frames() persistence.FrameTable                                 { return nil }
-func (noopStore) BlobOrphans() persistence.BlobOrphanTable                       { return nil }
 func (noopStore) WaitSet() persistence.WaitSetTable                              { return nil }
 func (noopStore) Messages() persistence.MessageTable                             { return nil }
 func (noopStore) MessageIdempotencies() persistence.MessageIdempotencyTable      { return nil }
@@ -333,10 +330,10 @@ func (f *fakeDiagnosticQueue) RegisterAsyncAck(context.Context, shared.UUID, str
 func (f *fakeDiagnosticQueue) LookupRunByAsyncAckID(context.Context, string, persistence.Tx) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) LoadScratch(context.Context, shared.UUID, persistence.Tx) ([]byte, string, string, error) {
-	return nil, "", "", nil
+func (f *fakeDiagnosticQueue) LoadScratch(context.Context, shared.UUID, persistence.Tx) ([]byte, error) {
+	return nil, nil
 }
-func (f *fakeDiagnosticQueue) WriteScratch(context.Context, shared.UUID, []byte, string, string, persistence.Tx) error {
+func (f *fakeDiagnosticQueue) WriteScratch(context.Context, shared.UUID, []byte, persistence.Tx) error {
 	return nil
 }
 

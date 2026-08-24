@@ -124,7 +124,7 @@ func startMcpHTTPServer(provider mcpToolProvider, opts mcpHTTPServerOpts) (*mcpH
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
 		if bearerToken != "" && r.Header.Get("Authorization") != "Bearer "+bearerToken {
-			log.Warn("mcp.unauthorized", "reason", "missing_or_wrong_bearer")
+			log.Warn("CLAUDEAGENTMCP.REQUEST.UNAUTHORIZED", "reason", "missing_or_wrong_bearer")
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -144,7 +144,7 @@ func startMcpHTTPServer(provider mcpToolProvider, opts mcpHTTPServerOpts) (*mcpH
 				return
 			case <-srv.sweeper.C:
 				for _, id := range sessions.evictIdle(time.Now().Add(-sessionIdle)) {
-					log.Info("mcp.session_closed", "session_id", id, "reason", "idle_timeout")
+					log.Info("CLAUDEAGENTMCP.SESSION.CLOSED", "session_id", id, "reason", "idle_timeout")
 				}
 			}
 		}
@@ -152,7 +152,7 @@ func startMcpHTTPServer(provider mcpToolProvider, opts mcpHTTPServerOpts) (*mcpH
 
 	go func() {
 		if err := srv.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			log.Error("mcp.http_server_error", "error", err.Error())
+			log.Error("CLAUDEAGENTMCP.HTTP.SERVEFAILED", "error", err.Error())
 		}
 	}()
 
@@ -253,7 +253,7 @@ func serveMcpRequest(
 	case http.MethodDelete:
 		if sid := r.Header.Get("Mcp-Session-Id"); sid != "" {
 			sessions.evict(sid)
-			log.Info("mcp.session_closed", "session_id", sid, "reason", "client_delete")
+			log.Info("CLAUDEAGENTMCP.SESSION.CLOSED", "session_id", sid, "reason", "client_delete")
 		}
 		w.WriteHeader(http.StatusOK)
 		return
@@ -274,7 +274,7 @@ func serveMcpRequest(
 	sid := r.Header.Get("Mcp-Session-Id")
 	if sid != "" {
 		if !sessions.touch(sid) {
-			log.Warn("mcp.unknown_session", "session_id", sid)
+			log.Warn("CLAUDEAGENTMCP.SESSION.UNKNOWN", "session_id", sid)
 			writeJSONRPC(w, http.StatusNotFound, jsonRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
@@ -300,11 +300,11 @@ func serveMcpRequest(
 	case "initialize":
 		if sid != "" {
 			sessions.evict(sid)
-			log.Info("mcp.session_reinitialized", "old_session_id", sid)
+			log.Info("CLAUDEAGENTMCP.SESSION.REINITIALIZED", "old_session_id", sid)
 		}
 		newSid := uuid.NewString()
 		sessions.open(newSid)
-		log.Info("mcp.session_opened", "session_id", newSid)
+		log.Info("CLAUDEAGENTMCP.SESSION.OPENED", "session_id", newSid)
 		var params struct {
 			ProtocolVersion string `json:"protocolVersion"`
 		}
@@ -397,7 +397,7 @@ func (p *callbackToolProvider) callTool(name string, arguments json.RawMessage) 
 	deferTeardown := func(td func() error) {
 		go func() {
 			if err := td(); err != nil {
-				log.Warn("internal-mcp teardown failed", "error", err.Error())
+				log.Warn("CLAUDEAGENTMCP.SERVER.TEARDOWNFAILED", "error", err.Error())
 			}
 		}()
 	}
@@ -405,10 +405,10 @@ func (p *callbackToolProvider) callTool(name string, arguments json.RawMessage) 
 	lookup := func(token string, tool string) (*TokenEntry, map[string]any) {
 		entry, ok := registry.Lookup(token)
 		if !ok {
-			log.Warn("mcp.unknown_token", "tool", tool)
+			log.Warn("CLAUDEAGENTMCP.TOKEN.UNKNOWN", "tool", tool)
 			return nil, toolResultText("unknown_token", true)
 		}
-		log.Info("mcp.tool_called", "tool", tool, "run_id", entry.SessionID)
+		log.Info("CLAUDEAGENTMCP.TOOL.CALLED", "tool", tool, "run_id", entry.SessionID)
 		return entry, nil
 	}
 

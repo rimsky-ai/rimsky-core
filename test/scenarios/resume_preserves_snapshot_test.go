@@ -96,8 +96,10 @@ func TestResumePreservesSnapshot_DeadlineWakeReusesDispatchTimeBag(t *testing.T)
 		"b's first dispatch must see a's initial value for x")
 
 	h.ExecSQL(
-		`UPDATE rimsky_node_attributes SET data = jsonb_set(data, '{x}', '"updated"'::jsonb)
-		 WHERE node_id = $1`,
+		`UPDATE rimsky_node_attributes
+		    SET data = convert_to(
+		        jsonb_set(convert_from(data, 'UTF8')::jsonb, '{x}', '"updated"'::jsonb)::text, 'UTF8')
+		  WHERE node_id = $1`,
 		a.ID,
 	)
 

@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
@@ -21,6 +22,7 @@ type Opts struct {
 	HTTPBridgeURL   string
 	ErrorClassField string
 	Egress          egress.Guard
+	Now             func() time.Time
 }
 
 const DefaultErrorClassField = "error_class"
@@ -33,7 +35,7 @@ const (
 
 func LoadOptsFromEnv() (Opts, error) {
 	opts := Opts{Host: envOr("RIMSKY_EXECUTOR_HOST", "0.0.0.0")}
-	grpcPort, err := agentport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", defaultGRPCPort)
+	grpcPort, err := daemonport.Resolve("RIMSKY_EXECUTOR_PORT_GRPC", defaultGRPCPort)
 	if err != nil {
 		return Opts{}, err
 	}

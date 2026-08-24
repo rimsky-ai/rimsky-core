@@ -5,7 +5,7 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 ## Stories
 
 - `all-upstream-gating` — Template author relies on all-upstream gating for fan-in.
-- `anonymous-agents-isolated` — Concurrent anonymous agents stay isolated: each developer's instances reach only their own agent.
+- `anonymous-daemons-isolated` — Concurrent anonymous daemons stay isolated: each developer's instances reach only their own daemon.
 - `anonymous-mode-bootstrap` — Fresh deployment opens then locks down.
 - `api-key-management` — Operator administers api-key lifecycle.
 - `asset-management` — Operator manages instance-produced data assets.
@@ -16,8 +16,8 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `cascade-defers-during-flight` — In-flight node-runs are sealed against upstream cascades; a cascade during flight queues a new run that dispatches after the current one settles.
 - `cascade-send` — Template author declares a message-sender node-type that dispatches a message when its subscriptions fire.
 - `cascade-signal-blind` — Template author wires reactive nodes against any cascade-firing signal type.
-- `claim-handoff` — Template author wires multi-node atomic staging via claim handoff.
 - `claim-handoff-durable` — Template author wires a durable held claim that survives across instance dispatches.
+- `claim-handoff` — Template author wires multi-node atomic staging via claim handoff.
 - `claim-producer-conformance` — Author proves producer correct via conformance CLI.
 - `claim-producer-filesystem` — Operator uses filesystem-backed claim-producer.
 - `claim-producer-observability` — Operator dashboards producer-side state.
@@ -25,10 +25,10 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `claim-producer-protocol` — Service author writes custom claim-producer.
 - `claim-producer-scopes-conflict` — Operator uses non-trivial overlap rules.
 - `claim-scope-substitution` — Template author uses canonical claim_scope.
-- `claude-agent` — Operator wires agentic node with full controls.
 - `claude-agent-expose-env-per-node` — Template authors declare per-node expose-env; operators bound them.
 - `claude-agent-mcp-servers-per-node` — Template authors declare per-node MCP servers; operators bound them.
 - `claude-agent-session-resume` — Template author runs claude-agent with CLI session continuing within a RunScope and fresh in a new one.
+- `claude-agent` — Operator wires agentic node with full controls.
 - `clean-lint` — Maintainer verifies the codebase passes Plumbline's full enforcement.
 - `client-context` — Operator switches between control-api endpoints.
 - `commit-response-honored` — Claim-producer author's Commit response fields honored.
@@ -51,11 +51,11 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `grant-scope-enforcement` — Least-privilege delegation across lifecycle.
 - `held-abandon-cascades-abandoned` — Downstream hears an abandoned-error signal at the moment upstream held work is rolled back.
 - `held-commit-cascades-success` — Downstream sees held work's success signal only when the work commits, never at the provisional held moment.
-- `host-agent-anonymous-mode` — Late-bind works under anonymous mode.
-- `host-agent-control-plane` — Operator manages agent lifecycle via CLI.
-- `host-agent-late-bind-all-protocols` — The two rimsky-implementable protocols (executor, claim-producer) late-bind; others are refused loudly.
-- `host-agent-per-binding-overrides` — Per-binding env/args/cwd/timeout honored.
-- `host-agent-per-run-scope-isolation` — Concurrent run-scopes get isolated children.
+- `host-daemon-anonymous-mode` — Late-bind works under anonymous mode.
+- `host-daemon-control-plane` — Operator manages daemon lifecycle via CLI.
+- `host-daemon-late-bind-all-protocols` — The two rimsky-implementable protocols (executor, claim-producer) late-bind; others are refused loudly.
+- `host-daemon-per-binding-overrides` — Per-binding env/args/cwd/timeout honored.
+- `host-daemon-per-run-scope-isolation` — Concurrent run-scopes get isolated children.
 - `http-node` — Template author integrates HTTP upstreams.
 - `idempotent-mode-dedupes` — Idempotent cascade modes drop re-runs whose inputs are byte-identical to a predecessor before they reach the executor.
 - `inproc-utility-executor` — Template author dispatches utility node kinds without registering an external executor service.
@@ -83,9 +83,7 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `opaque-executor-scratch` — Executor author carries opaque bytes across recovery re-dispatch of the same node-run.
 - `operator-invalidate-queues-during-flight` — Operator-invalidate against an in-flight node queues a run that dispatches after the in-flight one settles; neither dropped nor destructive.
 - `operator-onboarding` — New operator runs first dev-loop end-to-end.
-- `peer-auth-mtls-mutual` — Operator enables mutual TLS on internal service traffic.
-- `peer-tls-enforced` — Operator enforces TLS on peer connections.
-- `permissive-peer-build` — Service author builds a peer without copyleft obligations.
+- `permissive-service-build` — Service author builds a service without copyleft obligations.
 - `portable-template-across-modes` — The same template file runs in both modes without edits.
 - `producer-class-routing` — Template author routes producer-declared error classes.
 - `producer-error-passthrough` — Operator reads producer errors in API responses.
@@ -101,7 +99,9 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `sensor-object-store` — Operator wires deposited-content-driven message.
 - `sensor-webhook` — Operator wires inbound-webhook message.
 - `sequenced-preserves-cascade-rounds` — Sequenced cascade mode dispatches once per cascade round, in arrival order.
+- `service-auth-mtls-mutual` — Operator enables mutual TLS on internal service traffic.
 - `service-enrollment` — Standing service enrolls and obtains rotating credentials from one revocable api-key.
+- `service-tls-enforced` — Operator enforces TLS on service connections.
 - `single-process-all-in-one` — Operator runs the all-in-one as one process.
 - `spawned-local-services` — Operator declares local executor binaries spawned for a single run.
 - `sub-claim-payload-substitution` — Template author reads per-sub-claim payload through the standard claim directive.
@@ -120,7 +120,7 @@ Read first. Then read `stories/<slug>.md` for the full body. Refreshed by sprint
 - `uniform-attributes-delta-subscription` — One subscription predicated on verdict-time attributes fires uniformly across success and error terminals.
 - `upstream-pull-on-invalidate` — Template author pulls an upstream fresh when the receiver is invalidated.
 - `validation-author` — Service author writes validation mix-in.
-- `validation-mixin-uniform` — Service author advertises validation mix-in from any peer kind.
+- `validation-mixin-uniform` — Service author advertises validation mix-in from any service kind.
 - `validation-warnings-surfaced` — Template author sees validator advisories in responses.
 - `verifier-http` — Template author validates via external check service.
 - `verifier-severity-partition` — Template author distinguishes warning vs error.

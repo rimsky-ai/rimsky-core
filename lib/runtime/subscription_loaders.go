@@ -59,7 +59,7 @@ func declaredMessageTypesForTemplate(
 	row, err := args.Persist.Templates().GetByHash(ctx, templateHash, tx)
 	if err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("declaredMessageTypesForTemplate: template lookup failed; messages-registry check disabled for this call",
+			args.Logger.Warn("MESSAGE.DECLAREDTYPES.LOOKUPFAILED", "site", "declaredMessageTypesForTemplate", "detail", "the messages-registry check is disabled for this call",
 				"template_hash", templateHash, "error", err.Error())
 		}
 		return nil

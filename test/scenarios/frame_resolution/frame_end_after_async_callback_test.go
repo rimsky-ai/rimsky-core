@@ -22,13 +22,13 @@ import (
 func TestFrameEndAfterAsyncCallback(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("agent").AwaitAsyncCallback("ack-frame-async", 10000)
+	h.Stub.WhenType("daemon").AwaitAsyncCallback("ack-frame-async", 10000)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "async-frame", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "agent", Executor: "stub"},
+				node.TemplateNodeDef{Type: "daemon", Executor: "stub"},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -39,7 +39,7 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-async-frame", map[string]any{})
-	n := h.FindNode(iid, "agent")
+	n := h.FindNode(iid, "daemon")
 	require.NotNil(t, n)
 
 	h.WaitForNodeState(n.ID, cascade.NodeStateRunning)

@@ -188,10 +188,10 @@ func TestStory_EmptyMessageWakesRoots(t *testing.T) {
 func postCreateInstance(t *testing.T, h *scenario.Harness, templateHash, instanceKey string) string {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"template":     templateHash,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-		"target_agent": "scenario-default-agent",
+		"template":      templateHash,
+		"instance_key":  instanceKey,
+		"params":        map[string]any{},
+		"target_daemon": "scenario-default-daemon",
 	})
 	require.NoError(t, err)
 	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytes.NewReader(body))

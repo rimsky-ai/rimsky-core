@@ -14,7 +14,7 @@ Run `rimsky conformance` with no arguments, or with `help`, to print the subcomm
 
 ## The subcommands
 
-Eight subcommands exist. Six drive a protocol; two drive something else.
+Seven subcommands exist. Six drive a protocol; one drives something else.
 
 | Subcommand | What it drives |
 | --- | --- |
@@ -24,12 +24,11 @@ Eight subcommands exist. Six drive a protocol; two drive something else.
 | `validation` | The `Validation` protocol |
 | `data-processing` | The `DataProcessing` protocol |
 | `lifecycle-subscriber` | The `LifecycleSubscriber` protocol |
-| `blob-backend` | A blob backend, which is not a gRPC protocol |
 | `probe` | The stub-mode probe on an executor, as a one-shot reachability check |
 
 Two protocols have no subcommand of their own, and both are reachable through `--check-observability` on their sibling's subcommand: `ExecutorObservability` and `ClaimProducerObservability`.
 
-One protocol has no conformance coverage at all. `HostAgent` has no subcommand, and `rimsky conformance host-agent` answers `unknown subcommand "host-agent"` with exit code 2. Test a host-agent implementation yourself.
+One protocol has no conformance coverage at all. `HostDaemon` has no subcommand, and `rimsky conformance host-daemon` answers `unknown subcommand "host-daemon"` with exit code 2. Test a host-daemon implementation yourself.
 
 ## Shared flags
 
@@ -44,8 +43,6 @@ Every protocol subcommand takes `--endpoint` and `--timeout`. Most take `--trans
 **`publisher`** — `--kind` (required), `--resolved-config`, `--instance-id`, `--message-type`, `--control-api`. The message-push check runs only with both an instance id and a control-API URL, the latter from `--control-api` or `RIMSKY_CONTROL_API_URL`.
 
 **`validation`** — `--role`, taking `executor`, `claim_producer`, `lifecycle_subscriber`, or `publisher`.
-
-**`blob-backend`** — `--backend`, taking `memory`, `filesystem`, or `pg-largeobject`; `--root` for the filesystem backend; `--pg-conn-string` for the Postgres backend. It runs ten checks: two round-trips, a range read, an out-of-bounds range read, delete-then-read and delete-then-range-read, an empty payload, a non-empty self-describing handle, an idempotent delete, and concurrent writes.
 
 **`probe`** — `--callback-bind`, `--callback-host`. It runs the stub-mode probe alone and reports whether the executor answered.
 

@@ -30,7 +30,8 @@ func main() {
 		runner.Fatal(serviceName, err)
 	}
 
-	slog.Info(serviceName+" started",
+	slog.Info("POSTGRESSTORE.PROCESS.STARTED",
+		"service", serviceName,
 		"grpc_addr", grpcLis.Addr().String(),
 		"http_addr", httpLis.Addr().String(),
 		"admin_port", opts.AdminPort,

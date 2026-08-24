@@ -62,7 +62,7 @@ func TestAcquireOneLock_ParkedHolderBlocksContenderWithoutPreemption(t *testing.
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instanceID, TemplateHash: templateHash,
 		}, tx); err != nil {
 			return err

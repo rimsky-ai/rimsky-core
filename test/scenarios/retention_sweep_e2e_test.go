@@ -43,12 +43,9 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 
 	const totalFrames = 5
 	const keepFrames = 2
-	const blobOrphanBackend = "memory"
 	survivingRunIDs := make(map[string]bool)
 	prunedRunIDs := make(map[string]bool)
 	base := time.Now().Add(-24 * time.Hour)
-	blobOrphanHandle := "blob://retention-sweep-fixture/" + uuid.NewString()
-	blobOrphanRunSeeded := false
 	for i := 0; i < totalFrames; i++ {
 		frameID := uuid.New()
 		endedAt := base.Add(time.Duration(i) * time.Hour)
@@ -65,19 +62,10 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 
 		runID := uuid.New()
 		pruned := i < totalFrames-keepFrames
-		if pruned && !blobOrphanRunSeeded {
-			blobOrphanRunSeeded = true
-			h.ExecSQL(`INSERT INTO rimsky_node_runs
-			    (id, node_id, executor_name, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id,
-			     scratch_handle, scratch_handle_backend)
-			    VALUES ($1, $2, 'worker', $3, 'failed', 'cascade', 1, $4, $5, $6, $7)`,
-				runID, nodeID, endedAt, frameID, scopeID, blobOrphanHandle, blobOrphanBackend)
-		} else {
-			h.ExecSQL(`INSERT INTO rimsky_node_runs
-			    (id, node_id, executor_name, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
-			    VALUES ($1, $2, 'worker', $3, 'failed', 'cascade', 1, $4, $5)`,
-				runID, nodeID, endedAt, frameID, scopeID)
-		}
+		h.ExecSQL(`INSERT INTO rimsky_node_runs
+		    (id, node_id, executor_name, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id)
+		    VALUES ($1, $2, 'worker', $3, 'failed', 'cascade', 1, $4, $5)`,
+			runID, nodeID, endedAt, frameID, scopeID)
 
 		if !pruned {
 			survivingRunIDs[runID.String()] = true
@@ -85,7 +73,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 			prunedRunIDs[runID.String()] = true
 		}
 	}
-	require.True(t, blobOrphanRunSeeded, "test fixture bug: no pruned node_run seeded with a blob-backed scratch handle")
 	require.Len(t, survivingRunIDs, keepFrames)
 	require.Len(t, prunedRunIDs, totalFrames-keepFrames)
 
@@ -154,12 +141,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 			[]any{runID}, &n)
 		assert.Equal(t, 0, n, "run row %s (stale terminal frame) should be pruned", runID)
 	}
-
-	var orphanCount int
-	h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_blob_orphans WHERE handle = $1 AND backend = $2`,
-		[]any{blobOrphanHandle, blobOrphanBackend}, &orphanCount)
-	assert.Equal(t, 1, orphanCount,
-		"pruning a node_run carrying a blob-backed scratch handle must queue it into the blob-orphan ledger")
 }
 
 func TestSchedulerTickSweepsClaimHandleRetention(t *testing.T) {

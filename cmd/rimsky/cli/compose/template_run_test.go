@@ -35,7 +35,7 @@ func buildStubchildBinary(t *testing.T) string {
 	t.Helper()
 	root := repoRootForTest(t)
 	out := filepath.Join(t.TempDir(), "stubchild")
-	cmd := exec.Command("go", "build", "-o", out, "./lib/runtime/hostagent/testdata/stubchild")
+	cmd := exec.Command("go", "build", "-o", out, "./lib/runtime/hostdaemon/testdata/stubchild")
 	cmd.Dir = root
 	cmd.Env = os.Environ()
 	if combined, err := cmd.CombinedOutput(); err != nil {

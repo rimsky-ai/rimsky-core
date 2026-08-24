@@ -219,7 +219,7 @@ func applyTerminalCompleteSubgraphCaller(
 	}
 
 	if args.Logger != nil {
-		args.Logger.Info("subgraph: parent run staying running for internal cascade",
+		args.Logger.Info("SUBGRAPH.PARENTRUN.HELDRUNNING", "detail", "the parent run stays running for an internal cascade",
 			"calling_run_id", acq.NodeRunID.String(),
 			"node_type", acq.NodeType,
 			"delegate", acq.NodeDef.Delegate,

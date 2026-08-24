@@ -42,8 +42,8 @@ func main() {
 		os.Exit(dispatchNode(os.Args[2:]))
 	case "admin":
 		os.Exit(dispatchAdmin(os.Args[2:]))
-	case "agent":
-		os.Exit(cli.RunAgent(os.Args[2:]))
+	case "daemon":
+		os.Exit(cli.RunDaemon(os.Args[2:]))
 	case "parked":
 		os.Exit(dispatchParked(os.Args[2:]))
 	case "messages":
@@ -370,13 +370,12 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  compose run <manifest>              Self-host rimsky in-process and drive")
 	fmt.Fprintln(w, "                                      the manifest to terminal (one-shot)")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Host agent:")
-	fmt.Fprintln(w, "  agent start | status | stop      Manage the local host-agent daemon")
+	fmt.Fprintln(w, "Host daemon:")
+	fmt.Fprintln(w, "  daemon start | status | stop      Manage the local host daemon")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Conformance:")
 	fmt.Fprintln(w, "  conformance executor | claim-producer | publisher | validation |")
-	fmt.Fprintln(w, "              data-processing | blob-backend | lifecycle-subscriber |")
-	fmt.Fprintln(w, "              probe")
+	fmt.Fprintln(w, "              data-processing | lifecycle-subscriber | probe")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Version:")
 	fmt.Fprintln(w, "  version | --version | -v     Print the CLI version and exit")
@@ -391,6 +390,6 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  -h, --help           Show this help")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "These five families parse their own flags and do NOT accept the common set:")
-	fmt.Fprintln(w, "  auth   agent   conformance   compose run   ctx use|add|rm|current")
+	fmt.Fprintln(w, "  auth   daemon   conformance   compose run   ctx use|add|rm|current")
 	fmt.Fprintln(w, "  (run `rimsky <family> --help` for each family's own flags)")
 }

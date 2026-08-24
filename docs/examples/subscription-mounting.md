@@ -69,7 +69,7 @@ not register.
 
 ```bash
 curl -sS -X POST "$BASE/v1/instances" -H 'content-type: application/json' \
-  -d '{"template":"'"$TPL"'","instance_key":"missing-pub","target_agent":"my-agent"}'
+  -d '{"template":"'"$TPL"'","instance_key":"missing-pub","target_daemon":"my-daemon"}'
 # 201, with an instance id — no sign of the problem
 ```
 

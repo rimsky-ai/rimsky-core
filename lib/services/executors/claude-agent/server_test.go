@@ -373,7 +373,7 @@ func TestSessionTokenScratchRoundTrip(t *testing.T) {
 }
 
 func TestParseCliConfigNewShape(t *testing.T) {
-	registerTestModule(t, "witness", func() *ModuleMcpServer {
+	modules := testModules("witness", func() *ModuleMcpServer {
 		return &ModuleMcpServer{Name: "witness"}
 	})
 	raw := `{
@@ -394,7 +394,7 @@ func TestParseCliConfigNewShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := ParseCliConfig(v)
+	cfg, err := ParseCliConfig(v, modules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +430,7 @@ func TestParseCliConfigNewShape(t *testing.T) {
 func TestParseCliConfigRejectsRetiredRefShape(t *testing.T) {
 	var v map[string]any
 	_ = json.Unmarshal([]byte(`{"mcp_servers": [{"ref": "catalog-entry"}]}`), &v)
-	_, err := ParseCliConfig(v)
+	_, err := ParseCliConfig(v, nil)
 	if err == nil || !strings.Contains(err.Error(), "retired {ref} shape") {
 		t.Fatalf("expected retired-ref rejection, got %v", err)
 	}
@@ -439,7 +439,7 @@ func TestParseCliConfigRejectsRetiredRefShape(t *testing.T) {
 func TestParseCliConfigRejectsNegativeTimeout(t *testing.T) {
 	var v map[string]any
 	_ = json.Unmarshal([]byte(`{"silence_timeout_ms": -1}`), &v)
-	if _, err := ParseCliConfig(v); err == nil {
+	if _, err := ParseCliConfig(v, nil); err == nil {
 		t.Fatal("expected rejection of negative timeout")
 	}
 }

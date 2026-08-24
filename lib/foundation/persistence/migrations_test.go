@@ -40,7 +40,7 @@ func (f *fakeMigratorLocker) TakeClaimScopeLock(context.Context, string, []byte,
 	return nil
 }
 
-func (f *fakeMigratorLocker) TakeLifecycleScopeLock(context.Context, LifecycleIdempotencyScopeKind, string, Tx) error {
+func (f *fakeMigratorLocker) TakeLifecycleScopeLock(context.Context, LifecycleScopeKind, string, Tx) error {
 	return nil
 }
 

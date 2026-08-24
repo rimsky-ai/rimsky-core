@@ -3,7 +3,6 @@
 
 // @decision: launch-config-injection
 // @decision: persistence-driver
-// @decision: blob-backend
 package compose
 
 import (
@@ -53,21 +52,10 @@ type syntheticPublisherEntry struct {
 type syntheticPersistence struct {
 	Driver string                     `yaml:"driver"`
 	SQLite syntheticPersistenceSQLite `yaml:"sqlite"`
-	Blob   syntheticPersistenceBlob   `yaml:"blob"`
 }
 
 type syntheticPersistenceSQLite struct {
 	Path string `yaml:"path"`
-}
-
-type syntheticPersistenceBlob struct {
-	Backend             string                  `yaml:"backend"`
-	Filesystem          syntheticBlobFilesystem `yaml:"filesystem"`
-	SpillThresholdBytes int                     `yaml:"spill_threshold_bytes,omitempty"`
-}
-
-type syntheticBlobFilesystem struct {
-	Root string `yaml:"root"`
 }
 
 type SiblingBlocks struct {
@@ -93,12 +81,6 @@ func WriteSyntheticRimskyYAML(
 			Driver: "sqlite",
 			SQLite: syntheticPersistenceSQLite{
 				Path: filepath.Join(runDir, "state.db"),
-			},
-			Blob: syntheticPersistenceBlob{
-				Backend: "filesystem",
-				Filesystem: syntheticBlobFilesystem{
-					Root: filepath.Join(runDir, "blobs"),
-				},
 			},
 		},
 	}

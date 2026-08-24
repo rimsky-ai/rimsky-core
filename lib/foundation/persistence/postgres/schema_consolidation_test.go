@@ -19,7 +19,6 @@ import (
 
 var expectedTables = []string{
 	"rimsky_api_keys",
-	"rimsky_blob_orphans",
 	"rimsky_breakpoint_hits",
 	"rimsky_claim_handles",
 	"rimsky_claim_holders",
@@ -27,7 +26,6 @@ var expectedTables = []string{
 	"rimsky_frames",
 	"rimsky_instance_breakpoints",
 	"rimsky_instances",
-	"rimsky_lifecycle_idempotencies",
 	"rimsky_lineage",
 	"rimsky_message_idempotencies",
 	"rimsky_messages",

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -16,6 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 // @decision: lifecycle-fanout-after-commit
@@ -44,30 +44,35 @@ func TestTemplateRegister_FailingSubscriberLeavesTemplateRegistered(t *testing.T
 	}))
 	require.NotNil(t, row, "the transition commits even though the subscriber errored")
 
-	var lcRow *persistence.LifecycleIdempotencyRow
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.persist.LifecycleIdempotency().Get(ctx, "topics-ring",
-			persistence.LifecycleIdempotencyScopeTemplate, hash, tx)
-		lcRow = r
-		return err
-	}))
-	require.Nil(t, lcRow,
-		"the failed delivery leaves the ledger unadvanced, so the next fan-out for this scope retries it")
+	require.NotEmpty(t, pendingRowsForService(t, h, persistence.LifecycleScopeTemplate, hash, "topics-ring"),
+		"the failed delivery stays owed in the outbox, so the drain retries it")
 
 	clearSubscriberFailure(t, h, "topics-ring")
-	NewLifecycleReconciler(h.deps, time.Hour).tick(ctx)
+	newStagedLifecycleDrain(h.deps).DrainOnce(ctx)
 
+	require.Empty(t, pendingRowsForService(t, h, persistence.LifecycleScopeTemplate, hash, "topics-ring"),
+		"the drain redelivers the undelivered template-scope event and the acknowledged row leaves the outbox")
+	require.Equal(t, 1, countSubscriberCalls(t, h, "topics-ring", "on_template_registered"),
+		"the retry delivers OnTemplateRegistered once, on the pass after the subscriber recovers")
+}
+
+func pendingRowsForService(
+	t *testing.T, h *harness, kind persistence.LifecycleScopeKind, scopeID, service string,
+) []persistence.LifecycleOutboxRow {
+	t.Helper()
+	ctx := context.Background()
+	var rows []persistence.LifecycleOutboxRow
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.persist.LifecycleIdempotency().Get(ctx, "topics-ring",
-			persistence.LifecycleIdempotencyScopeTemplate, hash, tx)
-		lcRow = r
+		r, err := h.persist.LifecycleOutbox().ListPendingForScope(ctx, kind, scopeID, tx)
+		rows = nil
+		for _, row := range r {
+			if row.ClaimProducerName == service {
+				rows = append(rows, row)
+			}
+		}
 		return err
 	}))
-	require.NotNil(t, lcRow,
-		"the reconciler tick redelivers the undelivered template-scope event and advances the ledger row")
-	require.Equal(t, persistence.LifecycleIdempotencyStateRegistered, lcRow.State)
-	require.Equal(t, 1, countSubscriberCalls(t, h, "topics-ring", "on_template_registered"),
-		"the retry delivers OnTemplateRegistered once, on the tick after the subscriber recovers")
+	return rows
 }
 
 // @decision: lifecycle-fanout-after-commit
@@ -95,34 +100,21 @@ func TestInstanceCreate_FailingSubscriberLeavesInstanceCreated(t *testing.T) {
 	require.Equal(t, instID, out["id"], "the created instance is readable back")
 
 	ctx := context.Background()
-	var lcRow *persistence.LifecycleIdempotencyRow
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.persist.LifecycleIdempotency().Get(ctx, "topics-ring",
-			persistence.LifecycleIdempotencyScopeInstance, instID, tx)
-		lcRow = r
-		return err
-	}))
-	require.Nil(t, lcRow, "the failed delivery leaves no instance-scope ledger row")
+	require.NotEmpty(t, pendingRowsForService(t, h, persistence.LifecycleScopeInstance, instID, "topics-ring"),
+		"the failed delivery stays owed in the outbox")
 
 	clearSubscriberFailure(t, h, "topics-ring")
-	NewLifecycleReconciler(h.deps, time.Hour).tick(ctx)
+	newStagedLifecycleDrain(h.deps).DrainOnce(ctx)
 
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.persist.LifecycleIdempotency().Get(ctx, "topics-ring",
-			persistence.LifecycleIdempotencyScopeInstance, instID, tx)
-		lcRow = r
-		return err
-	}))
-	require.NotNil(t, lcRow,
-		"the reconciler tick redelivers the undelivered instance-created event and writes the ledger row")
-	require.Equal(t, persistence.LifecycleIdempotencyStateCreated, lcRow.State)
+	require.Empty(t, pendingRowsForService(t, h, persistence.LifecycleScopeInstance, instID, "topics-ring"),
+		"the drain redelivers the undelivered instance-created event and the acknowledged row leaves the outbox")
 	require.Equal(t, 1, countSubscriberCalls(t, h, "topics-ring", "on_instance_created"),
-		"the retry delivers OnInstanceCreated once, on the tick after the subscriber recovers")
+		"the retry delivers OnInstanceCreated once, on the pass after the subscriber recovers")
 }
 
 // @decision: lifecycle-subscriber-at-least-once-delivery
 // @concept: lifecycle-subscriber
-func TestLifecycleReconciler_RedeliveredEventIsNotSentAgainOnALaterTick(t *testing.T) {
+func TestLifecycleDrain_RedeliveredEventIsNotSentAgainOnALaterTick(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -134,12 +126,12 @@ func TestLifecycleReconciler_RedeliveredEventIsNotSentAgainOnALaterTick(t *testi
 	require.Equal(t, http.StatusCreated, status, out)
 
 	clearSubscriberFailure(t, h, "topics-ring")
-	reconciler := NewLifecycleReconciler(h.deps, time.Hour)
-	reconciler.tick(ctx)
-	reconciler.tick(ctx)
+	drain := newStagedLifecycleDrain(h.deps)
+	drain.DrainOnce(ctx)
+	drain.DrainOnce(ctx)
 
 	require.Equal(t, 1, countSubscriberCalls(t, h, "topics-ring", "on_template_registered"),
-		"the ledger row the first tick wrote stops the second tick from redelivering")
+		"the first pass deletes the row it acknowledged, so the second pass has nothing to redeliver")
 }
 
 func clearSubscriberFailure(t *testing.T, h *harness, name string) {
@@ -169,16 +161,54 @@ func countSubscriberCalls(t *testing.T, h *harness, name, verb string) int {
 
 // @decision: lifecycle-fanout-after-commit
 // @concept: lifecycle-subscriber
-func TestLifecycleReconciler_RunScopeTerminalPrecedesInstanceTerminated(t *testing.T) {
+func TestTerminateInstance_RunScopeTerminalPrecedesInstanceTerminated(t *testing.T) {
 	t.Parallel()
-	f := newTerminatorFixture(t)
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
 
-	_, instanceID := seedTerminatedInstance(t, f, "alpha", true)
-	term := NewLifecycleReconciler(f.deps, time.Millisecond)
-	term.tick(context.Background())
+	tplID := registerAndDeployBody(t, h, templateWithClaimProducersAndLocks("term-order-"+uuid.NewString()))
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": "ck-" + uuid.NewString(),
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instID, err := uuid.Parse(out["instance_id"].(string))
+	require.NoError(t, err)
+
+	rootScopeID := uuid.New()
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
+			ID: rootScopeID, GraphName: "main", InstanceID: instID,
+		}, tx); err != nil {
+			return err
+		}
+		msgID := uuid.New()
+		if err := h.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}, tx); err != nil {
+			return err
+		}
+		_, err := h.persist.Frames().InsertRunningFrame(ctx, instID, msgID, rootScopeID, tx)
+		return err
+	}))
+
+	clearSubscriberFailure(t, h, "topics-ring")
+
+	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID.String()+"/terminate", nil)
+	require.Equal(t, http.StatusOK, status, out)
+
+	cp, ok := h.producers.Get("topics-ring")
+	require.True(t, ok)
+	fake, ok := cp.(*storetest.Fake)
+	require.True(t, ok)
 
 	var runScopeCall, terminatedCall *storetest.FakeCall
-	calls := f.alpha.Calls()
+	calls := fake.Calls()
 	for i := range calls {
 		switch calls[i].Verb {
 		case "on_run_scope_terminal":
@@ -188,11 +218,20 @@ func TestLifecycleReconciler_RunScopeTerminalPrecedesInstanceTerminated(t *testi
 		}
 	}
 	require.NotNil(t, runScopeCall,
-		"one poll tick delivers OnRunScopeTerminal for the terminated instance's root run scope")
+		"terminating the instance delivers OnRunScopeTerminal for the run scope it closes")
 	require.NotNil(t, terminatedCall,
-		"one poll tick delivers OnInstanceTerminated for instance "+instanceID.String())
+		"terminating the instance delivers OnInstanceTerminated for instance "+instID.String())
 	require.Less(t, runScopeCall.Sequence, terminatedCall.Sequence,
-		"a peer observes run-scope closure before the instance is reported terminated")
+		"a service observes run-scope closure before the instance is reported terminated")
+
+	var scope *persistence.RunScopeRow
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.persist.RunScopes().GetByID(ctx, rootScopeID, tx)
+		scope = r
+		return err
+	}))
+	require.NotNil(t, scope)
+	require.NotNil(t, scope.ClosedAt, "the terminating transaction closes the instance's open run scopes")
 }
 
 func failSubscriber(t *testing.T, h *harness, name, verb string) {
@@ -207,4 +246,14 @@ func failSubscriber(t *testing.T, h *harness, name, verb string) {
 		}
 		return nil
 	}
+}
+
+func newStagedLifecycleDrain(deps AppDeps) *runtime.LifecycleReconciler {
+	return runtime.NewLifecycleReconciler(runtime.LifecycleReconcilerConfig{
+		Persist:        deps.Persist,
+		AdvisoryLocker: deps.AdvisoryLocker,
+		Subscribers:    deps.LifecycleSubs,
+		Clock:          deps.Clock,
+		Logger:         deps.Logger,
+	})
 }

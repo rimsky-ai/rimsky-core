@@ -81,7 +81,7 @@ func lookupExecutorSchema(
 	}
 	var schema map[string]any
 	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
-		slog.Default().Warn("instances_static_config_gate.malformed_executor_schema",
+		slog.Default().Warn("INSTANCE.STATICCONFIGGATE.MALFORMEDEXECUTORSCHEMA",
 			"executor", executor, "error", err.Error())
 		return nil, false
 	}

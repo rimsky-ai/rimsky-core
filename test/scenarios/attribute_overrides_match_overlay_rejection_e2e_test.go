@@ -80,10 +80,10 @@ func TestAttributeOverridesMatchOverlayRejection_OrdinalAndUnknownKeys(t *testin
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			body, err := json.Marshal(map[string]any{
-				"template":     tid,
-				"instance_key": "ck-bm-rej-" + tt.name,
-				"params":       map[string]any{},
-				"target_agent": "scenario-default-agent",
+				"template":      tid,
+				"instance_key":  "ck-bm-rej-" + tt.name,
+				"params":        map[string]any{},
+				"target_daemon": "scenario-default-daemon",
 				"attribute_overrides": map[string]any{
 					"by_match": []any{
 						map[string]any{

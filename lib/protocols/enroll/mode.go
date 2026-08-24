@@ -4,12 +4,12 @@
 package enroll
 
 const (
-	PeerAuthNone = "none"
-	PeerAuthMTLS = "mtls"
+	ServiceAuthNone = "none"
+	ServiceAuthMTLS = "mtls"
 )
 
 const (
-	EnvPeerAuth      = "RIMSKY_PEER_AUTH"
+	EnvServiceAuth   = "RIMSKY_SERVICE_AUTH"
 	EnvControlAPIURL = "RIMSKY_CONTROL_API_URL"
 	EnvAPIKey        = "RIMSKY_API_KEY"
 )

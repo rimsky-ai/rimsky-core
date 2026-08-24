@@ -11,9 +11,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,19 +21,17 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostdaemon"
 )
 
 func setupRoleStackEnv(t *testing.T) (runDir, endpoint string, port int) {
 	t.Helper()
 	runDir = t.TempDir()
-	if err := os.MkdirAll(filepath.Join(runDir, "blobs"), 0o755); err != nil {
-		t.Fatalf("mkdir blobs: %v", err)
-	}
 	if err := compose.WriteSyntheticRimskyYAML(runDir, &compose.Manifest{Project: "test-launcher"}, nil, nil, 0); err != nil {
 		t.Fatalf("write rimsky.yml: %v", err)
 	}
-	port, err := hostagent.FreeLocalPort()
+	port, err := hostdaemon.FreeLocalPort()
 	if err != nil {
 		t.Fatalf("FreeLocalPort: %v", err)
 	}
@@ -63,7 +61,7 @@ func TestStartRoleStack_BootsAndDrains(t *testing.T) {
 	if got := stack.Endpoint(); got != endpoint {
 		t.Errorf("Endpoint() = %q, want %q", got, endpoint)
 	}
-	if err := compose.WaitForControlAPIReady(ctx, stack.Endpoint(), 0); err != nil {
+	if err := compose.WaitForControlAPIReady(ctx, shared.SystemClock{}, stack.Endpoint(), 0); err != nil {
 		stack.Drain(context.Background(), 5*time.Second)
 		t.Fatalf("WaitForControlAPIReady: %v", err)
 	}
@@ -123,7 +121,7 @@ func TestWaitForControlAPIReady_Polls(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := compose.WaitForControlAPIReady(context.Background(), srv.URL, 0); err != nil {
+	if err := compose.WaitForControlAPIReady(context.Background(), shared.SystemClock{}, srv.URL, 0); err != nil {
 		t.Fatalf("WaitForControlAPIReady: %v", err)
 	}
 	if got := hits.Load(); got < flipAt {
@@ -132,13 +130,22 @@ func TestWaitForControlAPIReady_Polls(t *testing.T) {
 }
 
 func TestWaitForControlAPIReady_DeadlineExceeded(t *testing.T) {
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
 
-	err := compose.WaitForControlAPIReady(context.Background(), srv.URL, 150*time.Millisecond)
+	clock := shared.NewAutoAdvanceClock(time.Date(2026, 6, 1, 7, 0, 0, 0, time.UTC))
+	err := compose.WaitForControlAPIReady(context.Background(), clock, srv.URL, 150*time.Millisecond)
 	if err == nil {
 		t.Fatal("WaitForControlAPIReady must error when the endpoint never returns 200")
+	}
+	if !strings.Contains(err.Error(), "not ready within 150ms") {
+		t.Fatalf("err = %v, want the readiness deadline named", err)
+	}
+	if got := hits.Load(); got < 2 {
+		t.Fatalf("health endpoint polled %d time(s); the wait must keep polling until its deadline, not give up on the first 503", got)
 	}
 }

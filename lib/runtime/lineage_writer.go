@@ -200,7 +200,7 @@ func frameTriggerFieldsFor(ctx context.Context, args RunArgs, frameID shared.UUI
 		return ferr
 	}); err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("lineage_writer.frameTriggerFieldsFor failed",
+			args.Logger.Warn("LINEAGE.FRAMETRIGGERFIELDS.FAILED", "site", "frameTriggerFieldsFor",
 				"frame_id", frameID.String(),
 				"error", err.Error())
 		}
@@ -222,14 +222,14 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 	}
 	paramsHash, perr := HashCanonicalJSON(in.Params)
 	if perr != nil && args.Logger != nil {
-		args.Logger.Warn("lineage_writer.HashCanonicalJSON failed",
+		args.Logger.Warn("LINEAGE.CANONICALHASH.FAILED", "site", "HashCanonicalJSON",
 			"field", "params",
 			"run_id", in.NodeRunID.String(),
 			"error", perr.Error())
 	}
 	attributesHash, uerr := HashCanonicalJSON(in.AttributesMerged)
 	if uerr != nil && args.Logger != nil {
-		args.Logger.Warn("lineage_writer.HashCanonicalJSON failed",
+		args.Logger.Warn("LINEAGE.CANONICALHASH.FAILED", "site", "HashCanonicalJSON",
 			"field", "attributes",
 			"run_id", in.NodeRunID.String(),
 			"error", uerr.Error())
@@ -269,7 +269,7 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 		return WriteLeafRunLineage(ctx, lt, in.InstanceID, in.FrameID, args.Clock.Now(), rec, tx)
 	}); err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("EmitLeafRunLineage: write failed",
+			args.Logger.Warn("LINEAGE.LEAFRUNRECORD.WRITEFAILED", "site", "EmitLeafRunLineage",
 				"run_id", in.NodeRunID.String(),
 				"error", err.Error())
 		}
@@ -351,7 +351,7 @@ func CollectSubstitutionRefsForEmit(ctx context.Context, args RunArgs, acq *acqu
 		return nil
 	}); err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("CollectSubstitutionRefsForEmit: ListByInstance failed; emitting directive-shape refs only",
+			args.Logger.Warn("LINEAGE.SUBSTITUTIONREFS.LISTFAILED", "site", "CollectSubstitutionRefsForEmit", "detail", "emitting directive-shape refs only",
 				"instance_id", acq.InstanceID.String(),
 				"error", err.Error())
 		}

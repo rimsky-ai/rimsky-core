@@ -1,7 +1,7 @@
 // Copyright © 2026 Fall Guy Consulting.
 // SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 
-// @concept: peer-auth
+// @concept: service-auth
 
 package config
 
@@ -19,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 func startMTLSControlAPI(t *testing.T) (string, *pki.CA) {
@@ -49,7 +49,7 @@ func startMTLSControlAPI(t *testing.T) (string, *pki.CA) {
 		Host:         "127.0.0.1",
 		Port:         0,
 		ControlAPIID: controlAPIListenerPrincipal,
-		PeerAuth:     peer.PeerAuthMTLS,
+		ServiceAuth:  service.ServiceAuthMTLS,
 	})
 	if err != nil {
 		t.Fatalf("StartControlAPI under mtls: %v", err)
@@ -78,8 +78,8 @@ func leafClient(t *testing.T, issuer *pki.CA, trustRoots *pki.CA, principal stri
 	}}}
 }
 
-// @story: peer-auth-mtls-mutual
-// @decision: peer-auth-mtls
+// @story: service-auth-mtls-mutual
+// @decision: service-auth-mtls
 func TestControlAPIListenerServesTLSFromTheDeploymentCAUnderMTLS(t *testing.T) {
 	addr, ca := startMTLSControlAPI(t)
 
@@ -88,7 +88,7 @@ func TestControlAPIListenerServesTLSFromTheDeploymentCAUnderMTLS(t *testing.T) {
 		defer plaintextResp.Body.Close()
 		body, _ := io.ReadAll(plaintextResp.Body)
 		if plaintextResp.StatusCode == http.StatusOK {
-			t.Fatalf("under peer_auth: mtls the control API port must not answer plaintext HTTP; the mode is one flip and the inbound listener is inside it (got 200, body %q)", body)
+			t.Fatalf("under service_auth: mtls the control API port must not answer plaintext HTTP; the mode is one flip and the inbound listener is inside it (got 200, body %q)", body)
 		}
 		if !strings.Contains(string(body), "HTTPS server") {
 			t.Errorf("a plaintext request to the mTLS port should be refused as such, got %d %q", plaintextResp.StatusCode, body)
@@ -109,7 +109,7 @@ func TestControlAPIListenerServesTLSFromTheDeploymentCAUnderMTLS(t *testing.T) {
 	}
 }
 
-// @decision: peer-auth-mtls
+// @decision: service-auth-mtls
 func TestControlAPIListenerRejectsAClientCertFromAnotherCA(t *testing.T) {
 	addr, ca := startMTLSControlAPI(t)
 
@@ -123,7 +123,7 @@ func TestControlAPIListenerRejectsAClientCertFromAnotherCA(t *testing.T) {
 	}
 }
 
-// @decision: peer-auth-mtls
+// @decision: service-auth-mtls
 func TestControlAPIListenerStaysPlaintextUnderTheDefaultPosture(t *testing.T) {
 	ctx := context.Background()
 	db, err := persistence.Open(ctx, persistence.Config{

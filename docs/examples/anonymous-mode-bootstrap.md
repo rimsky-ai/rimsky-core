@@ -27,7 +27,7 @@ curl -sS -X POST "$BASE/v1/templates" -H 'content-type: application/json' \
   -d '{"spec":{"name":"demo","version":"1","nodes":[{"type":"worker","executor":"http-node"}]}}'
 curl -sS -X POST "$BASE/v1/templates/$TPL/deploy" -H 'content-type: application/json' -d '{}'
 curl -sS -X POST "$BASE/v1/instances" -H 'content-type: application/json' \
-  -d '{"template":"'"$TPL"'","instance_key":"demo-1","target_agent":"my-agent"}'
+  -d '{"template":"'"$TPL"'","instance_key":"demo-1","target_daemon":"my-daemon"}'
 curl -sS "$BASE/v1/instances/$IID"
 curl -sS -X POST "$BASE/v1/instances/$IID/terminate" -H 'content-type: application/json' -d '{}'
 ```
@@ -36,7 +36,7 @@ Across the whole published control-API route set, the anonymous caller meets no
 authorization refusal: routes answer 2xx, 400 for an empty body, or 404 for an
 identifier that does not exist.
 
-One route is a deliberate exception. On a deployment configured for mTLS peer
+One route is a deliberate exception. On a deployment configured for mTLS service
 auth, `POST /v1/enroll` refuses the anonymous caller with 403 and a message
 naming the missing authenticated principal, while `GET /v1/ca-root` answers 200
 to the same caller.

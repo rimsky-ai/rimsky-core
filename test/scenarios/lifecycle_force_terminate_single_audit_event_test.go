@@ -19,20 +19,20 @@ func TestForceTerminate_MultiNodeKillAuditsAsOneInstanceTerminatedEvent(t *testi
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	h.Stub.WhenType("agent-a").AwaitAsyncCallback("ack-a", 60000)
-	h.Stub.WhenType("agent-b").AwaitAsyncCallback("ack-b", 60000)
+	h.Stub.WhenType("daemon-a").AwaitAsyncCallback("ack-a", 60000)
+	h.Stub.WhenType("daemon-b").AwaitAsyncCallback("ack-b", 60000)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "multi-node-force-terminate", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "agent-a", Executor: "stub"}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "agent-b", Executor: "stub"}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "daemon-a", Executor: "stub"}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "daemon-b", Executor: "stub"}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-multi-node-force-terminate", map[string]any{})
 
-	a := h.FindNode(iid, "agent-a")
-	b := h.FindNode(iid, "agent-b")
+	a := h.FindNode(iid, "daemon-a")
+	b := h.FindNode(iid, "daemon-b")
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 

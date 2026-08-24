@@ -206,6 +206,42 @@ func (r *fakeRunner) waitForResumeCount(t *testing.T, want int) []CliResumeReque
 	return append([]CliResumeRequest(nil), r.resumes[:want]...)
 }
 
+type drivenTimeouts struct {
+	mu    sync.Mutex
+	now   time.Time
+	ticks chan time.Time
+}
+
+func newDrivenTimeouts() *drivenTimeouts {
+	return &drivenTimeouts{
+		now:   time.Date(2026, 4, 2, 8, 0, 0, 0, time.UTC),
+		ticks: make(chan time.Time, 1),
+	}
+}
+
+func (d *drivenTimeouts) Now() time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.now
+}
+
+func (d *drivenTimeouts) ticker() (<-chan time.Time, func()) { return d.ticks, func() {} }
+
+func (d *drivenTimeouts) advanceAndTick(by time.Duration) {
+	d.mu.Lock()
+	d.now = d.now.Add(by)
+	at := d.now
+	d.mu.Unlock()
+	d.ticks <- at
+}
+
+func driveTimeouts(opts *AgentRunOptions) *drivenTimeouts {
+	d := newDrivenTimeouts()
+	opts.Now = d.Now
+	opts.TimeoutTicker = d.ticker
+	return d
+}
+
 func baseRunOpts(runner CliRunner) AgentRunOptions {
 	return AgentRunOptions{
 		SessionID:    "run-1",
@@ -570,7 +606,9 @@ func TestRunAgentStdioAllowedWhenAllowlistOpen(t *testing.T) {
 }
 
 func TestRunAgentMcpServersReachSpawnAcrossTransports(t *testing.T) {
-	RegisterMcpModule("test-witness-module", func() *ModuleMcpServer {
+	runner := &fakeRunner{spawnHandles: []*fakeHandle{newFakeHandle(true)}}
+	opts := baseRunOpts(runner)
+	opts.McpModules = testModules("test-witness-module", func() *ModuleMcpServer {
 		return &ModuleMcpServer{
 			Name: "loopback",
 			Tools: []ModuleMcpTool{{
@@ -585,8 +623,6 @@ func TestRunAgentMcpServersReachSpawnAcrossTransports(t *testing.T) {
 			}},
 		}
 	})
-	runner := &fakeRunner{spawnHandles: []*fakeHandle{newFakeHandle(true)}}
-	opts := baseRunOpts(runner)
 	opts.CliConfig = &CliConfig{McpServers: []McpServerInput{
 		{Transport: "http", Name: "search", URL: "https://mcp.example.invalid/", AllowedTools: []string{"query"}},
 		{Transport: "stdio", Name: "local-tool", Command: "/bin/tool", Args: []string{"--serve"}},
@@ -689,11 +725,19 @@ func TestRunAgentSpawnFailure(t *testing.T) {
 }
 
 func TestRunAgentSilenceTimeout(t *testing.T) {
-	runner := &fakeRunner{spawnHandles: []*fakeHandle{newFakeHandle(true)}}
+	h := newFakeHandle(true)
+	runner := &fakeRunner{spawnHandles: []*fakeHandle{h}}
 	opts := baseRunOpts(runner)
 	silence := 200
 	opts.CliConfig = &CliConfig{SilenceTimeoutMs: &silence}
-	outcome := RunAgent(opts)
+	clock := driveTimeouts(&opts)
+
+	done := make(chan AgentOutcome, 1)
+	go func() { done <- RunAgent(opts) }()
+	h.waitStdoutRegistered(t)
+	clock.advanceAndTick(time.Duration(silence+1) * time.Millisecond)
+
+	outcome := <-done
 	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/timeout" {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -705,10 +749,12 @@ func TestRunAgentSilenceTimeoutFiresWithOpenToolUse(t *testing.T) {
 	opts := baseRunOpts(runner)
 	silence := 100
 	opts.CliConfig = &CliConfig{SilenceTimeoutMs: &silence}
+	clock := driveTimeouts(&opts)
 	done := make(chan AgentOutcome, 1)
 	go func() { done <- RunAgent(opts) }()
 	h.waitStdoutRegistered(t)
 	h.emitStdout(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_hung","name":"Bash"}]}}` + "\n")
+	clock.advanceAndTick(time.Duration(silence+1) * time.Millisecond)
 
 	outcome := <-done
 	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/timeout" {
@@ -722,11 +768,13 @@ func TestRunAgentToolUseTimeout(t *testing.T) {
 	opts := baseRunOpts(runner)
 	toolUse := 150
 	opts.CliConfig = &CliConfig{ToolUseTimeoutMs: &toolUse}
+	clock := driveTimeouts(&opts)
 	done := make(chan AgentOutcome, 1)
 	go func() { done <- RunAgent(opts) }()
 	runner.waitForSpawn(t)
 	h.waitStdoutRegistered(t)
 	h.emitStdout(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_stuck","name":"Bash","input":{}}]}}` + "\n")
+	clock.advanceAndTick(time.Duration(toolUse+1) * time.Millisecond)
 
 	outcome := <-done
 	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/tool_use_timeout" {
@@ -751,12 +799,14 @@ func TestRunAgentToolUseEndClearsOpenToolUseBeforeItTimesOut(t *testing.T) {
 	toolUse := 150
 	silence := 400
 	opts.CliConfig = &CliConfig{ToolUseTimeoutMs: &toolUse, SilenceTimeoutMs: &silence}
+	clock := driveTimeouts(&opts)
 	done := make(chan AgentOutcome, 1)
 	go func() { done <- RunAgent(opts) }()
 	runner.waitForSpawn(t)
 	h.waitStdoutRegistered(t)
 	h.emitStdout(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_quick","name":"Bash","input":{}}]}}` + "\n")
 	h.emitStdout(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_quick"}]}}` + "\n")
+	clock.advanceAndTick(time.Duration(silence+1) * time.Millisecond)
 
 	outcome := <-done
 	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/timeout" {

@@ -24,7 +24,7 @@ func TestLookupExecutorSchema_MalformedSchemaLogsWarn(t *testing.T) {
 	schema, ok := lookupExecutorSchema("broken-executor", execCaps)
 	require.False(t, ok)
 	require.Nil(t, schema)
-	require.Contains(t, buf.String(), "malformed_executor_schema")
+	require.Contains(t, buf.String(), "INSTANCE.STATICCONFIGGATE.MALFORMEDEXECUTORSCHEMA")
 	require.Contains(t, buf.String(), "broken-executor")
 }
 

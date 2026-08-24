@@ -48,7 +48,7 @@ A signal is the emission shape for any transition that affects a node run. A tem
 | --- | --- |
 | `TerminalSuccessSignalPayload` | `changed`, `attributes_delta`, `change_summary`, `tags` |
 | `TerminalErrorSignalPayload` | `error_class`, `error_payload`, `attempt`, `retries_so_far`, `attributes_delta`, `tags` |
-| `TransientParkSignalPayload` | `resume_at`, `tags`, `scratch_size`, `scratch_spilled` |
+| `TransientParkSignalPayload` | `resume_at`, `tags`, `scratch_size` |
 | `TransientRetrySignalPayload` | `attempt`, `cap`, `error_class`, `delay_ms`, `error_payload` |
 | `TransientAwaitAsyncSignalPayload` | `async_ack_id`, `callback_url` |
 | `TransientInfraSignalPayload` | `reason`, `details` |

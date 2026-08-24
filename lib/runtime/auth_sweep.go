@@ -48,7 +48,7 @@ func SweepRotationGrace(
 	}
 	for _, k := range swept {
 		if log != nil {
-			log.Info("auth.rotation_grace_revoked", "key_id", k.ID.String(), "key_name", k.Name)
+			log.Info("AUTH.ROTATIONGRACE.REVOKED", "key_id", k.ID.String(), "key_name", k.Name)
 		}
 	}
 	if len(swept) > 0 {
@@ -106,7 +106,7 @@ func emitKeyRevoked(ctx context.Context, tables persistence.Tables, log shared.L
 		Payload: eventpayload.New(auth.KeyRevokedProto(p)),
 	}, tx); err != nil {
 		if log != nil {
-			log.Error("auth.key_revoked.append", "key_id", p.KeyID.String(), "err", err.Error())
+			log.Error("AUTH.KEYREVOKEDEVENT.APPENDFAILED", "key_id", p.KeyID.String(), "err", err.Error())
 		}
 		return err
 	}

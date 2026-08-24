@@ -275,7 +275,7 @@ func dumpWorkerDispatchProvenance(t *testing.T, ctx context.Context, pool *pgxpo
 	rows, err := pool.Query(ctx, `
 		SELECT nr.id::text, nr.run_scope_id::text, nr.frame_id::text, nr.sequence, nr.state,
 		       nr.creation_reason, nr.enqueued_at,
-		       COALESCE(na.dispatch_input_bag, '{}'::jsonb), COALESCE(na.data, '{}'::jsonb)
+		       COALESCE(na.dispatch_input_bag, convert_to('{}', 'UTF8')), COALESCE(na.data, convert_to('{}', 'UTF8'))
 		  FROM rimsky_node_runs nr
 		  LEFT JOIN rimsky_node_attributes na ON na.node_run_id = nr.id
 		 WHERE nr.node_id = $1::uuid
@@ -317,7 +317,7 @@ func connectStatePostgres(ctx context.Context, t *testing.T, hostDSN string) *pg
 func getWorkerDispatchesInOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string) []workerDispatch {
 	t.Helper()
 	rows, err := pool.Query(ctx, `
-		SELECT nr.id::text, nr.run_scope_id::text, COALESCE(na.data, '{}'::jsonb)
+		SELECT nr.id::text, nr.run_scope_id::text, COALESCE(na.data, convert_to('{}', 'UTF8'))
 		  FROM rimsky_node_runs nr
 		  LEFT JOIN rimsky_node_attributes na ON na.node_run_id = nr.id
 		 WHERE nr.node_id = $1::uuid

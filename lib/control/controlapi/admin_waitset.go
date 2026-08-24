@@ -70,7 +70,7 @@ func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 				if len(r.TopicFilter) > 0 {
 					var f any
 					if err := json.Unmarshal(r.TopicFilter, &f); err != nil {
-						deps.Logger.Debug("admin.wait_set.topic_filter_decode_failed",
+						deps.Logger.Debug("CONTROLAPI.WAITSETTOPICFILTER.DECODEFAILED",
 							"frame_id", r.FrameID, "receiver_run_id", r.ReceiverNodeRunID, "err", err.Error())
 					}
 					entry.TopicFilter = f

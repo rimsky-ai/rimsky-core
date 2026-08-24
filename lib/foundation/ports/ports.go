@@ -16,16 +16,16 @@ const ControlAPI = 8080
 
 const SupervisorCallback = 8081
 
-const HostAgentProxyAgentFacing = 8090
+const HostDaemonProxyDaemonFacing = 8090
 
-const HostAgentProxyPeerFacing = 8091
+const HostDaemonProxyServiceFacing = 8091
 
 // @decision: default-port-allocation
 func CoreDefaults() map[string]int {
 	return map[string]int{
-		"control-api":                   ControlAPI,
-		"supervisor-async-callback":     SupervisorCallback,
-		"host-agent-proxy-agent-facing": HostAgentProxyAgentFacing,
-		"host-agent-proxy-peer-facing":  HostAgentProxyPeerFacing,
+		"control-api":                      ControlAPI,
+		"supervisor-async-callback":        SupervisorCallback,
+		"host-daemon-proxy-daemon-facing":  HostDaemonProxyDaemonFacing,
+		"host-daemon-proxy-service-facing": HostDaemonProxyServiceFacing,
 	}
 }

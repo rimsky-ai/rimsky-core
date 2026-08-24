@@ -1,0 +1,26 @@
+// Copyright © 2026 Fall Guy Consulting.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
+
+package scenarios
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+)
+
+func TestHostDaemonAnonymousModeLateBind(t *testing.T) {
+	fx := newHostDaemonFixture(t, fixtureOpts{withDaemon: true, anonymous: true})
+
+	tid := fx.deployLateBindTemplate(t, "anon-late-bind")
+	iid := fx.createLateBindInstance(t, tid, "ck-anon-late-bind", fx.stubBinary)
+
+	worker := fx.h.FindNode(iid, "worker")
+	require.NotNil(t, worker, "worker node should exist")
+
+	fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh)
+
+	fx.waitForNodeEventKind(t, iid, "terminal/success")
+}

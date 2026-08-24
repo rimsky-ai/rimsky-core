@@ -84,19 +84,19 @@ func (ca *testCA) pool(t *testing.T) *x509.CertPool {
 	return pool
 }
 
-func TestPinnedTLSConfigVerifiesAPeerByItsIssuerAndTheFixedPeerName(t *testing.T) {
+func TestPinnedTLSConfigVerifiesAServiceByItsIssuerAndTheFixedServiceName(t *testing.T) {
 	ca := newTestCA(t)
 	cfg := PinnedTLSConfig(ca.pool(t))
-	if cfg.ServerName != PeerServerName {
+	if cfg.ServerName != ServiceServerName {
 		t.Fatalf("ServerName = %q, want %q — an enrolled leaf is named by its workload principal, "+
-			"never by the host the config happens to point at", cfg.ServerName, PeerServerName)
+			"never by the host the config happens to point at", cfg.ServerName, ServiceServerName)
 	}
 	if cfg.InsecureSkipVerify {
-		t.Fatal("verification must stay on: the fixed peer name exists so the standard chain check still runs")
+		t.Fatal("verification must stay on: the fixed service name exists so the standard chain check still runs")
 	}
-	leaf := ca.leaf(t, "key-01JWORKLOAD", PeerServerName)
+	leaf := ca.leaf(t, "key-01JWORKLOAD", ServiceServerName)
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: cfg.RootCAs, DNSName: cfg.ServerName}); err != nil {
-		t.Fatalf("a CA-issued peer leaf must verify under the pinned config: %v", err)
+		t.Fatalf("a CA-issued service leaf must verify under the pinned config: %v", err)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestPinnedTLSConfigRejectsALeafFromAnotherCA(t *testing.T) {
 	pinned := newTestCA(t)
 	impostor := newTestCA(t)
 	cfg := PinnedTLSConfig(pinned.pool(t))
-	leaf := impostor.leaf(t, "key-01JWORKLOAD", PeerServerName)
+	leaf := impostor.leaf(t, "key-01JWORKLOAD", ServiceServerName)
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: cfg.RootCAs, DNSName: cfg.ServerName}); err == nil {
 		t.Fatal("a leaf signed by a CA that is not the pinned one must be rejected")
 	}
@@ -130,8 +130,8 @@ func TestCAPoolFromFileLoadsAPinnedRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CAPoolFromFile: %v", err)
 	}
-	leaf := ca.leaf(t, "control-api", PeerServerName)
-	if _, err := leaf.Verify(x509.VerifyOptions{Roots: pool, DNSName: PeerServerName}); err != nil {
+	leaf := ca.leaf(t, "control-api", ServiceServerName)
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: pool, DNSName: ServiceServerName}); err != nil {
 		t.Fatalf("the loaded pool must verify that CA's own leaves: %v", err)
 	}
 }

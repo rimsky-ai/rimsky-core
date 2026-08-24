@@ -48,9 +48,6 @@ func (f *fakeInstancesForEnqueue) MarkTerminated(context.Context, shared.UUID, p
 func (f *fakeInstancesForEnqueue) CountActiveByTemplate(context.Context, string, persistence.Tx) (int, error) {
 	return 0, nil
 }
-func (f *fakeInstancesForEnqueue) ListTerminatedWithLifecycleRows(context.Context, int, persistence.Tx) ([]persistence.InstanceRow, error) {
-	return nil, nil
-}
 func (f *fakeInstancesForEnqueue) CountByActive(context.Context, persistence.Tx) (int, int, error) {
 	return 0, 0, nil
 }

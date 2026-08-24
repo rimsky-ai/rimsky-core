@@ -119,7 +119,7 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		// @decision: event-log-kind-enum
 		k, err := events.ParseKindString(kindRaw)
 		if err != nil {
-			slog.Error("events.unknown_kind_at_unmarshal", slog.String("raw", kindRaw))
+			slog.Error("PERSISTENCE.EVENTKIND.UNKNOWN", slog.String("raw", kindRaw))
 			return persistence.EventListResult{}, fmt.Errorf("events.list: %w", err)
 		}
 		r.ID = eventID
@@ -184,7 +184,7 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 		}
 		k, err := events.ParseKindString(kindRaw)
 		if err != nil {
-			slog.Error("events.unknown_kind_at_unmarshal", slog.String("raw", kindRaw))
+			slog.Error("PERSISTENCE.EVENTKIND.UNKNOWN", slog.String("raw", kindRaw))
 			return nil, fmt.Errorf("events.lastTerminalByNodes: %w", err)
 		}
 		r.ID = eventID

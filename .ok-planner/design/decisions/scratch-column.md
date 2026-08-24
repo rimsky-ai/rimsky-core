@@ -6,11 +6,11 @@ decision: scratch-column
 
 ## Choice
 
-Executor scratch persists on the node-run row as an inline-bytes-or-spilled-handle payload, following the same `concept:blob-backend` spill pattern as the row's other inert payloads. Default is empty.
+Executor scratch persists as a byte column on the node-run row, committed with the row (see `decision:attribute-bytes-in-the-row`). Default is empty.
 
 ## Rationale
 
-Reuses the inert-payload persistence idiom, so persistence-layer code stays uniform, and the same blob-backend abstracts inline versus spilled storage. Scratch lives and dies with the dispatch row, so the row is its natural home.
+Scratch lives and dies with the dispatch row, so the row is its natural home, and a column on that row is the same idiom the attribute bag uses.
 
 ## Alternatives
 

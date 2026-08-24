@@ -100,8 +100,8 @@ func TestSend_4xx_NoRetry_LogsRejected(t *testing.T) {
 	if atomic.LoadInt32(&hits) != 1 {
 		t.Fatalf("expected 1 hit on 4xx, got %d", hits)
 	}
-	if len(log.msgs) != 1 || log.msgs[0] != "publisher.message.rejected" {
-		t.Fatalf("expected publisher.message.rejected log, got %#v", log.msgs)
+	if len(log.msgs) != 1 || log.msgs[0] != "PUBLISHERKIT.MESSAGE.REJECTED" {
+		t.Fatalf("expected a PUBLISHERKIT.MESSAGE.REJECTED log, got %#v", log.msgs)
 	}
 }
 
@@ -189,8 +189,8 @@ func TestSend_408And429_ExhaustionIsTransientNotRejected(t *testing.T) {
 		msgs := append([]string(nil), log.msgs...)
 		log.mu.Unlock()
 		for _, m := range msgs {
-			if m == "publisher.message.rejected" {
-				t.Fatalf("status %d must not log publisher.message.rejected", code)
+			if m == "PUBLISHERKIT.MESSAGE.REJECTED" {
+				t.Fatalf("status %d must not log PUBLISHERKIT.MESSAGE.REJECTED", code)
 			}
 		}
 	}

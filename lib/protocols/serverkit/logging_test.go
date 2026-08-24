@@ -62,7 +62,7 @@ func TestJSONLoggerReportsAnUnrecognizedLevelInsteadOfSilentlyUsingInfo(t *testi
 	if !logger.Enabled(context.Background(), slog.LevelInfo) {
 		t.Fatal("an unrecognized level must still leave a usable logger at info")
 	}
-	if !strings.Contains(captured.String(), "unrecognized log level") {
+	if !strings.Contains(captured.String(), "SERVERKIT.LOGLEVEL.UNRECOGNIZED") {
 		t.Fatalf("an unrecognized level emitted no event: %q", captured.String())
 	}
 	if !strings.Contains(captured.String(), "verbose") {

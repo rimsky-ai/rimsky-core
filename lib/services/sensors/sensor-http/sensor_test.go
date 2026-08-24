@@ -22,9 +22,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
-
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/awaited"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
 )
 
 type noopLogger struct{}
@@ -492,26 +491,27 @@ func TestTick_OversizedResponseBody_RejectedNotBuffered(t *testing.T) {
 
 func TestTick_PollsDueWatchesConcurrently_OneSlowWatchDoesNotBlockAnother(t *testing.T) {
 	release := make(chan struct{})
-	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		<-release
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer slow.Close()
+	var servedA, servedB int32
+	held := func(served *int32) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			<-release
+			atomic.AddInt32(served, 1)
+			w.WriteHeader(http.StatusOK)
+		}
+	}
+	upstreamA := httptest.NewServer(held(&servedA))
+	defer upstreamA.Close()
+	upstreamB := httptest.NewServer(held(&servedB))
+	defer upstreamB.Close()
 
-	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer fast.Close()
-
-	fastPolled := make(chan struct{})
-	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
 	s := NewSensorService(rimsky.URL, loopbackGuard(t), noopLogger{})
 	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	for id, url := range map[string]string{"slow": slow.URL, "fast": fast.URL} {
+	for id, url := range map[string]string{"a": upstreamA.URL, "b": upstreamB.URL} {
 		raw, _ := json.Marshal(map[string]any{"url": url, "poll_interval": "1ms"})
 		if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 			PublisherSubscriptionId: id, InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
@@ -520,27 +520,35 @@ func TestTick_PollsDueWatchesConcurrently_OneSlowWatchDoesNotBlockAnother(t *tes
 		}
 	}
 
-	go func() {
-		s.mu.Lock()
-		w := s.watches["fast"]
-		s.mu.Unlock()
-		awaited.Until(t, "the fast watch to record its first poll", func() bool {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			return !w.LastPollAt.IsZero()
-		})
-		close(fastPolled)
-	}()
-
 	tickDone := make(chan struct{})
 	go func() {
 		s.Tick(context.Background())
 		close(tickDone)
 	}()
 
-	<-fastPolled
+	awaited.Until(t, "both due watches to be polling at the same time", func() bool {
+		return s.PollsInFlight() == 2
+	})
+	select {
+	case <-tickDone:
+		t.Fatal("Tick returned while both upstreams were still held, so it never waited on either watch")
+	default:
+	}
+
 	close(release)
 	<-tickDone
+
+	if atomic.LoadInt32(&servedA) != 1 || atomic.LoadInt32(&servedB) != 1 {
+		t.Errorf("upstreams served a=%d b=%d (want 1 each; the tick must poll every due watch)",
+			atomic.LoadInt32(&servedA), atomic.LoadInt32(&servedB))
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range []string{"a", "b"} {
+		if s.watches[id].LastPollAt.IsZero() {
+			t.Errorf("the tick polled %q's sibling and never polled %q", id, id)
+		}
+	}
 }
 
 func TestTick_PermanentRejectionDropsObservation_AdvancesStateAndDoesNotReEmit(t *testing.T) {

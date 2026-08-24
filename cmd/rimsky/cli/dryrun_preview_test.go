@@ -57,21 +57,24 @@ func TestReportDryRunPreviewExitsZeroAndPrintsThePreview(t *testing.T) {
 		Body:    map[string]any{"dry_run": true},
 	}
 
-	SetActiveCommonFlags(&CommonFlags{Format: FormatHuman})
-	t.Cleanup(func() { SetActiveCommonFlags(nil) })
 	var code int
-	out := captureStdout(t, func() { code = reportError(preview) })
+	_ = captureStdout(t, func() { code = reportError(preview) })
 	if code != 0 {
 		t.Fatalf("a preview exits %d, want 0: nothing was written, so nothing failed", code)
+	}
+
+	var reported bool
+	out := captureStdout(t, func() { code, reported = reportDryRunPreviewAs(FormatHuman, preview) })
+	if code != 0 || !reported {
+		t.Fatalf("human report = (%d, %t), want (0, true)", code, reported)
 	}
 	if !strings.Contains(out, "would have created tag") || !strings.Contains(out, "release") {
 		t.Fatalf("human output = %q, want the would-have line and the details", out)
 	}
 
-	SetActiveCommonFlags(&CommonFlags{Format: FormatJSON})
-	jsonOut := captureStdout(t, func() { code = reportError(preview) })
-	if code != 0 {
-		t.Fatalf("a preview exits %d under json output, want 0", code)
+	jsonOut := captureStdout(t, func() { code, reported = reportDryRunPreviewAs(FormatJSON, preview) })
+	if code != 0 || !reported {
+		t.Fatalf("json report = (%d, %t), want (0, true)", code, reported)
 	}
 	if !strings.Contains(jsonOut, "dry_run") {
 		t.Fatalf("structured output = %q, want the dry-run marker", jsonOut)

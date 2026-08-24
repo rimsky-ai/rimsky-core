@@ -20,7 +20,7 @@ The CLI is the exception and it is not an image. Rimsky ships it as release arch
 docker run -p 8080:8080 rimskyai/rimsky-all-in-one
 ```
 
-That is the whole configuration. The image bakes a `rimsky.yml` with the SQLite driver at `/var/lib/rimsky/state.db`, a supervisor configuration with the async-callback listener on port 9100 advertising `127.0.0.1`, and `RIMSKY_CONTROL_API_HOST=0.0.0.0` so the published port reaches the control API.
+That is the whole configuration. The image bakes a `rimsky.yml` with the SQLite driver at `/var/lib/rimsky/state.db`, a supervisor configuration with the async-callback listener on port 8081 advertising `127.0.0.1`, and `RIMSKY_CONTROL_API_HOST=0.0.0.0` so the published port reaches the control API.
 
 To keep state across container replacement, mount a host directory:
 

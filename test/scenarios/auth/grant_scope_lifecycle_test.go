@@ -6,9 +6,13 @@
 package auth_test
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 func scopeLifecycleSpec(name string) map[string]any {
@@ -452,6 +456,9 @@ func TestGrantScope_TemplateRegister_HashForm(t *testing.T) {
 			"tag":  "analytics",
 		})
 		requireOK(t, code, body, "register tagged analytics (in-scope)")
+		if !templateHasTag(t, h.f, h.adminKey, "analytics") {
+			t.Fatal("the in-scope register did not tag the template analytics")
+		}
 	})
 
 	t.Run("out-of-scope tag rejects register", func(t *testing.T) {
@@ -460,7 +467,58 @@ func TestGrantScope_TemplateRegister_HashForm(t *testing.T) {
 			"tag":  "billing",
 		})
 		requireForbidden(t, code, body, "register tagged billing (out-of-scope)")
+		if templateHasTag(t, h.f, h.adminKey, "billing") {
+			t.Fatal("the denied register persisted a billing-tagged template")
+		}
+		if !sawTemplateRegisterScopeDenial(t, h.f) {
+			t.Fatal("expected a template:register auth.access_denied row carrying denial_reason=permission_denied")
+		}
 	})
+}
+
+func templateHasTag(t *testing.T, f *authFixture, adminKey, tag string) bool {
+	t.Helper()
+	code, resp := f.request(t, "GET", "/v1/templates", adminKey, nil)
+	if code != 200 {
+		t.Fatalf("GET /templates: %d %+v", code, resp)
+	}
+	list, _ := resp["templates"].([]any)
+	for _, item := range list {
+		row, _ := item.(map[string]any)
+		tags, _ := row["tags"].([]any)
+		for _, tg := range tags {
+			if s, _ := tg.(string); s == tag {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sawTemplateRegisterScopeDenial(t *testing.T, f *authFixture) bool {
+	t.Helper()
+	ctx := context.Background()
+	var saw bool
+	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rl, err := f.db.Tables().Events().List(ctx,
+			persistence.EventListFilter{KindIn: []string{auth.EventAccessDenied.String()}},
+			persistence.ListPagination{Limit: 200}, tx)
+		if err != nil {
+			return err
+		}
+		for _, e := range rl.Events {
+			if action, _ := e.Payload.Map()["action"].(string); action != "template:register" {
+				continue
+			}
+			if reason, _ := e.Payload.Map()["denial_reason"].(string); reason == string(auth.DenialPermissionDenied) {
+				saw = true
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Events.List: %v", err)
+	}
+	return saw
 }
 
 func registerOnly(t *testing.T, f *authFixture, adminKey, name, tag string) string {

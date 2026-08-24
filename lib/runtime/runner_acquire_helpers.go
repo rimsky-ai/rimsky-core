@@ -47,7 +47,7 @@ func acquireFanOutIfDeclared(
 	frameID := cand.FrameID
 	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, frameID, out, acquiredLocks, nodeDef.FanOut.PartitionRequest, tx)
 	if err != nil {
-		args.Logger.Warn("tryAcquire: fan-out partition_request substitution failed",
+		args.Logger.Warn("RUNNER.FANOUTPARTITIONREQUEST.SUBSTITUTIONFAILED", "site", "tryAcquire",
 			"node_id", cand.NodeID.String(),
 			"error", err.Error())
 		out.FanOutSubstitutionErr = fmt.Errorf("partition_request substitution: %w", err).Error()
@@ -71,7 +71,7 @@ func acquireFanOutIfDeclared(
 		ParentRealizedWriteSemantics: parent.RealizedWriteSemantics,
 	}, tx)
 	if err != nil {
-		args.Logger.Warn("tryAcquire: fan-out sub-claim acquisition failed",
+		args.Logger.Warn("RUNNER.FANOUTSUBCLAIM.ACQUIREFAILED", "site", "tryAcquire",
 			"node_id", cand.NodeID.String(),
 			"producer", parent.ProducerName,
 			"error", err.Error())
@@ -104,7 +104,7 @@ func resolveFanOutParentClaim(
 		}
 		parentClaimSpec, ok := acquiredLocks[i].Spec.(claimproducer.ClaimSpec)
 		if !ok {
-			args.Logger.Warn("tryAcquire: fan-out alias references non-claim spec; ignored",
+			args.Logger.Warn("RUNNER.FANOUTALIAS.IGNORED", "site", "tryAcquire", "detail", "the alias references a non-claim spec",
 				"node_id", cand.NodeID.String(),
 				"alias", alias)
 			return nil, nil
@@ -218,27 +218,14 @@ func instanceParamsRaw(out *acquisition) (json.RawMessage, error) {
 
 // @concept: executor
 // @concept: inertness
+// @decision: scratch-column
 func loadScratchIntoAcquisition(
 	ctx context.Context, args RunArgs, out *acquisition, cand persistence.Candidate, tx persistence.Tx,
 ) error {
-	inline, handle, handleBackend, err := args.Queue.LoadScratch(ctx, cand.NodeRunID, tx)
+	scratch, err := args.Queue.LoadScratch(ctx, cand.NodeRunID, tx)
 	if err != nil {
 		return fmt.Errorf("loadScratch: reading persisted scratch for dispatch %s: %w", cand.NodeRunID, err)
 	}
-	if handle == "" {
-		out.Scratch = inline
-		return nil
-	}
-	// @decision: blob-backend-mismatch-read-refused
-	if err := persistence.CheckBlobBackendMatches(
-		fmt.Sprintf("loadScratch: dispatch %s", cand.NodeRunID), args.Blob, handle, handleBackend); err != nil {
-		return err
-	}
-	b, berr := args.Blob.Read(ctx, persistence.Handle(handle))
-	if berr != nil {
-		return fmt.Errorf("loadScratch: reading spilled scratch for dispatch %s from backend %q: %w",
-			cand.NodeRunID, handleBackend, berr)
-	}
-	out.Scratch = b
+	out.Scratch = scratch
 	return nil
 }

@@ -54,7 +54,7 @@ func seedBreakpointEvalFixture(t *testing.T, ctx context.Context, tables persist
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 		}, tx); err != nil {

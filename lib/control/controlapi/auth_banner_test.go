@@ -24,7 +24,7 @@ func TestCheckAnonymousBanner_WarnsOnlyWhenAnonymous(t *testing.T) {
 		if !anon {
 			t.Fatalf("CheckAnonymousBanner: got false want true (zero active keys)")
 		}
-		msg, ok := logger.fieldFor("auth.anonymous_mode", "message")
+		msg, ok := logger.fieldFor("AUTH.ANONYMOUSMODE.ACTIVE", "message")
 		if !ok {
 			t.Fatalf("no auth.anonymous_mode WARN emitted while in anonymous mode; events=%v", *events)
 		}
@@ -46,7 +46,7 @@ func TestCheckAnonymousBanner_WarnsOnlyWhenAnonymous(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		for _, e := range *events {
-			if e.msg == "auth.anonymous_mode" {
+			if e.msg == "AUTH.ANONYMOUSMODE.ACTIVE" {
 				t.Fatalf("auth.anonymous_mode WARN emitted while an active key is present: %+v", e)
 			}
 		}
@@ -60,7 +60,7 @@ type warnSignalLogger struct {
 func (w warnSignalLogger) Debug(string, ...any) {}
 func (w warnSignalLogger) Info(string, ...any)  {}
 func (w warnSignalLogger) Warn(msg string, _ ...any) {
-	if msg != "auth.anonymous_mode" {
+	if msg != "AUTH.ANONYMOUSMODE.ACTIVE" {
 		return
 	}
 	select {

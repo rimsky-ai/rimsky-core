@@ -14,11 +14,11 @@ func NewExpectedAttributesSchemaResolver(disc *Discovery) func(executorName stri
 		entry, ok := disc.GetExecutor(executorName)
 		if !ok || entry.Capabilities == nil {
 			if !ok {
-				slog.Debug("expected_attributes_schema_resolver: skip",
+				slog.Debug("OBSERVABILITY.EXPECTEDATTRIBUTESSCHEMA.SKIPPED", "site", "expectedAttributesSchemaFor",
 					"executor", executorName,
 					"reason", "executor_not_in_capability_cache")
 			} else {
-				slog.Warn("expected_attributes_schema_resolver: skip",
+				slog.Warn("OBSERVABILITY.EXPECTEDATTRIBUTESSCHEMA.SKIPPED", "site", "expectedAttributesSchemaFor",
 					"executor", executorName,
 					"reason", "executor_capabilities_nil")
 			}
@@ -26,7 +26,7 @@ func NewExpectedAttributesSchemaResolver(disc *Discovery) func(executorName stri
 		}
 		schema := entry.Capabilities.ExpectedAttributesSchema
 		if len(schema) == 0 {
-			slog.Debug("expected_attributes_schema_resolver: executor advertised no schema",
+			slog.Debug("OBSERVABILITY.EXPECTEDATTRIBUTESSCHEMA.ABSENT", "site", "expectedAttributesSchemaFor",
 				"executor", executorName)
 		}
 		return schema, true

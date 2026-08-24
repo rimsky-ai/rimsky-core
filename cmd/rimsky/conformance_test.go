@@ -146,13 +146,6 @@ var conformanceSubcommands = []struct {
 		reqExit: 2,
 	},
 	{
-		name:    "blob-backend",
-		run:     runConformanceBlobBackend,
-		flags:   []string{"backend", "root", "pg-conn-string", "timeout"},
-		reqMsg:  "--backend required",
-		reqExit: 2,
-	},
-	{
 		name:    "probe",
 		run:     runConformanceProbe,
 		flags:   []string{"endpoint", "transport", "timeout", "callback-bind", "callback-host"},
@@ -196,7 +189,7 @@ func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {
 
 // @concept: conformance
 func TestNoProtocolSuiteHangsOffAnotherProtocolsSubcommand(t *testing.T) {
-	protocols := []string{"executor", "claim-producer", "publisher", "validation", "data-processing", "blob-backend", "lifecycle-subscriber"}
+	protocols := []string{"executor", "claim-producer", "publisher", "validation", "data-processing", "lifecycle-subscriber"}
 	for _, sc := range conformanceSubcommands {
 		t.Run(sc.name, func(t *testing.T) {
 			_, usage := runCapt(t, sc.run, []string{"-h"})

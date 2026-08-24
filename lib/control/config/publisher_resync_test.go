@@ -121,7 +121,7 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:                    instanceID,
 			TemplateHash:          templateHash,
-			TargetRoutingIdentity: "test-resync-agent",
+			TargetRoutingIdentity: "test-resync-daemon",
 		}, tx); err != nil {
 			return err
 		}
@@ -156,9 +156,7 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 	var resyncCalled bool
 	var mu sync.Mutex
 	done := make(chan struct{})
-	orig := resyncPublishersAtStartup
-	t.Cleanup(func() { resyncPublishersAtStartup = orig })
-	resyncPublishersAtStartup = func(ctx context.Context, deps runtime.PublisherLifecycleDeps) error {
+	resyncPublishers := func(ctx context.Context, deps runtime.PublisherLifecycleDeps) error {
 		mu.Lock()
 		resyncCalled = true
 		mu.Unlock()
@@ -169,16 +167,18 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 	}
 
 	h, err := StartControlAPI(ControlAPIConfig{
-		Driver: db,
-		Clock:  shared.SystemClock{},
-		Logger: shared.SilentLogger{},
-		Host:   "127.0.0.1",
-		Port:   0,
+		Driver:           db,
+		Clock:            shared.SystemClock{},
+		Logger:           shared.SilentLogger{},
+		Host:             "127.0.0.1",
+		Port:             0,
+		ResyncPublishers: resyncPublishers,
 	})
 	if err != nil {
 		t.Fatalf("StartControlAPI: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the shutdown error, so no verdict reads this grace
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = h.Shutdown(shutCtx)

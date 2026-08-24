@@ -13,23 +13,23 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/grpcdial"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 const handshakeTimeout = 30 * time.Second
 
 type Prober interface {
-	ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
-	ProbeClaimProducer(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
-	ProbeClaimProducerDeclaredErrorClasses(ctx context.Context, peerName, endpoint, tlsMode string) ([]string, error)
+	ProbeExecutor(ctx context.Context, serviceName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
+	ProbeClaimProducer(ctx context.Context, serviceName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
+	ProbeClaimProducerDeclaredErrorClasses(ctx context.Context, serviceName, endpoint, tlsMode string) ([]string, error)
 }
 
 type gRPCProber struct{}
 
 func NewGRPCProber() Prober { return gRPCProber{} }
 
-func (gRPCProber) ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
-	conn, err := dial(peerName, endpoint, tlsMode)
+func (gRPCProber) ProbeExecutor(ctx context.Context, serviceName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
+	conn, err := dial(serviceName, endpoint, tlsMode)
 	if err != nil {
 		return nil, err
 	}
@@ -42,8 +42,8 @@ func (gRPCProber) ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode
 	return executorCapsFromProto(resp), nil
 }
 
-func (gRPCProber) ProbeClaimProducer(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
-	conn, err := dial(peerName, endpoint, tlsMode)
+func (gRPCProber) ProbeClaimProducer(ctx context.Context, serviceName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
+	conn, err := dial(serviceName, endpoint, tlsMode)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +56,8 @@ func (gRPCProber) ProbeClaimProducer(ctx context.Context, peerName, endpoint, tl
 	return storeCapsFromProto(resp), nil
 }
 
-func (gRPCProber) ProbeClaimProducerDeclaredErrorClasses(ctx context.Context, peerName, endpoint, tlsMode string) ([]string, error) {
-	conn, err := dial(peerName, endpoint, tlsMode)
+func (gRPCProber) ProbeClaimProducerDeclaredErrorClasses(ctx context.Context, serviceName, endpoint, tlsMode string) ([]string, error) {
+	conn, err := dial(serviceName, endpoint, tlsMode)
 	if err != nil {
 		return nil, err
 	}
@@ -132,29 +132,29 @@ func customUIFromProto(r *genv1.CustomUI) *CustomUI {
 	}
 }
 
-func dial(peerName, endpoint, tlsMode string) (*grpc.ClientConn, error) {
+func dial(serviceName, endpoint, tlsMode string) (*grpc.ClientConn, error) {
 	target := grpcdial.Target(endpoint)
-	label := peerName
+	label := serviceName
 	if label == "" {
 		label = endpoint
 	} else {
-		label = peerName + " (" + endpoint + ")"
+		label = serviceName + " (" + endpoint + ")"
 	}
 	return grpc.NewClient(target,
-		grpc.WithTransportCredentials(peer.TransportCredentials(tlsMode)),
-		grpc.WithUnaryInterceptor(peer.TLSModeUnaryInterceptor(label, tlsMode)),
-		grpc.WithStreamInterceptor(peer.TLSModeStreamInterceptor(label, tlsMode)),
+		grpc.WithTransportCredentials(service.TransportCredentials(tlsMode)),
+		grpc.WithUnaryInterceptor(service.TLSModeUnaryInterceptor(label, tlsMode)),
+		grpc.WithStreamInterceptor(service.TLSModeStreamInterceptor(label, tlsMode)),
 	)
 }
 
-type PeerSpec struct {
+type ServiceSpec struct {
 	Name                  string
 	Endpoint              string
 	ObservabilityEndpoint string
 	TLS                   string
 }
 
-func RunHandshake(ctx context.Context, prober Prober, executors, claimProducers []PeerSpec, log *slog.Logger) *Discovery {
+func RunHandshake(ctx context.Context, prober Prober, executors, claimProducers []ServiceSpec, log *slog.Logger) *Discovery {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -162,14 +162,14 @@ func RunHandshake(ctx context.Context, prober Prober, executors, claimProducers 
 	var wg sync.WaitGroup
 	for _, e := range executors {
 		wg.Add(1)
-		go func(e PeerSpec) {
+		go func(e ServiceSpec) {
 			defer wg.Done()
 			d.SetExecutor(probeExecutorEntry(ctx, prober, e, log))
 		}(e)
 	}
 	for _, s := range claimProducers {
 		wg.Add(1)
-		go func(s PeerSpec) {
+		go func(s ServiceSpec) {
 			defer wg.Done()
 			d.SetClaimProducer(probeClaimProducerEntry(ctx, prober, s, log))
 		}(s)
@@ -178,9 +178,9 @@ func RunHandshake(ctx context.Context, prober Prober, executors, claimProducers 
 	return d
 }
 
-func probeExecutorEntry(ctx context.Context, prober Prober, e PeerSpec, log *slog.Logger) PeerEntry {
+func probeExecutorEntry(ctx context.Context, prober Prober, e ServiceSpec, log *slog.Logger) ServiceEntry {
 	probe := chooseObsEndpoint(e.ObservabilityEndpoint, e.Endpoint)
-	entry := PeerEntry{
+	entry := ServiceEntry{
 		Name:                  e.Name,
 		Endpoint:              e.Endpoint,
 		ObservabilityEndpoint: probe,
@@ -193,7 +193,7 @@ func probeExecutorEntry(ctx context.Context, prober Prober, e PeerSpec, log *slo
 	if err != nil {
 		entry.Reachability = ReachabilityUnreachable
 		entry.LastError = err.Error()
-		log.Info("observability.handshake.executor.unreachable",
+		log.Info("OBSERVABILITY.HANDSHAKEEXECUTOR.UNREACHABLE",
 			slog.String("name", e.Name),
 			slog.String("endpoint", probe),
 			slog.String("error", err.Error()))
@@ -208,9 +208,9 @@ func probeExecutorEntry(ctx context.Context, prober Prober, e PeerSpec, log *slo
 }
 
 // @decision: producer-declared-classes-capability
-func probeClaimProducerEntry(ctx context.Context, prober Prober, s PeerSpec, log *slog.Logger) PeerEntry {
+func probeClaimProducerEntry(ctx context.Context, prober Prober, s ServiceSpec, log *slog.Logger) ServiceEntry {
 	probe := chooseObsEndpoint(s.ObservabilityEndpoint, s.Endpoint)
-	entry := PeerEntry{
+	entry := ServiceEntry{
 		Name:                  s.Name,
 		Endpoint:              s.Endpoint,
 		ObservabilityEndpoint: probe,
@@ -224,7 +224,7 @@ func probeClaimProducerEntry(ctx context.Context, prober Prober, s PeerSpec, log
 	declaredClasses, classErr := prober.ProbeClaimProducerDeclaredErrorClasses(classCtx, s.Name, s.Endpoint, s.TLS)
 	classCancel()
 	if classErr != nil {
-		log.Info("observability.handshake.claim_producer.declared_error_classes.unavailable",
+		log.Info("OBSERVABILITY.HANDSHAKEERRORCLASSES.UNAVAILABLE",
 			slog.String("name", s.Name),
 			slog.String("endpoint", s.Endpoint),
 			slog.String("error", classErr.Error()))
@@ -232,7 +232,7 @@ func probeClaimProducerEntry(ctx context.Context, prober Prober, s PeerSpec, log
 	if err != nil {
 		entry.Reachability = ReachabilityUnreachable
 		entry.LastError = err.Error()
-		log.Info("observability.handshake.claim_producer.unreachable",
+		log.Info("OBSERVABILITY.HANDSHAKECLAIMPRODUCER.UNREACHABLE",
 			slog.String("name", s.Name),
 			slog.String("endpoint", probe),
 			slog.String("error", err.Error()))
@@ -290,7 +290,7 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 			continue
 		}
 		wg.Add(1)
-		go func(e PeerEntry) {
+		go func(e ServiceEntry) {
 			defer wg.Done()
 			probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 			caps, err := d.prober.ProbeExecutor(probeCtx, e.Name, e.ObservabilityEndpoint, e.TLS)
@@ -318,9 +318,9 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 			continue
 		}
 		wg.Add(1)
-		go func(e PeerEntry) {
+		go func(e ServiceEntry) {
 			defer wg.Done()
-			d.SetClaimProducer(probeClaimProducerEntry(ctx, d.prober, PeerSpec{
+			d.SetClaimProducer(probeClaimProducerEntry(ctx, d.prober, ServiceSpec{
 				Name:                  e.Name,
 				Endpoint:              e.Endpoint,
 				ObservabilityEndpoint: e.ObservabilityEndpoint,
@@ -329,7 +329,7 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 		}(e)
 	}
 	wg.Wait()
-	log.Debug("observability.handshake.refresh",
+	log.Debug("OBSERVABILITY.HANDSHAKE.REFRESHED",
 		slog.Int("executors", len(executors)),
 		slog.Int("claim_producers", len(claimProducers)))
 }

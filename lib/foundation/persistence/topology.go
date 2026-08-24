@@ -7,6 +7,8 @@ import (
 	"os"
 )
 
+const ProcessRoleEnv = "RIMSKY_PROCESS_ROLE"
+
 type Topology string
 
 const (

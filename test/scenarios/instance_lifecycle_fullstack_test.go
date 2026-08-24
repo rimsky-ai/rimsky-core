@@ -223,10 +223,10 @@ func waitForInstanceTerminated(t *testing.T, h *scenario.Harness, iid shared.UUI
 func postCreateInstanceIdle(t *testing.T, controlBase, templateHash, instanceKey string) shared.UUID {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"template":     templateHash,
-		"instance_key": instanceKey,
-		"params":       map[string]any{},
-		"target_agent": "scenario-default-agent",
+		"template":      templateHash,
+		"instance_key":  instanceKey,
+		"params":        map[string]any{},
+		"target_daemon": "scenario-default-daemon",
 	})
 	require.NoError(t, err)
 	resp, err := http.Post(controlBase+"/v1/instances", "application/json", bytes.NewReader(body))

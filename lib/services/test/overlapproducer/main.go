@@ -117,14 +117,14 @@ func main() {
 	}
 	lis, err := net.Listen("tcp", bind)
 	if err != nil {
-		slog.Error("overlapproducer: listen", "bind", bind, "error", err)
+		slog.Error("OVERLAPPRODUCER.GRPC.LISTENFAILED", "bind", bind, "error", err)
 		os.Exit(1)
 	}
 	srv := grpc.NewServer()
 	genv1.RegisterClaimProducerServer(srv, &overlapProducer{})
-	slog.Info("overlapproducer: serving", "bind", bind)
+	slog.Info("OVERLAPPRODUCER.GRPC.LISTENING", "bind", bind)
 	if err := srv.Serve(lis); err != nil {
-		slog.Error("overlapproducer: serve", "error", err)
+		slog.Error("OVERLAPPRODUCER.GRPC.SERVEFAILED", "error", err)
 		os.Exit(1)
 	}
 }

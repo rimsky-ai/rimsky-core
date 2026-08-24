@@ -9,7 +9,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	service "github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type publisherRegistryImpl struct {
@@ -89,23 +89,23 @@ func DialPublisherAndValidationRegistries(
 	// @story: validation-author
 	// @story: validation-mixin-uniform
 	// @decision: plumb-validation-roles
-	type peerSpec struct {
+	type serviceSpec struct {
 		name       string
 		endpoint   string
 		tls        string
 		protocols  []string
 		fetchRoles func(context.Context) ([]string, error)
 	}
-	peers := make([]peerSpec, 0, len(producers.ClaimProducers)+len(execs.Executors)+len(publishers.Publishers))
+	services := make([]serviceSpec, 0, len(producers.ClaimProducers)+len(execs.Executors)+len(publishers.Publishers))
 	for n, e := range producers.ClaimProducers {
 		nameCopy, endpointCopy, tlsCopy := n, e.Endpoint, e.TLS
-		peers = append(peers, peerSpec{
+		services = append(services, serviceSpec{
 			name:      n,
 			endpoint:  e.Endpoint,
 			tls:       e.TLS,
 			protocols: e.Protocols,
 			fetchRoles: func(fctx context.Context) ([]string, error) {
-				c, dErr := peer.Dial(fctx, nameCopy, endpointCopy, tlsCopy)
+				c, dErr := service.Dial(fctx, nameCopy, endpointCopy, tlsCopy)
 				if dErr != nil {
 					return nil, dErr
 				}
@@ -124,29 +124,29 @@ func DialPublisherAndValidationRegistries(
 		if obsEndpoint == "" {
 			obsEndpoint = e.Endpoint
 		}
-		peers = append(peers, peerSpec{
+		services = append(services, serviceSpec{
 			name:      n,
 			endpoint:  e.Endpoint,
 			tls:       e.TLS,
 			protocols: e.Protocols,
 			fetchRoles: func(fctx context.Context) ([]string, error) {
-				return peer.FetchExecutorValidationRoles(fctx, nameCopy, obsEndpoint, tlsCopy)
+				return service.FetchExecutorValidationRoles(fctx, nameCopy, obsEndpoint, tlsCopy)
 			},
 		})
 	}
 	for n, e := range publishers.Publishers {
 		nameCopy, endpointCopy, tlsCopy := n, e.Endpoint, e.TLS
-		peers = append(peers, peerSpec{
+		services = append(services, serviceSpec{
 			name:      n,
 			endpoint:  e.Endpoint,
 			tls:       e.TLS,
 			protocols: e.Protocols,
 			fetchRoles: func(fctx context.Context) ([]string, error) {
-				return peer.FetchPublisherValidationRoles(fctx, nameCopy, endpointCopy, tlsCopy)
+				return service.FetchPublisherValidationRoles(fctx, nameCopy, endpointCopy, tlsCopy)
 			},
 		})
 	}
-	for _, p := range peers {
+	for _, p := range services {
 		for _, proto := range p.protocols {
 			switch proto {
 			case ProtocolPublisher:
@@ -154,7 +154,7 @@ func DialPublisherAndValidationRegistries(
 					continue
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := peer.DialPublisher(dialCtx, p.name, p.endpoint, p.tls)
+				c, dErr := service.DialPublisher(dialCtx, p.name, p.endpoint, p.tls)
 				cancel()
 				if dErr != nil {
 					closeAll()
@@ -173,7 +173,7 @@ func DialPublisherAndValidationRegistries(
 					return nil, nil, nil, nil, fmt.Errorf("DialPublisherAndValidationRegistries: validation %q: resolve supported_roles: %w", p.name, fErr)
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := peer.DialValidation(dialCtx, p.name, p.endpoint, p.tls, roles)
+				c, dErr := service.DialValidation(dialCtx, p.name, p.endpoint, p.tls, roles)
 				cancel()
 				if dErr != nil {
 					closeAll()
@@ -185,7 +185,7 @@ func DialPublisherAndValidationRegistries(
 					continue
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := peer.DialDataProcessing(dialCtx, p.name, p.endpoint, p.tls)
+				c, dErr := service.DialDataProcessing(dialCtx, p.name, p.endpoint, p.tls)
 				cancel()
 				if dErr != nil {
 					closeAll()
@@ -200,7 +200,7 @@ func DialPublisherAndValidationRegistries(
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		c, dErr := peer.DialValidation(dialCtx, name, e.Endpoint, e.TLS, validatorRoleDiscriminators(e.Protocols))
+		c, dErr := service.DialValidation(dialCtx, name, e.Endpoint, e.TLS, validatorRoleDiscriminators(e.Protocols))
 		cancel()
 		if dErr != nil {
 			closeAll()
@@ -213,7 +213,7 @@ func DialPublisherAndValidationRegistries(
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		c, dErr := peer.DialDataProcessing(dialCtx, name, e.Endpoint, e.TLS)
+		c, dErr := service.DialDataProcessing(dialCtx, name, e.Endpoint, e.TLS)
 		cancel()
 		if dErr != nil {
 			closeAll()

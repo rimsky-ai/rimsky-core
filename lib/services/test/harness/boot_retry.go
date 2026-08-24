@@ -76,7 +76,7 @@ func runContainerWithRetry[T any](
 			}
 		}
 		lastErr = err
-		slog.Warn("harness: container boot attempt failed",
+		slog.Warn("HARNESS.CONTAINERBOOT.ATTEMPTFAILED",
 			"image", img, "attempt", attempt, "max_attempts", bootMaxAttempts, "error", err.Error())
 		if attempt < bootMaxAttempts {
 			//nolint:testwallclock-pacing backoff between boot attempts; the attempt budget, not elapsed time, ends this loop
@@ -91,6 +91,7 @@ func terminateBootFailure(ctx context.Context, img string, c testcontainers.Cont
 	if c == nil || bootErr == nil {
 		return
 	}
+	//nolint:testwallclock-pacing the harness reads a failed container's log tail into the failure message; no verdict reads this grace
 	logCtx, logCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	if logs, logErr := c.Logs(logCtx); logErr == nil {
 		if tail, readErr := io.ReadAll(logs); readErr == nil && len(tail) > 0 {
@@ -98,11 +99,12 @@ func terminateBootFailure(ctx context.Context, img string, c testcontainers.Cont
 			if len(tail) > maxTail {
 				tail = tail[len(tail)-maxTail:]
 			}
-			slog.Warn("harness: container logs at boot failure", "image", img, "logs_tail", string(tail))
+			slog.Warn("HARNESS.CONTAINERBOOT.LOGSCAPTURED", "image", img, "logs_tail", string(tail))
 		}
 		_ = logs.Close()
 	}
 	logCancel()
+	//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 	termCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	_ = c.Terminate(termCtx)

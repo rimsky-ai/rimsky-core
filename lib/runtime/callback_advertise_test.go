@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 func TestEffectiveCallbackHostPort(t *testing.T) {
@@ -90,7 +90,7 @@ func TestAdvertisedURLMatchesPersistedHostPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("effectiveCallbackHostPort: %v", err)
 	}
-	url := advertisedCallbackURL(host, port, peer.PeerAuthNone)
+	url := advertisedCallbackURL(host, port, service.ServiceAuthNone)
 	want := "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 	if url != want {
 		t.Fatalf("advertisedCallbackURL = %q; want %q (must match persisted host:port)", url, want)
@@ -98,7 +98,7 @@ func TestAdvertisedURLMatchesPersistedHostPort(t *testing.T) {
 }
 
 func TestAdvertisedURLUsesHTTPSUnderMTLS(t *testing.T) {
-	url := advertisedCallbackURL("rimsky-supervisor", 9200, peer.PeerAuthMTLS)
+	url := advertisedCallbackURL("rimsky-supervisor", 9200, service.ServiceAuthMTLS)
 	if !strings.HasPrefix(url, "https://") {
 		t.Fatalf("advertisedCallbackURL under mtls = %q; want https:// scheme", url)
 	}

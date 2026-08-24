@@ -56,7 +56,7 @@ func ValidateAndPersistResume(
 					return shared.Wrap(shared.ErrResumeOverlayInvalid, vErr.Error(), nil)
 				}
 			} else if args.Logger != nil {
-				args.Logger.Warn("breakpoint.resume.schema_not_in_snapshot",
+				args.Logger.Warn("BREAKPOINT.RESUMESCHEMA.MISSING", "detail", "the schema is not in the snapshot",
 					"hit_id", hitID.String(),
 					"reason", "effective_schema absent from snapshot; deferring to supervisor-side defense-in-depth")
 			}

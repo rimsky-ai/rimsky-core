@@ -4,7 +4,7 @@ release. Read it only when directed here. -->
 
 # rimsky CLI reference
 
-The `rimsky` binary drives a rimsky deployment from the command line. Most verbs are a thin HTTP+JSON client over the control API. A few — the `ctx` verbs, `agent status`, `agent stop`, `version` — run entirely on your machine and contact nothing. Two verbs, `rimsky run` and `rimsky compose run`, boot a whole rimsky stack inside the CLI process.
+The `rimsky` binary drives a rimsky deployment from the command line. Most verbs are a thin HTTP+JSON client over the control API. A few — the `ctx` verbs, `daemon status`, `daemon stop`, `version` — run entirely on your machine and contact nothing. Two verbs, `rimsky run` and `rimsky compose run`, boot a whole rimsky stack inside the CLI process.
 
 Read this document to find a verb, its arguments, its flags, and what it does. Read the last section, [Where the CLI will surprise you](#where-the-cli-will-surprise-you), before you script against it.
 
@@ -23,7 +23,7 @@ Read this document to find a verb, its arguments, its flags, and what it does. R
 - [`lineage`](#lineage)
 - [`ctx`](#ctx)
 - [`auth`](#auth)
-- [`agent`](#agent)
+- [`daemon`](#daemon)
 - [`compose`](#compose)
 - [`conformance`](#conformance)
 - [`version` and `help`](#version-and-help)
@@ -48,7 +48,7 @@ Most control-API verbs share five flags:
 | `--no-color` | Suppress ANSI color. |
 | `--yes` | Stands in for `--force` on `instance kill`, and answers the compose family's prompt. |
 
-The dev-loop verbs, the grouped literal-API verbs (`template`, `tag`, `instance`, `node`, `admin`, `parked`, `messages`, `asset`, `lineage`), `health`, `watch`, and `ctx list` take this set. The `auth`, `agent`, `conformance`, and `compose run` families parse their own flags and reject these names. `ctx use`, `ctx add`, `ctx rm`, and `ctx current` do the same.
+The dev-loop verbs, the grouped literal-API verbs (`template`, `tag`, `instance`, `node`, `admin`, `parked`, `messages`, `asset`, `lineage`), `health`, `watch`, and `ctx list` take this set. The `auth`, `daemon`, `conformance`, and `compose run` families parse their own flags and reject these names. `ctx use`, `ctx add`, `ctx rm`, and `ctx current` do the same.
 
 Flags may appear before or after positional arguments on the verbs that use the common set. Attached short values do not work: write `-o json` or `-o=json`, never `-ojson`. Clustering does not work either.
 
@@ -120,7 +120,7 @@ Registers a template, deploys it, creates an instance, and wakes it — in one c
 
 Plus the common flag set.
 
-`--service` behaves differently per mode. Remotely, `run` starts the local host agent first if `~/.rimsky/agent.pid` names no live process. Self-hosted, it spawns each binary directly on loopback ports. A bare `--service <name>` looks the name up in the `aliases:` map of `~/.rimsky/aliases.yml` and `./.rimsky/aliases.yml`, the second overriding the first, and fails when no alias defines it.
+`--service` behaves differently per mode. Remotely, `run` starts the local host daemon first if `~/.rimsky/daemon.pid` names no live process. Self-hosted, it spawns each binary directly on loopback ports. A bare `--service <name>` looks the name up in the `aliases:` map of `~/.rimsky/aliases.yml` and `./.rimsky/aliases.yml`, the second overriding the first, and fails when no alias defines it.
 
 Self-host mode rejects two combinations: `--template` needs a running rimsky, because a fresh self-hosted stack has an empty template registry, and `--keep` has nothing to keep, because the stack exits with the process.
 
@@ -262,9 +262,9 @@ Creates an instance and prints its id, template hash, optional instance key, and
 | --- | --- |
 | `--params <json\|@file>` | Instance params as a JSON object, or `@path`. |
 | `--instance-key <key>` | Set the new row's `instance_key`. |
-| `--agent <silly-name>` | Target a named anonymous host agent, overriding the local identity file. |
+| `--daemon <silly-name>` | Target a named anonymous host daemon, overriding the local identity file. |
 
-With no `--agent` and no API key in play, the CLI reads or creates its local anonymous identity file and targets that agent. With an API key present, it sends no target agent.
+With no `--daemon` and no API key in play, the CLI reads or creates its local anonymous identity file and targets that daemon. With an API key present, it sends no target daemon.
 
 ### `rimsky instance list`
 
@@ -493,34 +493,34 @@ Rotation is how you recover from a lost key: the name and the grant survive, the
 
 Prints the deployment's auth mode and key counts. Reports `anonymous` while the key ledger is empty and `authenticated` once a key exists.
 
-## `agent`
+## `daemon`
 
-`rimsky agent <start|status|stop>` manages the local host-agent daemon. These subcommands take neither `--endpoint` nor `--key`.
+`rimsky daemon <start|status|stop>` manages the local host daemon. These subcommands take neither `--endpoint` nor `--key`.
 
-### `rimsky agent start`
+### `rimsky daemon start`
 
-Starts the host agent, daemonized by default, and waits for it to report a live connection to the proxy before returning. Prints `rimsky agent started (pid N, connected to <proxy>)`. Exits 1 when the daemon dies or fails to connect within 10 seconds, naming `~/.rimsky/agent.log`.
+Starts the host daemon, daemonized by default, and waits for it to report a live connection to the proxy before returning. Prints `rimsky daemon started (pid N, connected to <proxy>)`. Exits 1 when the daemon dies or fails to connect within 10 seconds, naming `~/.rimsky/daemon.log`.
 
 | Flag | Meaning |
 | --- | --- |
-| `--proxy <host:port>` | Host-agent-proxy endpoint. Required, unless `RIMSKY_HOST_AGENT_PROXY_URL` supplies it. |
+| `--proxy <host:port>` | Host-daemon-proxy endpoint. Required, unless `RIMSKY_HOST_DAEMON_PROXY_URL` supplies it. |
 | `--api-key <plaintext>` | Key plaintext presented to the proxy on `Register`. Omit to register anonymously. Overrides `RIMSKY_API_KEY`. |
 | `--listen <addr>` | Local listener address. Defaults to `127.0.0.1:0`. |
 | `--allow-paths <globs>` | Comma-separated glob patterns for validating spawnable binary paths. |
-| `--tls` | Dial the proxy over TLS. Overrides `RIMSKY_AGENT_TLS`. |
-| `--tls-ca <path>` | Pinned deployment CA root PEM verifying the proxy's server certificate. Overrides `RIMSKY_AGENT_TLS_CA`. |
-| `--label <silly-name>` | Anonymous routing label the agent asks the proxy to adopt. Meaningful only without `--api-key`. |
-| `--identity-file <path>` | Anonymous identity JSON file. Defaults to `$XDG_CONFIG_HOME/rimsky/host-agent/identity.json`. |
+| `--tls` | Dial the proxy over TLS. Overrides `RIMSKY_DAEMON_TLS`. |
+| `--tls-ca <path>` | Pinned deployment CA root PEM verifying the proxy's server certificate. Overrides `RIMSKY_DAEMON_TLS_CA`. |
+| `--label <silly-name>` | Anonymous routing label the daemon asks the proxy to adopt. Meaningful only without `--api-key`. |
+| `--identity-file <path>` | Anonymous identity JSON file. Defaults to `$XDG_CONFIG_HOME/rimsky/host-daemon/identity.json`. |
 | `--state-dir <dir>` | Directory for the pid, status, and log files. Defaults to `~/.rimsky`. |
 | `--foreground` | Run in the foreground instead of daemonizing. |
 
-### `rimsky agent status`
+### `rimsky daemon status`
 
-Reports whether the agent runs, its pid, the proxy it connected to, since when, and its spawned children. Prints `rimsky agent: not running` and exits 0 when no live pid file exists. Takes `--state-dir`.
+Reports whether the daemon runs, its pid, the proxy it connected to, since when, and its spawned children. Prints `rimsky daemon: not running` and exits 0 when no live pid file exists. Takes `--state-dir`.
 
-### `rimsky agent stop`
+### `rimsky daemon stop`
 
-Sends SIGTERM, waits, escalates to SIGKILL if needed, then removes the pid and status files. Prints `rimsky agent: stopped (pid N)`. Takes `--state-dir`.
+Sends SIGTERM, waits, escalates to SIGKILL if needed, then removes the pid and status files. Prints `rimsky daemon: stopped (pid N)`. Takes `--state-dir`.
 
 ## `compose`
 
@@ -568,7 +568,7 @@ Boots an in-process all-in-one stack, drives the manifest's instances to termina
 
 ## `conformance`
 
-`rimsky conformance <executor|claim-producer|publisher|validation|data-processing|blob-backend|lifecycle-subscriber|probe>` proves a third-party implementation against a protocol. Each subcommand parses its own flags, prints one `ok` or `FAIL` line per check, and closes with `N/M checks failed` when anything failed.
+`rimsky conformance <executor|claim-producer|publisher|validation|data-processing|lifecycle-subscriber|probe>` proves a third-party implementation against a protocol. Each subcommand parses its own flags, prints one `ok` or `FAIL` line per check, and closes with `N/M checks failed` when anything failed.
 
 Every subcommand exits 0 on a clean run, 1 on any failure, and 2 on a usage error. A failed check and an unreachable endpoint both exit 1.
 
@@ -578,7 +578,7 @@ Runs the executor scenario suite.
 
 | Flag | Meaning |
 | --- | --- |
-| `--endpoint <url>` | Executor or lifecycle peer endpoint. Required. |
+| `--endpoint <url>` | Executor or lifecycle service endpoint. Required. |
 | `--transport grpc` | Transport. `grpc` is the only accepted value. |
 | `--tls off\|required` | Dial with TLS verified against system roots. Defaults to `off`. |
 | `--allow-live` | Run against a live, non-stub endpoint; stub-requiring scenarios skip instead of refusing the run. |
@@ -634,17 +634,6 @@ Runs the validation checks.
 
 Runs the data-processing checks. Takes `--endpoint` (required), `--transport grpc`, and `--timeout`, defaulting to `30s`.
 
-### `rimsky conformance blob-backend --backend <name>`
-
-Runs the blob-backend checks directly against a backend, with no service in between.
-
-| Flag | Meaning |
-| --- | --- |
-| `--backend <name>` | `memory`, `filesystem`, or `pg-largeobject`. Required. |
-| `--root <dir>` | Filesystem root. Required for the `filesystem` backend. |
-| `--pg-conn-string <dsn>` | Postgres DSN. Required for the `pg-largeobject` backend. |
-| `--timeout <duration>` | Per-check timeout. Defaults to `60s`. |
-
 ### `rimsky conformance lifecycle-subscriber --endpoint <url>`
 
 Runs the lifecycle-subscriber check. Takes `--endpoint` (required), `--transport grpc`, `--tls off|required`, and `--timeout`, defaulting to `30s`. Prints `lifecycle-subscriber: ok`.
@@ -666,11 +655,10 @@ Every flag the CLI defines, with the verbs that take it. Flags whose names repea
 | Flag | Verbs | Meaning |
 | --- | --- | --- |
 | `--add` | `auth create-key` | Append a grant entry, repeatable. |
-| `--agent` | `instance create`, `instantiate` | Target anonymous host agent by routing label. |
+| `--daemon` | `instance create`, `instantiate` | Target anonymous host daemon by routing label. |
 | `--allow-live` | `conformance executor` | Permit a non-stub endpoint; stub scenarios skip. |
-| `--allow-paths` | `agent start` | Comma-separated globs for binary path validation. |
-| `--api-key` | `agent start` | Key plaintext the agent presents to the proxy. |
-| `--backend` | `conformance blob-backend` | `memory`, `filesystem`, or `pg-largeobject`. |
+| `--allow-paths` | `daemon start` | Comma-separated globs for binary path validation. |
+| `--api-key` | `daemon start` | Key plaintext the daemon presents to the proxy. |
 | `--before` | `lineage prune` | RFC3339 cutoff for deletion. |
 | `--callback-bind` | `conformance executor`, `conformance probe` | Interface the callback receiver binds. |
 | `--callback-host` | `conformance executor`, `conformance probe` | Host the executor dials the receiver at. |
@@ -683,9 +671,9 @@ Every flag the CLI defines, with the verbs that take it. Flags whose names repea
 | `--follow` | `instance events`, `messages tail` | Keep polling. |
 | `--force` | `instance kill` | Confirm the termination. |
 | `--force-leave-anonymous` | `auth revoke` | Permit dropping to zero active keys. |
-| `--foreground` | `agent start` | Do not daemonize. |
+| `--foreground` | `daemon start` | Do not daemonize. |
 | `--grace` | `auth rotate` | How long the old key keeps working. Defaults to `24h`. |
-| `--identity-file` | `agent start` | Anonymous identity JSON file. |
+| `--identity-file` | `daemon start` | Anonymous identity JSON file. |
 | `--include-revoked` | `auth list` | Include revoked rows. |
 | `--instance` | `asset *`, `messages tail`, `parked list` | The instance to act on or filter by. |
 | `--instance-id` | `conformance publisher` | Instance id passed to `Subscribe`. |
@@ -697,8 +685,8 @@ Every flag the CLI defines, with the verbs that take it. Flags whose names repea
 | `--key-prefix` | `instance list`, `ls instances` | Client-side filter on instance key. |
 | `--kind` | `watch` | Server-side event-kind filter. |
 | `--kind` | `conformance publisher` | Publisher kind to exercise. |
-| `--label` | `agent start` | Anonymous routing label to adopt. |
-| `--listen` | `agent start` | Local listener address. |
+| `--label` | `daemon start` | Anonymous routing label to adopt. |
+| `--listen` | `daemon start` | Local listener address. |
 | `--message-type` | `conformance publisher` | Message type to subscribe and watch for. |
 | `--name` | `auth create-key` | Name for the new key. Required. |
 | `--name` | `compose run` | Run name in the artifact directory. |
@@ -710,10 +698,9 @@ Every flag the CLI defines, with the verbs that take it. Flags whose names repea
 | `--older-than` | `parked list` | Keep rows parked longer ago than this. |
 | `--param` | `run` | One `k=v` param, repeatable, merged over `--params`. |
 | `--params` | `run`, `instance create`, `instantiate` | Params as a JSON object or `@file`. |
-| `--pg-conn-string` | `conformance blob-backend` | Postgres DSN for `pg-largeobject`. |
 | `--poll-interval` | `run`, `instance events`, `logs`, `messages tail`, `watch` | Poll interval. Defaults to `1s`. |
 | `--prefix` | `tag list`, `ls tags` | Client-side filter on tag prefix. |
-| `--proxy` | `agent start` | Host-agent-proxy endpoint. |
+| `--proxy` | `daemon start` | Host-daemon-proxy endpoint. |
 | `--quiet` | `compose run` | Only the final summary. |
 | `--reason` | `instance kill` | Reason on the teardown audit event. |
 | `--remove` | `auth create-key` | Drop grant entries naming this action, repeatable. |
@@ -722,7 +709,6 @@ Every flag the CLI defines, with the verbs that take it. Flags whose names repea
 | `--role` | `auth create-key` | Bundled role name. |
 | `--role` | `conformance validation` | Role to validate against. |
 | `--role-file` | `auth create-key` | Role JSON file. |
-| `--root` | `conformance blob-backend` | Filesystem root for the `filesystem` backend. |
 | `--scenarios` | `conformance executor` | Comma-list of scenarios to run. |
 | `--self-host` | `run` | Boot an in-process stack for this run. |
 | `--sender-kind` | `messages tail` | Filter by `operator`, `publisher`, or `instance`. |
@@ -731,7 +717,7 @@ Every flag the CLI defines, with the verbs that take it. Flags whose names repea
 | `--skip` | `conformance executor` | Comma-list of scenarios to skip. |
 | `--source` | `template register`, `register` | Free-form source description. |
 | `--state` | `template list`, `ls templates` | Server-side template-state filter. |
-| `--state-dir` | `agent start\|status\|stop` | Directory for pid, status, and log files. |
+| `--state-dir` | `daemon start\|status\|stop` | Directory for pid, status, and log files. |
 | `--tag` | `template register`, `register`, `run` | Tag to attach at registration. |
 | `--tag-prefix` | `template list`, `ls templates` | Client-side filter on attached tags. |
 | `--template` | `tag create`, `tag mv` | Template ref the tag points at. Required. |
@@ -739,10 +725,10 @@ Every flag the CLI defines, with the verbs that take it. Flags whose names repea
 | `--template` | `run` | Name of an already-registered template. |
 | `--timeout` | `run`, `compose run` | Maximum wall-clock wait. `0` means unbounded. |
 | `--timeout` | Every `conformance` subcommand | Per-check or per-scenario timeout. |
-| `--tls` | `agent start` | Boolean: dial the proxy over TLS. |
+| `--tls` | `daemon start` | Boolean: dial the proxy over TLS. |
 | `--tls` | `conformance executor`, `conformance lifecycle-subscriber` | `off` or `required`. |
-| `--tls-ca` | `agent start` | Pinned CA root PEM for the proxy's certificate. |
-| `--transport` | Every `conformance` subcommand except `blob-backend` | `grpc`, plus `http` on `claim-producer`. |
+| `--tls-ca` | `daemon start` | Pinned CA root PEM for the proxy's certificate. |
+| `--transport` | Every `conformance` subcommand | `grpc`, plus `http` on `claim-producer`. |
 | `--type` | `messages tail` | Filter by message type. |
 | `--until` | `instance events`, `logs` | Only events at or before this RFC3339 timestamp. |
 | `--until` | `watch` | Exit condition: `idle` or `terminated`. |
@@ -761,7 +747,7 @@ Every flag the CLI defines, with the verbs that take it. Flags whose names repea
 | `RIMSKY_CONTEXT` | Selects a context by name, overriding `current_context`. |
 | `NO_COLOR` | Any non-empty value disables ANSI color. |
 
-`rimsky agent start` reads the host agent's own variables, and each of its flags overrides the matching one: `RIMSKY_HOST_AGENT_PROXY_URL`, `RIMSKY_API_KEY`, `RIMSKY_AGENT_LISTEN`, `RIMSKY_AGENT_ALLOW_PATHS`, `RIMSKY_AGENT_TLS`, `RIMSKY_AGENT_TLS_CA`, and the identity-file and routing-label variables.
+`rimsky daemon start` reads the host daemon's own variables, and each of its flags overrides the matching one: `RIMSKY_HOST_DAEMON_PROXY_URL`, `RIMSKY_API_KEY`, `RIMSKY_DAEMON_LISTEN`, `RIMSKY_DAEMON_ALLOW_PATHS`, `RIMSKY_DAEMON_TLS`, `RIMSKY_DAEMON_TLS_CA`, and the identity-file and routing-label variables.
 
 ## Where the CLI will surprise you
 
@@ -801,4 +787,4 @@ Each item below is a reasonable expectation the CLI does not meet, and what it d
 
 **Asset operations do not match across surfaces.** `rimsky asset lineage` is CLI-only: no control-API route and no MCP tool matches it, and it is a client-side composition that fails on the asset lookup before it reaches any lineage call. The reverse gap also exists — asset materialization history has a route and an MCP tool but no CLI verb, and `rimsky asset materialization-history` is refused. List, show, versions, and delete do appear on all three surfaces.
 
-**Conformance output is text, and one exit code covers every runtime outcome.** No conformance subcommand accepts `--json` or `--warnings-as-errors`, so CI must parse the printed `ok` / `FAIL` rows and the closing `N/M checks failed` line. A failed check, an unreachable endpoint, and an unopenable backend all exit 1; only a usage error is distinct, at 2. A CI job reading the status alone cannot tell "your implementation failed" from "I never reached your endpoint". There is also no `conformance host-agent` subcommand: nothing in the kit proves a host-agent implementation. Executor-observability and claim-producer-observability have no subcommand either, but `--check-observability` on their siblings covers both.
+**Conformance output is text, and one exit code covers every runtime outcome.** No conformance subcommand accepts `--json` or `--warnings-as-errors`, so CI must parse the printed `ok` / `FAIL` rows and the closing `N/M checks failed` line. A failed check, an unreachable endpoint, and an unopenable backend all exit 1; only a usage error is distinct, at 2. A CI job reading the status alone cannot tell "your implementation failed" from "I never reached your endpoint". There is also no `conformance host-daemon` subcommand: nothing in the kit proves a host-daemon implementation. Executor-observability and claim-producer-observability have no subcommand either, but `--check-observability` on their siblings covers both.

@@ -9,7 +9,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	protocol "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 // @concept: claim-producer
@@ -59,7 +59,7 @@ func (c *Client) Release(ctx context.Context, claimID protocol.ClaimID, scope, a
 }
 
 func (c *Client) SplitScope(ctx context.Context, req protocol.SplitClaimScopeRequest) (protocol.SplitClaimScopeResponse, error) {
-	if err := peer.GateSplitScope(c.caps); err != nil {
+	if err := service.GateSplitScope(c.caps); err != nil {
 		return protocol.SplitClaimScopeResponse{}, err
 	}
 	resp, err := c.handler.SplitScope(ctx, req)
@@ -70,7 +70,7 @@ func (c *Client) SplitScope(ctx context.Context, req protocol.SplitClaimScopeReq
 }
 
 func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
-	if fallback, gated := peer.GateScopesConflict(c.caps, a, b); gated {
+	if fallback, gated := service.GateScopesConflict(c.caps, a, b); gated {
 		return fallback, nil
 	}
 	conflicts, err := c.handler.ScopesConflict(ctx, a, b)
@@ -80,10 +80,10 @@ func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) 
 	return conflicts, nil
 }
 
-func callError(name, method string, err error) *peer.ProducerCallError {
+func callError(name, method string, err error) *service.ProducerCallError {
 	var classed protocol.ClassedError
 	if errors.As(err, &classed) {
-		return &peer.ProducerCallError{
+		return &service.ProducerCallError{
 			ProducerName: name,
 			Method:       method,
 			ErrorClass:   classed.ErrorClass(),
@@ -91,5 +91,5 @@ func callError(name, method string, err error) *peer.ProducerCallError {
 			Underlying:   err,
 		}
 	}
-	return peer.NewProducerCallError(name, method, err)
+	return service.NewProducerCallError(name, method, err)
 }

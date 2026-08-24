@@ -15,7 +15,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type httpClient struct {
@@ -28,18 +28,18 @@ func NewHTTPClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "http" {
 		return nil, fmt.Errorf("executor.NewHTTPClient: transport=%q not http", endpoint.Transport)
 	}
-	if endpoint.TLS != peer.TLSModeRequired {
+	if endpoint.TLS != service.TLSModeRequired {
 		return &httpClient{client: &http.Client{}, endpoint: endpoint.URL, tlsMode: endpoint.TLS}, nil
 	}
 	u, err := url.Parse(endpoint.URL)
 	if err != nil {
-		return nil, fmt.Errorf("executor.NewHTTPClient: peer %q (tls: required): invalid endpoint URL: %w", endpoint.URL, err)
+		return nil, fmt.Errorf("executor.NewHTTPClient: service %q (tls: required): invalid endpoint URL: %w", endpoint.URL, err)
 	}
 	if u.Scheme != "https" {
-		return nil, fmt.Errorf("executor.NewHTTPClient: peer %q (tls: required): endpoint scheme %q is not https — a tls: required HTTP-bridge executor must use an https:// URL", endpoint.URL, u.Scheme)
+		return nil, fmt.Errorf("executor.NewHTTPClient: service %q (tls: required): endpoint scheme %q is not https — a tls: required HTTP-bridge executor must use an https:// URL", endpoint.URL, u.Scheme)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = peer.TLSClientConfig()
+	transport.TLSClientConfig = service.TLSClientConfig()
 	return &httpClient{
 		client:   &http.Client{Transport: transport},
 		endpoint: endpoint.URL,
@@ -58,13 +58,13 @@ func (c *httpClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*g
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	if name, ok := peer.ServiceNameFromContext(ctx); ok {
-		httpReq.Header.Set(peer.ServiceNameHTTPHeader, name)
+	if name, ok := service.ServiceNameFromContext(ctx); ok {
+		httpReq.Header.Set(service.ServiceNameHTTPHeader, name)
 	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		if c.tlsMode == peer.TLSModeRequired {
-			return nil, "", fmt.Errorf("peer %q (tls: required): %w", c.endpoint, err)
+		if c.tlsMode == service.TLSModeRequired {
+			return nil, "", fmt.Errorf("service %q (tls: required): %w", c.endpoint, err)
 		}
 		return nil, "", err
 	}

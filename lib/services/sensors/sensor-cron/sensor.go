@@ -55,13 +55,13 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 	}
 	rows, err := state.ListAll(context.Background())
 	if err != nil {
-		s.logger.Warn("sensor-cron.attach_state_db.list_failed", "error", err.Error())
+		s.logger.Warn("SENSORCRON.STATEDBATTACH.LISTFAILED", "error", err.Error())
 		return
 	}
 	for _, r := range rows {
 		sched, err := cron.ParseStandard(r.CronExpr)
 		if err != nil {
-			s.logger.Error("sensor-cron.attach_state_db.cron_parse_failed",
+			s.logger.Error("SENSORCRON.STATEDBATTACH.CRONPARSEFAILED",
 				"publisher_subscription_id", r.SubscriptionID, "cron", r.CronExpr, "error", err.Error())
 			continue
 		}
@@ -76,7 +76,7 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			StartedAt:      r.StartedAt,
 			LastFireAt:     lastFire,
 		}
-		s.logger.Info("sensor-cron.state_recovered",
+		s.logger.Info("SENSORCRON.STATE.RECOVERED",
 			"publisher_subscription_id", r.SubscriptionID,
 			"next_fire_at", r.NextFireAt.Format(time.RFC3339))
 	}
@@ -149,7 +149,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	if state != nil {
 		p, getErr := state.GetSubscription(ctx, req.GetPublisherSubscriptionId())
 		if getErr != nil {
-			s.logger.Warn("sensor-cron.subscribe.state_get_failed",
+			s.logger.Warn("SENSORCRON.SUBSCRIBE.STATEGETFAILED",
 				"publisher_subscription_id", req.GetPublisherSubscriptionId(), "error", getErr.Error())
 		} else {
 			persisted = p
@@ -166,7 +166,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		lastFireAt = persisted.LastFireAt
 	}
 	if nextFireAt.IsZero() {
-		s.logger.Warn("sensor-cron.never_fires",
+		s.logger.Warn("SENSORCRON.SCHEDULE.NEVERFIRES",
 			"publisher_subscription_id", req.GetPublisherSubscriptionId(), "cron", cfg.Cron)
 	}
 	messageType := req.GetMessageType()
@@ -188,7 +188,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	}
 	s.watches[w.SubscriptionID] = w
 	s.mu.Unlock()
-	s.logger.Info("sensor-cron.subscribe",
+	s.logger.Info("SENSORCRON.SUBSCRIPTION.MOUNTED",
 		"publisher_subscription_id", w.SubscriptionID,
 		"instance_id", w.InstanceID,
 		"cron", cfg.Cron,
@@ -201,7 +201,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 				delete(s.watches, w.SubscriptionID)
 			}
 			s.mu.Unlock()
-			s.logger.Warn("sensor-cron.subscribe.state_upsert_failed",
+			s.logger.Warn("SENSORCRON.SUBSCRIBE.STATEUPSERTFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 			return nil, fmt.Errorf("sensor-cron: persist subscription %s: %w", w.SubscriptionID, err)
 		}
@@ -214,10 +214,10 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 	defer s.mu.Unlock()
 	if _, ok := s.watches[req.GetPublisherSubscriptionId()]; ok {
 		delete(s.watches, req.GetPublisherSubscriptionId())
-		s.logger.Info("sensor-cron.unsubscribe", "publisher_subscription_id", req.GetPublisherSubscriptionId())
+		s.logger.Info("SENSORCRON.SUBSCRIPTION.STOPPED", "publisher_subscription_id", req.GetPublisherSubscriptionId())
 		if s.state != nil {
 			if err := s.state.DeleteSubscription(context.Background(), req.GetPublisherSubscriptionId()); err != nil {
-				s.logger.Warn("sensor-cron.unsubscribe.state_delete_failed",
+				s.logger.Warn("SENSORCRON.UNSUBSCRIBE.STATEDELETEFAILED",
 					"publisher_subscription_id", req.GetPublisherSubscriptionId(), "error", err.Error())
 			}
 		}
@@ -266,7 +266,7 @@ func (s *SensorService) Tick(ctx context.Context) {
 
 func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 	if w.Schedule == nil {
-		s.logger.Error("sensor-cron.fire.no_schedule",
+		s.logger.Error("SENSORCRON.FIRE.NOSCHEDULE",
 			"publisher_subscription_id", w.SubscriptionID, "cron", w.CronExpr)
 		return
 	}
@@ -281,11 +281,11 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 	if err := s.postMessage(ctx, w, body, idemKey); err != nil {
 		var rejected *publisherkit.RejectedError
 		if !errors.As(err, &rejected) {
-			s.logger.Warn("sensor-cron.message_post_failed",
+			s.logger.Warn("SENSORCRON.MESSAGE.POSTFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 			return
 		}
-		s.logger.Error("sensor-cron.message_rejected_dropped",
+		s.logger.Error("SENSORCRON.MESSAGE.REJECTED", "detail", "the message was dropped",
 			"publisher_subscription_id", w.SubscriptionID, "status", rejected.Status, "error", err.Error())
 	}
 	s.mu.Lock()
@@ -302,16 +302,16 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 	state := s.state
 	s.mu.Unlock()
 	if nextFireAt.IsZero() {
-		s.logger.Warn("sensor-cron.never_fires_again",
+		s.logger.Warn("SENSORCRON.SCHEDULE.EXHAUSTED", "detail", "the schedule never fires again",
 			"publisher_subscription_id", w.SubscriptionID, "cron", w.CronExpr)
 	}
 	if missedWindows > 1 {
-		s.logger.Warn("sensor-cron.catch_up_coalesced",
+		s.logger.Warn("SENSORCRON.CATCHUP.COALESCED",
 			"publisher_subscription_id", w.SubscriptionID, "missed_windows", missedWindows-1)
 	}
 	if state != nil {
 		if err := state.UpdateNextFire(ctx, w.SubscriptionID, nextFireAt, lastFireAt); err != nil {
-			s.logger.Warn("sensor-cron.fire.state_update_failed",
+			s.logger.Warn("SENSORCRON.FIRE.STATEUPDATEFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		}
 	}

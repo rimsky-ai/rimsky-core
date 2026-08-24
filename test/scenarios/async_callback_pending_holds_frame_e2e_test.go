@@ -24,13 +24,13 @@ func TestAsyncCallbackPendingNodeHoldsFrameOpen(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	h.Stub.WhenType("agent").AwaitAsyncCallback("ack-held-frame", 5000)
+	h.Stub.WhenType("daemon").AwaitAsyncCallback("ack-held-frame", 5000)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "async-frame-hold", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "agent", Executor: "stub"},
+				node.TemplateNodeDef{Type: "daemon", Executor: "stub"},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -42,14 +42,14 @@ func TestAsyncCallbackPendingNodeHoldsFrameOpen(t *testing.T) {
 	})
 	iid := h.CreateInstance(tid, "ck-async-frame-hold", map[string]any{})
 
-	n := h.FindNode(iid, "agent")
+	n := h.FindNode(iid, "daemon")
 	require.NotNil(t, n)
 	h.WaitForNodeState(n.ID, cascade.NodeStateRunning)
 
 	frameID := h.GetRunningFrameID(iid)
 	require.NotEqual(t, shared.UUID{}, frameID)
 
-	require.NoError(t, frame.RunTick(h.Ctx, h.Persist, h.Queue, shared.SilentLogger{}, nil, nil),
+	require.NoError(t, frame.RunTick(h.Ctx, h.Persist, h.Queue, shared.SilentLogger{}, frame.LifecycleDelivery{}, nil),
 		"forcing a frame-settlement sweep while the node is async-callback-pending must not error")
 
 	pending := getFrameDetail(t, h, iid, frameID)

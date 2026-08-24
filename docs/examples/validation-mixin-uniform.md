@@ -2,12 +2,12 @@
 that release, not a source of truth; regenerated whole at the next
 release. Read it only when directed here. -->
 
-# The validation mix-in works the same for every peer role
+# The validation mix-in works the same for every service role
 
-A peer advertising the validation mix-in is consulted about templates that use
+A service advertising the validation mix-in is consulted about templates that use
 it, whatever role it plays — and only for the roles it declares.
 
-## Declare three peers
+## Declare three services
 
 ```yaml
 persistence:
@@ -17,23 +17,23 @@ persistence:
 claim_producers: {}
 named_locks: {}
 executors:
-  executor-peer:
+  executor-service:
     transport: grpc
-    endpoint: grpc://executor-peer:9400
+    endpoint: grpc://executor-service:9400
     protocols: [executor, validation]
-  other-role-peer:
+  other-role-service:
     transport: grpc
-    endpoint: grpc://other-role-peer:9400
+    endpoint: grpc://other-role-service:9400
     protocols: [executor, validation]
 publishers:
-  publisher-peer:
-    endpoint: grpc://publisher-peer:9400
+  publisher-service:
+    endpoint: grpc://publisher-service:9400
     protocols: [publisher, validation]
 ```
 
-Each peer advertises its supported roles as `validation_supported_roles` in its
-primary protocol's capabilities handshake. `executor-peer` declares `executor`;
-`publisher-peer` declares `publisher`; `other-role-peer` declares
+Each service advertises its supported roles as `validation_supported_roles` in its
+primary protocol's capabilities handshake. `executor-service` declares `executor`;
+`publisher-service` declares `publisher`; `other-role-service` declares
 `claim_producer` — a role it does not play here.
 
 ## The template
@@ -45,10 +45,10 @@ primary protocol's capabilities handshake. `executor-peer` declares `executor`;
   "messages": [{"type": "probe/event",
                 "body_schema": {"type": "object", "properties": {},
                                 "additionalProperties": true}}],
-  "publishers": [{"name": "publisher-peer", "kind": "probe", "config": {},
+  "publishers": [{"name": "publisher-service", "kind": "probe", "config": {},
                   "message_type": "probe/event"}],
-  "nodes": [{"type": "worker", "executor": "executor-peer"},
-            {"type": "other",  "executor": "other-role-peer"}]
+  "nodes": [{"type": "worker", "executor": "executor-service"},
+            {"type": "other",  "executor": "other-role-service"}]
 }
 ```
 
@@ -61,20 +61,20 @@ curl -sS -X POST "$BASE/v1/templates/validate" \
 
 Two findings come back together.
 
-One from the executor peer, called for role `executor`, naming the node it was
+One from the executor service, called for role `executor`, naming the node it was
 called about (`node_alias=worker`).
 
-One from the publisher peer, called for role `publisher`, naming the publisher
-it was called about (`publisher_name=publisher-peer`).
+One from the publisher service, called for role `publisher`, naming the publisher
+it was called about (`publisher_name=publisher-service`).
 
-Neither peer is a claim producer, and the deployment found both mix-ins through
-each peer's own capabilities handshake — the author advertises it from their
+Neither service is a claim producer, and the deployment found both mix-ins through
+each service's own capabilities handshake — the author advertises it from their
 service rather than registering it in the product.
 
 ## Declared roles are what is honoured
 
-`other-role-peer` advertises the mix-in but declares a role it does not play. It
-is never called, even though its node sits in the same template as the peer that
+`other-role-service` advertises the mix-in but declares a role it does not play. It
+is never called, even though its node sits in the same template as the service that
 was.
 
 Advertising the mix-in does not mean being asked about everything.

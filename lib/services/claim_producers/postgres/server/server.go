@@ -20,8 +20,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/postgres/store"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/shared/listarray"
@@ -80,7 +80,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		return err
 	}
 	st := srv.store
-	identity, err := peerauth.LoadFromEnv(ctx, "claim-producer-postgres")
+	identity, err := serviceauth.LoadFromEnv(ctx, "claim-producer-postgres")
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	obsSrv.SetHTTPBridgeURL(cfg.HTTPBridgeURL)
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
-			slog.Warn("postgres store: grpc serve", "error", err.Error())
+			slog.Warn("POSTGRESSTORE.GRPC.SERVEFAILED", "error", err.Error())
 		}
 	}()
 
@@ -111,7 +111,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	httpSrv := identity.HTTPServer(httpMux)
 	go func() {
 		if err := identity.RunHTTP(httpSrv, httpLis); err != nil && err != http.ErrServerClosed {
-			slog.Warn("postgres store: http serve", "error", err.Error())
+			slog.Warn("POSTGRESSTORE.HTTP.SERVEFAILED", "error", err.Error())
 		}
 	}()
 
@@ -120,7 +120,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 		adminSrv = &http.Server{Handler: st.AdminHandler()}
 		go func() {
 			if err := adminSrv.Serve(adminLis); err != nil && err != http.ErrServerClosed {
-				slog.Warn("postgres store: admin serve", "error", err.Error())
+				slog.Warn("POSTGRESSTORE.ADMINHTTP.SERVEFAILED", "error", err.Error())
 			}
 		}()
 	}
@@ -132,12 +132,12 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), gracefulStopBudget)
 	defer cancelShutdown()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		slog.Warn("postgres store: http graceful shutdown", "error", err.Error())
+		slog.Warn("POSTGRESSTORE.HTTP.SHUTDOWNFAILED", "error", err.Error())
 		_ = httpSrv.Close()
 	}
 	if adminSrv != nil {
 		if err := adminSrv.Shutdown(shutdownCtx); err != nil {
-			slog.Warn("postgres store: admin graceful shutdown", "error", err.Error())
+			slog.Warn("POSTGRESSTORE.ADMINHTTP.SHUTDOWNFAILED", "error", err.Error())
 			_ = adminSrv.Close()
 		}
 	}

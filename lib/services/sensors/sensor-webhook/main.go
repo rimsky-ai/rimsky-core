@@ -15,10 +15,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 )
 
 type slogAdapter struct{ l *slog.Logger }
@@ -36,16 +36,16 @@ const (
 func main() {
 	host := envOr("RIMSKY_SENSOR_WEBHOOK_HOST", "0.0.0.0")
 	// @concept: service
-	grpcPort, err := agentport.Resolve("RIMSKY_SENSOR_WEBHOOK_PORT", defaultGRPCPort)
+	grpcPort, err := daemonport.Resolve("RIMSKY_SENSOR_WEBHOOK_PORT", defaultGRPCPort)
 	if err != nil {
-		slog.Error("sensor-webhook config", "error", err.Error())
+		slog.Error("SENSORWEBHOOK.CONFIG.INVALID", "error", err.Error())
 		os.Exit(1)
 	}
 	webhookPort := atoiOr("RIMSKY_SENSOR_WEBHOOK_HTTP_PORT", defaultHTTPPort)
 	rimskyEndpoint := envOr("RIMSKY_CONTROL_API_URL", "http://localhost:8080")
 
 	slog.SetDefault(serverkit.NewJSONLogger())
-	slog.Info("sensor-webhook starting",
+	slog.Info("SENSORWEBHOOK.PROCESS.STARTING",
 		"grpc_port", grpcPort,
 		"webhook_port", webhookPort,
 		"rimsky_endpoint", rimskyEndpoint)
@@ -60,9 +60,9 @@ func main() {
 	ctxState, stopSignals := serverkit.ShutdownContext(context.Background(), slog.Default())
 	defer stopSignals()
 
-	identity, err := peerauth.LoadFromEnv(ctxState, "sensor-webhook")
+	identity, err := serviceauth.LoadFromEnv(ctxState, "sensor-webhook")
 	if err != nil {
-		slog.Error("sensor-webhook peer-auth", "error", err.Error())
+		slog.Error("SENSORWEBHOOK.SERVICEAUTH.ENROLLFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	svc.SetPublishClient(identity.OutboundHTTPClient(10 * time.Second))
@@ -70,13 +70,13 @@ func main() {
 
 	state, err := openStateDB(ctxState)
 	if err != nil {
-		slog.Error("open state db", "error", err.Error())
+		slog.Error("SENSORWEBHOOK.STATEDB.OPENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	if state != nil {
 		svc.AttachStateDB(state)
 		defer func() { _ = state.Close() }()
-		slog.Info("sensor-webhook state db attached")
+		slog.Info("SENSORWEBHOOK.STATEDB.ATTACHED")
 	}
 
 	webhookSrv := &http.Server{
@@ -86,13 +86,13 @@ func main() {
 	}
 	go func() {
 		if err := webhookSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("webhook server failed", "error", err.Error())
+			slog.Error("SENSORWEBHOOK.HTTP.SERVEFAILED", "error", err.Error())
 		}
 	}()
 
 	lis, err := serverkit.Listen(host, grpcPort)
 	if err != nil {
-		slog.Error("grpc listen", "error", err.Error())
+		slog.Error("SENSORWEBHOOK.GRPC.LISTENFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	grpcSrv := identity.GRPCServer()
@@ -100,7 +100,7 @@ func main() {
 	go serverkit.Serve(grpcSrv, lis, "sensor-webhook")
 
 	<-ctxState.Done()
-	slog.Info("sensor-webhook stopping")
+	slog.Info("SENSORWEBHOOK.PROCESS.STOPPING")
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), serverkit.BundledServiceGrace)
 	defer stopCancel()
 	_ = webhookSrv.Shutdown(stopCtx)

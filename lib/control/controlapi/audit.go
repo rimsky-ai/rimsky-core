@@ -119,7 +119,7 @@ func (s *AuthState) insertEvent(kind eventskinds.Kind, payload proto.Message) {
 			Payload: eventpayload.New(payload),
 		}, tx)
 	}); err != nil {
-		s.Logger.Error("audit.insert", "kind", kind.String(), "err", err.Error())
+		s.Logger.Error("CONTROLAPI.AUDITEVENT.APPENDFAILED", "kind", kind.String(), "err", err.Error())
 	}
 }
 

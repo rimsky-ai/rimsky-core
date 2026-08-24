@@ -142,10 +142,10 @@ func (f *invTestQueue) RegisterAsyncAck(_ context.Context, _ shared.UUID, _ stri
 func (f *invTestQueue) LookupRunByAsyncAckID(_ context.Context, _ string, _ persistence.Tx) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) LoadScratch(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]byte, string, string, error) {
-	return nil, "", "", nil
+func (f *invTestQueue) LoadScratch(_ context.Context, _ shared.UUID, _ persistence.Tx) ([]byte, error) {
+	return nil, nil
 }
-func (f *invTestQueue) WriteScratch(_ context.Context, _ shared.UUID, _ []byte, _, _ string, _ persistence.Tx) error {
+func (f *invTestQueue) WriteScratch(_ context.Context, _ shared.UUID, _ []byte, _ persistence.Tx) error {
 	return nil
 }
 func (f *invTestQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx) ([]persistence.ParkedDiagnosticRow, error) {
@@ -200,7 +200,7 @@ func newFixtureWithNodes(t *testing.T, defs []nodepkg.TemplateNodeDef) *fixture 
 		}, tx); err != nil {
 			return err
 		}
-		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck,
 			Params: map[string]any{},
 		}, tx)

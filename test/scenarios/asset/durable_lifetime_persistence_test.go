@@ -47,7 +47,7 @@ func TestDurableLifetimePersistence_InsertInputCarriesLifetime(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instID, TemplateHash: tmpl.ID,
 			InstanceKey: &ck, Params: map[string]any{},
 		}, tx); err != nil {

@@ -219,7 +219,7 @@ func TestGeneratedProtoBindingsMatchSource(t *testing.T) {
 	protoFiles := []string{
 		"executor.proto", "events.proto", "claim_producer.proto", "lifecycle.proto",
 		"executor_observability.proto", "claim_producer_observability.proto",
-		"data_processing.proto", "validation.proto", "publisher.proto", "host_agent.proto",
+		"data_processing.proto", "validation.proto", "publisher.proto", "host_daemon.proto",
 	}
 
 	args := []string{

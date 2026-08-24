@@ -112,7 +112,7 @@ func (s *Store) recordStagingReservation(ctx context.Context, staging, claimID s
 
 func (s *Store) clearStagingReservation(ctx context.Context, staging string) {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM `+stagingReservationsTable+` WHERE schema_name = $1`, staging); err != nil {
-		slog.Warn("postgres store: clear staging reservation", "staging", staging, "error", err.Error())
+		slog.Warn("POSTGRESSTORE.STAGINGRESERVATION.CLEARFAILED", "staging", staging, "error", err.Error())
 	}
 }
 

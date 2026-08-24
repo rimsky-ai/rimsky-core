@@ -94,7 +94,7 @@ func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 	fs.DurationVar(&rf.Timeout, "timeout", 0, "max wait for terminal state (0 = unbounded)")
 	fs.Var(&paramKV, "param", "k=v param (repeatable); merged over --params (later wins)")
 	fs.Var(&rf.Services, "service", "late-bound service binding: <name>=<path> or bare <name> (alias). "+
-		"Remote: auto-starts the local agent if its ~/.rimsky/agent.pid is not live. Self-host: spawned directly on loopback ports")
+		"Remote: auto-starts the local daemon if its ~/.rimsky/daemon.pid is not live. Self-host: spawned directly on loopback ports")
 	fs.BoolVar(&rf.SelfHost, "self-host", false,
 		"boot an in-process all-in-one stack for this run even when a context endpoint is configured (incompatible with --endpoint)")
 	if err := parseInterspersed(fs, args); err != nil {
@@ -193,14 +193,14 @@ func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf 
 	}
 
 	if len(bindings) > 0 {
-		if startErr := ensureAgentRunning(); startErr != nil {
-			fmt.Fprintf(os.Stderr, "rimsky run: could not start host-agent: %v\n", startErr)
+		if startErr := ensureDaemonRunning(); startErr != nil {
+			fmt.Fprintf(os.Stderr, "rimsky run: could not start host-daemon: %v\n", startErr)
 			return 1
 		}
 	}
 
 	body := CreateInstanceRequest{Template: hash, Params: rf.Params}
-	body.TargetAgent = ResolveTargetAgent("", apiKey)
+	body.TargetDaemon = ResolveTargetDaemon("", apiKey)
 	if rf.Key != "" {
 		key := rf.Key
 		body.InstanceKey = &key
@@ -301,12 +301,12 @@ func resolveServiceBindings(values RepeatedFlag) (map[string]bindingSpec, error)
 	return out, nil
 }
 
-func ensureAgentRunning() error {
-	if pid, ok, err := readAgentPID(); err == nil && ok && processAlive(pid) {
+func ensureDaemonRunning() error {
+	if pid, ok, err := readDaemonPID(); err == nil && ok && processAlive(pid) {
 		return nil
 	}
-	if code := runAgentStart(nil); code != 0 {
-		return fmt.Errorf("`rimsky agent start` exited with code %d", code)
+	if code := runDaemonStart(nil); code != 0 {
+		return fmt.Errorf("`rimsky daemon start` exited with code %d", code)
 	}
 	return nil
 }

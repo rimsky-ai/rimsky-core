@@ -152,10 +152,10 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 	case ActionInstanceCreate:
 		key := step.InstanceKey
 		body := cli.CreateInstanceRequest{
-			Template:    step.TemplateTag,
-			InstanceKey: &key,
-			Params:      step.Params,
-			TargetAgent: cli.ResolveTargetAgent("", ""),
+			Template:     step.TemplateTag,
+			InstanceKey:  &key,
+			Params:       step.Params,
+			TargetDaemon: cli.ResolveTargetDaemon("", ""),
 		}
 		resp, err := c.CreateInstance(ctx, body)
 		if err != nil {

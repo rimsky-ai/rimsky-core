@@ -6,7 +6,7 @@ decision: launch-config-injection
 
 ## Choice
 
-The compose verb writes one synthetic YAML file to the run directory — a unified config file matching the `concept:rimsky-yml` shape, the supervisor's tuning under its per-role section — and points the role runners at it through the standard config-discovery surface before the runners start. The synthetic file persists alongside the SQL state and the blob root as part of the run artifact (see `decision:artifact-layout`).
+The compose verb writes one synthetic YAML file to the run directory — a unified config file matching the `concept:rimsky-yml` shape, the supervisor's tuning under its per-role section — and points the role runners at it through the standard config-discovery surface before the runners start. The synthetic file persists alongside the SQL state as part of the run artifact (see `decision:artifact-layout`).
 
 ## Rationale
 

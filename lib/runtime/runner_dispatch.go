@@ -24,7 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/eventpayload"
 )
@@ -128,7 +128,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 				}),
 			}, tx)
 		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("runner_dispatch: append unresolved_executor event failed",
+			args.Logger.Warn("RUNNER.UNRESOLVEDEXECUTOREVENT.APPENDFAILED",
 				"node_id", acq.NodeID.String(),
 				"executor_name", acq.Executor,
 				"error", err.Error())
@@ -150,7 +150,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "build_request_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
-	ctx = peer.WithServiceName(ctx, acq.Executor)
+	ctx = service.WithServiceName(ctx, acq.Executor)
 	deadline := resolveSyncRPCDeadline(acq.NodeDef, dctx.Args.SyncRPCDeadlineDefault)
 	if deadline > 0 {
 		var cancel context.CancelFunc
@@ -177,7 +177,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	}
 	// @decision: lineage-records-computation-only
 	acq.ExecutorInvoked = true
-	outcome, peerPrincipal, err := client.Execute(ctx, req)
+	outcome, servicePrincipal, err := client.Execute(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return terminalEvent{
@@ -214,7 +214,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 			}),
 		}
 		if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := dctx.Args.Queue.RegisterAsyncAck(ctx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, peerPrincipal, dctx.Args.CallbackURL, tx); err != nil {
+			if err := dctx.Args.Queue.RegisterAsyncAck(ctx, acq.NodeRunID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec, servicePrincipal, dctx.Args.CallbackURL, tx); err != nil {
 				return fmt.Errorf("register async ack: %w", err)
 			}
 			return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),
@@ -223,7 +223,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 			return terminalEvent{}, nil, fmt.Errorf(
 				"runner_dispatch: persist async-callback registration failed for ack %q: %w", asyncAck, err)
 		}
-		if !registerAsyncIfSet(dctx, asyncAck, peerPrincipal) {
+		if !registerAsyncIfSet(dctx, asyncAck, servicePrincipal) {
 			return terminalEvent{}, nil, fmt.Errorf(
 				"runner_dispatch: async_ack_id %q collides with an existing in-memory callback registration", asyncAck)
 		}
@@ -238,7 +238,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	return terminal, nil, nil
 }
 
-func registerAsyncIfSet(dctx dispatchContext, asyncAck, peerPrincipal string) bool {
+func registerAsyncIfSet(dctx dispatchContext, asyncAck, servicePrincipal string) bool {
 	if dctx.RegisterAsync == nil {
 		return true
 	}
@@ -257,7 +257,7 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck, peerPrincipal string) bo
 		GraphName:             acq.GraphName,
 		ResolvedAttributes:    dctx.Attributes,
 		AttributesSchema:      dctx.AttributesSchema,
-		AsyncAckPrincipal:     peerPrincipal,
+		AsyncAckPrincipal:     servicePrincipal,
 	})
 }
 
@@ -463,7 +463,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 				}),
 			}, tx)
 		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("runner_dispatch: append attributes_substituted event failed",
+			args.Logger.Warn("RUNNER.ATTRIBUTESSUBSTITUTEDEVENT.APPENDFAILED",
 				"node_id", acq.NodeID.String(),
 				"error", err.Error())
 		}
@@ -499,7 +499,7 @@ func evaluateBeforeDispatchBreakpoints(
 	if bpErr != nil {
 		var infraErr *BreakpointInfraError
 		if errors.As(bpErr, &infraErr) && args.Logger != nil {
-			args.Logger.Warn("runner_dispatch: breakpoint infra failure on the pause path; failing closed, dispatch blocked",
+			args.Logger.Warn("RUNNER.BREAKPOINTPAUSE.INFRAFAILURE", "detail", "failing closed; the dispatch is blocked",
 				"node_id", acq.NodeID.String(),
 				"dispatch_id", acq.NodeRunID.String(),
 				"phase", infraErr.Phase,
@@ -543,7 +543,7 @@ func computeEffectiveAttributeSchema(args RunArgs, acq *acquisition) (map[string
 			if len(bytesIn) > 0 {
 				if err := json.Unmarshal(bytesIn, &execSchema); err != nil {
 					if args.Logger != nil {
-						args.Logger.Warn("computeEffectiveAttributeSchema: executor schema unmarshal failed",
+						args.Logger.Warn("RUNNER.EXECUTORSCHEMA.UNMARSHALFAILED", "site", "computeEffectiveAttributeSchema",
 							"executor", acq.Executor, "error", err.Error())
 					}
 					execSchema = nil
@@ -838,7 +838,7 @@ func priorDispositionFromStorageForm(s string) genv1.PriorDispatchDisposition {
 	return genv1.PriorDispatchDisposition_PRIOR_NONE
 }
 
-// @concept: host-agent-proxy
+// @concept: host-daemon-proxy
 func runScopeIDString(id shared.UUID) string {
 	if id == (shared.UUID{}) {
 		return ""
@@ -875,7 +875,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	req := &genv1.ExecuteRequest{
 		NodeId:     acq.NodeID.String(),
 		InstanceId: acq.InstanceID.String(),
-		// @concept: host-agent-proxy
+		// @concept: host-daemon-proxy
 		RunScopeId:       runScopeIDString(acq.RunScopeID),
 		NodeType:         acq.NodeType,
 		Attributes:       attrStruct,

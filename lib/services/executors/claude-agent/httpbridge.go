@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/internal/observability"
 )
 
@@ -34,7 +34,7 @@ func (r *RunningHTTPBridge) Shutdown(ctx context.Context) error {
 }
 
 // @decision: http-bridge-preserved
-func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *peerauth.Identity) (*RunningHTTPBridge, error) {
+func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *serviceauth.Identity) (*RunningHTTPBridge, error) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -129,7 +129,7 @@ func StartHTTPBridge(host string, port int, executor *ExecutorServer, identity *
 	server.ReadHeaderTimeout = 30 * time.Second
 	go func() {
 		if serveErr := identity.RunHTTP(server, listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			executor.cfg.Logger.Error("http bridge serve", "error", serveErr.Error())
+			executor.cfg.Logger.Error("CLAUDEAGENT.HTTPBRIDGE.SERVEFAILED", "error", serveErr.Error())
 		}
 	}()
 	return &RunningHTTPBridge{

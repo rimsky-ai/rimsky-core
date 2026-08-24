@@ -43,7 +43,7 @@ docker run -p 8080:8080 \
   rimskyai/rimsky-all-in-one
 ```
 
-`grpc_port: 9200` is not decoration. The producer's default gRPC port is 9100, which is also where the supervisor's async-callback listener binds in the bundled defaults, so a producer left at its default will not bind.
+`grpc_port: 9200` moves this producer off its default. The producer's default gRPC port is 9100, which a second filesystem producer on the same host would already hold.
 
 ## The template
 

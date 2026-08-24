@@ -250,8 +250,8 @@ func TestV1Registry(t *testing.T) {
 		// @concept: control-api
 		"health:probe": true,
 		"auth:whoami":  true,
-		// @concept: peer-auth
-		"peer-auth:ca-root": true,
+		// @concept: service-auth
+		"service-auth:ca-root": true,
 	}
 	for _, a := range surplus {
 		if !allowed[a] {
@@ -265,7 +265,7 @@ func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
 	wantRouteCount := map[string]int{
 		"health:probe":            1,
 		"auth:whoami":             1,
-		"peer-auth:ca-root":       1,
+		"service-auth:ca-root":    1,
 		"instance:read":           2,
 		"instance:create":         1,
 		"instance:terminate":      1,
@@ -302,7 +302,7 @@ func TestActionRoutes_PinnedRouteCounts(t *testing.T) {
 		"claim-holders:read":      1,
 		"asset:read":              4,
 		"asset:delete":            1,
-		"diagnostics:read":        2,
+		"diagnostics:read":        3,
 		"auth:read":               3,
 		"auth:create":             1,
 		"auth:revoke":             1,

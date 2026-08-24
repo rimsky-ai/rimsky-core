@@ -34,9 +34,8 @@ type DispatchRequest struct {
 	CreationReason cascade.CreationReason
 
 	// @concept: executor
-	InitialScratchInline        []byte
-	InitialScratchHandle        string
-	InitialScratchHandleBackend string
+	// @decision: scratch-column
+	InitialScratch []byte
 }
 
 // @concept: service-address-book
@@ -154,11 +153,11 @@ type Queue interface {
 	ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx Tx) (resumed bool, err error)
 
 	// @concept: executor
-	LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx Tx) (inline []byte, handle, handleBackend string, err error)
+	LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx Tx) (scratch []byte, err error)
 
 	// @concept: executor
 	// @decision: scratch-column
-	WriteScratch(ctx context.Context, nodeRunID shared.UUID, inline []byte, handle, handleBackend string, tx Tx) error
+	WriteScratch(ctx context.Context, nodeRunID shared.UUID, scratch []byte, tx Tx) error
 }
 
 type ParkActiveInput struct {

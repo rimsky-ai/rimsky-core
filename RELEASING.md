@@ -112,7 +112,7 @@ Published under `docker.io/rimskyai/`:
 |-------|--------|
 | `rimsky` | `dockerfiles/Dockerfile.rimsky` — all role binaries + entrypoint |
 | `rimsky-all-in-one` | `dockerfiles/Dockerfile.all-in-one` — zero-config SQLite stack |
-| `rimsky-host-agent-proxy` | `dockerfiles/Dockerfile.go-base` |
+| `rimsky-host-daemon-proxy` | `dockerfiles/Dockerfile.go-base` |
 | `rimsky-conformance` | `dockerfiles/Dockerfile.conformance` — protocol conformance runners |
 | `rimsky-claim-producer-filesystem` | `lib/services/claim_producers/filesystem/Dockerfile.filesystem` |
 | `rimsky-claim-producer-postgres` | `lib/services/claim_producers/postgres/Dockerfile.postgres` |

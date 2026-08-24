@@ -22,7 +22,7 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 type AppDeps struct {
@@ -34,9 +34,12 @@ type AppDeps struct {
 	AuthState      *AuthState
 	ClaimProducers *locks.Registry
 	LifecycleSubs  *lifecycle.Registry
-	NamedLocks     locks.NamedLocksConfig
-	Executors      map[string]ExecutorEntry
-	Observability  ObservabilityRouter
+
+	// @decision: lifecycle-drain-per-role
+	LifecycleKick func()
+	NamedLocks    locks.NamedLocksConfig
+	Executors     map[string]ExecutorEntry
+	Observability ObservabilityRouter
 
 	ExecutorCapabilities func(executorName string) (declaredTags []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool)
 
@@ -57,7 +60,7 @@ type AppDeps struct {
 	// @concept: node
 	KindAliases *node.KindAliasMap
 
-	PeerAuth string
+	ServiceAuth string
 
 	Enroll *EnrollDeps
 }
@@ -152,7 +155,7 @@ func accessLog(log foundationshared.Logger) func(http.Handler) http.Handler {
 			ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			next.ServeHTTP(ww, r)
 			lat := time.Since(start)
-			log.Info("controlapi.request",
+			log.Info("CONTROLAPI.REQUEST.SERVED",
 				slog.String("method", r.Method),
 				slog.String("url", r.URL.String()),
 				slog.Int("status", ww.Status()),
@@ -183,7 +186,7 @@ func jsonMarshal(v any) []byte {
 }
 
 func writeError(w http.ResponseWriter, err error) {
-	var pcErr *peer.ProducerCallError
+	var pcErr *service.ProducerCallError
 	if errors.As(err, &pcErr) {
 		writeProducerError(w, pcErr)
 		return
@@ -213,7 +216,7 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 // @decision: producer-error-passthrough
-func writeProducerError(w http.ResponseWriter, pcErr *peer.ProducerCallError) {
+func writeProducerError(w http.ResponseWriter, pcErr *service.ProducerCallError) {
 	httpStatus := http.StatusBadGateway
 	switch grpcstatus.Code(pcErr.Underlying) {
 	case grpccodes.InvalidArgument, grpccodes.FailedPrecondition, grpccodes.OutOfRange,

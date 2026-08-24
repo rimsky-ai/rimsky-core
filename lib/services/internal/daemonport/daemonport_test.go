@@ -1,0 +1,89 @@
+// Copyright © 2026 Fall Guy Consulting.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
+
+package daemonport
+
+import "testing"
+
+func TestResolvePrefersDaemonPortOverFallbackVar(t *testing.T) {
+	t.Setenv(EnvVar, "5555")
+	t.Setenv("SOME_SERVICE_PORT", "9999")
+
+	got, err := Resolve("SOME_SERVICE_PORT", 1234)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got != 5555 {
+		t.Fatalf("Resolve = %d, want 5555 (RIMSKY_DAEMON_PORT should win)", got)
+	}
+}
+
+func TestResolveFallsBackToServiceVarWhenDaemonPortUnset(t *testing.T) {
+	t.Setenv("SOME_SERVICE_PORT", "9999")
+
+	got, err := Resolve("SOME_SERVICE_PORT", 1234)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got != 9999 {
+		t.Fatalf("Resolve = %d, want 9999 (fallback var)", got)
+	}
+}
+
+func TestResolveFallsBackToDefaultWhenNeitherSet(t *testing.T) {
+	got, err := Resolve("SOME_SERVICE_PORT", 1234)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got != 1234 {
+		t.Fatalf("Resolve = %d, want 1234 (default)", got)
+	}
+}
+
+func TestResolveFailsClosedOnMalformedDaemonPort(t *testing.T) {
+	t.Setenv(EnvVar, "not-a-number")
+	t.Setenv("SOME_SERVICE_PORT", "9999")
+
+	if _, err := Resolve("SOME_SERVICE_PORT", 1234); err == nil {
+		t.Fatal("Resolve: expected an error for a malformed RIMSKY_DAEMON_PORT, got nil " +
+			"(silently falling through to another port would let a typo bind the wrong port)")
+	}
+}
+
+func TestResolveFailsClosedOnMalformedFallbackVar(t *testing.T) {
+	t.Setenv("SOME_SERVICE_PORT", "not-a-number")
+
+	if _, err := Resolve("SOME_SERVICE_PORT", 1234); err == nil {
+		t.Fatal("Resolve: expected an error for a malformed fallback port var, got nil")
+	}
+}
+
+func TestOverridePrefersDaemonPort(t *testing.T) {
+	t.Setenv(EnvVar, "5555")
+
+	got, err := Override(1234)
+	if err != nil {
+		t.Fatalf("Override: %v", err)
+	}
+	if got != 5555 {
+		t.Fatalf("Override = %d, want 5555", got)
+	}
+}
+
+func TestOverrideFallsBackWhenUnset(t *testing.T) {
+	got, err := Override(1234)
+	if err != nil {
+		t.Fatalf("Override: %v", err)
+	}
+	if got != 1234 {
+		t.Fatalf("Override = %d, want 1234", got)
+	}
+}
+
+func TestOverrideFailsClosedOnMalformedDaemonPort(t *testing.T) {
+	t.Setenv(EnvVar, "not-a-number")
+
+	if _, err := Override(1234); err == nil {
+		t.Fatal("Override: expected an error for a malformed RIMSKY_DAEMON_PORT, got nil")
+	}
+}

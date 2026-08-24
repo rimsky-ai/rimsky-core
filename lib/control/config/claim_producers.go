@@ -23,7 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
-	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	service "github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 const (
@@ -42,6 +42,16 @@ type yamlRetention struct {
 	ClaimHandlesTrailing         *time.Duration `yaml:"claim_handles_trailing"`
 	MessageIdempotenciesTrailing *time.Duration `yaml:"message_idempotencies_trailing"`
 	LifecycleOutboxTrailing      *time.Duration `yaml:"lifecycle_outbox_trailing"`
+}
+
+// @decision: service-delivery-stall-signal
+type yamlServiceDelivery struct {
+	StallAfter *time.Duration `yaml:"stall_after"`
+}
+
+// @decision: service-delivery-stall-signal
+type ServiceDeliveryConfig struct {
+	StallAfter time.Duration
 }
 
 type yamlDispatchDefaults struct {
@@ -176,7 +186,7 @@ func (c ExecutorsConfig) Validate() error {
 		if e.Endpoint == "" {
 			return fmt.Errorf("executor %q: endpoint required", name)
 		}
-		if e.Transport == "http" && e.TLS == peer.TLSModeRequired && !strings.HasPrefix(e.Endpoint, "https://") {
+		if e.Transport == "http" && e.TLS == service.TLSModeRequired && !strings.HasPrefix(e.Endpoint, "https://") {
 			return fmt.Errorf("executor %q: tls: required with transport: http needs an https:// endpoint, got %q", name, e.Endpoint)
 		}
 	}
@@ -191,7 +201,6 @@ func (c ExecutorsConfig) ExecutorDeclared(name string) bool {
 // @concept: rimsky-yml
 type RimskyConfig struct {
 	Persistence            persistence.Config
-	Blob                   persistence.BlobConfig
 	ClaimProducers         RemoteClaimProducersConfig
 	NamedLocks             locks.NamedLocksConfig
 	Executors              ExecutorsConfig
@@ -199,10 +208,11 @@ type RimskyConfig struct {
 	Validators             RemoteValidatorsConfig
 	DataProcessors         RemoteDataProcessorsConfig
 	Retention              runtime.RetentionConfig
+	ServiceDelivery        ServiceDeliveryConfig
 	Dispatch               DispatchDefaultsConfig
 	Supervisor             SupervisorSection
 	LateBindServiceProxies map[string]string
-	PeerAuth               string
+	ServiceAuth            string
 	Topology               persistence.Topology
 	Warnings               []string
 
@@ -229,15 +239,15 @@ func parseObservabilityRefreshInterval() (time.Duration, error) {
 	return d, nil
 }
 
-// @decision: peer-auth-mtls
-func ParsePeerAuth(raw string) (string, error) {
+// @decision: service-auth-mtls
+func ParseServiceAuth(raw string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", peer.PeerAuthNone:
-		return peer.PeerAuthNone, nil
-	case peer.PeerAuthMTLS:
-		return peer.PeerAuthMTLS, nil
+	case "", service.ServiceAuthNone:
+		return service.ServiceAuthNone, nil
+	case service.ServiceAuthMTLS:
+		return service.ServiceAuthMTLS, nil
 	default:
-		return "", fmt.Errorf("peer_auth: unknown value %q (one of: none, mtls)", raw)
+		return "", fmt.Errorf("service_auth: unknown value %q (one of: none, mtls)", raw)
 	}
 }
 
@@ -311,17 +321,6 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Protocols             []string `yaml:"protocols"`
 		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
 	}
-	type yamlBlob struct {
-		Backend             string `yaml:"backend"`
-		SpillThresholdBytes int    `yaml:"spill_threshold_bytes"`
-		Filesystem          *struct {
-			Root string `yaml:"root"`
-		} `yaml:"filesystem"`
-		Retention *struct {
-			OrphanSweepInterval        time.Duration `yaml:"orphan_sweep_interval"`
-			RetentionAfterUnreferenced time.Duration `yaml:"retention_after_unreferenced"`
-		} `yaml:"retention"`
-	}
 	var wrapper struct {
 		Persistence struct {
 			Driver   string `yaml:"driver"`
@@ -334,7 +333,6 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			SQLite *struct {
 				Path string `yaml:"path"`
 			} `yaml:"sqlite"`
-			Blob *yamlBlob `yaml:"blob"`
 		} `yaml:"persistence"`
 		ClaimProducers map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
 		// @concept: named-lock
@@ -344,27 +342,28 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Validators                 map[string]yamlValidatorEntry     `yaml:"validators"`
 		DataProcessors             map[string]yamlDataProcessorEntry `yaml:"data_processors"`
 		Retention                  *yamlRetention                    `yaml:"retention"`
+		ServiceDelivery            *yamlServiceDelivery              `yaml:"service_delivery"`
 		DispatchDefaults           *yamlDispatchDefaults             `yaml:"dispatch_defaults"`
 		LateBindServiceProxies     map[string]string                 `yaml:"late_bind_service_proxies"`
 		Supervisor                 *yamlSupervisor                   `yaml:"supervisor"`
-		PeerAuth                   string                            `yaml:"peer_auth"`
+		ServiceAuth                string                            `yaml:"service_auth"`
 		UnreachableValidatorPolicy string                            `yaml:"unreachable_validator_policy"`
 	}
 	if err := configload.LoadFile(path, &wrapper); err != nil {
 		return RimskyConfig{}, err
 	}
 	rawProducers := wrapper.ClaimProducers
-	peerAuth, err := ParsePeerAuth(wrapper.PeerAuth)
+	serviceAuth, err := ParseServiceAuth(wrapper.ServiceAuth)
 	if err != nil {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
-	if peerAuth == peer.PeerAuthMTLS {
+	if serviceAuth == service.ServiceAuthMTLS {
 		if _, err := pki.ParseCAEncryptionKey(os.Getenv(pki.EnvCAEncryptionKey)); err != nil {
-			return RimskyConfig{}, fmt.Errorf("rimsky config %q: peer_auth: mtls requires %w", path, err)
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: service_auth: mtls requires %w", path, err)
 		}
 	}
-	// @decision: peer-auth-mtls
-	peerTLSDefault := defaultPeerTLSMode(peerAuth)
+	// @decision: service-auth-mtls
+	serviceTLSDefault := defaultServiceTLSMode(serviceAuth)
 
 	producers := RemoteClaimProducersConfig{ClaimProducers: make(map[string]ClaimProducerEntry, len(rawProducers))}
 	for name, e := range rawProducers {
@@ -388,7 +387,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasClaimProducer {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: protocols must include %q", path, name, ProtocolClaimProducer)
 		}
-		tlsMode, err := parseTLSMode("claim_producers", name, e.TLS, peerTLSDefault)
+		tlsMode, err := parseTLSMode("claim_producers", name, e.TLS, serviceTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -418,7 +417,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasExecutor {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: executors[%q]: protocols must include %q", path, name, ProtocolExecutor)
 		}
-		tlsMode, err := parseTLSMode("executors", name, e.TLS, peerTLSDefault)
+		tlsMode, err := parseTLSMode("executors", name, e.TLS, serviceTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -448,7 +447,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasPublisher {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: publishers[%q]: protocols must include %q", path, name, ProtocolPublisher)
 		}
-		tlsMode, err := parseTLSMode("publishers", name, e.TLS, peerTLSDefault)
+		tlsMode, err := parseTLSMode("publishers", name, e.TLS, serviceTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -486,7 +485,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 				"rimsky config %q: validators[%q]: protocols declares only %q, so the entry derives no role to validate and rimsky would never consult it; name the protocols whose registrations it validates",
 				path, name, claimproducer.ProtocolValidation)
 		}
-		tlsMode, err := parseTLSMode("validators", name, e.TLS, peerTLSDefault)
+		tlsMode, err := parseTLSMode("validators", name, e.TLS, serviceTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -515,7 +514,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasDataProcessing {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: data_processors[%q]: protocols must include %q", path, name, claimproducer.ProtocolDataProcessing)
 		}
-		tlsMode, err := parseTLSMode("data_processors", name, e.TLS, peerTLSDefault)
+		tlsMode, err := parseTLSMode("data_processors", name, e.TLS, serviceTLSDefault)
 		if err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
@@ -548,32 +547,18 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		warnings = append(warnings, msg)
 	}
 
-	bcfg := persistence.DefaultBlobConfig()
-	if blob := wrapper.Persistence.Blob; blob != nil {
-		if blob.Backend != "" {
-			bcfg.Backend = blob.Backend
-		}
-		if blob.SpillThresholdBytes > 0 {
-			bcfg.SpillThresholdBytes = blob.SpillThresholdBytes
-		}
-		if blob.Filesystem != nil {
-			bcfg.Filesystem.Root = blob.Filesystem.Root
-		}
-		if blob.Retention != nil {
-			if blob.Retention.OrphanSweepInterval > 0 {
-				bcfg.Retention.OrphanSweepInterval = blob.Retention.OrphanSweepInterval
-			}
-			if blob.Retention.RetentionAfterUnreferenced > 0 {
-				bcfg.Retention.RetentionAfterUnreferenced = blob.Retention.RetentionAfterUnreferenced
-			}
-		}
-	}
-	if err := persistence.ValidateBlobConfig(bcfg, topology); err != nil {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence.blob: %w", path, err)
-	}
-
 	retentionCfg, err := parseRetention(wrapper.Retention)
 	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+
+	serviceDeliveryCfg, err := parseServiceDelivery(wrapper.ServiceDelivery)
+	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+
+	// @decision: service-delivery-stall-signal
+	if err := checkStallSignalPrecedesRetention(serviceDeliveryCfg, retentionCfg); err != nil {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
 
@@ -610,7 +595,6 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 
 	return RimskyConfig{
 		Persistence:                  pcfg,
-		Blob:                         bcfg,
 		ClaimProducers:               producers,
 		NamedLocks:                   locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
 		Executors:                    executors,
@@ -618,15 +602,40 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Validators:                   validatorsCfg,
 		DataProcessors:               dataProcessorsCfg,
 		Retention:                    retentionCfg,
+		ServiceDelivery:              serviceDeliveryCfg,
 		Dispatch:                     dispatchCfg,
 		Supervisor:                   supervisorSection,
 		LateBindServiceProxies:       wrapper.LateBindServiceProxies,
-		PeerAuth:                     peerAuth,
+		ServiceAuth:                  serviceAuth,
 		Topology:                     topology,
 		Warnings:                     warnings,
 		UnreachableValidatorPolicy:   unreachableValidatorPolicy,
 		ObservabilityRefreshInterval: observabilityRefreshInterval,
 	}, nil
+}
+
+// @decision: service-delivery-stall-signal
+func checkStallSignalPrecedesRetention(sd ServiceDeliveryConfig, ret runtime.RetentionConfig) error {
+	if ret.LifecycleOutboxTrailing <= 0 || ret.LifecycleOutboxTrailing > sd.StallAfter {
+		return nil
+	}
+	return fmt.Errorf(
+		"retention.lifecycle_outbox_trailing (%s) must be longer than service_delivery.stall_after (%s), "+
+			"or the window discards an undelivered event before the stall signal reports it",
+		ret.LifecycleOutboxTrailing, sd.StallAfter)
+}
+
+// @decision: service-delivery-stall-signal
+func parseServiceDelivery(in *yamlServiceDelivery) (ServiceDeliveryConfig, error) {
+	out := ServiceDeliveryConfig{StallAfter: runtime.DefaultServiceDeliveryStallAfter}
+	if in == nil || in.StallAfter == nil {
+		return out, nil
+	}
+	if *in.StallAfter <= 0 {
+		return ServiceDeliveryConfig{}, fmt.Errorf("service_delivery.stall_after must be positive")
+	}
+	out.StallAfter = *in.StallAfter
+	return out, nil
 }
 
 func parseRetention(in *yamlRetention) (runtime.RetentionConfig, error) {
@@ -738,27 +747,27 @@ func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics
 }
 
 // @decision: tls-mode-validation
-// @decision: peer-auth-mtls
+// @decision: service-auth-mtls
 func parseTLSMode(block, name, raw, defaultMode string) (string, error) {
 	switch raw {
 	case "":
 		return defaultMode, nil
-	case peer.TLSModeOff:
-		return peer.TLSModeOff, nil
-	case peer.TLSModeRequired:
-		return peer.TLSModeRequired, nil
+	case service.TLSModeOff:
+		return service.TLSModeOff, nil
+	case service.TLSModeRequired:
+		return service.TLSModeRequired, nil
 	default:
 		return "", fmt.Errorf("%s[%q]: tls: unknown value %q (one of: off, required)", block, name, raw)
 	}
 }
 
-// @decision: peer-auth-mtls
-// @story: peer-auth-mtls-mutual
-func defaultPeerTLSMode(peerAuth string) string {
-	if peerAuth == peer.PeerAuthMTLS {
-		return peer.TLSModeRequired
+// @decision: service-auth-mtls
+// @story: service-auth-mtls-mutual
+func defaultServiceTLSMode(serviceAuth string) string {
+	if serviceAuth == service.ServiceAuthMTLS {
+		return service.TLSModeRequired
 	}
-	return peer.TLSModeOff
+	return service.TLSModeOff
 }
 
 func ValidProtocols() map[string]bool {
@@ -776,7 +785,7 @@ func validateProtocols(name string, protocols []string) error {
 	known := ValidProtocols()
 	for _, p := range protocols {
 		if !known[p] {
-			return fmt.Errorf("peer %q: unknown protocol %q", name, p)
+			return fmt.Errorf("service %q: unknown protocol %q", name, p)
 		}
 	}
 	return nil
@@ -802,7 +811,7 @@ func dialRemoteClaimProducers(
 			return nil, fmt.Errorf("dialRemoteClaimProducers: %w", err)
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := peer.Dial(dialCtx, name, entry.Endpoint, entry.TLS)
+		client, err := service.Dial(dialCtx, name, entry.Endpoint, entry.TLS)
 		cancel()
 		if err != nil {
 			reg.Close()
@@ -855,7 +864,7 @@ func DialLifecycleSubscribers(ctx context.Context, producers RemoteClaimProducer
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
+		client, err := service.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
 		cancel()
 		if err != nil {
 			reg.Close()
@@ -868,7 +877,7 @@ func DialLifecycleSubscribers(ctx context.Context, producers RemoteClaimProducer
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
+		client, err := service.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
 		cancel()
 		if err != nil {
 			reg.Close()
@@ -881,7 +890,7 @@ func DialLifecycleSubscribers(ctx context.Context, producers RemoteClaimProducer
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
+		client, err := service.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
 		cancel()
 		if err != nil {
 			reg.Close()

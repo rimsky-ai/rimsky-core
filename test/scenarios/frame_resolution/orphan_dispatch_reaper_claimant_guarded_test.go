@@ -27,7 +27,7 @@ func TestOrphanDispatchReaper_ReleasesTerminalFrameClaim(t *testing.T) {
 	nodeRunID := seedTerminalFrameAndDispatch(t, h, "stale-sup")
 
 	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(),
-		slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil))
+		slog.New(slog.NewTextHandler(io.Discard, nil)), frame.LifecycleDelivery{}, nil))
 
 	var claimedBy *string
 	h.QueryRowSQL(
@@ -79,7 +79,7 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 			return err
 		}
 		ck := "ck-orphan-" + instanceID.String()[:8]
-		_, err := h.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		_, err := h.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID:           instanceID,
 			TemplateHash: templateHash,
 			InstanceKey:  &ck,

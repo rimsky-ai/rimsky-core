@@ -12,7 +12,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	fsstore "github.com/rimsky-ai/rimsky-core/lib/services/claim_producers/filesystem/store"
-	"github.com/rimsky-ai/rimsky-core/lib/services/internal/agentport"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/daemonport"
 )
 
 const ConfigEnv = "RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG"
@@ -127,7 +127,7 @@ func LoadOptsFromEnv() (Opts, error) {
 	if httpPortCfg == 0 {
 		httpPortCfg = defaultHTTPPort
 	}
-	grpcPort, err := agentport.Override(grpcPortCfg)
+	grpcPort, err := daemonport.Override(grpcPortCfg)
 	if err != nil {
 		return Opts{}, err
 	}

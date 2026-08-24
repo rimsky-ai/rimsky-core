@@ -81,7 +81,7 @@ func TestFanOutCloneWritebacksNeverAggregateOntoTheParent(t *testing.T) {
 			  FROM rimsky_node_attributes a
 			  JOIN rimsky_node_runs r ON r.id = a.node_run_id
 			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
-			 WHERE r.node_id = $1 AND rs.partition_key <> '' AND a.data ? 'clone_tag'
+			 WHERE r.node_id = $1 AND rs.partition_key <> '' AND convert_from(a.data, 'UTF8')::jsonb ? 'clone_tag'
 		`, []any{parentNode.ID}, &written)
 		return written >= 3
 	})
@@ -89,7 +89,7 @@ func TestFanOutCloneWritebacksNeverAggregateOntoTheParent(t *testing.T) {
 
 	var distinctCloneTags int
 	h.QueryRowSQL(`
-		SELECT COUNT(DISTINCT a.data->>'clone_tag')
+		SELECT COUNT(DISTINCT convert_from(a.data, 'UTF8')::jsonb->>'clone_tag')
 		  FROM rimsky_node_attributes a
 		  JOIN rimsky_node_runs r ON r.id = a.node_run_id
 		  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
@@ -104,7 +104,7 @@ func TestFanOutCloneWritebacksNeverAggregateOntoTheParent(t *testing.T) {
 		  FROM rimsky_node_attributes a
 		  JOIN rimsky_node_runs r ON r.id = a.node_run_id
 		  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
-		 WHERE r.node_id = $1 AND rs.partition_key = '' AND a.data ? 'clone_tag'
+		 WHERE r.node_id = $1 AND rs.partition_key = '' AND convert_from(a.data, 'UTF8')::jsonb ? 'clone_tag'
 	`, []any{parentNode.ID}, &parentRunsCarryingACloneTag)
 	require.Equal(t, 0, parentRunsCarryingACloneTag,
 		"a clone's attribute writeback never merges into the fan-out parent's attribute bag")

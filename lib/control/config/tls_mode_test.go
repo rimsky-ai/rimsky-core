@@ -23,9 +23,9 @@ claim_producers:
     endpoint: items-store:9101
     write_semantics_allowed: [sync]
 ` + indent + `executors:
-  agent-runner:
+  daemon-runner:
     transport: grpc
-    endpoint: agent-runner:9090
+    endpoint: daemon-runner:9090
 ` + indent + `publishers:
   ticker:
     endpoint: ticker:9300
@@ -37,7 +37,7 @@ func TestTLSMode_AbsentKey_DefaultsOff(t *testing.T) {
 	if got := cfg.ClaimProducers.ClaimProducers["items-store"].TLS; got != "off" {
 		t.Fatalf("claim_producer TLS = %q, want off", got)
 	}
-	if got := cfg.Executors.Executors["agent-runner"].TLS; got != "off" {
+	if got := cfg.Executors.Executors["daemon-runner"].TLS; got != "off" {
 		t.Fatalf("executor TLS = %q, want off", got)
 	}
 	if got := cfg.Publishers.Publishers["ticker"].TLS; got != "off" {
@@ -51,7 +51,7 @@ func TestTLSMode_ValidValues_Pass(t *testing.T) {
 		if got := cfg.ClaimProducers.ClaimProducers["items-store"].TLS; got != mode {
 			t.Fatalf("claim_producer TLS = %q, want %q", got, mode)
 		}
-		if got := cfg.Executors.Executors["agent-runner"].TLS; got != mode {
+		if got := cfg.Executors.Executors["daemon-runner"].TLS; got != mode {
 			t.Fatalf("executor TLS = %q, want %q", got, mode)
 		}
 		if got := cfg.Publishers.Publishers["ticker"].TLS; got != mode {
@@ -89,12 +89,12 @@ persistence:
   sqlite:
     path: /tmp/rimsky.db
 executors:
-  agent-runner:
+  daemon-runner:
     transport: grpc
-    endpoint: agent-runner:9090
+    endpoint: daemon-runner:9090
     tls: optional
 `,
-			entryHint: `executors["agent-runner"]`,
+			entryHint: `executors["daemon-runner"]`,
 		},
 		{
 			name: "publisher optional",
@@ -118,12 +118,12 @@ persistence:
   sqlite:
     path: /tmp/rimsky.db
 executors:
-  agent-runner:
+  daemon-runner:
     transport: grpc
-    endpoint: agent-runner:9090
+    endpoint: daemon-runner:9090
     tls: mutual
 `,
-			entryHint: `executors["agent-runner"]`,
+			entryHint: `executors["daemon-runner"]`,
 		},
 	}
 	for _, tc := range cases {
@@ -156,7 +156,7 @@ func TestTLSMode_HTTPBridgeRequiredNeedsHTTPS(t *testing.T) {
 
 	accept := ExecutorsConfig{Executors: map[string]ExecutorEntry{
 		"bridge-runner": {Transport: "http", Endpoint: "https://bridge-runner:8443", TLS: "required"},
-		"agent-runner":  {Transport: "grpc", Endpoint: "agent-runner:9090", TLS: "required"},
+		"daemon-runner": {Transport: "grpc", Endpoint: "daemon-runner:9090", TLS: "required"},
 		"plain-bridge":  {Transport: "http", Endpoint: "http://plain-bridge:8080", TLS: "off"},
 	}}
 	if err := accept.Validate(); err != nil {

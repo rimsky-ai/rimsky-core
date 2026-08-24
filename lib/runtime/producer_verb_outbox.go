@@ -15,7 +15,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 const (
@@ -109,7 +109,8 @@ func FlushProducerVerbOutbox(ctx context.Context, args RunArgs) (int, error) {
 	if clock == nil {
 		clock = shared.SystemClock{}
 	}
-	d := NewProducerVerbDispatcher(outbox, args.Persist, args.ClaimProducerRegistry, clock, args.Logger)
+	d := NewProducerVerbDispatcher(outbox, args.Persist, args.ClaimProducerRegistry, clock, args.Logger,
+		DefaultServiceDeliveryStallAfter)
 	return d.DispatchOnce(ctx)
 }
 
@@ -128,16 +129,26 @@ type ProducerVerbDispatcher struct {
 	BaseBackoff  time.Duration
 	MaxBackoff   time.Duration
 
+	// @decision: service-delivery-stall-signal
+	health *ServiceDeliveryHealth
+
 	kick chan struct{}
 }
 
+// @decision: service-delivery-stall-signal
 func NewProducerVerbDispatcher(
 	outbox persistence.ProducerVerbOutboxTable,
 	tables persistence.Tables,
 	producers ProducerVerbResolver,
 	clock shared.Clock,
 	logger shared.Logger,
+	stallAfter time.Duration,
 ) *ProducerVerbDispatcher {
+	health := NewServiceDeliveryHealth(tables, persistence.ServiceDeliveryOutboxProducerVerb, stallAfter, logger)
+	maxBackoff := defaultProducerVerbMaxBackoff
+	if health.StallAfter() < maxBackoff {
+		maxBackoff = health.StallAfter()
+	}
 	return &ProducerVerbDispatcher{
 		Outbox:       outbox,
 		Tables:       tables,
@@ -146,7 +157,8 @@ func NewProducerVerbDispatcher(
 		Logger:       logger,
 		PollInterval: defaultProducerVerbPollInterval,
 		BaseBackoff:  defaultProducerVerbBaseBackoff,
-		MaxBackoff:   defaultProducerVerbMaxBackoff,
+		MaxBackoff:   maxBackoff,
+		health:       health,
 		kick:         make(chan struct{}, 1),
 	}
 }
@@ -167,7 +179,7 @@ func (d *ProducerVerbDispatcher) Run(ctx context.Context) {
 			return
 		}
 		if _, err := d.DispatchOnce(ctx); err != nil && d.Logger != nil {
-			d.Logger.Warn("producer_verb_outbox.dispatch_pass_failed", "error", err.Error())
+			d.Logger.Warn("PRODUCERVERB.DISPATCHPASS.FAILED", "error", err.Error())
 		}
 		interval := d.PollInterval
 		if interval <= 0 {
@@ -198,17 +210,7 @@ func producerVerbBackoff(attemptCount int, base, max time.Duration) time.Duratio
 	if max <= 0 {
 		max = defaultProducerVerbMaxBackoff
 	}
-	backoff := base
-	for i := 1; i < attemptCount; i++ {
-		backoff *= 2
-		if backoff >= max {
-			return max
-		}
-	}
-	if backoff > max {
-		return max
-	}
-	return backoff
+	return outboxRetryBackoff(attemptCount, base, max)
 }
 
 // @concept: terminal-resolution
@@ -217,11 +219,10 @@ func (d *ProducerVerbDispatcher) DispatchOnce(ctx context.Context) (int, error) 
 	if err != nil {
 		return 0, fmt.Errorf("ProducerVerbDispatcher: ListAll: %w", err)
 	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
 	delivered := 0
 	blocked := make(map[string]bool)
+	// @decision: service-delivery-stall-signal
+	settled := make(map[int64]bool)
 	now := d.Clock.Now()
 	for _, row := range rows {
 		key := producerVerbScopeKey(row.ProducerName, row.ClaimScopeData)
@@ -236,14 +237,14 @@ func (d *ProducerVerbDispatcher) DispatchOnce(ctx context.Context) (int, error) 
 			blocked[key] = true
 			backoff := producerVerbBackoff(row.AttemptCount+1, d.BaseBackoff, d.MaxBackoff)
 			if rerr := d.Outbox.RecordAttempt(ctx, row.Seq, now.Add(backoff), err.Error(), nil); rerr != nil && d.Logger != nil {
-				d.Logger.Warn("producer_verb_outbox.record_attempt_failed",
+				d.Logger.Warn("PRODUCERVERB.ATTEMPT.UNRECORDED",
 					"seq", row.Seq,
 					"producer", row.ProducerName,
 					"error", rerr.Error(),
 					"consequence", "the row keeps its previous next-attempt time, so the next pass retries it earlier than the backoff asks")
 			}
 			if d.Logger != nil {
-				d.Logger.Warn("producer_verb_outbox.delivery_retry_scheduled",
+				d.Logger.Warn("PRODUCERVERB.DELIVERY.RESCHEDULED",
 					"seq", row.Seq,
 					"producer", row.ProducerName,
 					"verb", string(row.Verb),
@@ -255,7 +256,11 @@ func (d *ProducerVerbDispatcher) DispatchOnce(ctx context.Context) (int, error) 
 			continue
 		}
 		delivered++
+		// @decision: service-delivery-stall-signal
+		settled[row.Seq] = true
 	}
+	// @decision: service-delivery-stall-signal
+	d.health.ObservePending(ctx, pendingSummaryFromProducerVerbRows(rows, settled), now)
 	return delivered, nil
 }
 
@@ -291,7 +296,7 @@ func deliverProducerVerb(
 	ctx context.Context, args RunArgs, producer claimproducer.ClaimProducer,
 	row persistence.ProducerVerbOutboxRow, tx persistence.Tx, finalize outboxRowFinalizeFn,
 ) error {
-	ctx = peer.WithServiceName(ctx, row.ProducerName)
+	ctx = service.WithServiceName(ctx, row.ProducerName)
 	claimID := claimproducer.ClaimID(row.ClaimHandleID.String())
 	switch row.Verb {
 	case persistence.ProducerVerbCommit:

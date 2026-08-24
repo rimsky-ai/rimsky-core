@@ -249,7 +249,7 @@ func startVerifierHTTPBinary(t *testing.T, binary string) string {
 	cmd.Env = append(os.Environ(),
 		"RIMSKY_EXECUTOR_HOST=127.0.0.1",
 		fmt.Sprintf("RIMSKY_EXECUTOR_PORT_GRPC=%d", grpcPort),
-		// @concept: peer-auth
+		// @concept: service-auth
 		"RIMSKY_EXECUTOR_VERIFIER_HTTP_EGRESS_ALLOWLIST=127.0.0.0/8,::1/128",
 	)
 	cmd.Stdout = os.Stderr

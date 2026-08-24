@@ -62,6 +62,8 @@ enum OperationalKind {
   reserved "OPERATIONAL_KIND_PARK_TIMEOUT";
   OPERATIONAL_KIND_PARKED_RESUME_STARTED = 81;
   OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED = 82;
+  OPERATIONAL_KIND_SERVICE_DELIVERY_STALLED = 90;
+  OPERATIONAL_KIND_SERVICE_DELIVERY_RECOVERED = 91;
 }
 
 message Event {
@@ -439,6 +441,18 @@ message InstanceTerminatedPayload {
   string reason = 2;
 }
 
+message ServiceDeliveryStalledPayload {
+  string service = 1;
+  string outbox = 2;
+  int32 pending_count = 3;
+  int32 oldest_pending_age_seconds = 4;
+}
+
+message ServiceDeliveryRecoveredPayload {
+  string service = 1;
+  string outbox = 2;
+}
+
 message TerminalSuccessSignalPayload {
   bool changed = 1;
   google.protobuf.Struct attributes_delta = 2;
@@ -459,7 +473,8 @@ message TransientParkSignalPayload {
   google.protobuf.Timestamp resume_at = 1;
   repeated string tags = 2;
   int32 scratch_size = 3;
-  bool scratch_spilled = 4;
+  reserved 4;
+  reserved "scratch_spilled";
 }
 
 message TransientRetrySignalPayload {

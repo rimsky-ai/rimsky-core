@@ -20,23 +20,37 @@ const (
 	sharedStubErrAlias = "executor-stub-erroring"
 )
 
+type stubRegistry struct {
+	alias      string
+	forceError bool
+
+	mu       sync.Mutex
+	launched map[string]error
+}
+
+func newStubRegistry(alias string, forceError bool) *stubRegistry {
+	return &stubRegistry{alias: alias, forceError: forceError, launched: map[string]error{}}
+}
+
+func (r *stubRegistry) ensureOn(ctx context.Context, networkName string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	err, seen := r.launched[networkName]
+	if !seen {
+		err = launchExecutorStub(ctx, networkName, r.alias, r.forceError)
+		r.launched[networkName] = err
+	}
+	return err
+}
+
 var (
-	stubMu          sync.Mutex
-	stubLaunched    = map[string]error{}
-	stubErrMu       sync.Mutex
-	stubErrLaunched = map[string]error{}
+	sharedStubs    = newStubRegistry(sharedStubAlias, false)
+	sharedErrStubs = newStubRegistry(sharedStubErrAlias, true)
 )
 
 func StartExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName string) (endpoint string) {
 	t.Helper()
-	stubMu.Lock()
-	err, seen := stubLaunched[networkName]
-	if !seen {
-		err = launchExecutorStub(ctx, networkName, sharedStubAlias, false)
-		stubLaunched[networkName] = err
-	}
-	stubMu.Unlock()
-	if err != nil {
+	if err := sharedStubs.ensureOn(ctx, networkName); err != nil {
 		t.Fatalf("harness: start executor-stub: %v", err)
 	}
 	return sharedStubAlias + ":9300"
@@ -44,14 +58,7 @@ func StartExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName s
 
 func StartErroringExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName string) (endpoint string) {
 	t.Helper()
-	stubErrMu.Lock()
-	err, seen := stubErrLaunched[networkName]
-	if !seen {
-		err = launchExecutorStub(ctx, networkName, sharedStubErrAlias, true)
-		stubErrLaunched[networkName] = err
-	}
-	stubErrMu.Unlock()
-	if err != nil {
+	if err := sharedErrStubs.ensureOn(ctx, networkName); err != nil {
 		t.Fatalf("harness: start erroring executor-stub: %v", err)
 	}
 	return sharedStubErrAlias + ":9300"

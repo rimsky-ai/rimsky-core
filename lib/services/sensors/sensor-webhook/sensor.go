@@ -128,7 +128,7 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 	}
 	rows, err := state.ListWatermarks(context.Background())
 	if err != nil {
-		s.logger.Warn("sensor-webhook.attach_state_db.list_failed", "error", err.Error())
+		s.logger.Warn("SENSORWEBHOOK.STATEDBATTACH.LISTFAILED", "error", err.Error())
 		return
 	}
 	s.mu.Lock()
@@ -137,7 +137,7 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 	}
 	restored := len(rows)
 	s.mu.Unlock()
-	s.logger.Info("sensor-webhook.watermarks_restored", "count", restored)
+	s.logger.Info("SENSORWEBHOOK.WATERMARKS.RESTORED", "count", restored)
 }
 
 type logger interface {
@@ -278,7 +278,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		w.LastIdempotency = cachedWatermark
 	case state != nil:
 		if key, err := state.GetLastIdempotency(ctx, w.SubscriptionID); err != nil {
-			s.logger.Warn("sensor-webhook.subscribe.state_get_failed",
+			s.logger.Warn("SENSORWEBHOOK.SUBSCRIBE.STATEGETFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		} else {
 			w.LastIdempotency = key
@@ -297,7 +297,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.pathToWatch[w.PathPrefix] = w
 	delete(s.watermarkCache, w.SubscriptionID)
 	s.mu.Unlock()
-	s.logger.Info("sensor-webhook.subscribe",
+	s.logger.Info("SENSORWEBHOOK.SUBSCRIPTION.MOUNTED",
 		"publisher_subscription_id", w.SubscriptionID,
 		"instance_id", w.InstanceID,
 		"path", w.PathPrefix,
@@ -317,7 +317,7 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		return
 	}
 	if code, authErr := s.authenticate(w, req, body); authErr != nil {
-		s.logger.Warn("sensor-webhook.auth_rejected",
+		s.logger.Warn("SENSORWEBHOOK.REQUEST.UNAUTHORIZED",
 			"publisher_subscription_id", w.SubscriptionID, "error", authErr.Error())
 		http.Error(rw, http.StatusText(code), code)
 		return
@@ -362,12 +362,12 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 	if err := s.postMessage(req.Context(), w, obs, idemKey); err != nil {
 		var rejected *publisherkit.RejectedError
 		if !errors.As(err, &rejected) {
-			s.logger.Warn("sensor-webhook.message_post_failed",
+			s.logger.Warn("SENSORWEBHOOK.MESSAGE.POSTFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 			http.Error(rw, "rimsky push failed", http.StatusBadGateway)
 			return
 		}
-		s.logger.Error("sensor-webhook.message_rejected_dropped",
+		s.logger.Error("SENSORWEBHOOK.MESSAGE.REJECTED", "detail", "the message was dropped",
 			"publisher_subscription_id", w.SubscriptionID, "status", rejected.Status, "error", err.Error())
 	}
 	if inboundIdem != "" {
@@ -379,7 +379,7 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		s.mu.Unlock()
 		if state != nil {
 			if err := state.UpdateLastIdempotency(req.Context(), w.SubscriptionID, inboundIdem); err != nil {
-				s.logger.Warn("sensor-webhook.serve.state_update_failed",
+				s.logger.Warn("SENSORWEBHOOK.SERVE.STATEUPDATEFAILED",
 					"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 			}
 		}
@@ -466,11 +466,11 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 	s.mu.Unlock()
 	if state != nil {
 		if err := state.DeleteSubscription(context.Background(), req.GetPublisherSubscriptionId()); err != nil {
-			s.logger.Warn("sensor-webhook.unsubscribe.state_delete_failed",
+			s.logger.Warn("SENSORWEBHOOK.UNSUBSCRIBE.STATEDELETEFAILED",
 				"publisher_subscription_id", req.GetPublisherSubscriptionId(), "error", err.Error())
 		}
 	}
-	s.logger.Info("sensor-webhook.unsubscribe", "publisher_subscription_id", req.GetPublisherSubscriptionId())
+	s.logger.Info("SENSORWEBHOOK.SUBSCRIPTION.STOPPED", "publisher_subscription_id", req.GetPublisherSubscriptionId())
 	return &genv1.UnsubscribeResponse{}, nil
 }
 

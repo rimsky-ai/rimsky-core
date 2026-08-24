@@ -32,6 +32,7 @@ func RunImageToExit(
 		t.Fatalf("harness: start %s (expected to exit on its own): %v", name, err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)

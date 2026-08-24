@@ -278,7 +278,7 @@ func TestAdminWaitSets_MalformedTopicFilterLogsDebugAndYieldsNull(t *testing.T) 
 
 	found := false
 	for _, rec := range logger.Records() {
-		if rec.Msg == "admin.wait_set.topic_filter_decode_failed" {
+		if rec.Msg == "CONTROLAPI.WAITSETTOPICFILTER.DECODEFAILED" {
 			found = true
 		}
 	}

@@ -21,13 +21,13 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	h.Stub.WhenType("agent").AwaitAsyncCallback("ack-stuck", 60000)
+	h.Stub.WhenType("daemon").AwaitAsyncCallback("ack-stuck", 60000)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "stuck-async", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "agent", Executor: "stub"},
+				node.TemplateNodeDef{Type: "daemon", Executor: "stub"},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -39,7 +39,7 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	})
 	iid := h.CreateInstance(tid, "ck-stuck", map[string]any{})
 
-	n := h.FindNode(iid, "agent")
+	n := h.FindNode(iid, "daemon")
 	require.NotNil(t, n)
 
 	h.WaitForNodeState(n.ID, cascade.NodeStateRunning)

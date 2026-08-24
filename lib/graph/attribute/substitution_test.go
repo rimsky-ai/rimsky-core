@@ -539,9 +539,9 @@ func TestSubstitute_Env(t *testing.T) {
 	t.Parallel()
 
 	envMap := map[string]string{
-		"SERVICE_AGENT_MCP_TOKEN": "shhh-bearer",
-		"PUBLIC_API_URL":          "https://api.example.com",
-		"EMPTY_BUT_SET":           "",
+		"SERVICE_DAEMON_MCP_TOKEN": "shhh-bearer",
+		"PUBLIC_API_URL":           "https://api.example.com",
+		"EMPTY_BUT_SET":            "",
 	}
 	ctxWithEnv := ResolveContext{
 		EnvLookup: func(name string) (string, bool) {
@@ -551,7 +551,7 @@ func TestSubstitute_Env(t *testing.T) {
 	}
 
 	t.Run("whole-directive resolves to env value", func(t *testing.T) {
-		got, err := Substitute("{{env.SERVICE_AGENT_MCP_TOKEN}}", ctxWithEnv)
+		got, err := Substitute("{{env.SERVICE_DAEMON_MCP_TOKEN}}", ctxWithEnv)
 		if err != nil {
 			t.Fatalf("Substitute: %v", err)
 		}
@@ -561,7 +561,7 @@ func TestSubstitute_Env(t *testing.T) {
 	})
 
 	t.Run("embedded form concatenates", func(t *testing.T) {
-		got, err := Substitute("Bearer {{env.SERVICE_AGENT_MCP_TOKEN}}", ctxWithEnv)
+		got, err := Substitute("Bearer {{env.SERVICE_DAEMON_MCP_TOKEN}}", ctxWithEnv)
 		if err != nil {
 			t.Fatalf("Substitute: %v", err)
 		}

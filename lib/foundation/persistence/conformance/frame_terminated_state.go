@@ -167,6 +167,6 @@ func testRunScopeListTreeDeepestFirst(t *testing.T, d persistence.Database) {
 		}
 	}
 	if !closedIncluded {
-		t.Fatalf("closed scopes must be included so teardown can retry peer fan-out for them")
+		t.Fatalf("closed scopes must be included so teardown can retry service fan-out for them")
 	}
 }

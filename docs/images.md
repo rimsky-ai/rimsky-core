@@ -33,15 +33,14 @@ Any other argument, and any invocation with more than one argument, exits non-ze
 
 The entrypoint runs schema migrations synchronously before the roles start, but only when the invocation owns the migration. The no-command form always owns it. A single-role container owns it only when the role is `rimsky-control-api`, so a three-container split migrates exactly once. Set `RIMSKY_ENTRYPOINT_MIGRATE=1` to force the step, or `=0` to skip it — a dedicated init container uses the first, and role containers behind it use the second. Any other non-empty value is a startup error naming the value.
 
-The image expects two configuration files and neither is baked in. Mount both.
+The image expects one configuration file and it is not baked in. Mount it.
 
 | Path | What reads it |
 | --- | --- |
-| `/etc/rimsky/rimsky.yml` | The default of `RIMSKY_CONFIG` — persistence, claim producers, executors, publishers, named locks |
-| `/etc/rimsky/supervisor-config.yml` | The default of `RIMSKY_SUPERVISOR_CONFIG` — concurrency, poll intervals, the callback listener |
+| `/etc/rimsky/rimsky.yml` | The default of `RIMSKY_CONFIG` — persistence, claim producers, executors, publishers, named locks, and the `supervisor:` section's concurrency, poll intervals, and callback listener |
 | `/var/lib/rimsky` | A declared volume; the SQLite backend writes its database here |
 
-The supervisor refuses to start when its configuration file is missing. It also refuses when the callback listener binds a wildcard address and no advertise host is set, rather than stamping an unreachable callback URL into dispatches. Set `callback.advertise_host` in the supervisor configuration, or `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST`, to a hostname the executors can reach.
+The supervisor refuses to start when the callback listener binds a wildcard address and no advertise host is set, rather than stamping an unreachable callback URL into dispatches. Set `supervisor.callback.advertise_host` in `rimsky.yml`, or `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST`, to a hostname the executors can reach.
 
 The image exposes 8080 and runs as an unprivileged user. The control API binds `127.0.0.1` by default; set `RIMSKY_CONTROL_API_HOST` to reach it from outside the container.
 
@@ -57,7 +56,7 @@ The `rimsky` image with zero-configuration SQLite defaults baked in, for local d
 docker run -p 8080:8080 rimskyai/rimsky-all-in-one
 ```
 
-It builds from the `rimsky` image and inherits the entrypoint, the volume, the configuration paths, and the four commands. Three things differ. It bakes `/etc/rimsky/rimsky.yml` with the SQLite driver pointed at `/var/lib/rimsky/state.db`, and no claim producers, executors, or publishers wired in. It bakes `/etc/rimsky/supervisor-config.yml` with concurrency 8 and the async-callback listener on port 9100, bound to `0.0.0.0` and advertising `127.0.0.1`. It sets `RIMSKY_CONTROL_API_HOST=0.0.0.0` so a published port reaches the control API.
+It builds from the `rimsky` image and inherits the entrypoint, the volume, the configuration path, and the four commands. Two things differ. It bakes `/etc/rimsky/rimsky.yml` with the SQLite driver pointed at `/var/lib/rimsky/state.db`, no claim producers, executors, or publishers wired in, and a `supervisor:` section carrying concurrency 8 and the async-callback listener on port 8081, bound to `0.0.0.0` and advertising `127.0.0.1`. It sets `RIMSKY_CONTROL_API_HOST=0.0.0.0` so a published port reaches the control API.
 
 Combined with anonymous mode — no API keys — that last default exposes an unauthenticated admin API on every interface. The image is for local development. A deployed instance runs the `rimsky` image with the Postgres driver and its own mounted configuration.
 
@@ -69,15 +68,15 @@ Override either baked file by mounting your own at the same path:
 docker run -v ./my-rimsky.yml:/etc/rimsky/rimsky.yml:ro rimskyai/rimsky-all-in-one
 ```
 
-### `rimsky-host-agent-proxy`
+### `rimsky-host-daemon-proxy`
 
-The stack-side half of the host-agent pair. A developer's host agent dials this proxy, and the proxy relays spawn, dispatch, and reap requests out to that developer's machine.
+The stack-side half of the host-daemon pair. A developer's host daemon dials this proxy, and the proxy relays spawn, dispatch, and reap requests out to that developer's machine.
 
-The proxy opens one or two listeners. The agent-facing gRPC listener carries the host-agent protocol on `RIMSKY_PROXY_GRPC_PORT`, default 9090. Under `RIMSKY_PEER_AUTH=mtls` the proxy enrolls with the deployment's certificate authority, renews its own leaf, and moves the peer-service protocols — executor, claim producer, lifecycle subscriber, and their observability siblings — onto a second listener at `RIMSKY_PROXY_PEER_GRPC_PORT`, default 9091, which requires client certificates. Without mTLS both sets share the agent-facing port.
+The proxy opens one or two listeners. The daemon-facing gRPC listener carries the host-daemon protocol on `RIMSKY_PROXY_GRPC_PORT`, default 8090. Under `RIMSKY_SERVICE_AUTH=mtls` the proxy enrolls with the deployment's certificate authority, renews its own leaf, and moves the service protocols — executor, claim producer, lifecycle subscriber, and their observability siblings — onto a second listener at `RIMSKY_PROXY_SERVICE_GRPC_PORT`, default 8091, which requires client certificates. Without mTLS both sets share the daemon-facing port.
 
-`RIMSKY_CONTROL_API_URL` is mandatory in practice. The proxy verifies each agent's registration key against the control API and routes by the key identity the control API reports. With no control API URL the proxy starts and then refuses every registration, so no agent can attach.
+`RIMSKY_CONTROL_API_URL` is mandatory in practice. The proxy verifies each daemon's registration key against the control API and routes by the key identity the control API reports. With no control API URL the proxy starts and then refuses every registration, so no daemon can attach.
 
-`RIMSKY_PROXY_TLS_CERT` and `RIMSKY_PROXY_TLS_KEY` set the agent-facing listener's server TLS. `RIMSKY_CONTROL_API_TOKEN` authenticates the proxy's own cache-miss lookups against the control API, and `RIMSKY_CONTROL_API_CA` supplies a CA bundle for an HTTPS control API — a CA path set against a non-HTTPS URL is a startup error.
+`RIMSKY_PROXY_TLS_CERT` and `RIMSKY_PROXY_TLS_KEY` set the daemon-facing listener's server TLS. `RIMSKY_CONTROL_API_TOKEN` authenticates the proxy's own cache-miss lookups against the control API, and `RIMSKY_CONTROL_API_CA` supplies a CA bundle for an HTTPS control API — a CA path set against a non-HTTPS URL is a startup error.
 
 ### `rimsky-conformance`
 
@@ -88,7 +87,7 @@ docker run rimskyai/rimsky-conformance \
   rimsky conformance executor --endpoint grpc://host:9091 --transport grpc
 ```
 
-Eight subcommands ship: `executor`, `claim-producer`, `publisher`, `validation`, `data-processing`, `blob-backend`, `lifecycle-subscriber`, and `probe`. Two of those cover something other than a protocol. The two observability protocols have no subcommand of their own; `--check-observability` on the executor and claim-producer subcommands runs them. The host-agent protocol has no runner at all, so an implementation of it has nothing to prove itself against.
+Seven subcommands ship: `executor`, `claim-producer`, `publisher`, `validation`, `data-processing`, `lifecycle-subscriber`, and `probe`. One of those covers something other than a protocol. The two observability protocols have no subcommand of their own; `--check-observability` on the executor and claim-producer subcommands runs them. The host-daemon protocol has no runner at all, so an implementation of it has nothing to prove itself against.
 
 Every subcommand takes `--endpoint` and `--transport`. Only `claim-producer` accepts `--transport http`; the rest accept `grpc` alone and exit 2 on anything else.
 
@@ -138,9 +137,9 @@ Two replicas of a sensor give failover without duplicate messages. The control A
 
 All four take `RIMSKY_EXECUTOR_HOST` (default `0.0.0.0`) and `RIMSKY_EXECUTOR_PORT_GRPC`. `http-node` and `claude-agent` take `RIMSKY_EXECUTOR_PORT_HTTP` as well; `http-node` defaults it to one above its gRPC port, and opens it always. The two verifier images open no HTTP listener and their Dockerfiles publish no port, so map their gRPC ports explicitly.
 
-`rimsky-executor-claude-agent` spawns the Claude Code CLI as a subprocess, so its runtime carries a real userland — a shell and git — rather than the static base the other images use. The CLI binary is pinned at build time. The executor starts only when it finds a Claude credential in its environment or runs in stub mode; otherwise it exits naming the two credential variables it accepts. `RIMSKY_EXECUTOR_CLAUDE_BINARY` overrides the CLI path. `RIMSKY_EXECUTOR_SILENCE_MS` and `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` set the per-dispatch defaults a node may override. `RIMSKY_DISPATCH_MAX_USD` caps a dispatch's spend.
+`rimsky-executor-claude-agent` spawns the Claude Code CLI as a subprocess, so its runtime carries a real userland — a shell and git — rather than the static base the other images use. The CLI binary is pinned at build time. The executor starts only when it finds a Claude credential in its environment or runs in stub mode; otherwise it exits naming the two credential variables it accepts. `RIMSKY_EXECUTOR_CLAUDE_BINARY` overrides the CLI path. `RIMSKY_EXECUTOR_SILENCE_MS` and `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` set the per-dispatch defaults a node may override. `RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD` caps a dispatch's spend.
 
-Two allowlists bound what a node may ask the Claude executor for: `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` over the MCP servers a node declares, and `RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST` over the environment names a node exposes to the agent. Both are comma-separated. **Unset means open, not closed.** With the MCP allowlist unset, a node's declared server runs; with the expose-env allowlist unset, a node reads any variable it names from the container's environment. Set them to an exact boundary and a node naming anything outside it fails that dispatch with an error naming the entry, the instance, and the node.
+Two allowlists bound what a node may ask the Claude executor for: `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` over the MCP servers a node declares, and `RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST` over the environment names a node exposes to the daemon. Both are comma-separated. **Unset means open, not closed.** With the MCP allowlist unset, a node's declared server runs; with the expose-env allowlist unset, a node reads any variable it names from the container's environment. Set them to an exact boundary and a node naming anything outside it fails that dispatch with an error naming the entry, the instance, and the node.
 
 ### Subscriber
 
@@ -151,19 +150,19 @@ Two allowlists bound what a node may ask the Claude executor for: `RIMSKY_CLAUDE
 | Port | Listener |
 | --- | --- |
 | 8080 | Control API |
+| 8081 | Supervisor async-callback listener |
+| 8090 | `host-daemon-proxy` daemon-facing gRPC |
+| 8091 | `host-daemon-proxy` service-facing mTLS gRPC |
 | 9081 | `sensor-cron` gRPC |
 | 9082 | `sensor-http` gRPC |
 | 9083 | `sensor-object-store` gRPC |
 | 9084 | `sensor-webhook` gRPC |
 | 9090 | `claude-agent` gRPC |
-| 9090 | `host-agent-proxy` agent-facing gRPC |
 | 9091 | `http-node` gRPC |
-| 9091 | `host-agent-proxy` peer-facing mTLS gRPC |
 | 9092 | `http-node` HTTP |
 | 9095 | `verifier-shape-checks` gRPC |
 | 9096 | `verifier-http` gRPC |
 | 9100 | `claim-producer-filesystem` gRPC |
-| 9100 | Supervisor async-callback listener, as baked into `rimsky-all-in-one` |
 | 9101 | `claim-producer-postgres` gRPC |
 | 9110 | `claim-producer-filesystem` HTTP bridge |
 | 9111 | `claim-producer-postgres` HTTP bridge |
@@ -171,7 +170,7 @@ Two allowlists bound what a node may ask the Claude executor for: `RIMSKY_CLAUDE
 | 9184 | `sensor-webhook` HTTP ingress |
 | 9190 | `claude-agent` HTTP |
 
-**Three of these defaults collide when the whole bundle shares one network namespace.** The filesystem claim producer's 9100 is the port the supervisor's callback listener already holds, and the host-agent proxy's 9090 is the Claude executor's gRPC port. Each collision is between a service and a core listener rather than between two services, which is where an operator reading per-service defaults would not look. Both are configuration away: give the filesystem producer a `grpc_port` and `http_port` of your own, or move the proxy with `RIMSKY_PROXY_GRPC_PORT`. The other nine services share the namespace at their defaults without complaint.
+**No two of these defaults collide.** Core listeners take 8080 through 8099 and the bundled services take 9000 through 9199, so the whole bundle shares one network namespace at its shipped defaults. A fitness check enumerates every shipped default and fails when one leaves its block or two coincide.
 
 ## Executor attribute contracts
 
@@ -201,7 +200,7 @@ Each `required_signoffs` entry takes a `public_key` and an optional `path`.
 
 The schema accepts additional properties, so a node may carry its own inputs and outputs beside these keys.
 
-Writes back whatever the agent reports as its completion delta, with `session_token` always set to the run's session identifier. The agent's own reported change flag and change summary come back with it. Resume a later run against the same session by passing that token back in `session_token`.
+Writes back whatever the daemon reports as its completion delta, with `session_token` always set to the run's session identifier. The daemon's own reported change flag and change summary come back with it. Resume a later run against the same session by passing that token back in `session_token`.
 
 ### `verifier-http`
 
@@ -229,7 +228,7 @@ Seven expectations the shipped set does not meet. Each is worth knowing before y
 
 **No bundled service exposes metrics.** The three core roles each serve Prometheus text on a separate metrics listener, opened by `RIMSKY_METRICS_PORT` and the per-role variables beside it. The control API's own port answers 404 there — the metrics listener is its own port, not a route on the API. Carrying the same variables to any of the eleven bundled services opens nothing: no service declares a metrics port, none answers on any port it does open, and the OpenLineage subscriber opens no port at all. Dashboards cover the three core roles and nothing else.
 
-**No bundled service honors the log level.** The core process and the host-agent proxy both read `RIMSKY_LOG_LEVEL`, and all eleven bundled services fix their level at info and ignore it. The accepted values are `debug`, `warn`, and `error`. Anything else — a capitalized `DEBUG`, a borrowed `trace` — falls back to info silently, with the offending value named nowhere.
+**No bundled service honors the log level.** The core process and the host-daemon proxy both read `RIMSKY_LOG_LEVEL`, and all eleven bundled services fix their level at info and ignore it. The accepted values are `debug`, `warn`, and `error`. Anything else — a capitalized `DEBUG`, a borrowed `trace` — falls back to info silently, with the offending value named nowhere.
 
 **One HTTP liveness path is not enough.** Three listeners in the shipped set answer an HTTP health route: the control API at `GET /v1/health`, the supervisor's callback listener at `GET /health`, and `sensor-webhook`'s ingress at `GET /health`. The rest either spell it differently or serve no HTTP at all. One probe specification applied to every rimsky container fails on most of them.
 
@@ -241,4 +240,4 @@ Note the polarity difference between the two allowlist families, because they sh
 
 **Migration runs forward only.** The entrypoint applies migrations, and re-running is safe: a second container over the same state directory applies nothing and comes up healthy. There is no rollback. `RIMSKY_ENTRYPOINT_MIGRATE` accepts `1`, `0`, and unset, and refuses anything else; no CLI verb runs migrations; and every driver applies its numbered migrations in one direction. An upgrade runbook has nothing to call for a downgrade step. The migrate binary ships in the image and exits when it finishes, so a one-shot init container reaches it by replacing the image's entrypoint — the entrypoint's own role argument does not name it, and `RIMSKY_ENTRYPOINT_MIGRATE=1` migrates and then serves a role rather than finishing.
 
-**Most protocols are gRPC only.** The claim-producer protocol speaks HTTP+JSON on the bridge ports, and the conformance runner drives it there. The executor bridge ports carry an HTTP+JSON execute path, and rimsky dispatches over it when an executor is configured with the HTTP transport. Every other protocol — validation, data processing, publisher, lifecycle subscriber, host agent — is gRPC only, and the conformance runner refuses any transport but gRPC for them. Pointing a claim producer's configured endpoint at its own HTTP bridge stops the stack; the endpoint scheme must be `grpc://`.
+**Most protocols are gRPC only.** The claim-producer protocol speaks HTTP+JSON on the bridge ports, and the conformance runner drives it there. The executor bridge ports carry an HTTP+JSON execute path, and rimsky dispatches over it when an executor is configured with the HTTP transport. Every other protocol — validation, data processing, publisher, lifecycle subscriber, host daemon — is gRPC only, and the conformance runner refuses any transport but gRPC for them. Pointing a claim producer's configured endpoint at its own HTTP bridge stops the stack; the endpoint scheme must be `grpc://`.

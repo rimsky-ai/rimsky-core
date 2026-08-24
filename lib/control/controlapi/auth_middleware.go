@@ -88,7 +88,7 @@ func (s *AuthState) IdentityResolver() func(http.Handler) http.Handler {
 			start := s.Clock.Now()
 			ident, denial, err := s.resolveIdentity(r.Context(), r)
 			if err != nil {
-				s.Logger.Error("auth.middleware.error", "err", err.Error())
+				s.Logger.Error("AUTH.MIDDLEWARE.FAILED", "err", err.Error())
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "auth middleware failure"})
 				return
 			}
@@ -166,14 +166,14 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 		start := s.Clock.Now()
 		ident, ok := IdentityFromContextOK(r.Context())
 		if !ok {
-			s.Logger.Error("auth.gate.no_identity", "action", action)
+			s.Logger.Error("AUTH.GATE.NOIDENTITY", "action", action)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "no identity"})
 			return
 		}
 		skin := protocolSkinFromContext(r.Context())
 		dryRunRaw := r.URL.Query().Get("dry_run")
 		if dryRunRaw != "" && dryRunRaw != "true" && dryRunRaw != "false" {
-			s.Logger.Warn("auth.gate.invalid_dry_run", "action", action, "dry_run", dryRunRaw)
+			s.Logger.Warn("AUTH.GATE.INVALIDDRYRUN", "action", action, "dry_run", dryRunRaw)
 			s.emitDenied(r, start, ident, action, skin, nil, false, http.StatusBadRequest, auth.DenialInvalidDryRun, nil)
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error":   "invalid dry_run value",
@@ -251,11 +251,11 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 					bg, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 					defer cancel()
 					if err := s.Tables.APIKeys().UpdateLastUsed(bg, id, now, nil); err != nil {
-						s.Logger.Debug("auth.last_used_update", "err", err.Error())
+						s.Logger.Debug("AUTH.LASTUSED.UPDATEFAILED", "err", err.Error())
 					}
 				}()
 			default:
-				s.Logger.Debug("auth.last_used_update_skipped_sem_full", "key_id", id.String())
+				s.Logger.Debug("AUTH.LASTUSED.UPDATESKIPPED", "detail", "the update semaphore is full", "key_id", id.String())
 			}
 		}
 	}
@@ -273,7 +273,7 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 	body, err := io.ReadAll(limited)
 	if err != nil {
 		if logger != nil {
-			logger.Warn("auth.audit_body_read_failed", "err", err.Error())
+			logger.Warn("AUTH.AUDITBODY.READFAILED", "err", err.Error())
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": "failed to read request body",
@@ -283,7 +283,7 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 	if len(body) > auditBodyHandlerMaxBytes {
 		_, _ = io.Copy(io.Discard, r.Body)
 		if logger != nil {
-			logger.Warn("auth.audit_body_too_large",
+			logger.Warn("AUTH.AUDITBODY.TOOLARGE",
 				"handler_cap_bytes", auditBodyHandlerMaxBytes)
 		}
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
@@ -296,7 +296,7 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if len(body) > auditBodyCapBytes {
 		if logger != nil {
-			logger.Warn("auth.audit_body_truncated",
+			logger.Warn("AUTH.AUDITBODY.TRUNCATED",
 				"cap_bytes", auditBodyCapBytes,
 				"observed_bytes", len(body))
 		}

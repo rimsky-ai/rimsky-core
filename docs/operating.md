@@ -30,9 +30,9 @@ Three facts about migrations shape an upgrade runbook.
 
 Rimsky publishes fifteen images. Four are core:
 
-- `rimsky` — all role binaries plus the entrypoint above. Persistence backend by configuration. Exposes 8080, declares `/var/lib/rimsky` as a volume, and reads its configuration from `/etc/rimsky/rimsky.yml` and `/etc/rimsky/supervisor-config.yml`.
+- `rimsky` — all role binaries plus the entrypoint above. Persistence backend by configuration. Exposes 8080, declares `/var/lib/rimsky` as a volume, and reads its configuration from `/etc/rimsky/rimsky.yml`.
 - `rimsky-all-in-one` — the `rimsky` image with zero-config SQLite defaults baked in, for local development. It binds the control API to `0.0.0.0` and provisions no API keys, so it serves an unauthenticated admin API on every interface. Run it locally; never deploy it.
-- `rimsky-host-agent-proxy` — the proxy that host agents dial.
+- `rimsky-host-daemon-proxy` — the proxy that host daemons dial.
 - `rimsky-conformance` — the protocol conformance runners.
 
 Eleven are bundled services, named `rimsky-<kind>-<name>`: `rimsky-claim-producer-filesystem`, `rimsky-claim-producer-postgres`, `rimsky-sensor-cron`, `rimsky-sensor-http`, `rimsky-sensor-object-store`, `rimsky-sensor-webhook`, `rimsky-subscriber-openlineage`, `rimsky-executor-http-node`, `rimsky-executor-verifier-http`, `rimsky-executor-verifier-shape-checks`, and `rimsky-executor-claude-agent`. Every service image is guessable from its kind and its name. The four core images carry no kind segment, because they are not services of one kind.
@@ -43,18 +43,15 @@ The image name is not the configuration's word for the same thing. A sensor imag
 
 ## Configuration files
 
-A deployment reads two YAML files.
+A deployment reads one YAML file, `rimsky.yml`, at `RIMSKY_CONFIG`. It carries the deployment shape; every runtime process and the migrate step read it. The image default is `/etc/rimsky/rimsky.yml`.
 
-- `rimsky.yml`, at `RIMSKY_CONFIG` — the deployment shape. Every runtime process and the migrate step read it. The image default is `/etc/rimsky/rimsky.yml`.
-- `supervisor-config.yml`, at `RIMSKY_SUPERVISOR_CONFIG` — supervisor tuning and the async-callback listener. The image default is `/etc/rimsky/supervisor-config.yml`. The supervisor refuses to start when the variable is empty.
-
-`rimsky.yml` has twelve top-level keys: `persistence`, `claim_producers`, `named_locks`, `executors`, `publishers`, `validators`, `data_processors`, `retention`, `dispatch_defaults`, `late_bind_service_proxies`, `peer_auth`, and `unreachable_validator_policy`.
+`rimsky.yml` has fourteen top-level keys: `persistence`, `claim_producers`, `named_locks`, `executors`, `publishers`, `validators`, `data_processors`, `retention`, `service_delivery`, `dispatch_defaults`, `late_bind_service_proxies`, `supervisor`, `service_auth`, and `unreachable_validator_policy`. Supervisor tuning and the async-callback listener live under `supervisor:`; there is no second file.
 
 Decoding is strict. An unknown key stops the deployment before it serves, names the offending field, and prints the whole top-level schema. A typo in YAML is therefore loud.
 
 **A typo in an environment variable is silent, and environment variables do not override arbitrary configuration keys.** Rimsky reads a fixed, enumerated set of `RIMSKY_*` variables and checks the values of the ones it knows. It never checks the names of the ones it does not. A container carrying `RIMSKY_PERSISTENCE_DRIVER=postgres` comes up on whatever driver the file names, and the startup log mentions the variable nowhere. So does a container carrying `RIMSKY_CONTROL_API_PROT` in place of `RIMSKY_CONTROL_API_PORT`. Take the variable names from `docs/env-vars.md` rather than guessing them from a configuration key.
 
-The environment does reach the file, by interpolation. A `${VAR}` reference anywhere in either file expands from the process environment at load. An unset name referenced this way is an error that names it. That is how you keep a DSN or a hostname out of a baked file.
+The environment does reach the file, by interpolation. A `${VAR}` reference anywhere in the file expands from the process environment at load. An unset name referenced this way is an error that names it. That is how you keep a DSN or a hostname out of a baked file.
 
 ## Persistence
 
@@ -62,20 +59,11 @@ The environment does reach the file, by interpolation. A `${VAR}` reference anyw
 
 Choose Postgres for a deployed instance. The SQLite driver prints a warning at every boot that it is for local development only, and the Postgres driver never prints it. Outside the single-process topology, SQLite prints a second warning: every role process and every replica must share one local, non-network database file, a condition no process can verify from inside itself.
 
-The two drivers agree on behaviour and disagree on settings. The same template through either driver produces the same template id, the same events over the same node-type-and-kind pairs, the same node run summaries, frame states, and message types, and the same key structure from the instance, node, frame, event, and observability reads. A development run on SQLite does reproduce the graph behaviour of the same run on Postgres. But `persistence.blob.backend: pg-largeobject` stops a SQLite deployment at boot naming the driver it requires, while the same setting on Postgres comes up healthy. Do not treat a SQLite dev stack as proof that a persistence setting works.
+The two drivers agree on behaviour and disagree on settings. The same template through either driver produces the same template id, the same events over the same node-type-and-kind pairs, the same node run summaries, frame states, and message types, and the same key structure from the instance, node, frame, event, and observability reads. A development run on SQLite does reproduce the graph behaviour of the same run on Postgres. Do not treat a SQLite dev stack as proof that a persistence setting works.
 
 ### Large payloads
 
-Rimsky spills an attribute value or a scratch stream past `persistence.blob.spill_threshold_bytes` (default 65536) into the blob backend named by `persistence.blob.backend`. Four backends exist:
-
-- `inline` — the default; values live in the row.
-- `pg-largeobject` — requires the Postgres driver.
-- `filesystem` — requires `persistence.blob.filesystem.root`.
-- `memory` — legal only in the single-process topology, where all three roles share one in-process map. A per-role container given this backend is refused at startup with an error naming the backend as development-only and naming the mode it requires.
-
-`persistence.blob.retention.orphan_sweep_interval` (default one hour) and `persistence.blob.retention.retention_after_unreferenced` govern the sweep that reclaims unreferenced blobs.
-
-**The backends are not interchangeable at runtime.** Each spilled row records the backend that holds its value, and a read refuses to cross a switch. Change `persistence.blob.backend` on a deployment that has already spilled values, and every one of those reads answers HTTP 500 naming the handle's backend and the active one. The bytes survive on disk; the deployment's ability to read them does not, until you configure the original backend again. There is no migration path inside the switch. Size the backend before you spill, not after.
+An attribute bag and a node-run's scratch are byte columns in their own rows, whatever their size, and they commit in the row's transaction. There is no separate store to configure and no threshold to tune. The database engine's own per-value cap — one gigabyte on both drivers — is the only ceiling; a write over it fails at the write with an error naming the node run, the attribute or scratch, and the byte count.
 
 ### Retention
 
@@ -103,15 +91,15 @@ Other supervisor settings: `supervisor_id` (defaults to hostname and pid), `conc
 
 `RIMSKY_SCHEDULER_ID` defaults to `scheduler-<hostname>`. `RIMSKY_SCHEDULER_TICK_MS` defaults to 250.
 
-### Peer entries
+### Service entries
 
-Five blocks in `rimsky.yml` declare the deployment's peers, keyed by name: `claim_producers`, `executors`, `publishers`, `validators`, and `data_processors`. Every entry takes `endpoint`, `tls`, `protocols`, and `observability_endpoint`. An executor entry also takes `transport`, which is required. A claim-producer entry also takes `write_semantics_allowed`, which is required.
+Five blocks in `rimsky.yml` declare the deployment's services, keyed by name: `claim_producers`, `executors`, `publishers`, `validators`, and `data_processors`. Every entry takes `endpoint`, `tls`, `protocols`, and `observability_endpoint`. An executor entry also takes `transport`, which is required. A claim-producer entry also takes `write_semantics_allowed`, which is required.
 
 `protocols` defaults to the block's own protocol and must include it. The valid values are `claim_producer`, `executor`, `publisher`, `lifecycle_subscriber`, `validation`, and `data_processing`; one entry may declare several, which is how a service that speaks more than one protocol is wired once.
 
-`tls` takes `off` or `required` and defaults from `peer_auth`. `required` with `transport: http` needs an `https://` endpoint, and the deployment refuses to start otherwise.
+`tls` takes `off` or `required` and defaults from `service_auth`. `required` with `transport: http` needs an `https://` endpoint, and the deployment refuses to start otherwise.
 
-`named_locks.<name>.limit` sets a capacity counter, and must be at least 1. `late_bind_service_proxies.<name>` maps a service name to the proxy that late-binds it. `unreachable_validator_policy` takes `permissive_warn` (default) or `strict`. `RIMSKY_OBSERVABILITY_REFRESH_INTERVAL` sets how often the control plane re-probes peers, defaulting to one minute.
+`named_locks.<name>.limit` sets a capacity counter, and must be at least 1. `late_bind_service_proxies.<name>` maps a service name to the proxy that late-binds it. `unreachable_validator_policy` takes `permissive_warn` (default) or `strict`. `RIMSKY_OBSERVABILITY_REFRESH_INTERVAL` sets how often the control plane re-probes services, defaulting to one minute.
 
 ### Dispatch deadlines
 
@@ -126,19 +114,19 @@ Every default port the shipped images and services bind:
 | Port | Listener |
 | --- | --- |
 | 8080 | control API |
+| 8081 | supervisor async-callback listener |
+| 8090 | host-daemon-proxy daemon-facing gRPC |
+| 8091 | host-daemon-proxy service-facing mTLS gRPC |
 | 9081 | sensor-cron gRPC |
 | 9082 | sensor-http gRPC |
 | 9083 | sensor-object-store gRPC |
 | 9084 | sensor-webhook gRPC |
 | 9090 | claude-agent executor gRPC |
-| 9090 | host-agent-proxy agent-facing gRPC |
 | 9091 | http-node executor gRPC |
-| 9091 | host-agent-proxy peer-facing mTLS gRPC |
 | 9092 | http-node executor HTTP bridge |
 | 9095 | verifier-shape-checks executor gRPC |
 | 9096 | verifier-http executor gRPC |
 | 9100 | claim-producer-filesystem gRPC |
-| 9100 | supervisor async-callback listener, as `rimsky-all-in-one` bakes it |
 | 9101 | claim-producer-postgres gRPC |
 | 9110 | claim-producer-filesystem HTTP bridge |
 | 9111 | claim-producer-postgres HTTP bridge |
@@ -146,27 +134,27 @@ Every default port the shipped images and services bind:
 | 9184 | sensor-webhook HTTP ingress |
 | 9190 | claude-agent executor HTTP bridge |
 
-**Three numbers appear twice, so the full bundle does not come up on one host unconfigured.** The filesystem claim producer's default gRPC port is the port the supervisor's callback listener already holds, and the proxy's agent-facing port is the claude-agent executor's. Run the core stack, all eleven services, and the proxy together at their defaults, and the filesystem producer and the proxy each exit with `bind: address already in use`. The other nine services share the host without complaint. Both overlaps fall between a service and a core listener rather than between two services, which is where an operator reading the per-service defaults would not look.
+**Three numbers appear twice, so the full bundle does not come up on one host unconfigured.** The filesystem claim producer's default gRPC port is the port the supervisor's callback listener already holds, and the proxy's daemon-facing port is the claude-agent executor's. Run the core stack, all eleven services, and the proxy together at their defaults, and the filesystem producer and the proxy each exit with `bind: address already in use`. The other nine services share the host without complaint. Both overlaps fall between a service and a core listener rather than between two services, which is where an operator reading the per-service defaults would not look.
 
-Both are configuration away. Set `grpc_port` and `http_port` in the producer's own configuration file, and `RIMSKY_PROXY_GRPC_PORT` and `RIMSKY_PROXY_PEER_GRPC_PORT` on the proxy.
+Both are configuration away. Set `grpc_port` and `http_port` in the producer's own configuration file, and `RIMSKY_PROXY_GRPC_PORT` and `RIMSKY_PROXY_SERVICE_GRPC_PORT` on the proxy.
 
-## Peer authentication
+## Service authentication
 
-`peer_auth` takes `none` (the default) or `mtls`, and governs authentication across the internal service boundary.
+`service_auth` takes `none` (the default) or `mtls`, and governs authentication across the internal service boundary.
 
-Leaving it alone costs nothing. An unhardened deployment answers plaintext, reports its peers at transport off, and drives work unchanged. There are no keys to generate, no certificates to place, and no configuration to write.
+Leaving it alone costs nothing. An unhardened deployment answers plaintext, reports its services at transport off, and drives work unchanged. There are no keys to generate, no certificates to place, and no configuration to write.
 
-`peer_auth: mtls` is one change and it authenticates both directions. The control-API listener refuses plaintext and serves a certificate issued by the deployment CA. Every peer entry defaults to `tls: required`. A client presenting no certificate is refused, a client presenting a certificate from another CA is refused, and a client presenting a leaf this deployment issued completes the handshake and sees a deployment-signed server certificate.
+`service_auth: mtls` is one change and it authenticates both directions. The control-API listener refuses plaintext and serves a certificate issued by the deployment CA. Every service entry defaults to `tls: required`. A client presenting no certificate is refused, a client presenting a certificate from another CA is refused, and a client presenting a leaf this deployment issued completes the handshake and sees a deployment-signed server certificate.
 
 `RIMSKY_CA_ENCRYPTION_KEY` is required under `mtls`. It must be standard base64 decoding to exactly 32 bytes, and the deployment refuses to load its configuration without it.
 
-**The enrollment routes exist only when a deployment CA does.** On the default posture, and on an explicit `peer_auth: none`, `POST /v1/enroll` and `GET /v1/ca-root` answer 404 to every caller, including one holding a `service:enroll` key — the router has no such path. Under `mtls` both appear: the CA root answers 200 unauthenticated with a PEM, and enrollment answers an authenticated api-key principal with a certificate, its key, the CA root, and an expiry. A service author testing enrollment against a default deployment sees 404s that read like a missing feature and are a configuration you have not turned on.
+**The enrollment routes exist only when a deployment CA does.** On the default posture, and on an explicit `service_auth: none`, `POST /v1/enroll` and `GET /v1/ca-root` answer 404 to every caller, including one holding a `service:enroll` key — the router has no such path. Under `mtls` both appear: the CA root answers 200 unauthenticated with a PEM, and enrollment answers an authenticated api-key principal with a certificate, its key, the CA root, and an expiry. A service author testing enrollment against a default deployment sees 404s that read like a missing feature and are a configuration you have not turned on.
 
 A standing service needs one credential from you and nothing else. Mint it a key carrying exactly `service:enroll`, give the service that key and the control-API address through `RIMSKY_API_KEY` and `RIMSKY_CONTROL_API_URL`, and it enrolls at startup, serves a certificate whose subject is the key's id, and renews on its own — the issued leaf lasts about a day. You manage the key, not the certificates behind it. Revoking that key is the whole off switch: enrollment refuses it, and a service restarted on it exits fail-closed rather than serving uncredentialed.
 
 `RIMSKY_CONTROL_API_CA` supplies the CA bundle that verifies an HTTPS control API. `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT` permits enrolling over a plaintext control API; it is off unless set, and any value other than `0`, `false`, or `no` turns it on.
 
-Requiring transport security is enforced, not advisory. An executor entry marked `required` against a peer that cannot present credentials is reported unreachable naming both the peer and the setting, and a node dispatched at that entry settles failed. Where the peer is a claim producer, the deployment refuses to start at all, with a log naming the producer and the setting. You cannot end up with a running deployment quietly talking to an unauthenticated store.
+Requiring transport security is enforced, not advisory. An executor entry marked `required` against a service that cannot present credentials is reported unreachable naming both the service and the setting, and a node dispatched at that entry settles failed. Where the service is a claim producer, the deployment refuses to start at all, with a log naming the producer and the setting. You cannot end up with a running deployment quietly talking to an unauthenticated store.
 
 ## Access control
 
@@ -182,7 +170,7 @@ The practical posture: mint the first key as the first act after the deployment 
 
 ### Actions
 
-Rimsky's permission registry is a closed set of 49 actions. Three of them are never grantable, because no permission is ever consulted for them: `health:probe` and `peer-auth:ca-root` carry the unauthenticated posture, and `auth:whoami` the identity-only posture. Naming any of the three in a grant is refused with that reason.
+Rimsky's permission registry is a closed set of 49 actions. Three of them are never grantable, because no permission is ever consulted for them: `health:probe` and `service-auth:ca-root` carry the unauthenticated posture, and `auth:whoami` the identity-only posture. Naming any of the three in a grant is refused with that reason.
 
 The 46 grantable actions:
 
@@ -262,7 +250,7 @@ Minting the deployment's first key with an expiry is refused without `?force_exp
 - `sensor-webhook`'s HTTP ingress answers `/health` on 9184.
 - The control API answers 404 at `/health` and 200 at `/v1/health`.
 - The claude-agent HTTP bridge answers 404 at `/health` and 200 at `/healthz`.
-- The openlineage subscriber serves no HTTP at all, and the proxy's agent-facing port is gRPC only, so neither has an HTTP liveness surface.
+- The openlineage subscriber serves no HTTP at all, and the proxy's daemon-facing port is gRPC only, so neither has an HTTP liveness surface.
 
 One probe spec applied to every rimsky pod therefore gives you two working probes, two that need a different path, and two processes with no HTTP probe to write.
 
@@ -273,6 +261,7 @@ Four read routes report why work is stuck:
 - `GET /v1/admin/diagnostics/parked-nodes` — the park roster: node-runs currently parked, when each parked, and when each is due to resume. Gated by `parked-node:read`.
 - `GET /v1/admin/diagnostics/held-frames` — frames held by a parked node-run. Gated by `diagnostics:read`.
 - `GET /v1/admin/diagnostics/producer-outbox` — undelivered producer-verb entries and the outbox depth. Gated by `diagnostics:read`.
+- `GET /v1/admin/diagnostics/lifecycle-outbox` — what each lifecycle subscriber is still owed: its pending depth, the age of its oldest staged row, and per row the attempt count and the last error. Carries no staged payload. Gated by `diagnostics:read`.
 - `GET /v1/admin/diagnostics/wait-sets` — the sender-and-receiver edges for one frame. Requires a `?frame=` query parameter and answers 400 without it; `?receiver_run=` narrows it further. Gated by `waitset:read`.
 
 Two further reads summarize the deployment: `GET /v1/observability/system/health` and `GET /v1/observability/system/summary`, both gated by `observability:read`.
@@ -297,7 +286,7 @@ The listener is off unless you open it. `RIMSKY_METRICS_PORT` sets a base port a
 
 `RIMSKY_LOG_LEVEL` accepts `debug`, `warn`, and `error`. Any other value falls back to the default level in silence, naming the offending value nowhere — `DEBUG` and `trace` both do this.
 
-**The variable reaches the core process and the proxy, and no bundled service.** The core roles honour it, emitting JSON records; the `rimsky-host-agent-proxy` image honours it. All eleven bundled services ignore it and log their startup lines whatever it says. The host agent started through `rimsky agent start` ignores it too, and prints plain text rather than JSON, so the format is not uniform across the deployment either.
+**The variable reaches the core process and the proxy, and no bundled service.** The core roles honour it, emitting JSON records; the `rimsky-host-daemon-proxy` image honours it. All eleven bundled services ignore it and log their startup lines whatever it says. The host daemon started through `rimsky daemon start` ignores it too, and prints plain text rather than JSON, so the format is not uniform across the deployment either.
 
 `RIMSKY_LOG_BINARY` labels a role's records with the binary that emits them; the entrypoint sets it on each role it spawns.
 
@@ -309,7 +298,7 @@ Each bundled service reads its own configuration, from a file named by its own v
 
 **An unset allowlist means the opposite thing in the claude-agent executor.** `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` and `RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST` are open when unset: a node may declare any MCP server and read any environment variable. Set either, and it becomes an exact boundary — a node naming something outside it fails that dispatch with an error naming the entry, the instance, and the node. Same suffix, same namespace, opposite polarity from the egress pair. Set both on any deployment where template authors are not the operator.
 
-**`RIMSKY_DISPATCH_MAX_USD` is a default, not a ceiling.** A node declaring its own `cli.max_budget_usd` is spawned with its own figure whether that figure is above or below the deployment variable; only a node declaring nothing takes the variable's value. An over-budget node is honoured, not refused. This is not the allowlist pattern, and it does not cap spend.
+**`RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD` is a default, not a ceiling.** A node declaring its own `cli.max_budget_usd` is spawned with its own figure whether that figure is above or below the deployment variable; only a node declaring nothing takes the variable's value. An over-budget node is honoured, not refused. This is not the allowlist pattern, and it does not cap spend.
 
 **The `auth` block works on the webhook publisher and is dropped by the HTTP-poll publisher.** A webhook publisher requires it and enforces it: a delivery with no credential is refused 401, one with the header is accepted, and a webhook publisher declaring no `auth` block never mounts. The same block written on an `http` publisher is accepted at registration, accepted at deploy, mounted live, and then dropped — the sensor polls upstream with no such header and the secret appears nowhere in the request, with no warning at any stage. An HTTP-poll sensor cannot present credentials to its upstream.
 

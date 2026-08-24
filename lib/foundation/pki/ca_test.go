@@ -177,7 +177,7 @@ func TestPrincipalFromVerifiedChainsRejectsUnverifiedForeignCert(t *testing.T) {
 
 	unverified := &tls.ConnectionState{PeerCertificates: []*x509.Certificate{spoof}}
 	if _, err := PrincipalFromVerifiedChains(unverified); !errors.Is(err, ErrPrincipalNotFound) {
-		t.Fatalf("an unverified peer cert (no VerifiedChains) must not yield a principal; got %v", err)
+		t.Fatalf("an unverified service cert (no VerifiedChains) must not yield a principal; got %v", err)
 	}
 
 	if _, err := PrincipalFromVerifiedChains(nil); !errors.Is(err, ErrPrincipalNotFound) {
@@ -208,8 +208,8 @@ func TestCARoundTripThroughLoad(t *testing.T) {
 	}
 }
 
-// @decision: host-agent-proxy-tls
-// @concept: peer-auth
+// @decision: host-daemon-proxy-tls
+// @concept: service-auth
 func TestLoadCARefusesAKeyThatDoesNotBelongToTheCertificate(t *testing.T) {
 	pinned, err := GenerateCA(fixedNow)
 	if err != nil {
@@ -233,7 +233,7 @@ func TestLoadCARefusesAKeyThatDoesNotBelongToTheCertificate(t *testing.T) {
 	}
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 func TestLoadCARefusesAnExpiredCertificate(t *testing.T) {
 	ca, err := GenerateCA(fixedNow)
 	if err != nil {
@@ -253,7 +253,7 @@ func TestLoadCARefusesAnExpiredCertificate(t *testing.T) {
 	}
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 func TestLoadCARefusesACertificateThatIsNotValidYet(t *testing.T) {
 	ca, err := GenerateCA(fixedNow)
 	if err != nil {
@@ -266,14 +266,14 @@ func TestLoadCARefusesACertificateThatIsNotValidYet(t *testing.T) {
 
 	_, err = LoadCA(ca.CertPEM(), keyDER, fixedNow.Add(-clockSkewTolerance).Add(-time.Hour))
 	if err == nil {
-		t.Fatal("a CA whose validity has not started signs leaves no peer accepts, so LoadCA must refuse it")
+		t.Fatal("a CA whose validity has not started signs leaves no service accepts, so LoadCA must refuse it")
 	}
 	if !strings.Contains(err.Error(), "not valid until") {
 		t.Fatalf("error = %q, want it to say the certificate is not valid yet", err)
 	}
 }
 
-// @concept: peer-auth
+// @concept: service-auth
 func TestLoadCARefusesALeafCertificate(t *testing.T) {
 	ca, err := GenerateCA(fixedNow)
 	if err != nil {

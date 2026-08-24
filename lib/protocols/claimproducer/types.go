@@ -53,7 +53,7 @@ type ClaimSpec struct {
 	Alias        string
 	TemplateID   string
 	InstanceID   string
-	// @concept: host-agent-proxy
+	// @concept: host-daemon-proxy
 	RunScopeID string
 	// @concept: claim-lifetime
 	Lifetime string

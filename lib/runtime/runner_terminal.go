@@ -50,7 +50,7 @@ func validateCommitWriteback(
 				Message: err.Error(),
 			}),
 		}, tx); appendErr != nil && args.Logger != nil {
-			args.Logger.Warn("runner_terminal: append attributes_schema_failed event failed",
+			args.Logger.Warn("RUNNER.ATTRIBUTESSCHEMAFAILEDEVENT.APPENDFAILED",
 				"node_id", acq.NodeID.String(),
 				"error", appendErr.Error())
 		}
@@ -108,7 +108,7 @@ func emitWorkCompleted(ctx context.Context, args RunArgs, acq *acquisition, kind
 			}),
 		}, tx)
 	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("emitWorkCompleted: work_completed event append failed; pairing event lost",
+		args.Logger.Warn("RUNNER.WORKCOMPLETEDEVENT.APPENDFAILED", "site", "emitWorkCompleted", "detail", "the pairing event is lost",
 			"node_id", acq.NodeID.String(),
 			"dispatch_id", acq.NodeRunID.String(),
 			"terminal_kind", string(terminalClassFor(kind)),
@@ -351,7 +351,7 @@ func applyTerminalComplete(
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil {
-			args.Logger.Warn("applyTerminalComplete: run-tree propagation failed",
+			args.Logger.Warn("RUNTREE.PROPAGATION.FAILED", "site", "applyTerminalComplete",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
@@ -424,7 +424,7 @@ func applyTerminalCompletePoisoned(
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil {
-			args.Logger.Warn("applyTerminalCompletePoisoned: run-tree propagation failed",
+			args.Logger.Warn("RUNTREE.PROPAGATION.FAILED", "site", "applyTerminalCompletePoisoned",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
@@ -499,7 +499,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 			ok, evalErr := edge.WhenExpr.Eval(sig)
 			if evalErr != nil {
 				if args.Logger != nil {
-					args.Logger.Warn("cascadeSubscribersStaleInTx: when-filter evaluation failed; subscription edge suppressed",
+					args.Logger.Warn("CASCADE.WHENFILTER.EVALFAILED", "site", "cascadeSubscribersStaleInTx", "detail", "the subscription edge is suppressed",
 						"sender_node_type", senderNodeType,
 						"receiver_node_type", edge.ReceiverNodeType,
 						"signal_type", string(sig.Type),
@@ -766,7 +766,7 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 		return nil
 	}); err != nil {
 		if args.Logger != nil {
-			args.Logger.Warn("fanoutRecalculate: receiver lookup failed; downstream fan-out receivers not recalculated",
+			args.Logger.Warn("CASCADE.FANOUTRECEIVER.LOOKUPFAILED", "site", "fanoutRecalculate", "detail", "downstream fan-out receivers are not recalculated",
 				"node_id", acq.NodeID.String(),
 				"instance_id", acq.InstanceID.String(),
 				"error", err.Error())
@@ -783,7 +783,7 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 			SourceNodeID: &src,
 			TargetNodeID: r.ID,
 		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("fanoutRecalculate: RecalculateNode failed; receiver not recalculated",
+			args.Logger.Warn("CASCADE.FANOUTRECEIVER.RECALCULATEFAILED", "site", "fanoutRecalculate", "detail", "the receiver is not recalculated",
 				"source_node_id", src.String(),
 				"target_node_id", r.ID.String(),
 				"error", err.Error())

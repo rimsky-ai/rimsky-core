@@ -19,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
-	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	service "github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 	"github.com/rimsky-ai/rimsky-core/test/support/awaited"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
@@ -68,7 +68,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	client, err := peer.Dial(h.Ctx, "content", "grpc://"+endpoint, peer.TLSModeOff)
+	client, err := service.Dial(h.Ctx, "content", "grpc://"+endpoint, service.TLSModeOff)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	reg := locks.NewRegistry()

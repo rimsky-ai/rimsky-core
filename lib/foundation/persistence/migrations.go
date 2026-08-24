@@ -36,7 +36,7 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 	}
 	defer func() {
 		if err := release(); err != nil && log != nil {
-			log.Warn("persistence.Migrator: release migration lock", "err", err)
+			log.Warn("PERSISTENCE.MIGRATIONLOCK.RELEASEFAILED", "site", "persistence.Migrator", "err", err)
 		}
 	}()
 
@@ -114,15 +114,15 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 			return fmt.Errorf("persistence.Migrator: apply %s: %w", filename, err)
 		}
 		if log != nil {
-			log.Info("migration applied", "filename", filename)
+			log.Info("PERSISTENCE.MIGRATION.APPLIED", "filename", filename)
 		}
 		applied++
 	}
 	if log != nil {
 		if applied == 0 {
-			log.Info("no migrations to apply")
+			log.Info("PERSISTENCE.MIGRATIONS.UPTODATE")
 		} else {
-			log.Info("migrations complete", "applied", applied)
+			log.Info("PERSISTENCE.MIGRATIONS.COMPLETED", "applied", applied)
 		}
 	}
 	return nil

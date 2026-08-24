@@ -15,11 +15,11 @@ func main() {
 	slog.SetDefault(serverkit.NewJSONLogger())
 	opts, err := claudeagent.LoadOptsFromEnv()
 	if err != nil {
-		slog.Error("claude-agent config", "error", err.Error())
+		slog.Error("CLAUDEAGENT.CONFIG.INVALID", "error", err.Error())
 		os.Exit(1)
 	}
 	if err := claudeagent.Serve(opts); err != nil {
-		slog.Error("claude-agent", "error", err.Error())
+		slog.Error("CLAUDEAGENT.PROCESS.FAILED", "error", err.Error())
 		os.Exit(1)
 	}
 }

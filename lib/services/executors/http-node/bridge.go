@@ -10,17 +10,17 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/rimsky-ai/rimsky-core/lib/protocols/peerauth"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/serviceauth"
 )
 
-func NewBridgeServer(addr string, handler http.Handler, id *peerauth.Identity) *http.Server {
+func NewBridgeServer(addr string, handler http.Handler, id *serviceauth.Identity) *http.Server {
 	srv := id.HTTPServer(handler)
 	srv.Addr = addr
 	return srv
 }
 
-func ServeBridge(srv *http.Server, lis net.Listener, id *peerauth.Identity) error {
+func ServeBridge(srv *http.Server, lis net.Listener, id *serviceauth.Identity) error {
 	return id.RunHTTP(srv, lis)
 }
 

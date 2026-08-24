@@ -77,38 +77,38 @@ func TestBundledInProcDispatchZeroExecutorConfig(t *testing.T) {
 	}
 
 	// @story: single-process-all-in-one
-	statusPeers, rawPeers := ep.GetJSON(t, "/v1/observability/executors", "")
-	if statusPeers != http.StatusOK {
-		t.Fatalf("GET /v1/observability/executors: %d %s", statusPeers, string(rawPeers))
+	statusServices, rawServices := ep.GetJSON(t, "/v1/observability/executors", "")
+	if statusServices != http.StatusOK {
+		t.Fatalf("GET /v1/observability/executors: %d %s", statusServices, string(rawServices))
 	}
-	var peerResp struct {
+	var serviceResp struct {
 		Executors []struct {
 			Name     string `json:"name"`
 			Endpoint string `json:"endpoint"`
 			Static   bool   `json:"static"`
 		} `json:"executors"`
 	}
-	if err := json.Unmarshal(rawPeers, &peerResp); err != nil {
-		t.Fatalf("decode peer list: %v: %s", err, string(rawPeers))
+	if err := json.Unmarshal(rawServices, &serviceResp); err != nil {
+		t.Fatalf("decode service list: %v: %s", err, string(rawServices))
 	}
 	var httpNode *struct {
 		Name     string `json:"name"`
 		Endpoint string `json:"endpoint"`
 		Static   bool   `json:"static"`
 	}
-	for i := range peerResp.Executors {
-		if peerResp.Executors[i].Name == "http-node" {
-			httpNode = &peerResp.Executors[i]
+	for i := range serviceResp.Executors {
+		if serviceResp.Executors[i].Name == "http-node" {
+			httpNode = &serviceResp.Executors[i]
 			break
 		}
 	}
 	if httpNode == nil {
-		t.Fatalf("http-node executor missing from observability peer list %s — the bundled adverts did not populate the discovery cache", string(rawPeers))
+		t.Fatalf("http-node executor missing from observability service list %s — the bundled adverts did not populate the discovery cache", string(rawServices))
 	}
 	if !httpNode.Static {
-		t.Fatalf("http-node peer entry is not marked static (%+v) — the dispatch was fielded via an external service process, not the in-proc bundled handler", *httpNode)
+		t.Fatalf("http-node service entry is not marked static (%+v) — the dispatch was fielded via an external service process, not the in-proc bundled handler", *httpNode)
 	}
 	if !strings.HasPrefix(httpNode.Endpoint, "inproc://") {
-		t.Fatalf("http-node peer entry has non-inproc endpoint %q — the dispatch was fielded via an external service process reachable at that address, not the in-proc bundled handler", httpNode.Endpoint)
+		t.Fatalf("http-node service entry has non-inproc endpoint %q — the dispatch was fielded via an external service process reachable at that address, not the in-proc bundled handler", httpNode.Endpoint)
 	}
 }

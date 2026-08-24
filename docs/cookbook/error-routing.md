@@ -116,7 +116,7 @@ To react to a *tag* rather than a class, pair a wildcard type with a predicate:
 
 **`max_retries` is one budget across every class in one dispatch.** It is not per class. Unset means unbounded. Exhausting it synthesizes a give-up with reason `max_retries_exhausted`.
 
-**Retry policy is per-node only.** `max_retries` and the four `retry_backoff` keys have no deployment-wide form. Writing either under `dispatch_defaults` in deployment configuration stops the deployment before it starts: the migrate step exits with an unknown-field error and the entrypoint reports `migrate failed`. Only `sync_rpc_deadline`, `max_quiet_period`, and `max_runtime` have a `dispatch_defaults` counterpart.
+**Retry policy is per-node only.** `max_retries` and the four `retry_backoff` keys have no deployment-wide form. Writing either under `dispatch_defaults` in deployment configuration stops the deployment before it starts: the migrate step exits with an unknown-field error and the entrypoint reports `ENTRYPOINT.MIGRATE.FAILED`. Only `sync_rpc_deadline`, `max_quiet_period`, and `max_runtime` have a `dispatch_defaults` counterpart.
 
 **`retry_backoff.base_delay_ms` must be positive whenever any other backoff key is set.** A zero base makes every computed delay zero, so registration refuses it.
 

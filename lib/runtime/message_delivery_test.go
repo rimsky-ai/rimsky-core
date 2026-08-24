@@ -179,9 +179,6 @@ func (f *fixedInstanceTable) MarkTerminated(context.Context, shared.UUID, persis
 func (f *fixedInstanceTable) CountActiveByTemplate(context.Context, string, persistence.Tx) (int, error) {
 	return 0, nil
 }
-func (f *fixedInstanceTable) ListTerminatedWithLifecycleRows(context.Context, int, persistence.Tx) ([]persistence.InstanceRow, error) {
-	return nil, nil
-}
 func (f *fixedInstanceTable) CountByActive(context.Context, persistence.Tx) (int, int, error) {
 	return 0, 0, nil
 }
@@ -237,9 +234,6 @@ func (n *nilInstancesTable) MarkTerminated(context.Context, shared.UUID, persist
 }
 func (n *nilInstancesTable) CountActiveByTemplate(context.Context, string, persistence.Tx) (int, error) {
 	return 0, nil
-}
-func (n *nilInstancesTable) ListTerminatedWithLifecycleRows(context.Context, int, persistence.Tx) ([]persistence.InstanceRow, error) {
-	return nil, nil
 }
 func (n *nilInstancesTable) CountByActive(context.Context, persistence.Tx) (int, int, error) {
 	return 0, 0, nil

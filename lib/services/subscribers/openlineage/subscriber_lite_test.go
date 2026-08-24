@@ -83,7 +83,7 @@ func newLiteSubscriber(t *testing.T, dsn string, backendURL string, lagWindow ti
 	return sub
 }
 
-func TestFetchSince_LagWindowWithholdsRowsUntilPeerTransactionsCouldHaveCommitted(t *testing.T) {
+func TestFetchSince_LagWindowWithholdsRowsUntilServiceTransactionsCouldHaveCommitted(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)
 	setupLineageSchema(t, dsn)
@@ -120,7 +120,7 @@ func TestFetchSince_LagWindowWithholdsRowsUntilPeerTransactionsCouldHaveCommitte
 	if gotEarly != 0 {
 		t.Fatalf("received %d events before the lag window elapsed (want 0); "+
 			"a row inside the lag window must not be cursored past, or a later-committing "+
-			"earlier-timestamped peer row would be silently skipped", gotEarly)
+			"earlier-timestamped service row would be silently skipped", gotEarly)
 	}
 
 	idA := uuid.New()

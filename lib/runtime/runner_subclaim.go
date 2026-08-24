@@ -97,7 +97,7 @@ func AcquireSubClaims(
 				ClaimHandleID:   b.claimHandleID,
 				CandidateHandle: b.candidateHandle,
 			}); err != nil && args.Logger != nil {
-				args.Logger.Warn("AcquireSubClaims: AbandonCandidate on unwind failed",
+				args.Logger.Warn("RUNNER.SUBCLAIMUNWINDABANDON.FAILED", "site", "AcquireSubClaims",
 					"producer", in.ProducerName,
 					"sub_claim_handle_id", b.claimHandleID,
 					"error", err.Error())
@@ -283,8 +283,8 @@ func emitSubclaimBeginCandidate(
 			CandidateHandleSizeBytes: int64(candidateHandleSize),
 		}),
 	}, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("AcquireSubClaims: event append failed",
-			"kind", "subclaim.begin_candidate",
+		args.Logger.Warn("RUNNER.SUBCLAIMEVENT.APPENDFAILED", "site", "AcquireSubClaims",
+			"kind", events.KindSubclaimBeginCandidate().String(),
 			"sub_claim_handle_id", subID.String(),
 			"error", err.Error())
 	}
@@ -307,8 +307,8 @@ func emitSubclaimAcquired(
 			ProducerName:            producerName,
 		}),
 	}, tx); err != nil && args.Logger != nil {
-		args.Logger.Warn("AcquireSubClaims: event append failed",
-			"kind", "subclaim.acquired",
+		args.Logger.Warn("RUNNER.SUBCLAIMEVENT.APPENDFAILED", "site", "AcquireSubClaims",
+			"kind", events.KindSubclaimAcquired().String(),
 			"parent_claim_handle_id", parentID.String(),
 			"error", err.Error())
 	}

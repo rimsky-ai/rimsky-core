@@ -18,7 +18,7 @@ func main() {
 
 	cfg, err := LoadConfig()
 	if err != nil {
-		log.Error("openlineage.config_invalid", "error", err.Error())
+		log.Error("OPENLINEAGE.CONFIG.INVALID", "error", err.Error())
 		os.Exit(1)
 	}
 
@@ -28,7 +28,7 @@ func main() {
 
 	sub, err := New(ctx, cfg, log)
 	if err != nil {
-		log.Error("openlineage.startup_failed", "error", err.Error())
+		log.Error("OPENLINEAGE.PROCESS.STARTFAILED", "error", err.Error())
 		os.Exit(1)
 	}
 	defer sub.Close()

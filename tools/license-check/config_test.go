@@ -23,19 +23,19 @@ func writeLicensingYAML(t *testing.T, dir, contents string) *licensingConfig {
 
 func TestClassifyLongestPrefixMatch(t *testing.T) {
 	cfg := writeLicensingYAML(t, t.TempDir(), `apache:
-  - runtime/peer/
+  - runtime/service/
 agpl:
   - runtime/
 exempt:
-  - runtime/peer/internal/skip/
+  - runtime/service/internal/skip/
 `)
 	cases := []struct {
 		path string
 		want classification
 	}{
-		{"runtime/peer/client.go", classApache},
+		{"runtime/service/client.go", classApache},
 		{"runtime/runner.go", classAGPL},
-		{"runtime/peer/internal/skip/dummy.go", classExempt},
+		{"runtime/service/internal/skip/dummy.go", classExempt},
 		{"unrelated/path/file.go", classUnknown},
 	}
 	for _, tc := range cases {

@@ -213,7 +213,7 @@ func TestRunControlAPI_PortValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			clearEnv(t)
 			t.Setenv("RIMSKY_CONTROL_API_PORT", tc.port)
-			_, _, err := RunControlAPI(context.Background(), testLogger(t), nil, nil, nil, nil)
+			_, _, err := RunControlAPI(context.Background(), testLogger(t), nil, nil, RoleOptions{})
 			if err == nil {
 				t.Fatalf("RIMSKY_CONTROL_API_PORT=%q must be a startup-fatal error, not silently accepted", tc.port)
 			}
@@ -241,7 +241,7 @@ func TestRunScheduler_TickMsValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			clearEnv(t)
 			t.Setenv("RIMSKY_SCHEDULER_TICK_MS", tc.tick)
-			_, _, err := RunScheduler(context.Background(), testLogger(t), nil, nil, nil)
+			_, _, err := RunScheduler(context.Background(), testLogger(t), nil, nil, RoleOptions{})
 			if err == nil {
 				t.Fatalf("RIMSKY_SCHEDULER_TICK_MS=%q must be a startup-fatal error, not silently defaulted", tc.tick)
 			}

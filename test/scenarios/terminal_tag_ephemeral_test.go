@@ -51,7 +51,7 @@ func TestTerminalTag_EphemeralNotPersistedIntoNodeState(t *testing.T) {
 
 	var bagJSON []byte
 	h.QueryRowSQL(
-		`SELECT a.data::text FROM rimsky_node_attributes a
+		`SELECT convert_from(a.data, 'UTF8') FROM rimsky_node_attributes a
 		   JOIN rimsky_node_runs r ON r.id = a.node_run_id
 		  WHERE r.node_id = $1 ORDER BY r.sequence DESC LIMIT 1`,
 		[]any{worker.ID}, &bagJSON,

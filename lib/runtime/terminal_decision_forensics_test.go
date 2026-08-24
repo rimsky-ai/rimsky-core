@@ -358,7 +358,8 @@ func TestProducerVerbDispatch_ARetriedDeliveryLeavesOneClaimTerminalRecord(t *te
 		return err
 	}))
 
-	dispatcher := runtime.NewProducerVerbDispatcher(outbox, backend, reg, clock, shared.SilentLogger{})
+	dispatcher := runtime.NewProducerVerbDispatcher(outbox, backend, reg, clock, shared.SilentLogger{},
+		runtime.DefaultServiceDeliveryStallAfter)
 
 	delivered, err := dispatcher.DispatchOnce(ctx)
 	require.NoError(t, err)

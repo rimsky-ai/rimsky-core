@@ -12,7 +12,7 @@ This page lists every environment variable the shipped rimsky code reads, its de
 
 **Rimsky never checks the name of a variable it does not read.** A misspelled `RIMSKY_*` name is a silently unapplied setting: the process starts and serves as if you had set nothing. Rimsky does check the *values* of the variables it reads — a bad value on a known variable stops the process and names both the variable and the value. The same typo in YAML behaves the opposite way: an unknown key stops the process at load with the offending field named. Check your spelling against the tables below.
 
-**Most variables are scoped to one process.** The tables group variables by the binary or image that reads them. `RIMSKY_LOG_LEVEL` is the widest, and even it reaches only the core roles and the host-agent proxy — see [Logging](#logging).
+**Most variables are scoped to one process.** The tables group variables by the binary or image that reads them. `RIMSKY_LOG_LEVEL` is the widest, and even it reaches only the core roles and the host-daemon proxy — see [Logging](#logging).
 
 ## Core roles
 
@@ -21,9 +21,8 @@ The `rimsky` image ships the scheduler, supervisor, and control API. `rimsky-ent
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `RIMSKY_CONFIG` | `/etc/rimsky/rimsky.yml` | Path to the deployment's `rimsky.yml`. Every role loads it at startup. A load failure stops the process. |
-| `RIMSKY_SUPERVISOR_CONFIG` | none — required by the supervisor | Path to the supervisor's own YAML (concurrency, claim poll interval, callback listener). The supervisor refuses to start without it. |
 | `RIMSKY_ENTRYPOINT_MIGRATE` | unset | Forces (`1`) or skips (`0`) the migration run before the roles start. Unset, the entrypoint migrates when it runs all three roles, and when the single named role is `rimsky-control-api`; a three-container split therefore migrates exactly once. Any other value stops the entrypoint with an error naming the value. |
-| `RIMSKY_PROCESS_ROLE` | unset | Marks the single-process mode. Rimsky sets it to `unified` itself on the entrypoint's no-command path, under `rimsky compose run`, and under `rimsky run` in self-host mode. The `memory` blob backend is legal only when it is set, because per-role processes cannot share an in-process map. |
+| `RIMSKY_PROCESS_ROLE` | unset | Marks the single-process mode. Rimsky sets it to `unified` itself on the entrypoint's no-command path, under `rimsky compose run`, and under `rimsky run` in self-host mode. The roles read it to place their metrics listeners and to decide whether the SQLite driver needs its shared-file warning. |
 
 ### Control API listener
 
@@ -62,7 +61,7 @@ Each core role serves Prometheus text at `/metrics` on its own port. That port i
 
 These four variables reach the three core roles only. No bundled service opens a metrics port, and none of them serves `/metrics` anywhere — see [What these variables do not do](#what-these-variables-do-not-do).
 
-### Peer discovery refresh
+### Service discovery refresh
 
 | Variable | Default | Effect |
 | --- | --- | --- |
@@ -72,23 +71,23 @@ These four variables reach the three core roles only. No bundled service opens a
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `RIMSKY_LOG_LEVEL` | `info` | Minimum level the core role binaries, the entrypoint, the migration binary, and the host-agent proxy emit. Accepted values are `debug`, `warn`, and `error`. Any other value — including `DEBUG`, `trace`, or a typo — silently falls back to `info`. |
+| `RIMSKY_LOG_LEVEL` | `info` | Minimum level the core role binaries, the entrypoint, the migration binary, and the host-daemon proxy emit. Accepted values are `debug`, `warn`, and `error`. Any other value — including `DEBUG`, `trace`, or a typo — silently falls back to `info`. |
 | `RIMSKY_LOG_BINARY` | unset | Adds a `binary` field to every log record. The entrypoint sets it on each role process it spawns. |
 
-The core roles emit JSON log records. No bundled service image honors `RIMSKY_LOG_LEVEL`, and neither does the host agent started through `rimsky agent start` — see [What these variables do not do](#what-these-variables-do-not-do).
+The core roles emit JSON log records. No bundled service image honors `RIMSKY_LOG_LEVEL`, and neither does the host daemon started through `rimsky daemon start` — see [What these variables do not do](#what-these-variables-do-not-do).
 
-## Peer authentication and enrollment
+## Service authentication and enrollment
 
-Bundled services and the host-agent proxy enroll with the control API to get a leaf certificate from the deployment CA, then speak mTLS to their peers.
+Bundled services and the host-daemon proxy enroll with the control API to get a leaf certificate from the deployment CA, then speak mTLS to their services.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `RIMSKY_PEER_AUTH` | `none` | Selects the peer-auth mode for a service process: `none` or `mtls`. Any other value stops the process with an error naming both values. |
-| `RIMSKY_CONTROL_API_URL` | unset | Control API base URL a service enrolls against, a sensor publishes to, the CLI talks to, and the proxy verifies agent api-keys against. Sensors default it to `http://localhost:8080`; every other reader treats it as required. |
-| `RIMSKY_API_KEY` | unset | API-key plaintext a service, agent, or CLI invocation presents. Not the key id. |
-| `RIMSKY_CONTROL_API_CA` | unset | Path to the deployment CA root PEM that verifies the control API's HTTPS certificate. Under `RIMSKY_PEER_AUTH=mtls` an `https://` control-API URL requires it. Setting it alongside a non-HTTPS URL stops the process: a pinned CA root cannot secure a plaintext hop. |
-| `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT` | off | Accepts a plaintext enrollment hop under `RIMSKY_PEER_AUTH=mtls`. Off, a non-HTTPS control-API URL is refused, because the api-key crosses that hop in the clear against an unverified server. Empty, `0`, `false`, and `no` leave it off; any other value turns it on. |
-| `RIMSKY_CA_ENCRYPTION_KEY` | none — required under `peer_auth: mtls` | The AES key that encrypts the deployment CA's private key at rest. Must be standard base64 decoding to exactly 32 bytes. Rimsky refuses to load a `rimsky.yml` declaring `peer_auth: mtls` without it, and reports a decryption failure plainly when the key is wrong or the stored ciphertext is corrupt. |
+| `RIMSKY_SERVICE_AUTH` | `none` | Selects the service-auth mode for a service process: `none` or `mtls`. Any other value stops the process with an error naming both values. |
+| `RIMSKY_CONTROL_API_URL` | unset | Control API base URL a service enrolls against, a sensor publishes to, the CLI talks to, and the proxy verifies daemon api-keys against. Sensors default it to `http://localhost:8080`; every other reader treats it as required. |
+| `RIMSKY_API_KEY` | unset | API-key plaintext a service, daemon, or CLI invocation presents. Not the key id. |
+| `RIMSKY_CONTROL_API_CA` | unset | Path to the deployment CA root PEM that verifies the control API's HTTPS certificate. Under `RIMSKY_SERVICE_AUTH=mtls` an `https://` control-API URL requires it. Setting it alongside a non-HTTPS URL stops the process: a pinned CA root cannot secure a plaintext hop. |
+| `RIMSKY_ALLOW_PLAINTEXT_ENROLLMENT` | off | Accepts a plaintext enrollment hop under `RIMSKY_SERVICE_AUTH=mtls`. Off, a non-HTTPS control-API URL is refused, because the api-key crosses that hop in the clear against an unverified server. Empty, `0`, `false`, and `no` leave it off; any other value turns it on. |
+| `RIMSKY_CA_ENCRYPTION_KEY` | none — required under `service_auth: mtls` | The AES key that encrypts the deployment CA's private key at rest. Must be standard base64 decoding to exactly 32 bytes. Rimsky refuses to load a `rimsky.yml` declaring `service_auth: mtls` without it, and reports a decryption failure plainly when the key is wrong or the stored ciphertext is corrupt. |
 
 ## The `rimsky` CLI
 
@@ -98,51 +97,52 @@ Bundled services and the host-agent proxy enroll with the control API to get a l
 | `RIMSKY_API_KEY` | unset | Bearer token the CLI sends. The `--key` flag wins over it; it wins over the current context's stored key. |
 | `RIMSKY_CONTEXT` | unset | Names which saved context the CLI uses, overriding `current_context`. A name absent from the config file is an error naming the value and the file. |
 
-## Host agent
+## Host daemon
 
-The host agent runs on an operator's machine and spawns local binaries as late-bound services. It dials the host-agent proxy; it does not talk to the control API directly.
+The host daemon runs on an operator's machine and spawns local binaries as late-bound services. It dials the host-daemon proxy; it does not talk to the control API directly.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `RIMSKY_HOST_AGENT_PROXY_URL` | none — required | Host-agent-proxy endpoint. Without it the agent refuses to start. The `--proxy` flag overrides it. |
-| `RIMSKY_API_KEY` | unset | API-key plaintext the agent presents on Register. Omit it to register anonymously. The `--api-key` flag overrides it. |
-| `RIMSKY_AGENT_LISTEN` | `127.0.0.1:0` | Address of the agent's local enrollment listener. The agent binds loopback whatever host you give: it keeps your port and warns when it drops a non-loopback host. |
-| `RIMSKY_AGENT_ALLOW_PATHS` | unset — every path allowed | Comma-separated glob patterns a spawned binary's path must match. Set it to bound which binaries the agent will launch. |
-| `RIMSKY_AGENT_LABEL` | `<hostname>-<pid>` | Label the agent registers under. |
-| `RIMSKY_AGENT_ROUTING_LABEL` | unset | Anonymous routing label the agent asks the proxy to adopt. Meaningful only in anonymous mode. The agent also passes it to every binary it spawns. |
-| `RIMSKY_AGENT_IDENTITY_FILE` | `<user config dir>/rimsky/host-agent/identity.json` | Path to the anonymous identity JSON the agent reads and writes. |
-| `RIMSKY_AGENT_STATUS_FILE` | unset — no status file written | Path the agent writes its live status snapshot to, and clears on exit. |
-| `RIMSKY_AGENT_HEARTBEAT_SEC` | `10` | Seconds between agent heartbeats. |
-| `RIMSKY_AGENT_REAP_GRACE_SEC` | `30` | Seconds a spawned service gets to exit before the agent reaps it. |
-| `RIMSKY_AGENT_REGISTER_ACK_TIMEOUT_SEC` | `15` | Seconds the agent waits for the proxy to acknowledge Register. |
-| `RIMSKY_AGENT_TLS` | off | Dials the proxy over TLS. `1`, `true`, `yes`, and `on` turn it on; any other value leaves it off. |
-| `RIMSKY_AGENT_TLS_CA` | unset | Path to the pinned deployment CA root PEM verifying the proxy's server certificate. Required whenever `RIMSKY_AGENT_TLS` is on; without it the agent refuses to start. |
+| `RIMSKY_HOST_DAEMON_PROXY_URL` | none — required | Host-daemon-proxy endpoint. Without it the daemon refuses to start. The `--proxy` flag overrides it. |
+| `RIMSKY_API_KEY` | unset | API-key plaintext the daemon presents on Register. Omit it to register anonymously. The `--api-key` flag overrides it. |
+| `RIMSKY_DAEMON_LISTEN` | `127.0.0.1:0` | Address of the daemon's local enrollment listener. The daemon binds loopback whatever host you give: it keeps your port and warns when it drops a non-loopback host. |
+| `RIMSKY_DAEMON_ALLOW_PATHS` | unset — every path allowed | Comma-separated glob patterns a spawned binary's path must match. Set it to bound which binaries the daemon will launch. |
+| `RIMSKY_DAEMON_LABEL` | `<hostname>-<pid>` | Label the daemon registers under. |
+| `RIMSKY_DAEMON_ROUTING_LABEL` | unset | Anonymous routing label the daemon asks the proxy to adopt. Meaningful only in anonymous mode. The daemon also passes it to every binary it spawns. |
+| `RIMSKY_DAEMON_IDENTITY_FILE` | `<user config dir>/rimsky/host-daemon/identity.json` | Path to the anonymous identity JSON the daemon reads and writes. |
+| `RIMSKY_DAEMON_STATUS_FILE` | unset — no status file written | Path the daemon writes its live status snapshot to, and clears on exit. |
+| `RIMSKY_DAEMON_HEARTBEAT_SEC` | `10` | Seconds between daemon heartbeats. |
+| `RIMSKY_DAEMON_REAP_GRACE_SEC` | `30` | Seconds a spawned service gets to exit before the daemon reaps it. |
+| `RIMSKY_DAEMON_REGISTER_ACK_TIMEOUT_SEC` | `15` | Seconds the daemon waits for the proxy to acknowledge Register. |
+| `RIMSKY_DAEMON_TLS_CA` | unset — verify against the system roots | Path to a pinned deployment CA root PEM. Set it and the daemon verifies the proxy's certificate against that root under the fixed service server name. Leave it unset and the daemon verifies against the system roots. The dial runs TLS either way. |
+| `RIMSKY_HOST_DAEMON_INSECURE` | off | Dials the proxy in plaintext instead of TLS. `1`, `true`, `yes`, and `on` turn it on; any other value leaves it off. The proxy must run with the same variable set, and the daemon's api-key then crosses the hop in the clear. |
 
-The three `_SEC` variables take a positive integer number of seconds. A non-integer or non-positive value stops the agent with an error naming the variable and the value.
+The three `_SEC` variables take a positive integer number of seconds. A non-integer or non-positive value stops the daemon with an error naming the variable and the value.
 
 ## Late-bound binaries
 
-When the host agent spawns a local binary as a late-bound service, it picks a free port and sets these in the child's environment. A binary you write to be spawned this way must read `RIMSKY_AGENT_PORT` and bind its gRPC server there; the agent polls that port until the server answers, and reports `spawn_failed` if nothing does.
+When the host daemon spawns a local binary as a late-bound service, it picks a free port and sets these in the child's environment. A binary you write to be spawned this way must read `RIMSKY_DAEMON_PORT` and bind its gRPC server there; the daemon polls that port until the server answers, and reports `spawn_failed` if nothing does.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `RIMSKY_AGENT_PORT` | set by the agent per spawn | The port the spawned service must bind. Every bundled executor, claim producer, and the cron, HTTP, and object-store sensors honor it in preference to their own port variable. A non-numeric value stops the service rather than letting it bind some other port. |
+| `RIMSKY_DAEMON_PORT` | set by the daemon per spawn | The port the spawned service must bind. Every bundled executor, claim producer, and the cron, HTTP, and object-store sensors honor it in preference to their own port variable. A non-numeric value stops the service rather than letting it bind some other port. |
 
-The agent also sets `RIMSKY_PEER_AUTH`, `RIMSKY_API_KEY`, `RIMSKY_CONTROL_API_URL`, and `RIMSKY_AGENT_ROUTING_LABEL` on each child.
+The daemon also sets `RIMSKY_SERVICE_AUTH`, `RIMSKY_API_KEY`, `RIMSKY_CONTROL_API_URL`, and `RIMSKY_DAEMON_ROUTING_LABEL` on each child.
 
-## Host-agent proxy
+## Host-daemon proxy
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `RIMSKY_PROXY_GRPC_PORT` | `9090` | Agent-facing gRPC listener port, carrying the host-agent protocol only. |
-| `RIMSKY_PROXY_PEER_GRPC_PORT` | `9091` | Peer-facing mTLS listener port, carrying the executor, claim-producer, lifecycle, and observability protocols. It requires client certificates from the deployment CA. |
-| `RIMSKY_CONTROL_API_URL` | none — required | Control API base URL. The proxy verifies each agent's api-key against it and routes by the key id the control API reports. Without it the proxy fails closed and no agent can register. |
+| `RIMSKY_PROXY_GRPC_PORT` | `8090` | Daemon-facing gRPC listener port, carrying the host-daemon protocol only. |
+| `RIMSKY_PROXY_SERVICE_GRPC_PORT` | `8091` | Service-facing mTLS listener port, carrying the executor, claim-producer, lifecycle, and observability protocols. It requires client certificates from the deployment CA. |
+| `RIMSKY_CONTROL_API_URL` | none — required | Control API base URL. The proxy verifies each daemon's api-key against it and routes by the key id the control API reports. Without it the proxy fails closed and no daemon can register. |
 | `RIMSKY_CONTROL_API_TOKEN` | unset | Bearer token the proxy uses on its cache-miss instance lookups against the control API. |
 | `RIMSKY_CONTROL_API_CA` | unset | CA bundle PEM verifying an HTTPS control API. Setting it with a non-HTTPS URL is a startup error. |
-| `RIMSKY_PROXY_TLS_CERT` | unset | Certificate for the agent-facing listener. Set it together with the key. |
-| `RIMSKY_PROXY_TLS_KEY` | unset | Private key for the agent-facing listener. Setting exactly one of the pair stops the proxy with an error naming both variables. With neither set, the proxy serves the agent-facing listener on its enrolled deployment-CA leaf when it has one. |
+| `RIMSKY_PROXY_TLS_CERT` | unset | Certificate for the daemon-facing listener. Set it together with the key. |
+| `RIMSKY_PROXY_TLS_KEY` | unset | Private key for the daemon-facing listener. Setting exactly one of the pair stops the proxy with an error naming both variables. With neither set, the proxy serves the daemon-facing listener on its enrolled deployment-CA leaf when it has one. |
+| `RIMSKY_PROXY_LOCAL_CA_FILE` | unset — a fresh CA per process | Path where the proxy stores the CA root it mints for the daemon-facing listener. It writes the private key beside that root, at the same path plus `.key`. It reuses both on the next start, so a restart serves leaves under the root every running daemon already pinned. Unset, the proxy mints a fresh CA each process and every daemon re-pins. |
 
-Both port defaults collide with something else in a full single-host bundle: 9090 is also the claude-agent executor's default gRPC port, and 9091 is also the http-node executor's. Move one side when you run them together.
+Neither port collides with anything else in a full single-host bundle. The proxy's two listeners sit in the core block, 8080 through 8099, and every bundled service defaults into 9000 through 9199. `test/plumbline/default_ports_test.go` fails the build when a shipped default leaves its block or two coincide.
 
 ## Bundled executors
 
@@ -151,7 +151,7 @@ All four bundled executor images read this set.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `RIMSKY_EXECUTOR_HOST` | `0.0.0.0` | Interface the executor binds. |
-| `RIMSKY_EXECUTOR_PORT_GRPC` | claude-agent `9090`, http-node `9091`, verifier-shape-checks `9095`, verifier-http `9096` | gRPC listener port. `RIMSKY_AGENT_PORT` wins over it. |
+| `RIMSKY_EXECUTOR_PORT_GRPC` | claude-agent `9090`, http-node `9091`, verifier-shape-checks `9095`, verifier-http `9096` | gRPC listener port. `RIMSKY_DAEMON_PORT` wins over it. |
 | `RIMSKY_EXECUTOR_PORT_HTTP` | claude-agent `9190`, http-node the gRPC port plus one | HTTP bridge port. Read by claude-agent and http-node only. |
 | `RIMSKY_EXECUTOR_STUB_MODE` | off | Turns on the executor's stub path. Only the exact value `1` turns it on. |
 
@@ -161,20 +161,20 @@ All four bundled executor images read this set.
 | --- | --- | --- |
 | `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` | unset — every MCP server permitted | Comma-separated names of the MCP servers a node may declare in `cli.mcp_servers`. Set, a node naming anything outside the list fails that dispatch with `agent/attribute_invalid` and an error naming the server, the instance, and the node. Set, the executor also refuses `stdio` transport outright, because it spawns a node-supplied command. |
 | `RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST` | unset — every variable name permitted | Comma-separated names a node may declare in `cli.expose_env`. Set, a node naming anything outside the list fails that dispatch with an error naming the variable, the instance, and the node. |
-| `RIMSKY_EXECUTOR_CLAUDE_BINARY` | `claude` on `PATH` | Path to the agent binary the executor spawns. |
-| `RIMSKY_DISPATCH_MAX_USD` | unset | Budget the executor passes for a node that declares no `cli.max_budget_usd` of its own. A node that declares one gets its own figure, above or below this value. |
+| `RIMSKY_EXECUTOR_CLAUDE_BINARY` | `claude` on `PATH` | Path to the daemon binary the executor spawns. |
+| `RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD` | unset | Budget the executor passes for a node that declares no `cli.max_budget_usd` of its own. A node that declares one gets its own figure, above or below this value. |
 | `RIMSKY_EXECUTOR_SILENCE_MS` | `0` — no silence timeout | Milliseconds of stdout silence after which the executor abandons a run, for nodes that declare no `cli.silence_timeout_ms`. |
 | `RIMSKY_EXECUTOR_TOOL_USE_TIMEOUT_MS` | `0` — no tool-use timeout | Milliseconds a single tool use may take, for nodes that declare no `cli.tool_use_timeout_ms`. |
-| `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` | unset | URL the executor advertises for its observability HTTP bridge. |
+| `RIMSKY_CLAUDE_AGENT_OBSERVABILITY_HTTP_BRIDGE_URL` | unset | URL the executor advertises for its observability HTTP bridge. |
 
 Both allowlists are open when unset. That is the opposite polarity from the two egress allowlists below — see [What these variables do not do](#what-these-variables-do-not-do).
 
-The executor sets two variables in the agent process it spawns, so the agent can call back into the dispatch:
+The executor sets two variables in the daemon process it spawns, so the daemon can call back into the dispatch:
 
 | Variable | Effect |
 | --- | --- |
 | `RIMSKY_CALLBACK_URL` | The dispatch's callback MCP server URL. |
-| `RIMSKY_CALLBACK_TOKEN` | The per-dispatch callback token the agent must present. |
+| `RIMSKY_CALLBACK_TOKEN` | The per-dispatch callback token the daemon must present. |
 
 ### http-node
 
@@ -185,9 +185,15 @@ The executor sets two variables in the agent process it spawns, so the agent can
 | `RIMSKY_EXECUTOR_HTTP_NODE_ERROR_CLASS_FIELD` | `error_class` | JSON field the executor reads an upstream's error class from. |
 | `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL` | unset | URL the executor advertises for its HTTP bridge. |
 
-### verifier-http and verifier-shape-checks
+### verifier-http
 
-These two read only the shared executor set above.
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `RIMSKY_EXECUTOR_VERIFIER_HTTP_EGRESS_ALLOWLIST` | unset — private destinations blocked | Comma-separated CIDRs or bare IPs the verifier may dial in the otherwise blocked ranges. It guards the node-supplied `url` the same way `http-node` guards its own. A malformed entry stops the service at boot. |
+
+### verifier-shape-checks
+
+`verifier-shape-checks` reads only the shared executor set above.
 
 ## Claim producers
 
@@ -196,7 +202,7 @@ These two read only the shared executor set above.
 | `RIMSKY_CLAIM_PRODUCER_FILESYSTEM_CONFIG` | none — required | Path to the filesystem producer's YAML. Without it the producer starts unconfigured and serves nothing. The file carries `root` (required), `host`, `grpc_port` (default 9100), `http_port` (default 9110), `admin_port`, `pick_policies`, and `sweep_interval_seconds` (default 60). |
 | `RIMSKY_CLAIM_PRODUCER_POSTGRES_CONFIG` | none — required | Path to the Postgres producer's YAML. Without it the producer starts unconfigured. The file carries `connection` (required), `write_semantics` (default `staged_async`), `host`, `grpc_port` (default 9101), `http_port` (default 9111), `admin_port`, `pick_policies`, `partition_policies`, and `sweep_interval_seconds` (default 30). |
 
-The filesystem producer's default gRPC port 9100 is the same port the supervisor's async-callback listener holds in the `rimsky-all-in-one` stack. Give the producer `grpc_port` and `http_port` in its YAML when you run both on one host.
+The filesystem producer's default gRPC port 9100 sits in the bundled-service block, clear of the core listeners in 8080 through 8099. Give the producer `grpc_port` and `http_port` in its YAML when a second copy shares the host.
 
 ## Sensors
 
@@ -205,14 +211,14 @@ All four sensors take the same shape: a host, a gRPC port, a control-API endpoin
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `RIMSKY_SENSOR_CRON_HOST` | `0.0.0.0` | Interface sensor-cron binds. |
-| `RIMSKY_SENSOR_CRON_PORT` | `9081` | sensor-cron's gRPC port. `RIMSKY_AGENT_PORT` wins over it. |
+| `RIMSKY_SENSOR_CRON_PORT` | `9081` | sensor-cron's gRPC port. `RIMSKY_DAEMON_PORT` wins over it. |
 | `RIMSKY_SENSOR_CRON_STATE_DSN` | unset — the sensor runs without persisted state | Postgres connection string for sensor-cron's state. It bootstraps its own `sensor_cron_state` table. |
 | `RIMSKY_SENSOR_HTTP_HOST` | `0.0.0.0` | Interface sensor-http binds. |
-| `RIMSKY_SENSOR_HTTP_PORT` | `9082` | sensor-http's gRPC port. `RIMSKY_AGENT_PORT` wins over it. |
+| `RIMSKY_SENSOR_HTTP_PORT` | `9082` | sensor-http's gRPC port. `RIMSKY_DAEMON_PORT` wins over it. |
 | `RIMSKY_SENSOR_HTTP_STATE_DSN` | unset — the sensor runs without persisted state | Postgres connection string for sensor-http's state, in its own `sensor_http_state` table. |
 | `RIMSKY_SENSOR_HTTP_EGRESS_ALLOWLIST` | unset — private poll targets blocked | Comma-separated CIDRs or bare IPs sensor-http may poll in the otherwise blocked ranges. The guard covers the poll client only; the sensor's publish call to the control API is not guarded. A malformed entry stops the service at boot. |
 | `RIMSKY_SENSOR_OBJECT_STORE_HOST` | `0.0.0.0` | Interface sensor-object-store binds. |
-| `RIMSKY_SENSOR_OBJECT_STORE_PORT` | `9083` | sensor-object-store's gRPC port. `RIMSKY_AGENT_PORT` wins over it. |
+| `RIMSKY_SENSOR_OBJECT_STORE_PORT` | `9083` | sensor-object-store's gRPC port. `RIMSKY_DAEMON_PORT` wins over it. |
 | `RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN` | unset — the sensor runs without persisted state | Postgres connection string for sensor-object-store's state, in its own `sensor_object_store_state` and `sensor_object_store_seen_names` tables. |
 | `RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT` | unset — the `filesystem` backend is not registered | Directory root that registers the sensor's `filesystem` backend. A publisher declaring `backend: filesystem` treats its `bucket` as a subdirectory of this root. |
 | `RIMSKY_SENSOR_OBJECT_STORE_ENABLE_MEMORY_BACKEND` | off | Registers the in-process `memory` backend. Only the exact value `1` turns it on. |
@@ -244,10 +250,10 @@ The subscriber opens no listener and dials its backend URL without an egress gua
 
 Four expectations the variable names invite, and what the product does instead.
 
-**An allowlist's absence does not mean the same thing everywhere.** `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` and `RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST` permit everything when unset: a node can declare any MCP server, and can read any variable out of the executor's environment. `RIMSKY_EXECUTOR_HTTP_NODE_EGRESS_ALLOWLIST` and `RIMSKY_SENSOR_HTTP_EGRESS_ALLOWLIST` permit nothing in the blocked ranges when unset. Same suffix, same namespace, opposite polarity. Set the two claude-agent allowlists explicitly in any deployment where a template author is not fully trusted.
+**An allowlist's absence does not mean the same thing everywhere.** `RIMSKY_CLAUDE_AGENT_MCP_ALLOWLIST` and `RIMSKY_CLAUDE_AGENT_EXPOSE_ENV_ALLOWLIST` permit everything when unset: a node can declare any MCP server, and can read any variable out of the executor's environment. The three `_EGRESS_ALLOWLIST` variables permit nothing in the blocked ranges when unset. Same suffix, same namespace, opposite polarity. Set the two claude-agent allowlists explicitly in any deployment where a template author is not fully trusted.
 
-**The egress guard covers two services, not every outbound dialer.** `http-node` and `sensor-http` refuse blocked-range destinations. The `verifier-http` executor takes its `url` from node attributes exactly as `http-node` does, dials whatever it is given, and has no allowlist variable at all. The OpenLineage subscriber posts to its configured backend URL, including private and metadata addresses, with nothing in the way. Read the two `_EGRESS_ALLOWLIST` variables as covering `http-node` and `sensor-http` alone.
+**The egress guard covers three services, not every outbound dialer.** `http-node`, `verifier-http`, and `sensor-http` refuse blocked-range destinations, each behind its own `_EGRESS_ALLOWLIST` variable. The OpenLineage subscriber has no allowlist variable at all. It posts to its configured backend URL with nothing in the way, private and metadata addresses included.
 
-**`RIMSKY_DISPATCH_MAX_USD` is a default, not a ceiling.** The executor passes it only to a node that declares no `cli.max_budget_usd`. A node declaring `50.00` is spawned with `50.00` even under `RIMSKY_DISPATCH_MAX_USD=1.00` — an over-budget node is honored, not refused. To cap spend, bound it outside the template.
+**`RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD` is a default, not a ceiling.** The executor passes it only to a node that declares no `cli.max_budget_usd`. A node declaring `50.00` is spawned with `50.00` even under `RIMSKY_CLAUDE_AGENT_DISPATCH_MAX_USD=1.00` — an over-budget node is honored, not refused. To cap spend, bound it outside the template.
 
-**`RIMSKY_LOG_LEVEL` and the metrics variables reach the core only.** No bundled service image honors `RIMSKY_LOG_LEVEL`: all of them log their startup lines at INFO regardless. The host agent started through `rimsky agent start` ignores it too, and prints plain-text lines rather than the JSON records the core roles emit. `RIMSKY_METRICS_HOST` and the four metrics port variables are inert on every bundled service: none opens the port named, and none serves `/metrics` on any port it does open. Dashboards get the three core roles and nothing from the sensors, executors, producers, or the subscriber.
+**`RIMSKY_LOG_LEVEL` and the metrics variables reach the core only.** No bundled service image honors `RIMSKY_LOG_LEVEL`: all of them log their startup lines at INFO regardless. The host daemon started through `rimsky daemon start` ignores it too, and prints plain-text lines rather than the JSON records the core roles emit. `RIMSKY_METRICS_HOST` and the four metrics port variables are inert on every bundled service: none opens the port named, and none serves `/metrics` on any port it does open. Dashboards get the three core roles and nothing from the sensors, executors, producers, or the subscriber.

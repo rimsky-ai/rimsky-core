@@ -55,11 +55,15 @@ func dryRunPreviewFromBody(body []byte) *DryRunPreview {
 
 // @decision: auth-dry-run-request-flag
 func ReportDryRunPreview(err error) (int, bool) {
+	return reportDryRunPreviewAs(activeFormatFlag, err)
+}
+
+func reportDryRunPreviewAs(format Format, err error) (int, bool) {
 	var p *DryRunPreview
 	if !errors.As(err, &p) {
 		return 0, false
 	}
-	if activeFormatFlag == FormatJSON {
+	if format == FormatJSON {
 		_ = EmitJSON(os.Stdout, p.Body)
 		return 0, true
 	}

@@ -58,7 +58,7 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		}, tx); err != nil {
 			return err
 		}
-		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck,
 			Params: map[string]any{},
 		}, tx)
@@ -211,7 +211,7 @@ func TestScheduler_Tick_SweepsPureCascadeReadyButSkipsExecutorNodes(t *testing.T
 	pure := f.createNode(t, "", cascade.NodeStateStale)
 	execNode := f.createNode(t, "runner", cascade.NodeStateStale)
 
-	require.NoError(t, tick(ctx, f.schedConfig(), nil))
+	require.NoError(t, tick(ctx, f.schedConfig()))
 
 	var pureState string
 	pgdbtest.QueryRowForTest(ctx, t, f.driver,
@@ -232,72 +232,47 @@ func TestScheduler_Tick_SweepsPureCascadeReadyButSkipsExecutorNodes(t *testing.T
 	assert.False(t, claimedBy.Valid, "executor node run must remain unclaimed")
 }
 
-func TestScheduler_Tick_NilClockDoesNotPanicAndStillSweepsOrphanBlobs(t *testing.T) {
+func TestScheduler_Tick_NilClockDoesNotPanic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newSchedFixture(t)
-
-	backend := persistence.NewMemoryBackend()
-	handle, err := backend.Write(ctx, persistence.BlobKey{}, []byte("orphaned"))
-	require.NoError(t, err)
-
-	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		return f.persist.BlobOrphans().Insert(ctx, persistence.BlobOrphanRow{
-			Handle:     string(handle),
-			Backend:    backend.Name(),
-			OrphanedAt: time.Now().Add(-time.Hour),
-			ReapAfter:  time.Now().Add(-time.Minute),
-		}, tx)
-	})
 
 	cfg := f.schedConfig()
 	cfg.Clock = nil
-	cfg.BlobBackend = backend
-	cfg.BlobOrphans = f.persist.BlobOrphans()
 
 	require.NotPanics(t, func() {
-		require.NoError(t, tick(ctx, cfg, nil))
-	}, "tick must not panic when Config.Clock is nil, including in the orphan-blob sweep section")
-
-	_, err = backend.Read(ctx, handle)
-	assert.ErrorIs(t, err, persistence.ErrBlobNotFound,
-		"orphan-blob sweep must actually run (not merely avoid panicking) when Clock is nil")
+		require.NoError(t, tick(ctx, cfg))
+	}, "tick must not panic when Config.Clock is nil")
 }
 
-func TestScheduler_Start_DefaultsNilClock(t *testing.T) {
+func TestScheduler_Start_DefaultsNilClockSoTheClockGatedSweepStillRuns(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newSchedFixture(t)
 
-	backend := persistence.NewMemoryBackend()
-	handle, err := backend.Write(ctx, persistence.BlobKey{}, []byte("orphaned"))
-	require.NoError(t, err)
-
-	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		return f.persist.BlobOrphans().Insert(ctx, persistence.BlobOrphanRow{
-			Handle:     string(handle),
-			Backend:    backend.Name(),
-			OrphanedAt: time.Now().Add(-time.Hour),
-			ReapAfter:  time.Now().Add(-time.Minute),
-		}, tx)
-	})
+	frameID := insertRunningFrame(ctx, t, f, f.instance.ID, shared.UUID{})
+	var triggeringMessageID shared.UUID
+	pgdbtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT triggering_message_id FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{frameID}, &triggeringMessageID)
 
 	cfg := f.schedConfig()
 	cfg.Clock = nil
 	cfg.TickInterval = 10 * time.Millisecond
-	cfg.BlobBackend = backend
-	cfg.BlobOrphans = f.persist.BlobOrphans()
-	require.Nil(t, cfg.Clock, "test setup: Clock must start nil to prove Start() defaults it")
 
 	h := Start(cfg)
 	defer func() {
 		require.NoError(t, h.Shutdown(context.Background()))
 	}()
 
-	awaited.Until(t, "the scheduler's orphan sweep to delete the blob", func() bool {
-		_, err := backend.Read(ctx, handle)
-		return errors.Is(err, persistence.ErrBlobNotFound)
-	})
+	awaited.Until(t, "the triggering-message delivery the tick performs only when a clock is configured",
+		func() bool {
+			var deliveredAt sql.NullTime
+			pgdbtest.QueryRowForTest(ctx, t, f.driver,
+				`SELECT delivered_at FROM rimsky_messages WHERE id = $1`,
+				[]any{triggeringMessageID}, &deliveredAt)
+			return deliveredAt.Valid
+		})
 }
 
 func TestScheduler_OrphanedClaim_Released(t *testing.T) {
@@ -342,7 +317,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		nodeRunID,
 	)
 
-	require.NoError(t, tick(ctx, f.schedConfig(), nil))
+	require.NoError(t, tick(ctx, f.schedConfig()))
 
 	own, err := f.queue.GetClaimedBy(ctx, nodeRunID)
 	require.NoError(t, err)
@@ -376,7 +351,7 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- tick(ctx, f.schedConfig(), nil)
+		done <- tick(ctx, f.schedConfig())
 	}()
 
 	require.NoError(t, <-done)
@@ -416,7 +391,7 @@ func TestScheduler_AdvisoryLockErrorSkipsSweepPass(t *testing.T) {
 	locker := &erroringAdvisoryLocker{}
 	cfg.AdvisoryLocker = locker
 
-	require.NoError(t, tick(ctx, cfg, nil))
+	require.NoError(t, tick(ctx, cfg))
 	assert.EqualValues(t, 1, atomic.LoadInt32(&locker.calls),
 		"tick should attempt the lock exactly once")
 
@@ -494,7 +469,7 @@ func TestScheduler_BreakpointSweeps(t *testing.T) {
 		`UPDATE rimsky_breakpoint_hits SET hit_at = NOW() - interval '1 hour' WHERE id = $1`,
 		hitID)
 
-	require.NoError(t, tick(ctx, f.schedConfig(), nil))
+	require.NoError(t, tick(ctx, f.schedConfig()))
 
 	var (
 		gotExpired, gotAuto *persistence.BreakpointRow
@@ -598,7 +573,7 @@ func TestScheduler_OrphanedBreakpointHitReap_ExcludesNotifyOnlyAndLiveBlockedRun
 			`UPDATE rimsky_breakpoint_hits SET hit_at = NOW() - interval '1 hour' WHERE id = $1`, id)
 	}
 
-	require.NoError(t, tick(ctx, f.schedConfig(), nil))
+	require.NoError(t, tick(ctx, f.schedConfig()))
 
 	var gotNotifyOnly, gotLiveBlocked, gotOrphaned *persistence.BreakpointHitRow
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {

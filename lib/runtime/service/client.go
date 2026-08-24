@@ -1,0 +1,133 @@
+// Copyright © 2026 Fall Guy Consulting.
+// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
+
+package service
+
+import (
+	"context"
+	"fmt"
+
+	"google.golang.org/grpc"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
+)
+
+type Client struct {
+	name     string
+	conn     *grpc.ClientConn
+	rpc      genv1.ClaimProducerClient
+	caps     claimproducer.Capabilities
+	declared claimproducer.Capabilities
+}
+
+var _ locks.ClaimProducer = (*Client)(nil)
+
+func (c *Client) Name() string { return c.name }
+
+func (c *Client) Capabilities(_ context.Context) (claimproducer.Capabilities, error) {
+	return c.caps, nil
+}
+
+func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
+	resp, err := c.rpc.Open(ctx, bridge.OpenRequestFromSpec(claimID, spec))
+	if err != nil {
+		return claimproducer.OpenOutcome{}, NewProducerCallError(c.name, "Open", err)
+	}
+	out, err := bridge.OpenOutcomeFromProto(resp)
+	if err != nil {
+		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: %w", c.name, err)
+	}
+	out, err = c.caps.EnforceOpenWriteSemantics("remote producer", c.name, out)
+	if err != nil {
+		return claimproducer.OpenOutcome{}, err
+	}
+	if out.Available && len(c.declared.WriteSemanticsAllowed) > 0 {
+		rws := out.Result.RealizedWriteSemantics
+		if !c.declared.Contains(rws) {
+			return claimproducer.OpenOutcome{}, fmt.Errorf(
+				"remote producer %q: Open: realized_write_semantics %q is outside the operator-declared allowed set %v (advertised envelope %v)",
+				c.name, rws, c.declared.WriteSemanticsAllowed, c.caps.WriteSemanticsAllowed)
+		}
+	}
+	return out, nil
+}
+
+func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) (claimproducer.CommitResult, error) {
+	resp, err := c.rpc.Commit(ctx, bridge.CommitRequestFromArgs(claimID, scope, address, leaseToken))
+	if err != nil {
+		return claimproducer.CommitResult{}, NewProducerCallError(c.name, "Commit", err)
+	}
+	return bridge.CommitResultFromProto(resp), nil
+}
+
+func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
+	_, err := c.rpc.Abandon(ctx, bridge.AbandonRequestFromArgs(claimID, scope, address, leaseToken))
+	if err != nil {
+		return NewProducerCallError(c.name, "Abandon", err)
+	}
+	return nil
+}
+
+func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte, leaseToken string) error {
+	_, err := c.rpc.Release(ctx, bridge.ReleaseRequestFromArgs(claimID, scope, address, leaseToken))
+	if err != nil {
+		return NewProducerCallError(c.name, "Release", err)
+	}
+	return nil
+}
+
+func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+	if err := GateSplitScope(c.caps); err != nil {
+		return claimproducer.SplitClaimScopeResponse{}, err
+	}
+	return c.SplitScopeWire(ctx, req)
+}
+
+func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
+	if fallback, gated := GateScopesConflict(c.caps, a, b); gated {
+		return fallback, nil
+	}
+	return c.ScopesConflictWire(ctx, a, b)
+}
+
+func (c *Client) SplitScopeWire(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+	resp, err := c.rpc.SplitScope(ctx, bridge.SplitScopeRequestToProto(req))
+	if err != nil {
+		return claimproducer.SplitClaimScopeResponse{}, NewProducerCallError(c.name, "SplitScope", err)
+	}
+	return bridge.SplitScopeResponseFromProto(resp), nil
+}
+
+func (c *Client) ScopesConflictWire(ctx context.Context, a, b []byte) (bool, error) {
+	resp, err := c.rpc.ScopesConflict(ctx, &genv1.ClaimScopesConflictRequest{
+		ClaimScopeA: a,
+		ClaimScopeB: b,
+	})
+	if err != nil {
+		return false, NewProducerCallError(c.name, "ScopesConflict", err)
+	}
+	return resp.GetConflicts(), nil
+}
+
+func (c *Client) Close() {
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+}
+
+func (c *Client) ValidateCapabilities(declared claimproducer.Capabilities) error {
+	if len(declared.WriteSemanticsAllowed) == 0 {
+		return fmt.Errorf("remote producer %q: operator-declared write_semantics_allowed is empty", c.name)
+	}
+	for _, want := range declared.WriteSemanticsAllowed {
+		if !c.caps.Contains(want) {
+			return fmt.Errorf("remote producer %q: capabilities mismatch — operator declared %v, producer advertised %v",
+				c.name, declared.WriteSemanticsAllowed, c.caps.WriteSemanticsAllowed)
+		}
+	}
+	c.declared = declared
+	return nil
+}

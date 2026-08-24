@@ -43,10 +43,10 @@ The first takes the template's default; the second overrides it at create time.
 
 ```bash
 curl -sS -X POST "$BASE/v1/instances" -H 'content-type: application/json' \
-  -d '{"template":"'"$TPL"'","instance_key":"coalescing","target_agent":"my-agent"}'
+  -d '{"template":"'"$TPL"'","instance_key":"coalescing","target_daemon":"my-daemon"}'
 
 curl -sS -X POST "$BASE/v1/instances" -H 'content-type: application/json' \
-  -d '{"template":"'"$TPL"'","instance_key":"backlogged","target_agent":"my-agent",
+  -d '{"template":"'"$TPL"'","instance_key":"backlogged","target_daemon":"my-daemon",
        "message_queue_mode":"backlog"}'
 
 curl -sS "$BASE/v1/instances/$IID"
@@ -97,7 +97,7 @@ operator who needs every payload chooses `backlog`; a payload is not exempt.
 
 ```bash
 curl -sS -X POST "$BASE/v1/instances" -H 'content-type: application/json' \
-  -d '{"template":"'"$TPL"'","instance_key":"x","target_agent":"my-agent",
+  -d '{"template":"'"$TPL"'","instance_key":"x","target_daemon":"my-daemon",
        "message_queue_mode":"newest-only"}'
 # 400 — the error names backlog and coalesce
 ```

@@ -49,7 +49,7 @@ echo "frame-origin-audit-demo: template deployed: ${DEPLOY_OUT}"
 
 INSTANCE_KEY="frame-origin-audit-demo-$( date +%s )-$$"
 INSTANCE_OUT="$( curl -sS -X POST -H 'Content-Type: application/json' \
-    --data "{\"template\": \"${TEMPLATE_HASH}\", \"instance_key\": \"${INSTANCE_KEY}\", \"target_agent\": \"demo-agent\"}" \
+    --data "{\"template\": \"${TEMPLATE_HASH}\", \"instance_key\": \"${INSTANCE_KEY}\", \"target_daemon\": \"demo-daemon\"}" \
     "${RIMSKY_CONTROL_API_URL}/v1/instances" )"
 INSTANCE_ID="$( echo "${INSTANCE_OUT}" | jq -r '.instance_id' )"
 if [ -z "${INSTANCE_ID}" ] || [ "${INSTANCE_ID}" = "null" ]; then

@@ -90,7 +90,7 @@ func TestMcpTransportParity(t *testing.T) {
 	mcpOnlySessionID := mcpInitialize(t, mcpURL, mcpOnlyKey)
 	mcpNotifyInitialized(t, mcpURL, mcpOnlyKey, mcpOnlySessionID)
 	mcpOnlyTools := mcpToolsList(t, mcpURL, mcpOnlyKey, mcpOnlySessionID)
-	postureExempt := map[string]bool{"health_probe": true, "auth_whoami": true, "peer_auth_ca_root": true}
+	postureExempt := map[string]bool{"health_probe": true, "auth_whoami": true, "service_auth_ca_root": true}
 	seen := map[string]bool{}
 	for _, tool := range mcpOnlyTools {
 		if !postureExempt[tool.Name] {

@@ -385,31 +385,6 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 	ti := (*tablesImpl)(s)
 	var affected int
 	err := ti.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		scratchHandles, err := queuePrunedBlobHandles(ctx, ti, tx, `
-            SELECT scratch_handle, scratch_handle_backend
-              FROM rimsky_node_runs
-             WHERE scratch_handle IS NOT NULL
-               AND frame_id IN (`+prunedFrameIDsSQL+`)
-        `, countCap, cutoffArg)
-		if err != nil {
-			return fmt.Errorf("select blob-backed scratch handles: %w", err)
-		}
-		attrHandles, err := queuePrunedBlobHandles(ctx, ti, tx, `
-            SELECT a.value_handle, a.value_handle_backend
-              FROM rimsky_node_attributes a
-              JOIN rimsky_node_runs r ON r.id = a.node_run_id
-             WHERE a.value_handle IS NOT NULL
-               AND r.frame_id IN (`+prunedFrameIDsSQL+`)
-        `, countCap, cutoffArg)
-		if err != nil {
-			return fmt.Errorf("select blob-backed attribute handles: %w", err)
-		}
-		now := time.Now().UTC()
-		for _, h := range append(scratchHandles, attrHandles...) {
-			if err := persistence.QueueBlobOrphan(ctx, ti.BlobOrphans(), h.handle, h.backend, now, ti.BlobRetention(), tx); err != nil {
-				return fmt.Errorf("queue blob orphan %q: %w", h.handle, err)
-			}
-		}
 		rootScopeRows, err := ti.q(tx).Query(ctx, `
             SELECT root_run_scope_id
               FROM rimsky_frames
@@ -455,38 +430,6 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 		return 0, fmt.Errorf("frames.PruneTraceForRetention: %w", err)
 	}
 	return affected, nil
-}
-
-type prunedBlobHandle struct {
-	handle  string
-	backend string
-}
-
-func queuePrunedBlobHandles(
-	ctx context.Context, ti *tablesImpl, tx persistence.Tx, sqlText string, args ...any,
-) ([]prunedBlobHandle, error) {
-	rows, err := ti.q(tx).Query(ctx, sqlText, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []prunedBlobHandle
-	for rows.Next() {
-		var handle string
-		var backend *string
-		if err := rows.Scan(&handle, &backend); err != nil {
-			return nil, fmt.Errorf("scan blob handle: %w", err)
-		}
-		b := ""
-		if backend != nil {
-			b = *backend
-		}
-		out = append(out, prunedBlobHandle{handle: handle, backend: b})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate blob handles: %w", err)
-	}
-	return out, nil
 }
 
 func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (int, error) {

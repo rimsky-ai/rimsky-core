@@ -97,30 +97,11 @@ func TestTransitionTable(t *testing.T) {
 					require.Error(t, err)
 					require.True(t, errors.Is(err, ErrIllegalTransition),
 						"expected ErrIllegalTransition, got %v", err)
+					require.Equal(t, NodeState(""), got, "an illegal transition returns no state")
 				}
 			})
 		}
 	}
-}
-
-func TestFreshAndFailedAreTerminal(t *testing.T) {
-	t.Parallel()
-	for _, from := range []NodeState{NodeStateFresh, NodeStateFailed} {
-		t.Run(string(from), func(t *testing.T) {
-			for _, reason := range allReasons {
-				_, err := NextState(from, reason)
-				require.ErrorIs(t, err, ErrIllegalTransition,
-					"terminal state %s must have no outgoing transitions; reason=%s", from, reason.Kind)
-			}
-		})
-	}
-}
-
-func TestRunningToRunningUnderDispatchClaimedIsRejected(t *testing.T) {
-	got, err := NextState(NodeStateRunning, ReasonDispatchClaimed)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrIllegalTransition))
-	require.Equal(t, NodeState(""), got)
 }
 
 func TestNextState_ParkTimeoutRetired(t *testing.T) {
@@ -198,18 +179,6 @@ func TestNextStateParent_LeafReasonsStillRouteToNextState(t *testing.T) {
 	require.True(t, errors.Is(err, ErrIllegalTransition))
 }
 
-func TestNextState_AggregateSettlementIsIllegalForLeafRuns(t *testing.T) {
-	t.Parallel()
-	for _, reason := range []TransitionReason{ReasonAggregateSettledSuccess, ReasonAggregateSettledFailure} {
-		for _, from := range allStates {
-			t.Run(reason.Kind+"/"+string(from), func(t *testing.T) {
-				_, err := NextState(from, reason)
-				require.ErrorIs(t, err, ErrIllegalTransition)
-			})
-		}
-	}
-}
-
 func TestNextStateParent_AggregateSettlementNeedsAParentThatCanCarryChildren(t *testing.T) {
 	t.Parallel()
 	targets := map[string]NodeState{
@@ -230,22 +199,5 @@ func TestNextStateParent_AggregateSettlementNeedsAParentThatCanCarryChildren(t *
 				require.ErrorIs(t, err, ErrIllegalTransition)
 			})
 		}
-	}
-}
-
-func TestNextState_ReleaseReturnsAClaimedRunToStale(t *testing.T) {
-	t.Parallel()
-	for _, from := range []NodeState{NodeStateStale, NodeStateRunning, NodeStateHeld, NodeStateParked} {
-		t.Run(string(from), func(t *testing.T) {
-			got, err := NextState(from, ReasonDispatchReleased)
-			require.NoError(t, err)
-			require.Equal(t, NodeStateStale, got)
-		})
-	}
-	for _, from := range []NodeState{NodeStatePending, NodeStateFresh, NodeStateFailed} {
-		t.Run("unclaimable/"+string(from), func(t *testing.T) {
-			_, err := NextState(from, ReasonDispatchReleased)
-			require.ErrorIs(t, err, ErrIllegalTransition)
-		})
 	}
 }

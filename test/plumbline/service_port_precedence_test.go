@@ -38,7 +38,7 @@ func serviceTreeSources(t *testing.T, root string) string {
 }
 
 // @concept: service
-// @concept: host-agent
+// @concept: host-daemon
 func TestEveryListeningBundledServiceResolvesItsPortThroughTheSharedPrecedence(t *testing.T) {
 	servicesRoot := filepath.Join(findRepoRoot(t), "lib", "services")
 
@@ -64,10 +64,10 @@ func TestEveryListeningBundledServiceResolvesItsPortThroughTheSharedPrecedence(t
 				continue
 			}
 			listening = append(listening, name)
-			if !strings.Contains(src, "agentport.") {
-				t.Errorf("%s serves a port but never calls agentport: every bundled service binary that listens "+
-					"resolves its serving port through the shared precedence — the agent-assigned port variable "+
-					"first, then its own port variable, then the built-in default — so the host agent can late-bind it",
+			if !strings.Contains(src, "daemonport.") {
+				t.Errorf("%s serves a port but never calls daemonport: every bundled service binary that listens "+
+					"resolves its serving port through the shared precedence — the daemon-assigned port variable "+
+					"first, then its own port variable, then the built-in default — so the host daemon can late-bind it",
 					name)
 			}
 		}

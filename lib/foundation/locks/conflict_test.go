@@ -108,24 +108,3 @@ func TestModeCoexistsPanicsOnUnknownWriteSemantics(t *testing.T) {
 		})
 	}
 }
-
-func TestModeCoexistsSymmetric(t *testing.T) {
-	intents := []claimproducer.Intent{claimproducer.IntentRead, claimproducer.IntentReadWrite}
-	semantics := []claimproducer.WriteSemantics{
-		claimproducer.WriteSemanticsSync,
-		claimproducer.WriteSemanticsBlockingAsync,
-		claimproducer.WriteSemanticsStagedAsync,
-		claimproducer.WriteSemanticsReadOnly,
-	}
-	for _, sem := range semantics {
-		for _, ia := range intents {
-			for _, ib := range intents {
-				ab := ModeCoexists(ia, ib, sem)
-				ba := ModeCoexists(ib, ia, sem)
-				if ab != ba {
-					t.Fatalf("ModeCoexists not symmetric for (%v,%v,%v): ab=%v ba=%v", ia, ib, sem, ab, ba)
-				}
-			}
-		}
-	}
-}

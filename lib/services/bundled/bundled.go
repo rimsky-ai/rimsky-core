@@ -153,7 +153,7 @@ func registerExecutors(execReg ExecutorRegistry, aliases ExecutorAliasSink, disc
 	for _, e := range executorEntries() {
 		h, err := e.construct(logger)
 		if errors.Is(err, errExecutorSkipped) {
-			logger.Info("bundled executor skipped: not configured", "executor", e.name, "reason", err.Error())
+			logger.Info("BUNDLED.EXECUTOR.SKIPPED", "detail", "the executor is not configured", "executor", e.name, "reason", err.Error())
 			continue
 		}
 		if err != nil {
@@ -166,7 +166,7 @@ func registerExecutors(execReg ExecutorRegistry, aliases ExecutorAliasSink, disc
 			return fmt.Errorf("bundled.RegisterAll: register executor alias %q: %w", e.name, err)
 		}
 		discovery.AdvertiseExecutor(e.name, e.schema, e.tags, e.errorClasses)
-		logger.Info("bundled executor registered in-process", "executor", e.name, "inproc_url", e.inprocURL)
+		logger.Info("BUNDLED.EXECUTOR.REGISTERED", "executor", e.name, "inproc_url", e.inprocURL)
 	}
 	return nil
 }
@@ -177,7 +177,7 @@ func registerClaimProducers(ctx context.Context, cpReg ClaimProducerRegistry, di
 		return fmt.Errorf("bundled.RegisterAll: construct claim producer %q: %w", ProducerNameFilesystem, err)
 	}
 	if !fsOpts.Configured {
-		logger.Info("bundled claim producer skipped: not configured", "producer", ProducerNameFilesystem, "config_env", fsserver.ConfigEnv)
+		logger.Info("BUNDLED.CLAIMPRODUCER.SKIPPED", "detail", "the producer is not configured", "producer", ProducerNameFilesystem, "config_env", fsserver.ConfigEnv)
 	} else {
 		for selector, pp := range fsOpts.PickPolicies {
 			if pp.SyncStrategy == "explicit" {
@@ -202,7 +202,7 @@ func registerClaimProducers(ctx context.Context, cpReg ClaimProducerRegistry, di
 		return fmt.Errorf("bundled.RegisterAll: construct claim producer %q: %w", ProducerNamePostgres, err)
 	}
 	if !pgOpts.Configured {
-		logger.Info("bundled claim producer skipped: not configured", "producer", ProducerNamePostgres, "config_env", pgserver.ConfigEnv)
+		logger.Info("BUNDLED.CLAIMPRODUCER.SKIPPED", "detail", "the producer is not configured", "producer", ProducerNamePostgres, "config_env", pgserver.ConfigEnv)
 		return nil
 	}
 	srv, err := pgserver.New(ctx, pgOpts.ServerConfig())
@@ -226,6 +226,6 @@ func registerClaimProducer(ctx context.Context, cpReg ClaimProducerRegistry, dis
 		return fmt.Errorf("bundled.RegisterAll: register claim producer %q: %w", name, err)
 	}
 	discovery.AdvertiseClaimProducer(name, caps)
-	logger.Info("bundled claim producer registered in-process", "producer", name)
+	logger.Info("BUNDLED.CLAIMPRODUCER.REGISTERED", "producer", name)
 	return nil
 }

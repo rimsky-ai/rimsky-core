@@ -108,19 +108,19 @@ func TestWorkCompletedSingletonAcrossRetryIterations(t *testing.T) {
 func TestWorkCompletedSingletonAcrossLivenessRecovery(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true, NoScheduler: true})
-	h.Stub.WhenType("agent").
+	h.Stub.WhenType("daemon").
 		AwaitAsyncCallback("ack-liveness-recovery", 600000).
 		Then().Success(map[string]any{"ok": true}, true, "recovered")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "work-completed-liveness-recovery", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "agent", Executor: "stub"}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "daemon", Executor: "stub"}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-work-completed-liveness-recovery", map[string]any{})
 
-	n := h.FindNode(iid, "agent")
+	n := h.FindNode(iid, "daemon")
 	require.NotNil(t, n)
 
 	pool := executor.NewClientPool()

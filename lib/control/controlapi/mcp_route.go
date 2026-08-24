@@ -52,16 +52,16 @@ func builtinSchemas() map[string][]byte {
 	obj := []byte(`{"type":"object","additionalProperties":true}`)
 	empty := []byte(`{"type":"object","additionalProperties":false}`)
 	return map[string][]byte{
-		"health_probe":       empty,
-		"auth_whoami":        empty,
-		"peer_auth_ca_root":  empty,
-		"instance_list":      obj,
-		"instance_get":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
-		"instance_create":    []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"}},"required":["template"]}`),
-		"instance_terminate": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
-		"instance_pause":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
-		"instance_resume":    []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
-		"instance_kill":      []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"reason":{"type":"string","description":"optional reason recorded on the teardown audit event"}},"required":["idOrKey"]}`),
+		"health_probe":         empty,
+		"auth_whoami":          empty,
+		"service_auth_ca_root": empty,
+		"instance_list":        obj,
+		"instance_get":         []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"instance_create":      []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"}},"required":["template"]}`),
+		"instance_terminate":   []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"instance_pause":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"instance_resume":      []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"instance_kill":        []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"reason":{"type":"string","description":"optional reason recorded on the teardown audit event"}},"required":["idOrKey"]}`),
 		// @decision: debug-channel-gate-paused-or-breakpoint
 		"instance_debug_override": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"action":{"type":"string","enum":["invalidate_node","set_attribute"]},"node_type":{"type":"string"},"attribute_key":{"type":"string"},"attribute_value":{}},"required":["id","action","node_type"]}`),
 
@@ -98,7 +98,7 @@ func builtinSchemas() map[string][]byte {
 		// @decision: mcp-http-parity
 		"observability_get": []byte(`{"type":"object","properties":{"path_suffix":{"type":"string","description":"path below /v1/observability/, e.g. \"executors\" or \"executors/claude-agent/trace/<dispatch_id>\""}},"required":["path_suffix"]}`),
 
-		// @concept: peer-auth
+		// @concept: service-auth
 		"service_enroll": []byte(`{"type":"object","properties":{"label":{"type":"string","description":"optional label recorded on the enrollment audit line"}}}`),
 
 		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string","description":"ignored; the server derives sender from the caller's identity or publisher_subscription_id"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Required: the server mints no key on the caller's behalf"}},"required":["id","type","idempotency_key"]}`),

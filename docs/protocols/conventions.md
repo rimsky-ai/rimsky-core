@@ -18,7 +18,7 @@ Rimsky ships ten `.proto` files declaring nine gRPC services, all in the protobu
 | `events.proto` | none — event-log payload messages |
 | `executor.proto` | `Executor` |
 | `executor_observability.proto` | `ExecutorObservability` |
-| `host_agent.proto` | `HostAgent` |
+| `host_daemon.proto` | `HostDaemon` |
 | `lifecycle.proto` | `LifecycleSubscriber` |
 | `publisher.proto` | `Publisher` |
 | `validation.proto` | `Validation` |
@@ -39,7 +39,7 @@ The packages a service author imports from the protocols module:
 | `claimproducer` | The `ClaimProducer` Go interface, `ClaimSpec`, `Capabilities`, write-semantics values |
 | `lifecycle` | Request types for the lifecycle-subscriber callbacks |
 | `serverkit` | `Listen`, `RunGRPC`, `GracefulStop`, and the HTTP+JSON bridge mounts |
-| `peerauth` | Enrollment, certificate renewal, and TLS-configured gRPC and HTTP servers |
+| `serviceauth` | Enrollment, certificate renewal, and TLS-configured gRPC and HTTP servers |
 | `enroll` | The raw `POST /v1/enroll` client and CA-pool helpers |
 | `publisherkit` | Retrying message push into the control API |
 | `config` | Strict YAML loading with environment expansion |
@@ -52,7 +52,7 @@ The packages a service author imports from the protocols module:
 
 ## The capabilities handshake
 
-Five of the nine services declare a `Capabilities` RPC: `ClaimProducer`, `ClaimProducerObservability`, `DataProcessing`, `ExecutorObservability`, and `Publisher`. Four do not: `Executor`, `Validation`, `LifecycleSubscriber`, and `HostAgent`. A client that opens every connection with a `Capabilities` call gets `Unimplemented` from those four. Call `Capabilities` only where the protocol declares it.
+Five of the nine services declare a `Capabilities` RPC: `ClaimProducer`, `ClaimProducerObservability`, `DataProcessing`, `ExecutorObservability`, and `Publisher`. Four do not: `Executor`, `Validation`, `LifecycleSubscriber`, and `HostDaemon`. A client that opens every connection with a `Capabilities` call gets `Unimplemented` from those four. Call `Capabilities` only where the protocol declares it.
 
 An executor advertises itself through `ExecutorObservability.Capabilities`, not through `Executor`. That is why an executor with anything to declare — an attributes schema, tags, error classes — implements the observability sibling.
 
@@ -66,7 +66,7 @@ An operator names your service in the deployment's configuration under the block
 | --- | --- |
 | `<block>.<name>.endpoint` | Where rimsky dials you |
 | `<block>.<name>.observability_endpoint` | Where rimsky performs the capabilities handshake |
-| `<block>.<name>.protocols` | The mix-in protocols this peer also serves |
+| `<block>.<name>.protocols` | The mix-in protocols this service also serves |
 | `<block>.<name>.tls` | `off` or `required` |
 | `executors.<name>.transport` | `grpc` or `http` — executors only |
 | `claim_producers.<name>.write_semantics_allowed` | The envelope the producer may realize |
@@ -75,7 +75,7 @@ An operator names your service in the deployment's configuration under the block
 
 `endpoint` must use the `grpc://` scheme for every block except an executor entry declaring `transport: http`. A claim-producer endpoint pointed at an HTTP bridge stops the deployment with `endpoint scheme must be grpc:// (got http://)`.
 
-`tls: required` makes rimsky dial you with verified TLS. When the deployment turns on mutual TLS, every peer entry defaults to `required` without the operator writing the key. A peer that cannot present credentials against a `required` entry is reported unreachable, and nodes dispatched at it fail with a dial failure. Where the peer is a claim producer, the deployment refuses to start at all rather than run unauthenticated.
+`tls: required` makes rimsky dial you with verified TLS. When the deployment turns on mutual TLS, every service entry defaults to `required` without the operator writing the key. A service that cannot present credentials against a `required` entry is reported unreachable, and nodes dispatched at it fail with a dial failure. Where the service is a claim producer, the deployment refuses to start at all rather than run unauthenticated.
 
 ## The HTTP+JSON bridge
 
@@ -91,13 +91,13 @@ Rimsky is a gRPC platform. One protocol is reachable over HTTP+JSON end to end, 
 
 Both observability capabilities messages carry an `http_bridge_url` field. Rimsky records what you put there and republishes it on its observability read routes. It never dials the URL.
 
-There is no HTTP+JSON path for `Validation`, `DataProcessing`, `Publisher`, or `HostAgent`. Implement those over gRPC.
+There is no HTTP+JSON path for `Validation`, `DataProcessing`, `Publisher`, or `HostDaemon`. Implement those over gRPC.
 
 ## Mutual-TLS enrollment
 
-A deployment runs mutual TLS when its configuration sets `peer_auth: mtls`. The default is `none`, and a deployment left on the default costs a service author nothing: no certificates, no trust store, no configuration.
+A deployment runs mutual TLS when its configuration sets `service_auth: mtls`. The default is `none`, and a deployment left on the default costs a service author nothing: no certificates, no trust store, no configuration.
 
-Under `peer_auth: mtls` your service obtains its own certificate at startup by exchanging an api-key for one. The exchange is the whole credential story — the operator manages one key per service and writes no certificate by hand.
+Under `service_auth: mtls` your service obtains its own certificate at startup by exchanging an api-key for one. The exchange is the whole credential story — the operator manages one key per service and writes no certificate by hand.
 
 ### The two routes
 
@@ -105,7 +105,7 @@ Under `peer_auth: mtls` your service obtains its own certificate at startup by e
 
 `POST /v1/enroll` exchanges your api-key for a leaf. Send `Authorization: Bearer <api-key>` and an optional JSON body `{"label": "<your-service-name>"}`. The response is JSON with `cert_pem`, `key_pem`, `ca_root_pem`, and `not_after`. The certificate's subject is the id of the key you enrolled with, and it lives 24 hours.
 
-Both routes are mounted only when the deployment has a CA. On a deployment left at the default, both answer `404 page not found` — the router has no such path, rather than a handler refusing you. Under `peer_auth: mtls`, `POST /v1/enroll` unauthenticated answers `403` with `enrollment requires an authenticated api-key principal`.
+Both routes are mounted only when the deployment has a CA. On a deployment left at the default, both answer `404 page not found` — the router has no such path, rather than a handler refusing you. Under `service_auth: mtls`, `POST /v1/enroll` unauthenticated answers `403` with `enrollment requires an authenticated api-key principal`.
 
 The key needs exactly one grant: `service:enroll`. Revoking that key ends the service's access — the enroll route refuses it, and a service restarted on it exits rather than serving without credentials.
 
@@ -113,7 +113,7 @@ The key needs exactly one grant: `service:enroll`. Revoking that key ends the se
 
 | Variable | Meaning |
 | --- | --- |
-| `RIMSKY_PEER_AUTH` | `none` (default) or `mtls`. Any other value is a startup error. |
+| `RIMSKY_SERVICE_AUTH` | `none` (default) or `mtls`. Any other value is a startup error. |
 | `RIMSKY_CONTROL_API_URL` | Base URL of the control API. Required under `mtls`. |
 | `RIMSKY_API_KEY` | The api-key plaintext you enroll with. Required under `mtls`. |
 | `RIMSKY_CONTROL_API_CA` | Path to the PEM verifying the control API's certificate. Required when the control-API URL is `https://`. |
@@ -130,7 +130,7 @@ Your service re-enrolls before its certificate expires. The renewal deadline sit
 ### Using it from Go
 
 ```go
-identity, err := peerauth.LoadFromEnv(ctx, "my-service")
+identity, err := serviceauth.LoadFromEnv(ctx, "my-service")
 if err != nil {
     return err                       // fail closed: no credentials, no service
 }
@@ -143,11 +143,11 @@ lis, err := serverkit.Listen(host, port)
 serverkit.RunGRPC(ctx, srv, lis, "my-service")
 ```
 
-`identity.GRPCServer()` requires and verifies a client certificate from the deployment CA on every inbound call, and returns a plain gRPC server when peer authentication is off. `identity.OutboundHTTPClient(timeout)` presents your leaf on outbound calls and pins the deployment root; it returns `nil` when peer authentication is off, so fall back to your own client. `identity.ServerOnlyTLSConfig()` serves your certificate without demanding one back, for a listener facing clients outside the deployment.
+`identity.GRPCServer()` requires and verifies a client certificate from the deployment CA on every inbound call, and returns a plain gRPC server when service authentication is off. `identity.OutboundHTTPClient(timeout)` presents your leaf on outbound calls and pins the deployment root; it returns `nil` when service authentication is off, so fall back to your own client. `identity.ServerOnlyTLSConfig()` serves your certificate without demanding one back, for a listener facing clients outside the deployment.
 
 ## Ports
 
-A service reads its own port from its own environment variable. One variable overrides them all: when `RIMSKY_AGENT_PORT` is set, bind there. The host agent sets it when it spawns your binary as a late-bound service, and there is no handshake back — a binary that binds elsewhere fails the readiness poll. A malformed `RIMSKY_AGENT_PORT` is a startup error rather than a silent fallback.
+A service reads its own port from its own environment variable. One variable overrides them all: when `RIMSKY_DAEMON_PORT` is set, bind there. The host daemon sets it when it spawns your binary as a late-bound service, and there is no handshake back — a binary that binds elsewhere fails the readiness poll. A malformed `RIMSKY_DAEMON_PORT` is a startup error rather than a silent fallback.
 
 ## Error classes
 

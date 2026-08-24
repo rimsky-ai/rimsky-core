@@ -64,22 +64,22 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		t.Logf("instance %d=%s reached commit in producer ledger", i, instanceID)
 	}
 
-	peerEntry := pollGetClaimProducerPeer(t, ep, "docs")
+	serviceEntry := pollGetClaimProducerService(t, ep, "docs")
 
-	if peerEntry.HTTPBridgeURL == "" {
+	if serviceEntry.HTTPBridgeURL == "" {
 		t.Fatalf("dashboard /v1/observability/claim-producers/docs returned empty http_bridge_url; "+
 			"the rimsky dashboard surface must expose the producer's bridge URL so the "+
-			"operator's browser can reach it. Full peer: %+v", peerEntry)
+			"operator's browser can reach it. Full service: %+v", serviceEntry)
 	}
-	if peerEntry.Reachability != "reachable" {
-		t.Fatalf("dashboard reports store reachability=%q, want reachable; full peer=%+v",
-			peerEntry.Reachability, peerEntry)
+	if serviceEntry.Reachability != "reachable" {
+		t.Fatalf("dashboard reports store reachability=%q, want reachable; full service=%+v",
+			serviceEntry.Reachability, serviceEntry)
 	}
-	if peerEntry.Capabilities == nil {
+	if serviceEntry.Capabilities == nil {
 		t.Fatalf("dashboard returned nil capabilities for the store; the handshake "+
-			"didn't probe it (or didn't cache the result). Full peer: %+v", peerEntry)
+			"didn't probe it (or didn't cache the result). Full service: %+v", serviceEntry)
 	}
-	caps := peerEntry.Capabilities
+	caps := serviceEntry.Capabilities
 	if !caps.SupportsClaimGet || !caps.SupportsClaimStream || !caps.SupportsListClaims {
 		t.Fatalf("dashboard caps want SupportsClaimGet/Stream/ListClaims = true; got %+v", caps)
 	}
@@ -228,33 +228,33 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 	}
 }
 
-type peerJSON struct {
-	Name                  string            `json:"name"`
-	Endpoint              string            `json:"endpoint"`
-	ObservabilityEndpoint string            `json:"observability_endpoint"`
-	HTTPBridgeURL         string            `json:"http_bridge_url"`
-	Reachability          string            `json:"reachability_status"`
-	Capabilities          *peerCapabilities `json:"observability_capabilities,omitempty"`
-	LastError             string            `json:"last_error,omitempty"`
+type serviceJSON struct {
+	Name                  string               `json:"name"`
+	Endpoint              string               `json:"endpoint"`
+	ObservabilityEndpoint string               `json:"observability_endpoint"`
+	HTTPBridgeURL         string               `json:"http_bridge_url"`
+	Reachability          string               `json:"reachability_status"`
+	Capabilities          *serviceCapabilities `json:"observability_capabilities,omitempty"`
+	LastError             string               `json:"last_error,omitempty"`
 }
 
-type peerCapabilities struct {
-	SupportsClaimGet    bool             `json:"supports_claim_get,omitempty"`
-	SupportsClaimStream bool             `json:"supports_claim_stream,omitempty"`
-	SupportsListClaims  bool             `json:"supports_list_claims,omitempty"`
-	AdminViews          []peerAdminView  `json:"admin_views,omitempty"`
-	CustomUI            *json.RawMessage `json:"custom_ui,omitempty"`
+type serviceCapabilities struct {
+	SupportsClaimGet    bool               `json:"supports_claim_get,omitempty"`
+	SupportsClaimStream bool               `json:"supports_claim_stream,omitempty"`
+	SupportsListClaims  bool               `json:"supports_list_claims,omitempty"`
+	AdminViews          []serviceAdminView `json:"admin_views,omitempty"`
+	CustomUI            *json.RawMessage   `json:"custom_ui,omitempty"`
 }
 
-type peerAdminView struct {
+type serviceAdminView struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
 }
 
-func pollGetClaimProducerPeer(t *testing.T, ep harness.RimskyEndpoint, name string) peerJSON {
+func pollGetClaimProducerService(t *testing.T, ep harness.RimskyEndpoint, name string) serviceJSON {
 	t.Helper()
-	var peer peerJSON
+	var service serviceJSON
 	awaited.Until(t, fmt.Sprintf("the dashboard at /v1/observability/claim-producers/%s to converge to "+
 		"reachable with an http_bridge_url and capabilities", name), func() bool {
 		status, raw := ep.GetJSON(t, "/v1/observability/claim-producers/"+name, "")
@@ -262,15 +262,15 @@ func pollGetClaimProducerPeer(t *testing.T, ep harness.RimskyEndpoint, name stri
 			return false
 		}
 		var body struct {
-			Peer peerJSON `json:"peer"`
+			Service serviceJSON `json:"service"`
 		}
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Fatalf("decode /v1/observability/claim-producers/%s: %v; raw=%s", name, err, string(raw))
 		}
-		peer = body.Peer
-		return peer.Reachability == "reachable" && peer.HTTPBridgeURL != "" && peer.Capabilities != nil
+		service = body.Service
+		return service.Reachability == "reachable" && service.HTTPBridgeURL != "" && service.Capabilities != nil
 	})
-	return peer
+	return service
 }
 
 type claimSummary struct {

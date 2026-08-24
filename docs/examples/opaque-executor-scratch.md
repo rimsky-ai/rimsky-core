@@ -102,7 +102,7 @@ curl -sS "$BASE/v1/observability/events?instance_id=$IID&limit=500"
 
 No record rimsky authored carries the byte strings in base64, hex or raw form.
 The park's own record notes the attachment's size and nothing more —
-`scratch_size` and `scratch_spilled` — not its content.
+`scratch_size` — not its content.
 
 An executor author treats the attachment as private in-flight state: rimsky
 moves it from one dispatch of a node-run to the next without reading it,

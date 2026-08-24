@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
 
 func TestTerminateInstance_NoReasonEmptyBody(t *testing.T) {
@@ -437,66 +439,50 @@ func TestDeleteInstance_DryRunUsesDeleteIntent(t *testing.T) {
 		"DELETE dry-run must not reuse the terminate handler's would_have_terminated intent: %v", out)
 }
 
-func TestDeleteInstance_PurgesRunScopeLifecycleIdempotencyRows(t *testing.T) {
+// @concept: lifecycle-subscriber
+// @decision: lifecycle-subscriber-at-least-once-delivery
+func TestDeleteInstance_LeavesAnUndeliveredLifecycleRowInTheOutbox(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 	ctx := context.Background()
 
-	tplID := registerAndDeployBody(t, h, templateWithClaimProducersAndLocks("del-runscope-purge-"+uuid.NewString()))
-	ck := "ck-" + uuid.NewString()
+	cp, ok := h.producers.Get("content")
+	require.True(t, ok)
+	contentFake, ok := cp.(*storetest.Fake)
+	require.True(t, ok)
+	contentFake.ErrorFunc = func(string, claimproducer.ClaimID) error {
+		return errors.New("content is down")
+	}
+
+	tplID := registerAndDeployBody(t, h, templateWithClaimProducersAndLocks("del-outbox-keep-"+uuid.NewString()))
 	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
-		"instance_key": ck,
+		"instance_key": "ck-" + uuid.NewString(),
 	})
 	require.Equal(t, http.StatusCreated, status, out)
-	instID, err := uuid.Parse(out["instance_id"].(string))
-	require.NoError(t, err)
+	instID := out["instance_id"].(string)
 
-	rootScopeID := uuid.New()
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.persist.RunScopes().Create(ctx, persistence.RunScopeRow{
-			ID: rootScopeID, GraphName: "main", InstanceID: instID,
-		}, tx); err != nil {
-			return err
-		}
-		msgID := uuid.New()
-		if err := h.persist.Messages().Insert(ctx, persistence.EnqueueMessageRequest{
-			ID:         msgID,
-			InstanceID: instID,
-			Type:       "test/seed",
-			Sender:     "test",
-			SenderKind: "operator",
-		}, tx); err != nil {
-			return err
-		}
-		_, err := h.persist.Frames().InsertRunningFrame(ctx, instID, msgID, rootScopeID, tx)
-		return err
-	}))
-
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.Instances().MarkTerminated(ctx, instID, tx)
-	}))
-
-	status, out = h.httpJSON(t, "DELETE", "/v1/instances/"+instID.String(), nil)
+	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/terminate", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	status, out = h.httpJSON(t, "DELETE", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 
+	var rows []persistence.LifecycleOutboxRow
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := h.persist.LifecycleIdempotency().Get(ctx,
-			"topics-ring", persistence.LifecycleIdempotencyScopeRunScope, rootScopeID.String(), tx)
-		require.NoError(t, err)
-		require.Nil(t, row,
-			"run-scope-scoped lifecycle idempotency row must be purged once the owning instance is hard-deleted, "+
-				"otherwise it leaks permanently since the run_scope row itself is cascade-deleted with the instance")
-		return nil
+		r, err := h.persist.LifecycleOutbox().ListPendingForScope(ctx,
+			persistence.LifecycleScopeInstance, instID, tx)
+		rows = r
+		return err
 	}))
+	require.NotEmpty(t, rows,
+		"deleting the instance must leave the deliveries the subscriber has not taken, so the drain still owes them")
 }
 
 func TestCreateInstance_IdempotentRetryFansOutExistingParamsNotRequestParams(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
-	ctx := context.Background()
 
 	tplID := registerAndDeployBody(t, h, templateWithClaimProducersAndLocks("create-idem-params-"+uuid.NewString()))
 	ck := "ck-" + uuid.NewString()
@@ -513,10 +499,6 @@ func TestCreateInstance_IdempotentRetryFansOutExistingParamsNotRequestParams(t *
 	require.True(t, ok)
 	contentFake, ok := cp.(*storetest.Fake)
 	require.True(t, ok)
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.LifecycleIdempotency().Delete(ctx,
-			"content", persistence.LifecycleIdempotencyScopeInstance, instID, tx)
-	}))
 	contentFake.Reset()
 
 	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
@@ -535,10 +517,9 @@ func TestCreateInstance_IdempotentRetryFansOutExistingParamsNotRequestParams(t *
 		}
 	}
 	require.NotNil(t, createdCall,
-		"the peer with a missing lifecycle row must still receive an OnInstanceCreated re-dispatch on idempotent retry")
+		"an idempotent retry re-stages OnInstanceCreated, so a subscriber that missed the first one still hears it")
 	require.JSONEq(t, `{"region":"us-east"}`, string(createdCall.Params),
-		"the re-dispatch to a peer recovering from a missing lifecycle row must carry the EXISTING instance's "+
-			"stored params, not the retry request's params")
+		"the re-dispatch must carry the EXISTING instance's stored params, not the retry request's params")
 }
 
 func TestCreateInstance_NodeListingIncludesMaterializedReceiversButNodeCountDoesNot(t *testing.T) {

@@ -54,7 +54,7 @@ type ObservabilityCapabilities struct {
 	DeclaredErrorClasses []string `json:"declared_error_classes,omitempty"`
 }
 
-type PeerEntry struct {
+type ServiceEntry struct {
 	Name                  string                     `json:"name"`
 	Endpoint              string                     `json:"endpoint"`
 	ObservabilityEndpoint string                     `json:"observability_endpoint"`
@@ -70,59 +70,59 @@ type PeerEntry struct {
 // @concept: discovery-cache
 type Discovery struct {
 	mu             sync.RWMutex
-	executors      map[string]PeerEntry
-	claimProducers map[string]PeerEntry
+	executors      map[string]ServiceEntry
+	claimProducers map[string]ServiceEntry
 	prober         Prober
 }
 
 func NewDiscovery(prober Prober) *Discovery {
 	return &Discovery{
-		executors:      map[string]PeerEntry{},
-		claimProducers: map[string]PeerEntry{},
+		executors:      map[string]ServiceEntry{},
+		claimProducers: map[string]ServiceEntry{},
 		prober:         prober,
 	}
 }
 
-func (d *Discovery) SetExecutor(entry PeerEntry) {
+func (d *Discovery) SetExecutor(entry ServiceEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.executors[entry.Name] = entry
 }
 
-func (d *Discovery) SetClaimProducer(entry PeerEntry) {
+func (d *Discovery) SetClaimProducer(entry ServiceEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.claimProducers[entry.Name] = entry
 }
 
-func (d *Discovery) GetExecutor(name string) (PeerEntry, bool) {
+func (d *Discovery) GetExecutor(name string) (ServiceEntry, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	e, ok := d.executors[name]
 	return e, ok
 }
 
-func (d *Discovery) GetClaimProducer(name string) (PeerEntry, bool) {
+func (d *Discovery) GetClaimProducer(name string) (ServiceEntry, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	e, ok := d.claimProducers[name]
 	return e, ok
 }
 
-func (d *Discovery) ListExecutors() []PeerEntry {
+func (d *Discovery) ListExecutors() []ServiceEntry {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	out := make([]PeerEntry, 0, len(d.executors))
+	out := make([]ServiceEntry, 0, len(d.executors))
 	for _, e := range d.executors {
 		out = append(out, e)
 	}
 	return out
 }
 
-func (d *Discovery) ListClaimProducers() []PeerEntry {
+func (d *Discovery) ListClaimProducers() []ServiceEntry {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	out := make([]PeerEntry, 0, len(d.claimProducers))
+	out := make([]ServiceEntry, 0, len(d.claimProducers))
 	for _, e := range d.claimProducers {
 		out = append(out, e)
 	}

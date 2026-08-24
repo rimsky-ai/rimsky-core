@@ -110,6 +110,7 @@ func bringUpRimskyAllInOne(ctx context.Context, t *testing.T, alias string) stri
 		t.Fatalf("[%s] start rimsky-all-in-one: %v", alias, err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the terminate error, so no verdict reads this grace
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = c.Terminate(termCtx)

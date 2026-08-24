@@ -91,7 +91,7 @@ func openFanOutWriteSemanticsFixture(
 			return err
 		}
 		if _, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			TargetRoutingIdentity: "test-agent",
+			TargetRoutingIdentity: "test-daemon",
 			ID:                    fx.instanceID, TemplateHash: tmplHash, InstanceKey: &instanceKey, Params: map[string]any{},
 		}, tx); err != nil {
 			return err

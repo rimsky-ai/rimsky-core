@@ -33,6 +33,7 @@ type RunnerOpts struct {
 	Timeout      time.Duration
 	CallbackBind string
 	CallbackHost string
+	Scenarios    []Scenario
 }
 
 // @concept: conformance
@@ -71,7 +72,10 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	}
 	asyncSupport := probeAsyncSupport(ctx, env, opts.Timeout)
 
-	all := All()
+	all := opts.Scenarios
+	if all == nil {
+		all = All()
+	}
 	if unknown := unknownFilterNames(opts.Only, opts.Skip, all); len(unknown) > 0 {
 		return nil, fmt.Errorf("conformance: unknown scenario name(s) in --scenarios/--skip: %s", strings.Join(unknown, ", "))
 	}

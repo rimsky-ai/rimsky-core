@@ -19,7 +19,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 func issueClientPair(t *testing.T, ca *pki.CA, principal string) tls.Certificate {
@@ -41,7 +41,7 @@ func startMTLSCallbackServer(t *testing.T, ca *pki.CA) (*CallbackServer, string)
 	if err != nil {
 		t.Fatalf("IssueLeaf server: %v", err)
 	}
-	serverIdentity := peer.NewIdentityHolder()
+	serverIdentity := service.NewIdentityHolder()
 	if err := serverIdentity.Set(serverIssued.CertPEM, serverIssued.KeyPEM, serverIssued.NotBefore, serverIssued.NotAfter); err != nil {
 		t.Fatalf("serverIdentity.Set: %v", err)
 	}
@@ -49,7 +49,7 @@ func startMTLSCallbackServer(t *testing.T, ca *pki.CA) (*CallbackServer, string)
 		Registry:       NewCallbackRegistry(),
 		Logger:         shared.SilentLogger{},
 		SupervisorID:   "supervisor-mtls",
-		PeerAuth:       peer.PeerAuthMTLS,
+		ServiceAuth:    service.ServiceAuthMTLS,
 		ServerIdentity: serverIdentity,
 		ClientCAs:      ca.CertPool(),
 	}
@@ -103,7 +103,7 @@ func TestCallbackMTLS_ValidClientCertAccepted(t *testing.T) {
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 (verified peer, ackID matched registry, body has no outcome)", resp.StatusCode)
+		t.Fatalf("status = %d, want 400 (verified service, ackID matched registry, body has no outcome)", resp.StatusCode)
 	}
 }
 
@@ -152,7 +152,7 @@ func TestCallbackServer_Start_MTLSRequiresClientCAs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueLeaf: %v", err)
 	}
-	serverIdentity := peer.NewIdentityHolder()
+	serverIdentity := service.NewIdentityHolder()
 	if err := serverIdentity.Set(serverIssued.CertPEM, serverIssued.KeyPEM, serverIssued.NotBefore, serverIssued.NotAfter); err != nil {
 		t.Fatalf("serverIdentity.Set: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestCallbackServer_Start_MTLSRequiresClientCAs(t *testing.T) {
 		Registry:       NewCallbackRegistry(),
 		Logger:         shared.SilentLogger{},
 		SupervisorID:   "supervisor-mtls",
-		PeerAuth:       peer.PeerAuthMTLS,
+		ServiceAuth:    service.ServiceAuthMTLS,
 		ServerIdentity: serverIdentity,
 		ClientCAs:      nil,
 	}
@@ -191,7 +191,7 @@ func parseLeafCert(t *testing.T, ca *pki.CA, principal string) *x509.Certificate
 	return cert
 }
 
-func requestWithPeerCert(cert *x509.Certificate) *http.Request {
+func requestWithServiceCert(cert *x509.Certificate) *http.Request {
 	r := &http.Request{}
 	if cert != nil {
 		r.TLS = &tls.ConnectionState{
@@ -211,20 +211,20 @@ func TestEnforceCallbackPrincipal(t *testing.T) {
 	dispatched := parseLeafCert(t, ca, "executor-1")
 	other := parseLeafCert(t, ca, "executor-2")
 
-	mtls := &CallbackServer{PeerAuth: peer.PeerAuthMTLS}
-	none := &CallbackServer{PeerAuth: peer.PeerAuthNone}
+	mtls := &CallbackServer{ServiceAuth: service.ServiceAuthMTLS}
+	none := &CallbackServer{ServiceAuth: service.ServiceAuthNone}
 
-	if err := mtls.enforceCallbackPrincipal(requestWithPeerCert(dispatched), AsyncContext{AsyncAckPrincipal: "executor-1"}); err != nil {
+	if err := mtls.enforceCallbackPrincipal(requestWithServiceCert(dispatched), AsyncContext{AsyncAckPrincipal: "executor-1"}); err != nil {
 		t.Fatalf("matching callback principal must be accepted: %v", err)
 	}
-	if err := mtls.enforceCallbackPrincipal(requestWithPeerCert(other), AsyncContext{AsyncAckPrincipal: "executor-1"}); err == nil {
+	if err := mtls.enforceCallbackPrincipal(requestWithServiceCert(other), AsyncContext{AsyncAckPrincipal: "executor-1"}); err == nil {
 		t.Fatal("callback principal differing from the dispatched principal must be rejected")
 	}
-	if err := mtls.enforceCallbackPrincipal(requestWithPeerCert(dispatched), AsyncContext{AsyncAckPrincipal: ""}); err != nil {
+	if err := mtls.enforceCallbackPrincipal(requestWithServiceCert(dispatched), AsyncContext{AsyncAckPrincipal: ""}); err != nil {
 		t.Fatalf("no stored principal must skip the binding check: %v", err)
 	}
-	if err := none.enforceCallbackPrincipal(requestWithPeerCert(other), AsyncContext{AsyncAckPrincipal: "executor-1"}); err != nil {
-		t.Fatalf("under peer_auth none there are no principals; the check must be skipped: %v", err)
+	if err := none.enforceCallbackPrincipal(requestWithServiceCert(other), AsyncContext{AsyncAckPrincipal: "executor-1"}); err != nil {
+		t.Fatalf("under service_auth none there are no principals; the check must be skipped: %v", err)
 	}
 }
 

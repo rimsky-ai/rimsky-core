@@ -14,7 +14,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostdaemon"
 )
 
 // @decision: exit-codes
@@ -36,16 +36,16 @@ const roleStackDrainWindow = serverkit.CLIChildGrace
 
 type SpawnedRegistry struct {
 	mu   sync.Mutex
-	list []*hostagent.SpawnedService
+	list []*hostdaemon.SpawnedService
 }
 
-func (r *SpawnedRegistry) Set(services []*hostagent.SpawnedService) {
+func (r *SpawnedRegistry) Set(services []*hostdaemon.SpawnedService) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.list = services
 }
 
-func (r *SpawnedRegistry) All() []*hostagent.SpawnedService {
+func (r *SpawnedRegistry) All() []*hostdaemon.SpawnedService {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.list
@@ -53,11 +53,19 @@ func (r *SpawnedRegistry) All() []*hostagent.SpawnedService {
 
 type ShutdownCoordinator struct {
 	Stack    *RoleStack
-	Services []*hostagent.SpawnedService
+	Services []*hostdaemon.SpawnedService
 	Logger   *slog.Logger
+
+	// @decision: graceful-shutdown
+	ChildGrace func() (<-chan time.Time, func())
 
 	drainOnce sync.Once
 	finalCode int
+}
+
+func systemChildGrace() (<-chan time.Time, func()) {
+	t := time.NewTimer(childGraceWindow)
+	return t.C, func() { t.Stop() }
 }
 
 func (c *ShutdownCoordinator) Drain(ctx context.Context, reason ShutdownReason) int {
@@ -72,7 +80,7 @@ func (c *ShutdownCoordinator) doDrain(ctx context.Context, reason ShutdownReason
 	if logger == nil {
 		logger = slog.Default()
 	}
-	logger.Info("compose run: draining",
+	logger.Info("COMPOSE.STACK.DRAINING",
 		"reason", reasonString(reason),
 		"services", len(c.Services),
 		"stack_present", c.Stack != nil,
@@ -94,7 +102,7 @@ func (c *ShutdownCoordinator) doDrain(ctx context.Context, reason ShutdownReason
 	case ReasonSignal:
 		return cli.ExitInterrupt
 	default:
-		logger.Warn("compose run: drain with unknown reason; defaulting to failure exit", "reason_int", int(reason))
+		logger.Warn("COMPOSE.DRAINREASON.UNKNOWN", "detail", "defaulting to a failure exit", "reason_int", int(reason))
 		return 1
 	}
 }
@@ -109,7 +117,7 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 		}
 		if err := s.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
 			if !errors.Is(err, os.ErrProcessDone) {
-				logger.Warn("compose run: SIGTERM child failed",
+				logger.Warn("COMPOSE.CHILDSIGTERM.FAILED",
 					"pid", s.Cmd.Process.Pid,
 					"err", err.Error(),
 				)
@@ -117,7 +125,7 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 		}
 	}
 
-	remaining := map[int]*hostagent.SpawnedService{}
+	remaining := map[int]*hostdaemon.SpawnedService{}
 	for _, s := range c.Services {
 		if s == nil || s.Cmd == nil || s.Cmd.Process == nil || s.Exited == nil {
 			continue
@@ -145,19 +153,23 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 	}
 	defer close(stopWatchers)
 
-	deadline := time.NewTimer(childGraceWindow)
-	defer deadline.Stop()
+	graceElapsed := c.ChildGrace
+	if graceElapsed == nil {
+		graceElapsed = systemChildGrace
+	}
+	expired, stopGrace := graceElapsed()
+	defer stopGrace()
 
 	for len(remaining) > 0 {
 		select {
 		case ev := <-exitWake:
 			delete(remaining, ev.pid)
-		case <-deadline.C:
+		case <-expired:
 			for _, s := range remaining {
 				if s.Cmd == nil || s.Cmd.Process == nil {
 					continue
 				}
-				logger.Warn("compose run: SIGKILL straggler child",
+				logger.Warn("COMPOSE.STRAGGLERCHILD.SIGKILLED",
 					"pid", s.Cmd.Process.Pid,
 				)
 				_ = s.Cmd.Process.Kill()
@@ -218,7 +230,7 @@ func (e *SignalEscalation) ArmOnFirstSignal(logger *slog.Logger, verb string) <-
 		case <-e.done:
 		case sig := <-e.sigCh:
 			if logger != nil {
-				logger.Info(verb+": signal while draining; a second signal exits immediately", "signal", sig.String())
+				logger.Info("COMPOSE.DRAIN.SIGNALLED", "verb", verb, "detail", "a second signal exits immediately", "signal", sig.String())
 			}
 			e.Arm()
 		}
@@ -227,7 +239,7 @@ func (e *SignalEscalation) ArmOnFirstSignal(logger *slog.Logger, verb string) <-
 }
 
 // @decision: graceful-shutdown
-func InstallSecondSignalEscalator(sigCh <-chan os.Signal, done <-chan struct{}, services func() []*hostagent.SpawnedService, logger *slog.Logger) {
+func InstallSecondSignalEscalator(sigCh <-chan os.Signal, done <-chan struct{}, services func() []*hostdaemon.SpawnedService, logger *slog.Logger) {
 	var log *slog.Logger
 	if logger != nil {
 		log = logger.With("path", "compose run")
@@ -238,7 +250,7 @@ func InstallSecondSignalEscalator(sigCh <-chan os.Signal, done <-chan struct{}, 
 				continue
 			}
 			if err := s.Cmd.Process.Kill(); err != nil && logger != nil && !errors.Is(err, os.ErrProcessDone) {
-				logger.Warn("compose run: SIGKILL on hard-exit failed",
+				logger.Warn("COMPOSE.HARDEXITSIGKILL.FAILED",
 					"pid", s.Cmd.Process.Pid,
 					"err", err.Error(),
 				)

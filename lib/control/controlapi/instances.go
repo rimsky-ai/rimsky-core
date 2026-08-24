@@ -19,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/lifecycle"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/sillyname"
@@ -30,19 +31,19 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @concept: host-agent-proxy
+// @concept: host-daemon-proxy
 // @concept: anonymous-mode
-func resolveTargetRoutingIdentity(ident auth.Identity, requestedTargetAgent string) (string, error) {
+func resolveTargetRoutingIdentity(ident auth.Identity, requestedTargetDaemon string) (string, error) {
 	if ident.KeyID != nil {
 		return ident.KeyID.String(), nil
 	}
-	if requestedTargetAgent == "" {
-		return "", fmt.Errorf("target_agent required for anonymous-mode instance creation")
+	if requestedTargetDaemon == "" {
+		return "", fmt.Errorf("target_daemon required for anonymous-mode instance creation")
 	}
-	if err := sillyname.Validate(requestedTargetAgent); err != nil {
-		return "", fmt.Errorf("target_agent: %w", err)
+	if err := sillyname.Validate(requestedTargetDaemon); err != nil {
+		return "", fmt.Errorf("target_daemon: %w", err)
 	}
-	return requestedTargetAgent, nil
+	return requestedTargetDaemon, nil
 }
 
 // @concept: node
@@ -76,9 +77,9 @@ type createInstanceRequest struct {
 	ServiceBindings    json.RawMessage `json:"service_bindings,omitempty"`
 	// @concept: instance
 	MessageQueueMode string `json:"message_queue_mode,omitempty"`
-	// @concept: host-agent-proxy
+	// @concept: host-daemon-proxy
 	// @concept: anonymous-mode
-	TargetAgent string `json:"target_agent,omitempty"`
+	TargetDaemon string `json:"target_daemon,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -154,7 +155,7 @@ func overrideMatchCountsFor(ctx context.Context, deps AppDeps, r persistence.Ins
 		countsByIdx, err = deps.Persist.Events().CountAttributeOverrideMatchesByIndex(ctx, r.ID, tx)
 		return err
 	}); err != nil {
-		deps.Logger.Warn("instance.attribute_override_match_events_query_failed",
+		deps.Logger.Warn("INSTANCE.ATTRIBUTEOVERRIDEMATCHEVENTS.QUERYFAILED",
 			"instance_id", r.ID.String(), "error", err.Error())
 		return make([]int64, len(byMatch))
 	}
@@ -275,7 +276,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			badRequest(w, fmt.Sprintf("message_queue_mode = %q; want one of backlog | coalesce", body.MessageQueueMode))
 			return
 		}
-		targetRoutingIdentity, terr := resolveTargetRoutingIdentity(ident, body.TargetAgent)
+		targetRoutingIdentity, terr := resolveTargetRoutingIdentity(ident, body.TargetDaemon)
 		if terr != nil {
 			badRequest(w, terr.Error())
 			return
@@ -364,7 +365,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			if len(row.Spec.Publishers) > 0 {
 				instUUID, parseErr := uuid.Parse(provisioned.InstanceID)
 				if parseErr != nil {
-					deps.Logger.Error("instance.publisher_subscriptions.instance_id_parse_failed",
+					deps.Logger.Error("INSTANCE.PUBLISHERSUBSCRIPTIONS.INSTANCEIDPARSEFAILED",
 						"instance_id", provisioned.InstanceID,
 						"error", parseErr.Error())
 					return fmt.Errorf("parse provisioned instance id %q: %w", provisioned.InstanceID, parseErr)
@@ -375,7 +376,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					Clock:      deps.Clock,
 					Logger:     deps.Logger,
 				}, foundationshared.UUID(instUUID), params, row.Spec.Publishers, tx); subErr != nil {
-					deps.Logger.Error("instance.publisher_subscriptions.insert_failed",
+					deps.Logger.Error("INSTANCE.PUBLISHERSUBSCRIPTIONS.INSERTFAILED",
 						"instance_id", provisioned.InstanceID,
 						"template_hash", hash,
 						"error", subErr.Error())
@@ -422,16 +423,16 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		deliverStagedLifecycleAfterCommit(req.Context(), deps,
-			persistence.LifecycleIdempotencyScopeInstance, respOut.InstanceID,
+			persistence.LifecycleScopeInstance, respOut.InstanceID,
 			"instance_id", respOut.InstanceID, "template_hash", hash,
-			"event", EventInstanceCreated.String())
+			"event", lifecycle.EventInstanceCreated.String())
 		status := http.StatusCreated
 		if existedKey {
 			status = http.StatusOK
 		}
 		if !existedKey && len(body.AttributeOverrides) > 0 {
 			byExecutor, byNode, byMatchCount := overridePresentKeys(body.AttributeOverrides)
-			deps.Logger.Info("instance.attribute_overrides_attached",
+			deps.Logger.Info("INSTANCE.ATTRIBUTEOVERRIDES.ATTACHED",
 				"instance_id", respOut.InstanceID,
 				"template_hash", respOut.TemplateHash,
 				"by_executor", byExecutor,
@@ -440,7 +441,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		if existedKey && len(body.AttributeOverrides) > 0 && !overridesEqual(body.AttributeOverrides, existingOverrides) {
 			byExecutor, byNode, byMatchCount := overridePresentKeys(body.AttributeOverrides)
-			deps.Logger.Warn("instance.attribute_overrides_replaced_by_idempotent_match",
+			deps.Logger.Warn("INSTANCE.ATTRIBUTEOVERRIDES.REPLACED", "detail", "an idempotent match replaced them",
 				"instance_id", respOut.InstanceID,
 				"template_hash", respOut.TemplateHash,
 				"by_executor", byExecutor,
@@ -556,7 +557,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			Clock:      deps.Clock,
 			Logger:     deps.Logger,
 		}, inst.ID); err != nil && deps.Logger != nil {
-			deps.Logger.Warn("handleDeleteInstance: stop publisher subscriptions failed",
+			deps.Logger.Warn("INSTANCE.PUBLISHERSUBSCRIPTIONS.STOPFAILED", "site", "handleDeleteInstance",
 				"instance_id", inst.ID.String(),
 				"error", err.Error())
 		}
@@ -571,80 +572,44 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				}, inst.ID, deps.Logger, tx)
 				return rErr
 			}); err != nil && deps.Logger != nil {
-				deps.Logger.Warn("handleDeleteInstance: ReleaseCommittedDurableClaims failed",
+				deps.Logger.Warn("INSTANCE.DURABLECLAIMS.RELEASEFAILED", "site", "handleDeleteInstance",
 					"instance_id", inst.ID.String(),
 					"error", err.Error())
 			}
 		}
-		runScopeIDs, err := collectRunScopeIDsForInstance(req.Context(), deps, inst.ID)
-		if err != nil && deps.Logger != nil {
-			deps.Logger.Warn("handleDeleteInstance: collect run-scope ids for lifecycle purge failed",
-				"instance_id", inst.ID.String(), "error", err.Error())
-		}
+		var closedScopes []foundationshared.UUID
+		// @decision: lifecycle-fanout-after-commit
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			if err := deps.Persist.LifecycleIdempotency().DeleteByScope(ctx,
-				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
+			scopes, err := closeAndStageRunScopeTerminalsInTx(ctx, deps, inst.ID, instanceTerminatedReason, tx)
+			if err != nil {
 				return err
 			}
-			if err := deps.Persist.LifecycleOutbox().DeleteByScope(ctx,
-				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
-				return err
-			}
-			for _, scopeID := range runScopeIDs {
-				if err := deps.Persist.LifecycleIdempotency().DeleteByScope(ctx,
-					persistence.LifecycleIdempotencyScopeRunScope, scopeID.String(), tx); err != nil {
-					return err
-				}
-			}
+			closedScopes = scopes
 			return deps.Persist.Instances().Delete(ctx, inst.ID, tx)
 		}); err != nil {
 			writeError(w, err)
 			return
 		}
+		deliverInstanceTerminationAfterCommit(req.Context(), deps, inst.ID, closedScopes)
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 	}
 }
 
-func collectRunScopeIDsForInstance(ctx context.Context, deps AppDeps, instanceID foundationshared.UUID) ([]foundationshared.UUID, error) {
-	pag := persistence.ListPagination{Limit: 256}
-	filter := persistence.FrameListFilter{InstanceID: &instanceID}
-	seenRoots := map[foundationshared.UUID]struct{}{}
-	var scopeIDs []foundationshared.UUID
-	for {
-		var page persistence.PaginatedListResult[persistence.FrameRow]
-		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			p, err := deps.Persist.Frames().ListForObservability(ctx, filter, pag, tx)
-			page = p
-			return err
-		}); err != nil {
-			return nil, err
-		}
-		for _, f := range page.Rows {
-			root := f.RootRunScopeID
-			if root == (foundationshared.UUID{}) {
-				continue
-			}
-			if _, dup := seenRoots[root]; dup {
-				continue
-			}
-			seenRoots[root] = struct{}{}
-			var tree []persistence.RunScopeRow
-			if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				rows, err := deps.Persist.RunScopes().ListTreeDeepestFirst(ctx, root, tx)
-				tree = rows
-				return err
-			}); err != nil {
-				return nil, err
-			}
-			for _, scope := range tree {
-				scopeIDs = append(scopeIDs, scope.ID)
-			}
-		}
-		if page.NextCursor == "" {
-			return scopeIDs, nil
-		}
-		pag.Cursor = page.NextCursor
+const instanceTerminatedReason = "instance_terminated"
+
+// @decision: lifecycle-fanout-after-commit
+// @decision: lifecycle-drain-per-role
+func deliverInstanceTerminationAfterCommit(
+	ctx context.Context, deps AppDeps, instanceID foundationshared.UUID, closedScopes []foundationshared.UUID,
+) {
+	for _, scopeID := range closedScopes {
+		deliverStagedLifecycleAfterCommit(ctx, deps,
+			persistence.LifecycleScopeRunScope, scopeID.String(),
+			"instance_id", instanceID.String())
 	}
+	deliverStagedLifecycleAfterCommit(ctx, deps,
+		persistence.LifecycleScopeInstance, instanceID.String(),
+		"instance_id", instanceID.String())
 }
 
 func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
@@ -708,14 +673,15 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 
 		if deps.AdvisoryLocker == nil {
-			writeError(w, errAdvisoryLockerNotInitialized)
+			writeError(w, runtime.ErrLifecycleAdvisoryLockerMissing)
 			return
 		}
 		var alreadyTerminated bool
 		var killPostCommit func(context.Context)
+		var closedScopes []foundationshared.UUID
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.AdvisoryLocker.TakeLifecycleScopeLock(ctx,
-				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
+				persistence.LifecycleScopeInstance, inst.ID.String(), tx); err != nil {
 				return err
 			}
 			fresh, err := deps.Persist.Instances().Get(ctx, inst.ID, tx)
@@ -745,11 +711,31 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			if err := deps.Persist.Instances().MarkTerminated(ctx, inst.ID, tx); err != nil {
 				return err
 			}
-			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			if err := deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &inst.ID,
 				Kind:       events.KindInstanceTerminated(),
 				Payload:    eventpayload.New(&genv1.InstanceTerminatedPayload{Reason: reason}),
-			}, tx)
+			}, tx); err != nil {
+				return err
+			}
+			// @decision: lifecycle-fanout-after-commit
+			scopes, err := closeAndStageRunScopeTerminalsInTx(ctx, deps, inst.ID, instanceTerminatedReason, tx)
+			if err != nil {
+				return err
+			}
+			closedScopes = scopes
+			terminated, err := deps.Persist.Instances().Get(ctx, inst.ID, tx)
+			if err != nil {
+				return err
+			}
+			if terminated == nil {
+				return foundationshared.ErrInstanceNotFound
+			}
+			var terminatedAtMs int64
+			if terminated.TerminatedAt != nil {
+				terminatedAtMs = terminated.TerminatedAt.UnixMilli()
+			}
+			return stageInstanceTerminatedInTx(ctx, deps, *terminated, terminatedAtMs, tx)
 		}); err != nil {
 			writeError(w, err)
 			return
@@ -766,27 +752,12 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 				Clock:      deps.Clock,
 				Logger:     deps.Logger,
 			}, inst.ID); err != nil && deps.Logger != nil {
-				deps.Logger.Warn("handleTerminateInstance: stop publisher subscriptions failed",
+				deps.Logger.Warn("INSTANCE.PUBLISHERSUBSCRIPTIONS.STOPFAILED", "site", "handleTerminateInstance",
 					"instance_id", inst.ID.String(),
 					"error", err.Error())
 			}
 
-			var tpl *persistence.TemplateRow
-			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-				t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-				tpl = t
-				return err
-			}); err != nil {
-				if deps.Logger != nil {
-					deps.Logger.Warn("handleTerminateInstance: load template for run-scope fan-out failed",
-						"instance_id", inst.ID.String(), "error", err.Error())
-				}
-			} else if tpl != nil {
-				if err := CloseAndFanOutRunScopesForInstance(req.Context(), deps, tpl.Spec, inst.ID, "instance_terminated"); err != nil && deps.Logger != nil {
-					deps.Logger.Warn("handleTerminateInstance: run-scope fan-out failed",
-						"instance_id", inst.ID.String(), "error", err.Error())
-				}
-			}
+			deliverInstanceTerminationAfterCommit(req.Context(), deps, inst.ID, closedScopes)
 		}
 
 		updated, err := resolveInstance(req.Context(), deps, inst.ID.String())

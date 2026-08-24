@@ -39,7 +39,7 @@ func applyTerminalPark(
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	// @concept: signal
-	parkSigType := string(parkTerminalSignal(args, t).Type)
+	parkSigType := string(parkTerminalSignal(t).Type)
 	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeRunID,
 		cascade.NodeStateParked, cascade.ReasonHandlerPark, &parkSigType, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
@@ -49,7 +49,7 @@ func applyTerminalPark(
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	// @concept: signal
-	parkSig := parkTerminalSignal(args, t)
+	parkSig := parkTerminalSignal(t)
 	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
 		acq.InstanceID, acq.NodeID, parkSig, now, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: emit signal: %w", err)
@@ -77,7 +77,7 @@ func applyTerminalPark(
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, nodeRunID); err != nil {
-			args.Logger.Warn("applyTerminalPark: run-tree propagation failed",
+			args.Logger.Warn("RUNTREE.PROPAGATION.FAILED", "site", "applyTerminalPark",
 				"run_id", nodeRunID.String(), "error", err.Error())
 		}
 	}
@@ -86,15 +86,13 @@ func applyTerminalPark(
 
 // @concept: signal
 // @concept: executor
-func parkTerminalSignal(args RunArgs, t terminalEvent) signalpkg.Signal {
-	scratchSize := len(t.Scratch)
+func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
 	return signalpkg.Signal{
 		Type: "transient/park",
 		Payload: eventpayload.New(&genv1.TransientParkSignalPayload{
-			ResumeAt:       timestamppb.New(t.ParkResumeAt),
-			Tags:           t.Tags,
-			ScratchSize:    int32(scratchSize),
-			ScratchSpilled: shouldSpillBlob(args, scratchSize),
+			ResumeAt:    timestamppb.New(t.ParkResumeAt),
+			Tags:        t.Tags,
+			ScratchSize: int32(len(t.Scratch)),
 		}),
 	}
 }

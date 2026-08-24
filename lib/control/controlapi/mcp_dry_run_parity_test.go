@@ -129,7 +129,7 @@ func (h *mcpParityHarness) http(t *testing.T, method, path, bearer string, body 
 
 func (h *mcpParityHarness) httpWithHeaders(t *testing.T, method, path, bearer, mcpSessionID string, body any) (int, http.Header, map[string]any) {
 	t.Helper()
-	body = injectDefaultTargetAgentIfInstanceCreate(method, path, body)
+	body = injectDefaultTargetDaemonIfInstanceCreate(method, path, body)
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

@@ -27,6 +27,7 @@ func startTestBridge(t *testing.T) (string, *callbackRecorder) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		//nolint:testwallclock-pacing the teardown discards the shutdown error, so no verdict reads this grace
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = bridge.Shutdown(ctx)

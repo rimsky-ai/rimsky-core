@@ -146,9 +146,9 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		tplID := registerDeployStaticGateTemplate(t, h, "static-gate-ok-"+uuid.NewString(), 5)
 
 		status, out := postJSON(t, h, "/v1/instances", map[string]any{
-			"template":     tplID,
-			"instance_key": "ck-ok-" + uuid.NewString(),
-			"target_agent": "scenario-default-agent",
+			"template":      tplID,
+			"instance_key":  "ck-ok-" + uuid.NewString(),
+			"target_daemon": "scenario-default-daemon",
 		})
 		require.Equal(t, http.StatusCreated, status,
 			"a schema-compliant static default (count:5 ≥ minimum:0) must instantiate cleanly; body: %v", out)
@@ -184,9 +184,9 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		require.Equal(t, http.StatusOK, deployStatus, "deploy must succeed; body: %v", deployOut)
 
 		status, out = postJSON(t, h, "/v1/instances", map[string]any{
-			"template":     tplID,
-			"instance_key": "ck-defaults-only-" + uuid.NewString(),
-			"target_agent": "scenario-default-agent",
+			"template":      tplID,
+			"instance_key":  "ck-defaults-only-" + uuid.NewString(),
+			"target_daemon": "scenario-default-daemon",
 		})
 		require.Equal(t, http.StatusBadRequest, status,
 			"the create-time static-config gate must catch the schema-violating by_executor-only "+

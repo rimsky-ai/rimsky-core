@@ -36,7 +36,7 @@ const (
 	pemTypePrivateKey  = "PRIVATE KEY"
 )
 
-var ErrPrincipalNotFound = errors.New("pki: verified peer certificate carries no spiffe://rimsky/<key-id> URI SAN")
+var ErrPrincipalNotFound = errors.New("pki: verified service certificate carries no spiffe://rimsky/<key-id> URI SAN")
 
 type CA struct {
 	cert    *x509.Certificate
@@ -123,7 +123,7 @@ func LoadCA(certPEM, keyPKCS8DER []byte, now time.Time) (*CA, error) {
 	if !key.PublicKey.Equal(certPublicKey) {
 		return nil, fmt.Errorf(
 			"pki.LoadCA: the private key does not belong to CA certificate %q; a leaf signed with this key "+
-				"verifies against no peer that pinned that certificate",
+				"verifies against no service that pinned that certificate",
 			cert.Subject.CommonName)
 	}
 	return &CA{cert: cert, certPEM: certPEM, key: key}, nil
@@ -175,7 +175,7 @@ func (ca *CA) IssueLeaf(principalKeyID string, now time.Time, ttl time.Duration)
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 		URIs:         []*url.URL{principalURI(principalKeyID)},
-		DNSNames:     []string{principalKeyID, enroll.PeerServerName},
+		DNSNames:     []string{principalKeyID, enroll.ServiceServerName},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &leafKey.PublicKey, ca.key)
 	if err != nil {

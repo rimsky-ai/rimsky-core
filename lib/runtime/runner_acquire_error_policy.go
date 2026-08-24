@@ -156,7 +156,7 @@ func runAcquireErrorPolicy(
 		post = p
 		return err
 	}); err != nil {
-		args.Logger.Warn(site+": applyErrorPolicy failed",
+		args.Logger.Warn("RUNNER.ERRORPOLICY.APPLYFAILED", "site", site,
 			"node_id", acq.NodeID.String(),
 			"dispatch_id", acq.NodeRunID.String(),
 			"error", err.Error())
@@ -178,14 +178,16 @@ func reclaimDispatchRowShortTx(ctx context.Context, args RunArgs, cand persisten
 		claimed = c
 		return err
 	}); err != nil {
-		args.Logger.Warn(site+": re-claim dispatch row failed; skipping policy resolution this cycle",
+		args.Logger.Warn("RUNNER.DISPATCHROW.RECLAIMFAILED", "site", site,
+			"detail", "skipping policy resolution this cycle",
 			"node_id", cand.NodeID.String(),
 			"dispatch_id", cand.NodeRunID.String(),
 			"error", err.Error())
 		return false
 	}
 	if !claimed {
-		args.Logger.Info(site+": dispatch row no longer claimable; another resolution owns it",
+		args.Logger.Info("RUNNER.DISPATCHROW.UNCLAIMABLE", "site", site,
+			"detail", "another resolution owns the row",
 			"node_id", cand.NodeID.String(),
 			"dispatch_id", cand.NodeRunID.String())
 		return false
@@ -216,13 +218,13 @@ func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLo
 				NextAttemptAt:  now,
 				EnqueuedAt:     now,
 			}, nil); err != nil {
-				args.Logger.Warn("abandonPartialLocks: enqueue Abandon failed",
+				args.Logger.Warn("RUNNER.PARTIALLOCKABANDON.ENQUEUEFAILED", "site", "abandonPartialLocks",
 					"producer", producerNameForSpec(lk.Spec), "error", err.Error())
 			}
 			continue
 		}
 		if err := abandonOpenedClaim(ctx, lk.Producer, lk.ClaimHandleID, scope, address, lk.ProducerLeaseToken); err != nil {
-			args.Logger.Warn("abandonPartialLocks: Abandon failed",
+			args.Logger.Warn("RUNNER.PARTIALLOCKABANDON.FAILED", "site", "abandonPartialLocks",
 				"producer", producerNameForSpec(lk.Spec), "error", err.Error())
 		}
 	}
@@ -246,7 +248,7 @@ func abandonBegunCandidate(ctx context.Context, args RunArgs, lk AcquiredLock) {
 		ClaimHandleID:   lk.ClaimHandleID.String(),
 		CandidateHandle: lk.ProducerCandidateHandle,
 	}); err != nil {
-		args.Logger.Warn("abandonPartialLocks: AbandonCandidate failed",
+		args.Logger.Warn("RUNNER.PARTIALLOCKABANDONCANDIDATE.FAILED", "site", "abandonPartialLocks",
 			"producer", producerName, "error", err.Error())
 	}
 }

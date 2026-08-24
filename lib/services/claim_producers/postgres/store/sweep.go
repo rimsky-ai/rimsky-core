@@ -28,7 +28,7 @@ func (s *Store) RunSweep(ctx context.Context, interval time.Duration) {
 		case <-t.C:
 		}
 		if err := s.sweepOnce(ctx); err != nil {
-			slog.Warn("postgres store: sweep failed", "error", err.Error())
+			slog.Warn("POSTGRESSTORE.SWEEP.FAILED", "error", err.Error())
 		}
 	}
 }
@@ -49,7 +49,7 @@ func (s *Store) sweepOnce(ctx context.Context) error {
 		)
 		ms := pp.VisibilityTimeout.Milliseconds()
 		if _, err := s.pool.Exec(ctx, q, pp.ItemsTable, ms); err != nil {
-			slog.Warn("postgres store: sweep one policy failed",
+			slog.Warn("POSTGRESSTORE.SWEEPPOLICY.FAILED",
 				"selector", selector, "items_table", pp.ItemsTable, "error", err.Error())
 			errs = append(errs, fmt.Errorf("sweep %q (%s): %w", selector, pp.ItemsTable, err))
 		}
@@ -66,14 +66,14 @@ func (s *Store) sweepStagingOrphans(ctx context.Context) {
 		 RETURNING schema_name`,
 		horizonMs)
 	if err != nil {
-		slog.Warn("postgres store: sweep staging orphans: query failed", "error", err.Error())
+		slog.Warn("POSTGRESSTORE.SWEEPSTAGINGORPHANS.QUERYFAILED", "error", err.Error())
 		return
 	}
 	var orphaned []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			slog.Warn("postgres store: sweep staging orphans: scan failed", "error", err.Error())
+			slog.Warn("POSTGRESSTORE.SWEEPSTAGINGORPHANS.SCANFAILED", "error", err.Error())
 			continue
 		}
 		orphaned = append(orphaned, name)
@@ -81,15 +81,15 @@ func (s *Store) sweepStagingOrphans(ctx context.Context) {
 	rowsErr := rows.Err()
 	rows.Close()
 	if rowsErr != nil {
-		slog.Warn("postgres store: sweep staging orphans: iterate failed", "error", rowsErr.Error())
+		slog.Warn("POSTGRESSTORE.SWEEPSTAGINGORPHANS.ITERATEFAILED", "error", rowsErr.Error())
 	}
 	for _, name := range orphaned {
 		if err := requireStagingSchemaIdent(name); err != nil {
-			slog.Warn("postgres store: sweep staging orphans: refusing drop", "staging", name, "error", err.Error())
+			slog.Warn("POSTGRESSTORE.SWEEPSTAGINGORPHANS.DROPREFUSED", "staging", name, "error", err.Error())
 			continue
 		}
 		if _, err := s.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{name}.Sanitize()+" CASCADE"); err != nil {
-			slog.Warn("postgres store: sweep staging orphans: drop failed", "staging", name, "error", err.Error())
+			slog.Warn("POSTGRESSTORE.SWEEPSTAGINGORPHANS.DROPFAILED", "staging", name, "error", err.Error())
 		}
 	}
 }

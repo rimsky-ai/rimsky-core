@@ -61,7 +61,7 @@ publishers:
 
 ```bash
 curl -sS -X POST "$BASE/v1/instances" -H 'content-type: application/json' \
-  -d '{"template":"'"$TPL"'","instance_key":"pub-1","params":{},"target_agent":"pub-agent"}'
+  -d '{"template":"'"$TPL"'","instance_key":"pub-1","params":{},"target_daemon":"pub-daemon"}'
 ```
 
 Rimsky calls `Subscribe` exactly once. The subscription carries the instance it

@@ -15,7 +15,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostdaemon"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -26,7 +26,7 @@ func TestRemoteOneShotRunTerminatesItsInstanceOnQuiescenceAndReturns(t *testing.
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "worker done")
 
-	t.Setenv(hostagent.IdentityFileEnvVar, filepath.Join(t.TempDir(), "identity.json"))
+	t.Setenv(hostdaemon.IdentityFileEnvVar, filepath.Join(t.TempDir(), "identity.json"))
 
 	spec := node.TemplateSpec{
 		Name: "remote-one-shot-to-terminal", Version: "1",

@@ -10,10 +10,10 @@ import (
 func WaitForSignalOrFailure(log Logger, sigCh <-chan os.Signal, failCh <-chan error) error {
 	select {
 	case s := <-sigCh:
-		log.Info("signal received", "signal", s.String())
+		log.Info("PROCESS.SIGNAL.RECEIVED", "signal", s.String())
 		return nil
 	case err := <-failCh:
-		log.Error("role failed", "error", err.Error())
+		log.Error("PROCESS.ROLE.FAILED", "error", err.Error())
 		return err
 	}
 }

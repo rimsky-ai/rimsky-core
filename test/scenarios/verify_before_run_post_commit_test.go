@@ -22,7 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/claim_producers/stub/testfixture"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -81,7 +81,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	clientA, err := peer.Dial(h.Ctx, "store-a", "grpc://"+endpointA, peer.TLSModeOff)
+	clientA, err := service.Dial(h.Ctx, "store-a", "grpc://"+endpointA, service.TLSModeOff)
 	require.NoError(t, err)
 	t.Cleanup(clientA.Close)
 	registry := locks.NewRegistry()

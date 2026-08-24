@@ -24,7 +24,7 @@ func Listen(host string, port int) (net.Listener, error) {
 
 func Serve(srv *grpc.Server, lis net.Listener, serviceName string) {
 	if err := srv.Serve(lis); err != nil {
-		slog.Warn(serviceName+": grpc serve", "error", err.Error())
+		slog.Warn("SERVERKIT.GRPC.SERVESTOPPED", "service", serviceName, "error", err.Error())
 	}
 }
 

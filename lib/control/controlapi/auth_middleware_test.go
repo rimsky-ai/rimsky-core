@@ -391,7 +391,7 @@ func TestCaptureBody_LogsAndRejectsOnReadError(t *testing.T) {
 
 	found := false
 	for _, r := range logger.Records() {
-		if r.Level == "warn" && r.Msg == "auth.audit_body_read_failed" {
+		if r.Level == "warn" && r.Msg == "AUTH.AUDITBODY.READFAILED" {
 			found = true
 		}
 	}

@@ -26,15 +26,15 @@ func OpenDriverFromEnv(ctx context.Context, logger *slog.Logger) (persistence.Da
 	configPath := resolveConfigPath(os.Getenv("RIMSKY_CONFIG"))
 	cfg, err := config.LoadRimskyConfigYAML(configPath)
 	if err != nil {
-		logger.Error("load rimsky config", "error", err.Error(), "path", configPath)
+		logger.Error("LAUNCH.CONFIG.LOADFAILED", "error", err.Error(), "path", configPath)
 		return nil, nil, fmt.Errorf("load rimsky config %q: %w", configPath, err)
 	}
 	for _, w := range cfg.Warnings {
-		logger.Warn(w)
+		logger.Warn("LAUNCH.CONFIG.WARNED", "detail", w)
 	}
 	driver, err := persistence.Open(ctx, cfg.Persistence)
 	if err != nil {
-		logger.Error("persistence.Open", "error", err.Error())
+		logger.Error("LAUNCH.PERSISTENCE.OPENFAILED", "site", "persistence.Open", "error", err.Error())
 		return nil, nil, fmt.Errorf("persistence.Open: %w", err)
 	}
 	return driver, &cfg, nil

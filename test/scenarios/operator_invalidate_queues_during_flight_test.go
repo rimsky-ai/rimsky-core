@@ -102,7 +102,8 @@ func TestOperatorInvalidateQueuesDuringFlight(t *testing.T) {
 		dispatchBag sql.NullString
 	)
 	h.QueryRowSQL(
-		`SELECT data::text, dispatch_input_bag::text FROM rimsky_node_attributes WHERE node_run_id = $1`,
+		`SELECT convert_from(data, 'UTF8'), convert_from(dispatch_input_bag, 'UTF8')
+		   FROM rimsky_node_attributes WHERE node_run_id = $1`,
 		[]any{newRunID}, &carriedData, &dispatchBag,
 	)
 	require.Contains(t, carriedData, "prior_marker",

@@ -120,7 +120,7 @@ func buildLockSpecs(
 			Alias:        sref.AliasOf(),
 			TemplateID:   instTemplateScope(inst),
 			InstanceID:   instInstanceScope(inst),
-			// @concept: host-agent-proxy
+			// @concept: host-daemon-proxy
 			RunScopeID: runScopeIDString(runScopeID),
 			// @concept: claim-lifetime
 			Lifetime: sref.Lifetime,

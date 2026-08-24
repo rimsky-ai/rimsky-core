@@ -12,7 +12,16 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
+
+// @decision: lifecycle-drain-per-role
+type RoleOptions struct {
+	Bundled *config.BundledRegistrations
+
+	SharedLifecycleDrain *runtime.LifecycleReconciler
+}
 
 const unifiedStackDrainTimeout = 5 * time.Second
 
@@ -36,38 +45,62 @@ func (s *UnifiedStack) Drain(ctx context.Context, deadline time.Duration) {
 	}
 }
 
-var (
-	runSchedulerFn  = RunScheduler
-	runSupervisorFn = RunSupervisor
-	runControlAPIFn = RunControlAPI
-)
+type runRoleFunc func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, RoleOptions) (StopFunc, <-chan error, error)
+
+type roleRunners struct {
+	scheduler  runRoleFunc
+	supervisor runRoleFunc
+	controlAPI runRoleFunc
+}
+
+func defaultRoleRunners() roleRunners {
+	return roleRunners{scheduler: RunScheduler, supervisor: RunSupervisor, controlAPI: RunControlAPI}
+}
 
 // @decision: single-process-mode
 func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations) (*UnifiedStack, error) {
-	blobBackend, err := config.OpenBlobBackend(cfg.Blob, driver, cfg.Topology)
-	if err != nil {
-		return nil, fmt.Errorf("open blob backend: %w", err)
-	}
+	return startUnifiedStack(ctx, logger, driver, cfg, bundledRegs, defaultRoleRunners())
+}
 
+func startUnifiedStack(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig, bundledRegs *config.BundledRegistrations, runs roleRunners) (*UnifiedStack, error) {
 	type roleRunner struct {
 		name string
 		run  func(context.Context, *slog.Logger) (StopFunc, <-chan error, error)
 	}
+	// @decision: lifecycle-drain-per-role
+	drain, stopDrain, err := config.StartSharedLifecycleDrain(config.SharedLifecycleDrainConfig{
+		Driver:         driver,
+		Clock:          shared.SystemClock{},
+		Logger:         shared.NewSlogLogger(logger),
+		ClaimProducers: cfg.ClaimProducers,
+		Executors:      cfg.Executors,
+		Publishers:     cfg.Publishers,
+		StallAfter:     cfg.ServiceDelivery.StallAfter,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start lifecycle drain: %w", err)
+	}
+	opts := RoleOptions{Bundled: bundledRegs, SharedLifecycleDrain: drain}
+
 	runners := []roleRunner{
 		{"scheduler", func(c context.Context, l *slog.Logger) (StopFunc, <-chan error, error) {
-			return runSchedulerFn(c, l, driver, cfg, blobBackend)
+			return runs.scheduler(c, l, driver, cfg, opts)
 		}},
 		{"supervisor", func(c context.Context, l *slog.Logger) (StopFunc, <-chan error, error) {
-			return runSupervisorFn(c, l, driver, cfg, bundledRegs, blobBackend)
+			return runs.supervisor(c, l, driver, cfg, opts)
 		}},
 		{"control-api", func(c context.Context, l *slog.Logger) (StopFunc, <-chan error, error) {
-			return runControlAPIFn(c, l, driver, cfg, bundledRegs, blobBackend)
+			return runs.controlAPI(c, l, driver, cfg, opts)
 		}},
 	}
 
 	stack := &UnifiedStack{
 		failCh: make(chan RoleFailure, len(runners)),
 	}
+	stack.stops = append(stack.stops, func(context.Context) error {
+		stopDrain()
+		return nil
+	})
 
 	for _, r := range runners {
 		stop, runnerFail, err := r.run(ctx, logger.With("role", r.name))

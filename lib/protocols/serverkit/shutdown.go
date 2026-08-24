@@ -40,7 +40,7 @@ func InstallSecondSignalHardExit(sigCh <-chan os.Signal, done <-chan struct{}, l
 			return
 		case s := <-sigCh:
 			if log != nil {
-				log.Warn("second signal received; escalating to hard exit", "signal", s.String())
+				log.Warn("SERVERKIT.SECONDSIGNAL.ESCALATED", "detail", "escalating to a hard exit", "signal", s.String())
 			}
 			hardExit()
 		}
@@ -60,7 +60,7 @@ func WatchShutdownSignals(parent context.Context, sigCh <-chan os.Signal, log *s
 			return
 		case s := <-sigCh:
 			if log != nil {
-				log.Info("signal received; shutting down", "signal", s.String())
+				log.Info("SERVERKIT.SIGNAL.RECEIVED", "detail", "shutting down", "signal", s.String())
 			}
 			cancel()
 			InstallSecondSignalHardExit(sigCh, released, log, hardExit)

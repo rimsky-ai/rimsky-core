@@ -2,11 +2,11 @@
 that release, not a source of truth; regenerated whole at the next
 release. Read it only when directed here. -->
 
-# `spawn_failed` and the host-agent proxy family
+# `spawn_failed` and the host-daemon proxy family
 
 When a node's executor is a **late-bound local binary** — a service you run on
-your own machine and reach through the host-agent proxy — the proxy stands in
-as the executor. It resolves the binding, asks your host agent to spawn the
+your own machine and reach through the host-daemon proxy — the proxy stands in
+as the executor. It resolves the binding, asks your host daemon to spawn the
 binary, and forwards the dispatch. When any of that fails, the proxy answers
 the runtime with an ordinary executor error outcome, carrying one of its own
 class strings.
@@ -33,7 +33,7 @@ error_types:
 registers **with a warning** on every node — including a node whose executor
 is `http-node` or `claude-agent`. The warning reads `error class
 "spawn_failed" is not in any declared vocabulary … the policy registers but
-will only match if a peer emits this exact class`, and it does not fail the
+will only match if a service emits this exact class`, and it does not fail the
 register. The policy does work: routing is an exact string match and the proxy
 emits exactly this string. Expect the warning; it is not a mistake on your
 part.
@@ -44,18 +44,18 @@ The same is true of every sibling class below.
 
 ## `spawn_failed`
 
-**What produced it.** The host agent was asked to start your binary and did
+**What produced it.** The host daemon was asked to start your binary and did
 not end up with a running, reachable process. Each of these paths raises it:
 
 - The binding declares no path.
-- The declared path could not be resolved on the agent's host.
-- The agent could not start the process.
+- The declared path could not be resolved on the daemon's host.
+- The daemon could not start the process.
 - **The process started and never bound its port.** This is the common one.
-  The agent picks a free port, sets `RIMSKY_AGENT_PORT` in the child's
+  The daemon picks a free port, sets `RIMSKY_DAEMON_PORT` in the child's
   environment, and poll-dials `127.0.0.1:<that port>` until the child's gRPC
   server answers, bounded by the binding's ready timeout. A binary that
-  ignores `RIMSKY_AGENT_PORT` and binds a port of its own choosing fails this
-  poll every time. There is no port handshake back to the agent.
+  ignores `RIMSKY_DAEMON_PORT` and binds a port of its own choosing fails this
+  poll every time. There is no port handshake back to the daemon.
 - The child exited before binding.
 - The spawn acknowledgement did not arrive before the proxy's spawn timeout.
 - The binding names a protocol the spawned binary does not serve.
@@ -63,14 +63,14 @@ not end up with a running, reachable process. Each of these paths raises it:
 The error message carries which of these it was.
 
 **Can `error_types` act on it.** Yes. `retry` is worth having with a cap: a
-host agent that is mid-restart recovers, and a binary with a genuine port bug
+host daemon that is mid-restart recovers, and a binary with a genuine port bug
 does not.
 
 **What to change.** In order of likelihood:
 
-1. Make the binary read `RIMSKY_AGENT_PORT` and bind its gRPC server there.
+1. Make the binary read `RIMSKY_DAEMON_PORT` and bind its gRPC server there.
 2. Check the binary path in `rimsky run --service <name>=<path>` and that the
-   file is executable on the agent's host.
+   file is executable on the daemon's host.
 3. Raise the binding's ready timeout if the binary is slow to start.
 4. Confirm the binary serves the protocol the node needs.
 
@@ -81,8 +81,8 @@ does not.
 | Class | What produced it | What to change |
 | --- | --- | --- |
 | `binding_not_found` | The dispatch named a service the proxy could not route: no service name on the call, the instance is unknown or has no routing identity stamped, or the name is not in the instance's service bindings. | Check that the instance was created with a binding for this service name, and that the name matches the node's `executor`. |
-| `host_agent_not_connected` | No host agent is connected under the routing identity the instance was stamped with. | Start `rimsky run` on the machine that should serve this instance, with the API key whose identity the instance was created under. |
-| `host_agent_disconnected` | The agent's connection dropped before, during, or after the dispatch was sent. | Network between the agent and the proxy, or the agent process itself. A `retry` policy covers a brief reconnect. |
+| `host_daemon_not_connected` | No host daemon is connected under the routing identity the instance was stamped with. | Start `rimsky run` on the machine that should serve this instance, with the API key whose identity the instance was created under. |
+| `host_daemon_disconnected` | The daemon's connection dropped before, during, or after the dispatch was sent. | Network between the daemon and the proxy, or the daemon process itself. A `retry` policy covers a brief reconnect. |
 | `executor_crashed` | The spawned binary cancelled the call, timed out, or returned an outcome the proxy could not decode. | The spawned binary. It answered, and the answer was unusable. |
 | `contract_mismatch` | The spawned binary advertises an attributes schema, and either that schema is not valid JSON or the node's resolved attributes do not satisfy it. | Either the node's attributes or the binary's declared schema. The message says which of the two failed and why. |
 

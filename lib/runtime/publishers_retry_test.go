@@ -14,7 +14,7 @@ import (
 func TestRetryRPCWithBackoff_SucceedsWithoutRetryOnFirstAttempt(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	err := retryRPCWithBackoff(context.Background(), shared.SilentLogger{}, "test.event",
+	err := retryRPCWithBackoff(context.Background(), shared.SilentLogger{}, "TEST.RPCRETRY.ATTEMPTED",
 		func(int, error) []any { return nil },
 		func(context.Context) error {
 			calls++
@@ -33,7 +33,7 @@ func TestRetryRPCWithBackoff_RetriesThenSucceeds(t *testing.T) {
 	t.Parallel()
 	calls := 0
 	transient := errors.New("transient")
-	err := retryRPCWithBackoff(context.Background(), shared.SilentLogger{}, "test.event",
+	err := retryRPCWithBackoff(context.Background(), shared.SilentLogger{}, "TEST.RPCRETRY.ATTEMPTED",
 		func(int, error) []any { return nil },
 		func(context.Context) error {
 			calls++
@@ -56,7 +56,7 @@ func TestRetryRPCWithBackoff_ExhaustsAttemptsAndReturnsLastError(t *testing.T) {
 	calls := 0
 	persistent := errors.New("persistent")
 	var loggedAttempts []int
-	err := retryRPCWithBackoff(context.Background(), shared.SilentLogger{}, "test.event",
+	err := retryRPCWithBackoff(context.Background(), shared.SilentLogger{}, "TEST.RPCRETRY.ATTEMPTED",
 		func(attempt int, _ error) []any {
 			loggedAttempts = append(loggedAttempts, attempt)
 			return nil
@@ -81,7 +81,7 @@ func TestRetryRPCWithBackoff_CtxCancelDuringBackoffStopsRetrying(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
-	err := retryRPCWithBackoff(ctx, shared.SilentLogger{}, "test.event",
+	err := retryRPCWithBackoff(ctx, shared.SilentLogger{}, "TEST.RPCRETRY.ATTEMPTED",
 		func(int, error) []any { return nil },
 		func(context.Context) error {
 			calls++

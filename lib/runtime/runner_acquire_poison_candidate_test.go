@@ -58,7 +58,7 @@ func seedStaleCandidateInternal(
 		}, tx); err != nil {
 			return err
 		}
-		if _, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-agent",
+		if _, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{TargetRoutingIdentity: "test-daemon",
 			ID: instID, TemplateHash: tmplHash, InstanceKey: &ck, Params: map[string]any{},
 		}, tx); err != nil {
 			return err

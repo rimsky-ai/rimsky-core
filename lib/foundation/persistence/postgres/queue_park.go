@@ -196,77 +196,43 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	return &r, nil
 }
 
-func (q *queueImpl) LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) ([]byte, string, string, error) {
+// @decision: scratch-column
+func (q *queueImpl) LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) ([]byte, error) {
 	if tx == nil {
-		return nil, "", "", errors.New("postgres.LoadScratch: tx required")
+		return nil, errors.New("postgres.LoadScratch: tx required")
 	}
-	var (
-		inline  []byte
-		handle  sql.NullString
-		backend sql.NullString
-	)
+	var scratch []byte
 	err := q.q(tx).QueryRow(ctx,
-		`SELECT scratch_inline, scratch_handle, scratch_handle_backend
-		   FROM rimsky_node_runs
-		  WHERE id = $1`,
+		`SELECT scratch FROM rimsky_node_runs WHERE id = $1`,
 		nodeRunID,
-	).Scan(&inline, &handle, &backend)
+	).Scan(&scratch)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", "", nil
+			return nil, nil
 		}
-		return nil, "", "", fmt.Errorf("postgres.LoadScratch: %w", err)
+		return nil, fmt.Errorf("postgres.LoadScratch: %w", err)
 	}
-	var hStr, bStr string
-	if handle.Valid {
-		hStr = handle.String
-	}
-	if backend.Valid {
-		bStr = backend.String
-	}
-	return inline, hStr, bStr, nil
+	return scratch, nil
 }
 
-// @concept: blob-backend
-func (q *queueImpl) WriteScratch(ctx context.Context, nodeRunID shared.UUID, inline []byte, handle, handleBackend string, tx persistence.Tx) error {
+// @decision: scratch-column
+// @decision: attribute-bytes-in-the-row
+func (q *queueImpl) WriteScratch(ctx context.Context, nodeRunID shared.UUID, scratch []byte, tx persistence.Tx) error {
 	if tx == nil {
 		return errors.New("postgres.WriteScratch: tx required")
 	}
-	if len(inline) > 0 && handle != "" {
-		return errors.New("postgres.WriteScratch: inline and handle are mutually exclusive")
+	if err := persistence.CheckValueSize("postgres.WriteScratch", nodeRunID, "scratch", len(scratch)); err != nil {
+		return err
 	}
-	if q.tables == nil {
-		return errors.New("postgres.WriteScratch: queue not wired with tables")
-	}
-	var priorHandle, priorBackend sql.NullString
-	if err := q.q(tx).QueryRow(ctx,
-		`SELECT scratch_handle, scratch_handle_backend FROM rimsky_node_runs WHERE id = $1`,
-		nodeRunID,
-	).Scan(&priorHandle, &priorBackend); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("postgres.WriteScratch: %s: %w", nodeRunID, persistence.ErrNotFound)
-		}
-		return fmt.Errorf("postgres.WriteScratch: read prior handle: %w", err)
-	}
-
 	tag, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_node_runs
-		    SET scratch_inline         = $2,
-		        scratch_handle         = $3,
-		        scratch_handle_backend = $4
-		  WHERE id = $1`,
-		nodeRunID, nilIfEmpty(inline), nullableString(handle), nullableString(handleBackend),
+		`UPDATE rimsky_node_runs SET scratch = $2 WHERE id = $1`,
+		nodeRunID, nilIfEmpty(scratch),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.WriteScratch: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("postgres.WriteScratch: %s: %w", nodeRunID, persistence.ErrNotFound)
-	}
-	if priorHandle.Valid && priorHandle.String != "" && priorHandle.String != handle {
-		if err := persistence.QueueBlobOrphan(ctx, q.tables.BlobOrphans(), priorHandle.String, priorBackend.String, time.Now().UTC(), q.tables.blobRetention, tx); err != nil {
-			return fmt.Errorf("postgres.WriteScratch: queue prior orphan: %w", err)
-		}
 	}
 	return nil
 }

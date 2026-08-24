@@ -170,7 +170,7 @@ Rimsky range-checks each class against the union of the vocabularies it can see 
 | `retry_backoff.base_delay_ms` | integer | The base delay. Must be positive whenever any other `retry_backoff` key is set — a zero base makes every computed delay zero — and may never be negative. |
 | `retry_backoff.max_delay_ms` | integer | A ceiling on the computed delay. Unset or `0` means no ceiling. It may not be negative, and it may not sit below `base_delay_ms`. |
 
-**Retry policy is per-node only.** `max_retries` and the four `retry_backoff` keys have no deployment-wide form. Writing either under `dispatch_defaults` in deployment configuration stops the deployment before it starts: migrate exits with an unknown-field error and the entrypoint reports `migrate failed`. Only `sync_rpc_deadline`, `max_quiet_period`, and `max_runtime` have a `dispatch_defaults` counterpart.
+**Retry policy is per-node only.** `max_retries` and the four `retry_backoff` keys have no deployment-wide form. Writing either under `dispatch_defaults` in deployment configuration stops the deployment before it starts: migrate exits with an unknown-field error and the entrypoint reports `ENTRYPOINT.MIGRATE.FAILED`. Only `sync_rpc_deadline`, `max_quiet_period`, and `max_runtime` have a `dispatch_defaults` counterpart.
 
 ### Deadlines
 
@@ -242,12 +242,12 @@ A node subscribes to a message type by naming it in `subscribes[].node`, and rea
 
 ## Publishers
 
-`publishers:` declares the publisher bindings an instance opens. A publisher is a peer service that pushes messages into the instance.
+`publishers:` declares the publisher bindings an instance opens. A publisher is a service that pushes messages into the instance.
 
 | Key | Type | Effect |
 |---|---|---|
-| `name` | string | The publisher peer, by the name the deployment declares. Required and unique within the template. |
-| `kind` | string | Which of that peer's advertised kinds to use. Required. A kind the peer does not advertise in its capabilities handshake fails registration and the finding lists what it does advertise. The bundled sensors advertise `cron`, `http`, `object-store`, and `webhook`. |
+| `name` | string | The publisher service, by the name the deployment declares. Required and unique within the template. |
+| `kind` | string | Which of that service's advertised kinds to use. Required. A kind the service does not advertise in its capabilities handshake fails registration and the finding lists what it does advertise. The bundled sensors advertise `cron`, `http`, `object-store`, and `webhook`. |
 | `config` | JSON | The binding's configuration, in the shape that kind defines. Rimsky passes it through. |
 | `message_type` | string | The message type the publisher's emissions arrive as. Required and non-empty, and it must be declared in this template's `messages:` registry. |
 
@@ -321,23 +321,23 @@ Removing an instance entry while that instance is still live refuses the whole r
 
 An apply warns on params drift rather than acting on it. The control API has no in-flight instance update, so changing `instances[].params` under a running instance prints a warning and changes nothing.
 
-## Peer blocks
+## Service blocks
 
 `executors:` and `claim_producers:` are mappings keyed by service name. Each name must match `^[a-z][a-z0-9-]{0,62}$`.
 
-`rimsky compose run` reads these blocks and writes them into the configuration of the stack it brings up. `compose plan`, `up`, `down`, and `status` validate them and otherwise ignore them, because those verbs reconcile against a deployment that already carries its own peer configuration.
+`rimsky compose run` reads these blocks and writes them into the configuration of the stack it brings up. `compose plan`, `up`, `down`, and `status` validate them and otherwise ignore them, because those verbs reconcile against a deployment that already carries its own service configuration.
 
 | Key | Type | Effect |
 |---|---|---|
 | `executors.<name>.transport` | `grpc` \| `http` | How to reach the executor. Required. |
 | `executors.<name>.endpoint` | string | The address. Required. |
 | `executors.<name>.tls` | `off` \| `required` | The TLS posture. |
-| `executors.<name>.protocols` | list of strings | Which protocols this peer serves. Each entry must be one of `claim_producer`, `executor`, `publisher`, `lifecycle_subscriber`, `validation`, `data_processing`. |
-| `executors.<name>.observability_endpoint` | string | The address of the peer's observability sibling. |
+| `executors.<name>.protocols` | list of strings | Which protocols this service serves. Each entry must be one of `claim_producer`, `executor`, `publisher`, `lifecycle_subscriber`, `validation`, `data_processing`. |
+| `executors.<name>.observability_endpoint` | string | The address of the service's observability sibling. |
 | `claim_producers.<name>.endpoint` | string | The address. Required. |
 | `claim_producers.<name>.write_semantics_allowed` | list | Which write semantics this producer permits. Required and non-empty. Each entry must be one of `sync`, `staged_async`, `blocking_async`, `read_only`. |
 | `claim_producers.<name>.tls` | `off` \| `required` | The TLS posture. |
-| `claim_producers.<name>.protocols` | list of strings | Which protocols this peer serves, from the same six names as above. |
-| `claim_producers.<name>.observability_endpoint` | string | The address of the peer's observability sibling. |
+| `claim_producers.<name>.protocols` | list of strings | Which protocols this service serves, from the same six names as above. |
+| `claim_producers.<name>.observability_endpoint` | string | The address of the service's observability sibling. |
 
 `rimsky compose run` also reads a sibling `rimsky.yml` next to the manifest, if one exists, and carries its `publishers:` and `named_locks:` blocks into the stack it brings up.

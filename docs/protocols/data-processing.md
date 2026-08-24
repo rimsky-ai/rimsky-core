@@ -6,7 +6,7 @@ release. Read it only when directed here. -->
 
 Data processing gives a claim producer versioned staging. A node writes into a candidate rather than into the live data, and the candidate becomes a version only when the node succeeds.
 
-This is a mix-in on a claim producer, not a standalone service. Serve `DataProcessing` from the same process as your `ClaimProducer`, and advertise `data_processing` in your `ClaimProducer.Capabilities` `protocols` list. Rimsky checks that a producer advertising the protocol actually serves it and refuses to start when it does not. An operator also names the protocol in the deployment's `claim_producers.<name>.protocols`, or declares the peer under `data_processors` instead.
+This is a mix-in on a claim producer, not a standalone service. Serve `DataProcessing` from the same process as your `ClaimProducer`, and advertise `data_processing` in your `ClaimProducer.Capabilities` `protocols` list. Rimsky checks that a producer advertising the protocol actually serves it and refuses to start when it does not. An operator also names the protocol in the deployment's `claim_producers.<name>.protocols`, or declares the service under `data_processors` instead.
 
 Read the [claim producer guide](claim-producer.md) first.
 

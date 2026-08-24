@@ -360,13 +360,17 @@ func TestPauseResume_NonIdempotentVerbs409(t *testing.T) {
 
 	instID := newInstanceForMessages(t, h, "pause-409")
 
-	status, _ := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/pause", map[string]any{})
-	require.Equal(t, http.StatusOK, status)
 	status, out := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/pause", map[string]any{})
-	require.Equal(t, http.StatusConflict, status, out)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["paused"])
+	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/pause", map[string]any{})
+	require.Equal(t, http.StatusConflict, status, out,
+		"pausing an already-paused instance must 409, not silently succeed")
 
-	status, _ = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/resume", map[string]any{})
-	require.Equal(t, http.StatusOK, status)
 	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/resume", map[string]any{})
-	require.Equal(t, http.StatusConflict, status, out)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["resumed"])
+	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/resume", map[string]any{})
+	require.Equal(t, http.StatusConflict, status, out,
+		"resuming a non-paused instance must 409, not silently succeed")
 }

@@ -18,7 +18,7 @@ import (
 	fspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 func acquireClaim(
@@ -31,7 +31,7 @@ func acquireClaim(
 	}
 	if !ok {
 		// @concept: service-address-book
-		return AcquiredLock{}, openResultErrored, &peer.ProducerCallError{
+		return AcquiredLock{}, openResultErrored, &service.ProducerCallError{
 			ProducerName: spec.ProducerName,
 			Method:       "resolve",
 			ErrorClass:   unresolvedClaimProducerSyntheticClass,
@@ -104,7 +104,7 @@ func acquireClaim(
 
 	// @concept: terminal-resolution
 	if err := producerVerbOutboxBarrier(ctx, args, s, spec.ProducerName, scopeInitial, tx); err != nil {
-		var pcErr *peer.ProducerCallError
+		var pcErr *service.ProducerCallError
 		if errors.As(err, &pcErr) {
 			recordClaimAcquisitionErrored(args, spec.ProducerName, acquireStart)
 			return AcquiredLock{}, openResultErrored, pcErr
@@ -112,10 +112,10 @@ func acquireClaim(
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: %w", err)
 	}
 	claimID := claimproducer.ClaimID(rowID.String())
-	openCtx := peer.WithServiceName(ctx, spec.ProducerName)
+	openCtx := service.WithServiceName(ctx, spec.ProducerName)
 	outcome, err := s.Open(openCtx, claimID, spec)
 	if err != nil {
-		var pcErr *peer.ProducerCallError
+		var pcErr *service.ProducerCallError
 		if errors.As(err, &pcErr) {
 			recordClaimAcquisitionErrored(args, spec.ProducerName, acquireStart)
 			return AcquiredLock{}, openResultErrored, pcErr

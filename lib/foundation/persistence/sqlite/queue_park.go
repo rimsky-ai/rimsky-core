@@ -183,71 +183,42 @@ func (q *queueImpl) ResumeParked(ctx context.Context, nodeRunID shared.UUID, tx 
 }
 
 // @concept: executor
-func (q *queueImpl) LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) ([]byte, string, string, error) {
+// @decision: scratch-column
+func (q *queueImpl) LoadScratch(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) ([]byte, error) {
 	if tx == nil {
-		return nil, "", "", errors.New("sqlite.LoadScratch: tx required")
+		return nil, errors.New("sqlite.LoadScratch: tx required")
 	}
-	var (
-		inline  []byte
-		handle  sql.NullString
-		backend sql.NullString
-	)
+	var scratch []byte
 	err := q.q(tx).QueryRowContext(ctx,
-		`SELECT scratch_inline, scratch_handle, scratch_handle_backend
-		   FROM rimsky_node_runs
-		  WHERE id = ?`,
+		`SELECT scratch FROM rimsky_node_runs WHERE id = ?`,
 		nodeRunID.String(),
-	).Scan(&inline, &handle, &backend)
+	).Scan(&scratch)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, "", "", nil
+			return nil, nil
 		}
-		return nil, "", "", fmt.Errorf("sqlite.LoadScratch: %w", err)
+		return nil, fmt.Errorf("sqlite.LoadScratch: %w", err)
 	}
-	var hStr, bStr string
-	if handle.Valid {
-		hStr = handle.String
-	}
-	if backend.Valid {
-		bStr = backend.String
-	}
-	return inline, hStr, bStr, nil
+	return scratch, nil
 }
 
 // @concept: executor
-// @concept: blob-backend
-func (q *queueImpl) WriteScratch(ctx context.Context, nodeRunID shared.UUID, inline []byte, handle, handleBackend string, tx persistence.Tx) error {
+// @decision: scratch-column
+// @decision: attribute-bytes-in-the-row
+func (q *queueImpl) WriteScratch(ctx context.Context, nodeRunID shared.UUID, scratch []byte, tx persistence.Tx) error {
 	if tx == nil {
 		return errors.New("sqlite.WriteScratch: tx required")
 	}
-	if len(inline) > 0 && handle != "" {
-		return errors.New("sqlite.WriteScratch: inline and handle are mutually exclusive")
+	if err := persistence.CheckValueSize("sqlite.WriteScratch", nodeRunID, "scratch", len(scratch)); err != nil {
+		return err
 	}
-	if q.tables == nil {
-		return errors.New("sqlite.WriteScratch: queue not wired with tables")
-	}
-	var priorHandle, priorBackend sql.NullString
-	if err := q.q(tx).QueryRowContext(ctx,
-		`SELECT scratch_handle, scratch_handle_backend FROM rimsky_node_runs WHERE id = ?`,
-		nodeRunID.String(),
-	).Scan(&priorHandle, &priorBackend); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("sqlite.WriteScratch: %s: %w", nodeRunID, persistence.ErrNotFound)
-		}
-		return fmt.Errorf("sqlite.WriteScratch: read prior handle: %w", err)
-	}
-
-	var inlineArg any
-	if len(inline) > 0 {
-		inlineArg = inline
+	var scratchArg any
+	if len(scratch) > 0 {
+		scratchArg = scratch
 	}
 	res, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		    SET scratch_inline         = ?,
-		        scratch_handle         = ?,
-		        scratch_handle_backend = ?
-		  WHERE id = ?`,
-		inlineArg, nullableString(handle), nullableString(handleBackend), nodeRunID.String(),
+		`UPDATE rimsky_node_runs SET scratch = ? WHERE id = ?`,
+		scratchArg, nodeRunID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.WriteScratch: %w", err)
@@ -258,11 +229,6 @@ func (q *queueImpl) WriteScratch(ctx context.Context, nodeRunID shared.UUID, inl
 	}
 	if n == 0 {
 		return fmt.Errorf("sqlite.WriteScratch: %s: %w", nodeRunID, persistence.ErrNotFound)
-	}
-	if priorHandle.Valid && priorHandle.String != "" && priorHandle.String != handle {
-		if err := persistence.QueueBlobOrphan(ctx, q.tables.BlobOrphans(), priorHandle.String, priorBackend.String, time.Now().UTC(), q.tables.blobRetention, tx); err != nil {
-			return fmt.Errorf("sqlite.WriteScratch: queue prior orphan: %w", err)
-		}
 	}
 	return nil
 }

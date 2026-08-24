@@ -39,7 +39,7 @@ func newJSONLoggerTo(w io.Writer, raw string) *slog.Logger {
 	level, known := ParseLogLevel(raw)
 	logger := slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}))
 	if !known {
-		logger.Warn("unrecognized log level; using the default",
+		logger.Warn("SERVERKIT.LOGLEVEL.UNRECOGNIZED", "detail", "using the default level",
 			"variable", LogLevelEnv,
 			"value", raw,
 			"accepted", LogLevelsAccepted,

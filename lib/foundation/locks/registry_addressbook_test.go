@@ -325,14 +325,14 @@ func TestAddressBookResolveCachedHitDoesNotBlockOnOtherNamesDial(t *testing.T) {
 }
 
 // @concept: service-address-book
-// @story: host-agent-late-bind-all-protocols
+// @story: host-daemon-late-bind-all-protocols
 func TestLateBoundProducerResolvesProxyThroughAddressBook(t *testing.T) {
 	f := newAddressBookFixture()
-	f.endpoints["rimsky-host-agent-proxy"] = ProducerEndpoint{Transport: "grpc", Endpoint: "proxy:8090"}
+	f.endpoints["rimsky-host-daemon-proxy"] = ProducerEndpoint{Transport: "grpc", Endpoint: "proxy:8090"}
 
 	r := NewRegistry(
 		WithAddressBookResolution(f.lookup, f.dial, 10*time.Second, f.now),
-		WithLateBindServiceProxies(map[string]string{"claim_producer": "rimsky-host-agent-proxy"}),
+		WithLateBindServiceProxies(map[string]string{"claim_producer": "rimsky-host-daemon-proxy"}),
 		WithLookupInstanceBindings(func(_ context.Context, instanceID string, _ persistence.Tx) (map[string]json.RawMessage, bool, error) {
 			if instanceID != "instance-1" {
 				return nil, false, nil
@@ -350,7 +350,7 @@ func TestLateBoundProducerResolvesProxyThroughAddressBook(t *testing.T) {
 			"through the in-process registry and then the address book, as the executor path already does; "+
 			"got (%v, %v)", got, ok)
 	}
-	if got.Name() != "rimsky-host-agent-proxy" {
+	if got.Name() != "rimsky-host-daemon-proxy" {
 		t.Fatalf("late-bound producer resolved to %q, want the proxy", got.Name())
 	}
 

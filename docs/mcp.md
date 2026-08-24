@@ -4,7 +4,7 @@ release. Read it only when directed here. -->
 
 # MCP reference
 
-Rimsky's control API speaks MCP on one endpoint. The endpoint exposes 57 tools and 2 resources covering template registration, instance lifecycle, messages, the event and audit logs, lineage, assets, runtime diagnostics, breakpoint debugging, API-key management, observability reads, and peer-authentication enrollment.
+Rimsky's control API speaks MCP on one endpoint. The endpoint exposes 57 tools and 2 resources covering template registration, instance lifecycle, messages, the event and audit logs, lineage, assets, runtime diagnostics, breakpoint debugging, API-key management, observability reads, and service-authentication enrollment.
 
 The MCP surface is a skin over the same operations the control API's HTTP surface exposes. A tool call re-enters the same handler, passes the same permission gate, and returns the same JSON the HTTP route returns. What a key may do over HTTP, it may do over MCP.
 
@@ -123,7 +123,7 @@ All 57 tools follow, by family. "Required" marks an argument the tool cannot run
 | --- | --- | --- |
 | `instance_list` | `template_hash`, `active` (`true`/`false`), `limit`, `cursor` | Lists instances. |
 | `instance_get` | `idOrKey` (required) | Reads one instance by id or instance key. |
-| `instance_create` | `template` (required — tag or content hash), `instance_key`, `params`, `attribute_overrides`, `paused`, `service_bindings`, `message_queue_mode` (`backlog` or `coalesce`), `target_agent` | Creates an instance from a deployed template. On a deployment in anonymous mode `target_agent` is required, because the deployment has no key id to route the instance's dispatches by. |
+| `instance_create` | `template` (required — tag or content hash), `instance_key`, `params`, `attribute_overrides`, `paused`, `service_bindings`, `message_queue_mode` (`backlog` or `coalesce`), `target_daemon` | Creates an instance from a deployed template. On a deployment in anonymous mode `target_daemon` is required, because the deployment has no key id to route the instance's dispatches by. |
 | `instance_terminate` | `idOrKey` (required) | Deletes an already-terminal instance and its rows. Refused with 409 while the instance still runs. |
 | `instance_pause` | `idOrKey` (required) | Soft-pauses an instance; the supervisor stops claiming new dispatches for it. |
 | `instance_resume` | `idOrKey` (required) | Resumes a paused instance. |
@@ -243,13 +243,13 @@ The `auth_create_key` response is the only place a key's plaintext ever appears.
 
 One tool covers the whole observability family. Valid `path_suffix` values are `claim-producers`, `claim-producers/{name}`, `executors`, `executors/{name}`, `templates`, `templates/{hash}`, `instances`, `instances/{id}`, `frames`, `frames/{id}`, `nodes/{instance_id}/{node_type}`, `node-runs`, `node-runs/{id}`, `claim-handles`, `claim-handles/{id}`, `events`, `system/health`, and `system/summary`. The paged list paths accept `limit` (default 50, capped at 500) and `cursor`, which you pass as ordinary arguments. A `path_suffix` containing an empty, `.`, or `..` segment is refused with `-32602`.
 
-### Peer-authentication enrollment
+### Service-authentication enrollment
 
 | Tool | Arguments | What it does |
 | --- | --- | --- |
 | `service_enroll` | `label` | Exchanges the calling key for a short-lived mTLS leaf certificate. Returns `cert_pem`, `key_pem`, `ca_root_pem`, and `not_after`. |
 
-This tool is listed on every deployment, but its operation exists only where the deployment configures peer authentication with a CA. On a deployment without it, calling `service_enroll` returns an error result with `status: 404`.
+This tool is listed on every deployment, but its operation exists only where the deployment configures service authentication with a CA. On a deployment without it, calling `service_enroll` returns an error result with `status: 404`.
 
 ## Drive an instance end to end
 
@@ -302,6 +302,6 @@ Every tool maps to one permission action, and the same gate runs whether the ope
 
 ## What the transport does not cover
 
-The tool catalog is computed from the permission-action registry, so operations that need no permission fall outside it. **Two operations an agent reaches for first have no tool**: the liveness probe and the identity echo. Both answer over HTTP without a token — `GET /v1/health` and `GET /v1/auth/whoami` — and neither is reachable through MCP. `observability_get("system/health")` is a different resource behind a different permission, not a substitute. Where peer authentication is configured, the CA-root fetch is likewise HTTP-only. Apart from these, every operation the HTTP surface exposes is reachable over MCP.
+The tool catalog is computed from the permission-action registry, so operations that need no permission fall outside it. **Two operations an agent reaches for first have no tool**: the liveness probe and the identity echo. Both answer over HTTP without a token — `GET /v1/health` and `GET /v1/auth/whoami` — and neither is reachable through MCP. `observability_get("system/health")` is a different resource behind a different permission, not a substitute. Where service authentication is configured, the CA-root fetch is likewise HTTP-only. Apart from these, every operation the HTTP surface exposes is reachable over MCP.
 
 **The two teardown tools are named the inverse of what a REST reader expects.** `instance_kill` is the one that ends a running instance. `instance_terminate` deletes an already-terminal instance and its rows, and answers 409 while the instance still runs. An agent that calls `instance_terminate` on a running instance gets a conflict about deletion rather than the termination it asked for.

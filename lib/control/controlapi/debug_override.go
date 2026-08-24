@@ -283,6 +283,12 @@ func resolveActiveFrameLatestRun(
 	return latest, nil
 }
 
+// @decision: attribute-bytes-in-the-row
+func lockNodeRunForAttributeWrite(ctx context.Context, deps AppDeps, runID shared.UUID, tx persistence.Tx) error {
+	_, err := deps.Persist.Nodes().GetRunByDispatchIDForUpdate(ctx, runID, tx)
+	return err
+}
+
 func setNodeAttributeForDebugOverride(
 	ctx context.Context, deps AppDeps, n persistence.NodeRow, frameID *shared.UUID, inFrameLatest *persistence.NodeRunLatest, body DebugOverrideRequest, tx persistence.Tx,
 ) (bool, error) {
@@ -305,6 +311,9 @@ func setNodeAttributeForDebugOverride(
 		targetRunID = newRunID
 	}
 	delta := map[string]any{body.AttributeKey: body.AttributeValue}
+	if err := lockNodeRunForAttributeWrite(ctx, deps, targetRunID, tx); err != nil {
+		return false, err
+	}
 	existing, err := deps.Persist.NodeAttributes().GetByRun(ctx, targetRunID, tx)
 	if err != nil {
 		return false, err

@@ -4,12 +4,11 @@ release. Read it only when directed here. -->
 
 # Configuration reference
 
-Rimsky reads four kinds of configuration file. This page lists every key in each one, its type, its default, and what it does.
+Rimsky reads three kinds of configuration file. This page lists every key in each one, its type, its default, and what it does.
 
 | File | Who reads it | Where it lives |
 | --- | --- | --- |
 | `rimsky.yml` | every rimsky role process and the migrate step | `/etc/rimsky/rimsky.yml`, or the path in `RIMSKY_CONFIG` |
-| supervisor config | the supervisor role | the path in `RIMSKY_SUPERVISOR_CONFIG` (required; the supervisor refuses to start without it) |
 | CLI config | the `rimsky` CLI | `~/.rimsky/config.yml` |
 | CLI service aliases | the `rimsky` CLI | `~/.rimsky/aliases.yml` and `./.rimsky/aliases.yml` |
 
@@ -17,7 +16,7 @@ Each bundled claim producer reads its own file, named by its own environment var
 
 ## How every file is read
 
-All four files, and both bundled-producer files, go through one loader with one behaviour.
+All three files, and both bundled-producer files, go through one loader with one behaviour.
 
 **Unknown keys stop the process.** The loader decodes strictly. A typo, a guess, a stale example, or a retired key fails at load, and the error names the offending field. A container that will not start because you wrote `persistance` is the loader working as designed.
 
@@ -27,7 +26,7 @@ All four files, and both bundled-producer files, go through one loader with one 
 
 ## rimsky.yml
 
-Twelve top-level keys. `persistence` is the only required one.
+Fourteen top-level keys. `persistence` is the only required one.
 
 ### persistence
 
@@ -44,23 +43,7 @@ The `postgres:` and `sqlite:` blocks are mutually exclusive; declaring the block
 
 Durations are Go duration strings: `30s`, `5m`, `1h`, `720h`.
 
-**SQLite and Postgres are not interchangeable settings-for-settings.** The graph behaviour matches — the same template produces the same events, node runs, frames, and read-route shapes on either driver — so a development run on SQLite does reproduce a Postgres run. The settings do not match. `persistence.blob.backend: pg-largeobject` stops a SQLite deployment at boot with `config: pg-largeobject blob backend requires the postgres driver` and comes up healthy on Postgres. A SQLite deployment also warns at every boot that the driver is for local development only. Outside the single-process all-in-one, a SQLite deployment warns further: every role process and every replica must share one local, non-network database file, and nothing inside a process can detect a deployment that fails to provide one.
-
-#### persistence.blob
-
-Attribute values and executor scratch above a threshold spill out of the inline column into a blob backend.
-
-| Key | Type | Default | Effect |
-| --- | --- | --- | --- |
-| `persistence.blob.backend` | `inline` \| `filesystem` \| `pg-largeobject` \| `memory` | `inline` | Where spilled bytes live. |
-| `persistence.blob.spill_threshold_bytes` | int | `65536` | Values larger than this spill. A value of 0 leaves the default in place rather than spilling everything. |
-| `persistence.blob.filesystem.root` | path | none — required under `filesystem` | Directory the filesystem backend writes under. |
-| `persistence.blob.retention.orphan_sweep_interval` | duration | `1h` | How often the scheduler sweeps the orphan-blob ledger. A value of 0 leaves the default. |
-| `persistence.blob.retention.retention_after_unreferenced` | duration | `24h` | How long an unreferenced blob survives before the sweep deletes it. A value of 0 leaves the default. |
-
-`pg-largeobject` requires `persistence.driver: postgres`. `memory` requires the single-process mode, where all three roles share one process and therefore one in-process map; a per-role process rejects it at startup.
-
-**Switching `persistence.blob.backend` takes previously spilled values offline.** Each spilled row records the backend that holds its value and refuses to read across a switch. A value written under `filesystem` and read back under `inline` or `memory` fails with HTTP 500 naming both the row's backend and the active one. The bytes survive — configuring the original backend again makes the value whole — but nothing migrates them, so the switch is not a resize operation.
+**A SQLite deployment warns at every boot that the driver is for local development only.** The graph behaviour matches the Postgres driver's — the same template produces the same events, node runs, frames, and read-route shapes on either driver — so a development run on SQLite does reproduce a Postgres run. Outside the single-process all-in-one, a SQLite deployment warns further: every role process and every replica must share one local, non-network database file, and nothing inside a process can detect a deployment that fails to provide one.
 
 ### claim_producers
 
@@ -70,9 +53,9 @@ A map of operator-chosen name to producer entry. The name is opaque to rimsky: n
 | --- | --- | --- | --- |
 | `claim_producers.<name>.endpoint` | `host:port`, optionally `grpc://host:port` | none — required | Where to dial the producer. An `http://`, `https://`, `tcp://`, or `unix://` prefix is rejected. |
 | `claim_producers.<name>.write_semantics_allowed` | list of `sync` \| `staged_async` \| `blocking_async` \| `read_only` | none — required | Narrows what this producer may realize. Must be a subset of the producer's advertised set; a superset fails at startup. |
-| `claim_producers.<name>.tls` | `off` \| `required` | `off`, or `required` when `peer_auth: mtls` | `required` verifies the peer's server certificate. |
+| `claim_producers.<name>.tls` | `off` \| `required` | `off`, or `required` when `service_auth: mtls` | `required` verifies the service's server certificate. |
 | `claim_producers.<name>.protocols` | list | `[claim_producer]` | Which protocols this service speaks. Must include `claim_producer`. |
-| `claim_producers.<name>.observability_endpoint` | `host:port` | the entry's `endpoint` | Address of the peer's observability protocol when it is served separately. |
+| `claim_producers.<name>.observability_endpoint` | `host:port` | the entry's `endpoint` | Address of the service's observability protocol when it is served separately. |
 
 The legal protocol names, here and in every other service block, are `claim_producer`, `executor`, `publisher`, `lifecycle_subscriber`, `validation`, and `data_processing`.
 
@@ -90,7 +73,7 @@ A template that names a lock literally must name one declared here, or registrat
 | --- | --- | --- | --- |
 | `executors.<name>.transport` | `grpc` \| `http` \| `inproc` | none — required | How the supervisor dispatches. `inproc` addresses executors running inside the rimsky process. |
 | `executors.<name>.endpoint` | `host:port` under `grpc`; a URL under `http` | none — required | Where to dispatch. |
-| `executors.<name>.tls` | `off` \| `required` | `off`, or `required` when `peer_auth: mtls` | Under `transport: http`, `required` also demands an `https://` endpoint. |
+| `executors.<name>.tls` | `off` \| `required` | `off`, or `required` when `service_auth: mtls` | Under `transport: http`, `required` also demands an `https://` endpoint. |
 | `executors.<name>.protocols` | list | `[executor]` | Must include `executor`. |
 | `executors.<name>.observability_endpoint` | `host:port` | the entry's `endpoint` | Address of the executor-observability protocol when served separately. |
 
@@ -101,7 +84,7 @@ An executor named here overrides a bundled executor of the same name.
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `publishers.<name>.endpoint` | `host:port` | none — required | Where to reach the sensor. |
-| `publishers.<name>.tls` | `off` \| `required` | `off`, or `required` when `peer_auth: mtls` | Verifies the peer's server certificate. |
+| `publishers.<name>.tls` | `off` \| `required` | `off`, or `required` when `service_auth: mtls` | Verifies the service's server certificate. |
 | `publishers.<name>.protocols` | list | `[publisher]` | Must include `publisher`. |
 | `publishers.<name>.observability_endpoint` | `host:port` | the entry's `endpoint` | Address of the observability sibling. |
 
@@ -110,7 +93,7 @@ An executor named here overrides a bundled executor of the same name.
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `validators.<name>.endpoint` | `host:port` | none — required | Where to reach the validating service. |
-| `validators.<name>.tls` | `off` \| `required` | `off`, or `required` when `peer_auth: mtls` | Verifies the peer's server certificate. |
+| `validators.<name>.tls` | `off` \| `required` | `off`, or `required` when `service_auth: mtls` | Verifies the service's server certificate. |
 | `validators.<name>.protocols` | list | `[validation]` | Must include `validation`. |
 | `validators.<name>.observability_endpoint` | `host:port` | the entry's `endpoint` | Address of the observability sibling. |
 
@@ -121,7 +104,7 @@ Validators are consulted at template registration, never per dispatch.
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `data_processors.<name>.endpoint` | `host:port` | none — required | Where to reach the data-processing service. |
-| `data_processors.<name>.tls` | `off` \| `required` | `off`, or `required` when `peer_auth: mtls` | Verifies the peer's server certificate. |
+| `data_processors.<name>.tls` | `off` \| `required` | `off`, or `required` when `service_auth: mtls` | Verifies the service's server certificate. |
 | `data_processors.<name>.protocols` | list | `[data_processing]` | Must include `data_processing`. |
 | `data_processors.<name>.observability_endpoint` | `host:port` | the entry's `endpoint` | Address of the observability sibling. |
 
@@ -136,6 +119,15 @@ Every value is a Go duration or a count. Setting one to 0 disables that sweep; a
 | `retention.lineage_trailing` | duration | `720h` | Deletes lineage records older than this. |
 | `retention.claim_handles_trailing` | duration | `720h` | Deletes claim-handle rows older than this. |
 | `retention.message_idempotencies_trailing` | duration | `24h` | Deletes message-idempotency rows older than this. |
+| `retention.lifecycle_outbox_trailing` | duration | unset — nothing is discarded | Deletes lifecycle-outbox rows older than this, delivered or not. Unset keeps rimsky's at-least-once promise unconditional; a positive value is an operator's explicit decision to discard what a service has not acknowledged by that age. It must be longer than `service_delivery.stall_after`, so the stall signal reports the failure before the window discards it; a shorter window fails at load. |
+
+### service_delivery
+
+Deployment-wide tuning for delivery to services.
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `service_delivery.stall_after` | duration | `5m` | How long a service's oldest pending outbox row may wait before rimsky calls that service stalled. It also caps the retry backoff, so a stalled service is retried no less often than the threshold that declares it stalled. Must be positive; a zero or negative value fails at load. |
 
 ### dispatch_defaults
 
@@ -147,7 +139,7 @@ Deployment-wide fallbacks for three of a node's dispatch deadlines. A node's own
 | `dispatch_defaults.max_quiet_period` | duration | unset | How long a dispatch may go without progress. Must be 0 or at least `1s`; a smaller positive value fails at load. |
 | `dispatch_defaults.max_runtime` | duration | unset | Wall-clock ceiling on one dispatch. Must be 0 or at least `1s`. |
 
-**Retry policy has no deployment-wide form, and guessing one stops the deployment.** These three keys are the whole block. Adding `max_retries` or any `retry_backoff` subkey under `dispatch_defaults` — the natural guess from the per-node timing keys — fails the migrate step with `field max_retries not found`, and the entrypoint reports `migrate failed`. Set retry policy on each node instead.
+**Retry policy has no deployment-wide form, and guessing one stops the deployment.** These three keys are the whole block. Adding `max_retries` or any `retry_backoff` subkey under `dispatch_defaults` — the natural guess from the per-node timing keys — fails the migrate step with `field max_retries not found`, and the entrypoint reports `ENTRYPOINT.MIGRATE.FAILED`. Set retry policy on each node instead.
 
 ### late_bind_service_proxies
 
@@ -157,13 +149,32 @@ Deployment-wide fallbacks for three of a node's dispatch deadlines. A node's own
 
 An empty map leaves late-bind resolution inert: a dispatch to an unresolved name simply does not resolve.
 
-### peer_auth
+### supervisor
+
+Supervisor tuning. The supervisor role reads this section of `rimsky.yml`; there is no second file.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `peer_auth` | `none` \| `mtls` | `none` | Posture on the internal service-to-service boundary. |
+| `supervisor.supervisor_id` | string | `<hostname>-<pid>` | Identifies this supervisor in the supervisor registry. |
+| `supervisor.concurrency` | int | `4` | Dispatches in flight at once. A value below 1 is replaced by the default. |
+| `supervisor.liveness_interval_ms` | int | `5000` | How often the supervisor refreshes its liveness. A value below 100 is replaced by the default. |
+| `supervisor.claim_poll_interval_ms` | int | `1000` | How often the supervisor polls for claimable work. A value below 50 is replaced by the default. |
+| `supervisor.callback.host` | string | `0.0.0.0` | Bind address of the async-callback listener. |
+| `supervisor.callback.port` | int | `8081` | Bind port. 0 takes an operating-system-assigned port. |
+| `supervisor.callback.advertise_host` | string | unset | Hostname stamped into callback URLs handed to executors. |
+| `supervisor.callback.advertise_port` | int | the bound port | Port stamped into callback URLs. |
 
-Under `none`, internal dials are plaintext against a trusted-subnet assumption, and no certificate machinery runs. Under `mtls`, a per-deployment certificate authority issues short-lived leaf certificates, every standing service enrols, and both peers of every internal leg present and verify certificates. `mtls` also flips the default `tls` mode on every service entry from `off` to `required`, and it requires `RIMSKY_CA_ENCRYPTION_KEY` to hold a standard-base64 32-byte key; a missing or malformed key fails startup.
+Note the three silent floors: a `concurrency` of 0, a `liveness_interval_ms` of 50, or a `claim_poll_interval_ms` of 10 does not take effect and does not warn — each is replaced by the default above.
+
+`supervisor.callback.advertise_host` is the one key here that can stop startup. The listener binds `0.0.0.0` by default, which is not an address an executor can dial back on, so an unset advertise host over a wildcard bind is refused rather than stamped into callback URLs. Set it to a hostname the executors can reach. An explicit non-wildcard `supervisor.callback.host` serves as the advertise fallback. `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST` and `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT` override the two advertise keys, and take precedence over the file.
+
+### service_auth
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `service_auth` | `none` \| `mtls` | `none` | Posture on the internal service-to-service boundary. |
+
+Under `none`, internal dials are plaintext against a trusted-subnet assumption, and no certificate machinery runs. Under `mtls`, a per-deployment certificate authority issues short-lived leaf certificates, every standing service enrols, and both services of every internal leg present and verify certificates. `mtls` also flips the default `tls` mode on every service entry from `off` to `required`, and it requires `RIMSKY_CA_ENCRYPTION_KEY` to hold a standard-base64 32-byte key; a missing or malformed key fails startup.
 
 ### unreachable_validator_policy
 
@@ -175,26 +186,7 @@ Under `permissive_warn` the registration succeeds and the unreachable validator 
 
 ### What rimsky.yml does not configure
 
-**There is no authentication toggle.** Anonymous mode — the state in which the api-key ledger holds no active rows — is derived from data, not set by configuration. Each of `anonymous_mode`, `auth`, `require_auth`, `anonymous`, and `auth_mode` stops the container at startup with `field <name> not found`, and the refusal prints the whole top-level schema: the twelve keys above, none of them an auth switch. The environment offers no switch either. What the product gives instead is a warning banner while the ledger is empty, an immediate flip to enforcing the moment the first key is minted, and a guard on the way back that refuses to revoke the last key without an explicit force.
-
-## Supervisor config
-
-The supervisor reads a second file, named by `RIMSKY_SUPERVISOR_CONFIG`. It carries supervisor tuning only; deployment shape stays in `rimsky.yml`.
-
-| Key | Type | Default | Effect |
-| --- | --- | --- | --- |
-| `supervisor_id` | string | `<hostname>-<pid>` | Identifies this supervisor in the supervisor registry. |
-| `concurrency` | int | `4` | Dispatches in flight at once. A value below 1 is replaced by the default. |
-| `liveness_interval_ms` | int | `5000` | How often the supervisor refreshes its liveness. A value below 100 is replaced by the default. |
-| `claim_poll_interval_ms` | int | `1000` | How often the supervisor polls for claimable work. A value below 50 is replaced by the default. |
-| `callback.host` | string | `0.0.0.0` | Bind address of the async-callback listener. |
-| `callback.port` | int | `0` | Bind port. 0 takes an operating-system-assigned port. |
-| `callback.advertise_host` | string | unset | Hostname stamped into callback URLs handed to executors. |
-| `callback.advertise_port` | int | the bound port | Port stamped into callback URLs. |
-
-Note the three silent floors: a `concurrency` of 0, a `liveness_interval_ms` of 50, or a `claim_poll_interval_ms` of 10 does not take effect and does not warn — each is replaced by the default above.
-
-`callback.advertise_host` is the one key here that can stop startup. The listener binds `0.0.0.0` by default, which is not an address an executor can dial back on, so an unset advertise host over a wildcard bind is refused rather than stamped into callback URLs. Set it to a hostname the executors can reach. An explicit non-wildcard `callback.host` serves as the advertise fallback. `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST` and `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT` override the two advertise keys, and take precedence over the file.
+**There is no authentication toggle.** Anonymous mode — the state in which the api-key ledger holds no active rows — is derived from data, not set by configuration. Each of `anonymous_mode`, `auth`, `require_auth`, `anonymous`, and `auth_mode` stops the container at startup with `field <name> not found`, and the refusal prints the whole top-level schema: the fourteen keys above, none of them an auth switch. The environment offers no switch either. What the product gives instead is a warning banner while the ledger is empty, an immediate flip to enforcing the moment the first key is minted, and a guard on the way back that refuses to revoke the last key without an explicit force.
 
 ## CLI config
 
@@ -254,7 +246,7 @@ Two combinations are checked at load. `on_commit: pop` with `sync_strategy: on_o
 
 `sync_strategy: explicit` puts the rescan behind the admin listener, so it requires a non-zero `admin_port`; a policy asking for `explicit` without one fails at load and names the policy.
 
-**The default `grpc_port` collides with the core stack.** 9100 is also where a supervisor's async-callback listener binds in the bundled single-container defaults. Running this producer alongside the core stack on one host at defaults gives `listen tcp 0.0.0.0:9100: bind: address already in use`. Give the producer its own ports — `grpc_port: 9200`, `http_port: 9210` — when it shares a host with the core stack.
+**The default `grpc_port` sits in the bundled-service block.** 9100 belongs to this producer alone: core listeners take 8080 through 8099 and the bundled services take 9000 through 9199, so the producer binds beside the core stack on one host at defaults. Give it `grpc_port` and `http_port` of your own when a second copy shares the host.
 
 ### claim-producer-postgres
 

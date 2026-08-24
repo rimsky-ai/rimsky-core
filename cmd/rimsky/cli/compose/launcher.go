@@ -44,9 +44,13 @@ func MigratePersistence(ctx context.Context, logger *slog.Logger, configPath str
 	return driver, cfg, nil
 }
 
-var startRoleStackFn = launch.StartUnifiedStack
+type startUnifiedStackFunc func(context.Context, *slog.Logger, persistence.Database, *config.RimskyConfig, *config.BundledRegistrations) (*launch.UnifiedStack, error)
 
 func StartRoleStack(ctx context.Context, logger *slog.Logger, configPath string, endpoint string) (*RoleStack, error) {
+	return startRoleStack(ctx, logger, configPath, endpoint, launch.StartUnifiedStack)
+}
+
+func startRoleStack(ctx context.Context, logger *slog.Logger, configPath string, endpoint string, startUnified startUnifiedStackFunc) (*RoleStack, error) {
 	driver, cfg, err := MigratePersistence(ctx, logger, configPath)
 	if err != nil {
 		return nil, err
@@ -56,7 +60,7 @@ func StartRoleStack(ctx context.Context, logger *slog.Logger, configPath string,
 		_ = driver.Close()
 		return nil, fmt.Errorf("register bundled services: %w", err)
 	}
-	unified, err := startRoleStackFn(ctx, logger, driver, &cfg, bundledRegs)
+	unified, err := startUnified(ctx, logger, driver, &cfg, bundledRegs)
 	if err != nil {
 		_ = driver.Close()
 		return nil, err
@@ -88,19 +92,20 @@ func (s *RoleStack) FailCh() <-chan RoleFailure {
 
 func (s *RoleStack) Endpoint() string { return s.endpoint }
 
-func WaitForControlAPIReady(ctx context.Context, endpoint string, deadline time.Duration) error {
+const (
+	controlAPIProbeTimeout      = 500 * time.Millisecond
+	controlAPIReadyPollInterval = 50 * time.Millisecond
+)
+
+func WaitForControlAPIReady(ctx context.Context, clock shared.Clock, endpoint string, deadline time.Duration) error {
 	healthURL := endpoint + "/v1/health"
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-	pollCtx := ctx
-	cancel := func() {}
+	client := &http.Client{Timeout: controlAPIProbeTimeout}
+	var expiry time.Time
 	if deadline > 0 {
-		pollCtx, cancel = context.WithTimeout(ctx, deadline)
+		expiry = clock.Now().Add(deadline)
 	}
-	defer cancel()
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
 	for {
-		req, err := http.NewRequestWithContext(pollCtx, http.MethodGet, healthURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 		if err != nil {
 			return fmt.Errorf("build health request: %w", err)
 		}
@@ -111,13 +116,14 @@ func WaitForControlAPIReady(ctx context.Context, endpoint string, deadline time.
 				return nil
 			}
 		}
-		select {
-		case <-pollCtx.Done():
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if !expiry.IsZero() && !clock.Now().Before(expiry) {
 			return fmt.Errorf("control-api %s not ready within %s", healthURL, deadline)
-		case <-ticker.C:
+		}
+		if sleepErr := clock.Sleep(ctx, controlAPIReadyPollInterval); sleepErr != nil {
+			return sleepErr
 		}
 	}
 }

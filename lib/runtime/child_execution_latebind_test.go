@@ -53,7 +53,7 @@ func TestSettleFromFanoutChild_LateBoundProducer_ResolvesViaContext(t *testing.T
 	parentNodeRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	const lateBoundProducerName = "late-bound-store"
-	const proxyName = "host-agent-proxy"
+	const proxyName = "host-daemon-proxy"
 	proxy := storetest.NewFake(proxyName, claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})

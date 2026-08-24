@@ -11,7 +11,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
 
 func abandonOpenedClaim(
@@ -22,6 +22,6 @@ func abandonOpenedClaim(
 	leaseToken string,
 ) error {
 	claimID := claimproducer.ClaimID(claimHandleID.String())
-	ctx = peer.WithServiceName(ctx, producer.Name())
+	ctx = service.WithServiceName(ctx, producer.Name())
 	return producer.Abandon(ctx, claimID, scope, address, leaseToken)
 }

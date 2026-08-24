@@ -22,7 +22,7 @@ import (
 func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 	t.Parallel()
 
-	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
+	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
 		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
@@ -98,4 +98,14 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 	}))
 	require.NotNil(t, wLatest)
 	require.Equal(t, cascade.NodeStateFresh, wLatest.State)
+
+	var sawOpen bool
+	for _, c := range sub.Calls() {
+		if c.Verb == "open" {
+			sawOpen = true
+			break
+		}
+	}
+	require.True(t, sawOpen,
+		"the pass policy still opened the claim: the stub producer received at least one Open")
 }

@@ -96,10 +96,6 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		runDir = filepath.Clean(filepath.Join(rimskyDir, latestTarget))
 	}
 
-	if info, statErr := os.Stat(filepath.Join(runDir, "blobs")); statErr != nil || !info.IsDir() {
-		t.Fatalf("run dir missing blobs/ subdir (audit-artifact falsifier): err=%v info=%+v", statErr, info)
-	}
-
 	dbPath := filepath.Join(runDir, "state.db")
 	db, dbErr := sql.Open("sqlite", dbPath)
 	if dbErr != nil {
@@ -305,7 +301,7 @@ func parseSpawnedServicePID(t *testing.T, stderrStr, name string) int {
 		if jerr := json.Unmarshal([]byte(line), &env); jerr != nil {
 			continue
 		}
-		if env["msg"] != "spawned service" {
+		if env["msg"] != "COMPOSE.SERVICE.SPAWNED" {
 			continue
 		}
 		if envName, _ := env["name"].(string); envName != name {

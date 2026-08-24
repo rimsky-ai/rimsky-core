@@ -75,9 +75,9 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 	}
 	priorDisposition := nullableString(req.PriorDispatchDisposition)
 	// @concept: executor
-	var scratchInlineArg any
-	if len(req.InitialScratchInline) > 0 {
-		scratchInlineArg = req.InitialScratchInline
+	var scratchArg any
+	if len(req.InitialScratch) > 0 {
+		scratchArg = req.InitialScratch
 	}
 	creationReason := req.CreationReason
 	if creationReason == "" {
@@ -85,10 +85,10 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 	}
 	newRunID := uuid.New()
 	res, err := q.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_claim_producers, enqueued_at, state, creation_reason, sequence, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch)
 		 SELECT ?, ?, ?, ?, ?, 'stale', ?,
 		        COALESCE((SELECT MAX(sequence) FROM rimsky_node_runs WHERE node_id = ? AND run_scope_id = ?), 0) + 1,
-		        ?, rs.id, ?, ?, ?, ?, ?
+		        ?, rs.id, ?, ?, ?
 		   FROM rimsky_run_scopes rs
 		  WHERE rs.id = ?
 		    AND rs.closed_at IS NULL`,
@@ -98,7 +98,7 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 		req.NodeID.String(), req.RunScopeID.String(),
 		req.FrameID.String(),
 		priorNodeRunID, priorDisposition,
-		scratchInlineArg, nullableString(req.InitialScratchHandle), nullableString(req.InitialScratchHandleBackend),
+		scratchArg,
 		req.RunScopeID.String(),
 	)
 	if err != nil {
