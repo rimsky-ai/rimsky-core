@@ -711,7 +711,7 @@ Treat these as a second, differently shaped read surface, not a low-privilege co
 | `GET /v1/observability/claim-producers` | — | `{"claim_producers": [service]}`, no cursor, ignores `limit` |
 | `GET /v1/observability/claim-producers/{name}` | — | `{"service": ..., "pending_lifecycle_deliveries": [...]}`; unknown name `404` |
 | `GET /v1/observability/executors` | — | `{"executors": [service]}`, no cursor, ignores `limit` |
-| `GET /v1/observability/executors/{name}` | — | `{"service": ...}`; unknown name `404` |
+| `GET /v1/observability/executors/{name}` | — | `{"service": ..., "pending_lifecycle_deliveries": [...]}`; unknown name `404` |
 | `GET /v1/observability/templates` | `state`, `tag`, `limit`, `cursor` | `{"templates": [...], "next_cursor": "..."}` |
 | `GET /v1/observability/templates/{hash}` | — | `{"template": ..., "tags": [...]}` |
 | `GET /v1/observability/instances` | `template_hash`, `active`, `limit`, `cursor` | `{"instances": [...], "next_cursor": "..."}` |

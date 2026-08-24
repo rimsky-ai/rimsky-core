@@ -148,22 +148,26 @@ func handleGetClaimProducer(deps Deps) http.HandlerFunc {
 			}
 			cached = unreachableServiceEntry(spec)
 		}
-		// @decision: service-delivery-stall-signal
-		var pending []persistence.LifecycleOutboxRow
-		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			rows, err := deps.Tables.LifecycleOutbox().ListPendingForService(ctx, name, persistence.DefaultServiceOutboxPageSize, tx)
-			pending = rows
-			return err
-		}); err != nil {
-			internalErr(w, err)
-			return
-		}
-		resp := map[string]any{
-			"service":                      cached,
-			"pending_lifecycle_deliveries": pendingLifecycleDeliveries(pending),
-		}
-		writeJSON(w, http.StatusOK, resp)
+		writeServiceStatus(w, r, deps, name, cached)
 	}
+}
+
+// @decision: service-delivery-stall-signal
+// @concept: lifecycle-subscriber
+func writeServiceStatus(w http.ResponseWriter, r *http.Request, deps Deps, name string, cached ServiceEntry) {
+	var pending []persistence.LifecycleOutboxRow
+	if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := deps.Tables.LifecycleOutbox().ListPendingForService(ctx, name, persistence.DefaultServiceOutboxPageSize, tx)
+		pending = rows
+		return err
+	}); err != nil {
+		internalErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"service":                      cached,
+		"pending_lifecycle_deliveries": pendingLifecycleDeliveries(pending),
+	})
 }
 
 // @decision: service-delivery-stall-signal
@@ -230,7 +234,7 @@ func handleGetExecutor(deps Deps) http.HandlerFunc {
 			}
 			cached = unreachableServiceEntry(spec)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"service": cached})
+		writeServiceStatus(w, r, deps, name, cached)
 	}
 }
 
