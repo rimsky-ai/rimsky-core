@@ -1,3 +1,6 @@
+---
+closed: cecb7a6b89984bfc91c9400c46b3be06f4973cf0
+---
 # Sprint: Attribute bytes in the row, lifecycle delivery through one outbox, log kinds in the standard's form
 
 ## Intent
