@@ -1,3 +1,7 @@
+---
+closed: ca8bcf1d6575b6d48a458561e7e1a3d3b0a1c881
+---
+
 # Sprint: Align twenty silent traps to what a user expects
 
 ## Intent
