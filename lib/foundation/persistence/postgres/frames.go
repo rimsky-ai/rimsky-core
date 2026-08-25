@@ -5,8 +5,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -338,17 +336,12 @@ type frameCursor struct {
 }
 
 func encodeFrameCursor(started time.Time, fid shared.UUID) string {
-	b, _ := json.Marshal(frameCursor{StartedAt: started, F: fid})
-	return base64.StdEncoding.EncodeToString(b)
+	return persistence.EncodeCursor(frameCursor{StartedAt: started, F: fid})
 }
 
 func decodeFrameCursor(s string) (time.Time, shared.UUID, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, shared.UUID{}, err
-	}
 	var c frameCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := persistence.DecodeCursor(s, &c); err != nil {
 		return time.Time{}, shared.UUID{}, err
 	}
 	return c.StartedAt, c.F, nil

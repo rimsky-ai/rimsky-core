@@ -151,6 +151,9 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 const authSweepInterval = 1 * time.Minute
 
 func runAuthSweepLoop(ctx context.Context, tables persistence.Tables, clock shared.Clock, log shared.Logger, interval time.Duration) {
+	if log == nil {
+		log = shared.SilentLogger{}
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -159,12 +162,17 @@ func runAuthSweepLoop(ctx context.Context, tables persistence.Tables, clock shar
 			return
 		case <-ticker.C:
 			n, err := runtime.SweepRotationGrace(ctx, tables, clock, log)
-			if err != nil && log != nil {
+			if err != nil {
 				log.Error("AUTH.SWEEP.FAILED", "err", err.Error())
-				continue
-			}
-			if n > 0 && log != nil {
+			} else if n > 0 {
 				log.Info("AUTH.SWEEP.COMPLETED", "swept", n)
+			}
+			// @concept: api-key
+			expired, err := runtime.SweepKeyExpiry(ctx, tables, clock, log)
+			if err != nil {
+				log.Error("AUTH.EXPIRYSWEEP.FAILED", "err", err.Error())
+			} else if expired > 0 {
+				log.Info("AUTH.EXPIRYSWEEP.COMPLETED", "expired", expired)
 			}
 		}
 	}

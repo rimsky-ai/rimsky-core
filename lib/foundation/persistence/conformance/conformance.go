@@ -4,6 +4,7 @@
 package conformance
 
 import (
+	"io/fs"
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -17,6 +18,7 @@ func Suite(
 	factory func(*testing.T) persistence.Database,
 	rawExec func(t *testing.T, d persistence.Database, sql string, args ...any),
 	rawQuery func(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow,
+	migrations fs.FS,
 ) {
 	t.Helper()
 	t.Run("DispatchClaimRelease", func(t *testing.T) { testDispatchClaimRelease(t, factory(t)) })
@@ -261,6 +263,9 @@ func Suite(
 	t.Run("LineageQueryPaginatesWithCursor", func(t *testing.T) { testLineageQueryPaginatesWithCursor(t, factory(t)) })
 	t.Run("LineageCountOlderThanMatchesDelete", func(t *testing.T) { testLineageCountOlderThanMatchesDelete(t, factory(t)) })
 	t.Run("APIKeys", func(t *testing.T) { testAPIKeys(t, factory(t)) })
+	t.Run("UpgradeReportsNoExpiryThatPassedBeforeIt", func(t *testing.T) {
+		testUpgradeReportsNoExpiryThatPassedBeforeIt(t, factory(t), migrations, rawExec)
+	})
 	t.Run("Breakpoints", func(t *testing.T) { TestBreakpoints(t, factory(t)) })
 	t.Run("BreakpointHits", func(t *testing.T) { TestBreakpointHits(t, factory(t)) })
 	t.Run("DeploymentCA", func(t *testing.T) { TestDeploymentCA(t, factory(t)) })

@@ -40,10 +40,19 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	return s.executeCore(req), nil
 }
 
+// @concept: conformance
+func stubSuccess(attrs map[string]any) *genv1.Outcome {
+	return stubprobe.Success(stubprobe.StubSuccess{
+		Attributes:    attrs,
+		ChangeSummary: "verifier-shape-checks stub",
+		ErrorClass:    "verifier/attribute_invalid",
+	})
+}
+
 func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 	ud := req.GetAttributes().AsMap()
-	if stubmode.IsProbe(ud) && s.stubMode {
-		return execoutcome.StubSuccess("verifier-shape-checks stub")
+	if s.stubMode && (stubmode.IsProbe(ud) || stubprobe.HasResponseOverride(ud)) {
+		return stubSuccess(ud)
 	}
 	specs, err := parseChecks(ud)
 	if err != nil {

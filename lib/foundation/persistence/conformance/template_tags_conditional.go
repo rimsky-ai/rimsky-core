@@ -7,6 +7,7 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -174,17 +175,27 @@ func testTemplateTagsListDeleteCountRoundTrip(t *testing.T, d persistence.Databa
 
 	var page persistence.PaginatedListResult[persistence.TemplateTagRow]
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		p, err := store.TemplateTags().List(ctx, persistence.ListPagination{Limit: 1, Cursor: tagA1}, tx)
+		p, err := store.TemplateTags().List(ctx, persistence.ListPagination{
+			Limit:  1,
+			Cursor: persistence.EncodeKeyCursor(tagA1),
+		}, tx)
 		page = p
 		return err
 	}); err != nil {
-		t.Fatalf("List(cursor=%s): %v", tagA1, err)
+		t.Fatalf("List(cursor after %s): %v", tagA1, err)
 	}
 	if len(page.Rows) != 1 || page.Rows[0].Tag != tagA2 {
-		t.Fatalf("List(cursor=%s) = %+v, want next tag %s", tagA1, page, tagA2)
+		t.Fatalf("List(cursor after %s) = %+v, want next tag %s", tagA1, page, tagA2)
 	}
-	if page.NextCursor != tagA2 {
-		t.Fatalf("List(cursor=%s) NextCursor = %q, want %q", tagA1, page.NextCursor, tagA2)
+	if page.NextCursor == "" || page.NextCursor == tagA2 {
+		t.Fatalf("the tag cursor is opaque and never the tag itself; got %q", page.NextCursor)
+	}
+	cursorErr := inTx(ctx, store, func(tx persistence.Tx) error {
+		_, err := store.TemplateTags().List(ctx, persistence.ListPagination{Limit: 1, Cursor: "not-a-cursor"}, tx)
+		return err
+	})
+	if !errors.Is(cursorErr, persistence.ErrInvalidCursor) {
+		t.Fatalf("the store must refuse a cursor it did not mint with ErrInvalidCursor; got %v", cursorErr)
 	}
 
 	var deleted bool

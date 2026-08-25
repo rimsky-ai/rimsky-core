@@ -16,12 +16,15 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
+
+	pgmigrations "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres/migrations"
+	sqlitemigrations "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite/migrations"
 )
 
 func TestConformancePostgres(t *testing.T) {
 	Suite(t, func(t *testing.T) persistence.Database {
 		return pgtest.OpenDriver(context.Background(), t)
-	}, postgresRawExec, postgresRawQuery)
+	}, postgresRawExec, postgresRawQuery, pgmigrations.FS)
 }
 
 func TestConformanceSQLite(t *testing.T) {
@@ -40,7 +43,7 @@ func TestConformanceSQLite(t *testing.T) {
 			t.Fatalf("migrate: %v", err)
 		}
 		return d
-	}, sqliteRawExec, sqliteRawQuery)
+	}, sqliteRawExec, sqliteRawQuery, sqlitemigrations.FS)
 }
 
 func postgresRawExec(t *testing.T, d persistence.Database, sql string, args ...any) {

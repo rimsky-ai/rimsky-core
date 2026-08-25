@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
-	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/internal/clitest"
 )
 
 func TestRunAdminReset(t *testing.T) {
@@ -17,8 +16,7 @@ func TestRunAdminReset(t *testing.T) {
 	srv.State.SetTemplateState(hash, "deployed")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", RunSummary: &cli.NodeRunSummary{FreshCount: 1}})
-	if got := cli.RunAdminReset(context.Background(), []string{"n1"}); got != 0 {
+	if got := cli.RunAdminReset(context.Background(), []string{"--yes", "n1"}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
-	_ = clitest.Server{}
 }

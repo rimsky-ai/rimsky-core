@@ -20,6 +20,9 @@ var (
 	ErrRollbackUnsupported = errors.New("rollback unsupported by resource implementation")
 	ErrExecutorNotFound    = errors.New("executor not found in supervisor config")
 
+	// @concept: claim-handle
+	ErrClaimHandleNotFound = errors.New("claim handle not found")
+
 	// @concept: breakpoint
 	ErrBreakpointNotFound    = errors.New("breakpoint not found")
 	ErrBreakpointHitNotFound = errors.New("breakpoint hit not found")

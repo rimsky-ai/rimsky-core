@@ -103,6 +103,13 @@ func runCapt(t *testing.T, fn func([]string) int, args []string) (int, string) {
 	return code, out
 }
 
+func runCaptOut(t *testing.T, fn func([]string) int, args []string) (int, string) {
+	t.Helper()
+	var code int
+	out := captureStdout(t, func() { code = fn(args) })
+	return code, out
+}
+
 var conformanceSubcommands = []struct {
 	name    string
 	run     func([]string) int
@@ -113,14 +120,14 @@ var conformanceSubcommands = []struct {
 	{
 		name:    "executor",
 		run:     runConformanceExecutor,
-		flags:   []string{"endpoint", "transport", "allow-live", "scenarios", "skip", "timeout", "check-observability", "retention-test-seconds", "callback-bind", "callback-host", "tls"},
+		flags:   []string{"endpoint", "transport", "allow-live", "scenarios", "skip", "timeout", "check-observability", "retention-test", "callback-bind", "callback-host", "tls"},
 		reqMsg:  "--endpoint required",
 		reqExit: 2,
 	},
 	{
 		name:    "claim-producer",
 		run:     runConformanceClaimProducer,
-		flags:   []string{"endpoint", "transport", "timeout", "check-observability", "retention-test-seconds"},
+		flags:   []string{"endpoint", "transport", "timeout", "check-observability", "retention-test"},
 		reqMsg:  "--endpoint required",
 		reqExit: 2,
 	},
@@ -159,12 +166,19 @@ var conformanceSubcommands = []struct {
 		reqMsg:  "--endpoint required",
 		reqExit: 2,
 	},
+	{
+		name:    "host-daemon",
+		run:     runConformanceHostDaemon,
+		flags:   []string{"endpoint", "transport", "timeout", "tls", "daemon-label", "routing-label", "callback-base-url", "key"},
+		reqMsg:  "--endpoint required",
+		reqExit: 2,
+	},
 }
 
 func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {
 	for _, sc := range conformanceSubcommands {
 		t.Run(sc.name, func(t *testing.T) {
-			_, usage := runCapt(t, sc.run, []string{"-h"})
+			_, usage := runCaptOut(t, sc.run, []string{"-h"})
 			for _, f := range sc.flags {
 				if !strings.Contains(usage, "-"+f) {
 					t.Errorf("subcommand %q: documented flag --%s missing from usage:\n%s", sc.name, f, usage)
@@ -189,10 +203,10 @@ func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {
 
 // @concept: conformance
 func TestNoProtocolSuiteHangsOffAnotherProtocolsSubcommand(t *testing.T) {
-	protocols := []string{"executor", "claim-producer", "publisher", "validation", "data-processing", "lifecycle-subscriber"}
+	protocols := []string{"executor", "claim-producer", "publisher", "validation", "data-processing", "lifecycle-subscriber", "host-daemon"}
 	for _, sc := range conformanceSubcommands {
 		t.Run(sc.name, func(t *testing.T) {
-			_, usage := runCapt(t, sc.run, []string{"-h"})
+			_, usage := runCaptOut(t, sc.run, []string{"-h"})
 			for _, line := range strings.Split(usage, "\n") {
 				trimmed := strings.TrimSpace(line)
 				if !strings.HasPrefix(trimmed, "-") {
@@ -304,6 +318,7 @@ func TestConformanceSubcommandsRequireTheirInputs(t *testing.T) {
 	}
 }
 
+// @decision: conformance-suite-per-protocol
 func TestDispatchConformanceRouting(t *testing.T) {
 	if code, out := runCapt(t, dispatchConformance, nil); code != 2 || !strings.Contains(out, "usage: rimsky conformance") {
 		t.Errorf("empty args: want exit 2 + usage, got exit %d, out:\n%s", code, out)

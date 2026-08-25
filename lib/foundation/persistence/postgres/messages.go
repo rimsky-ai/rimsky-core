@@ -5,8 +5,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -135,11 +133,11 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 	}
 	if filter.DeliveredAfter != nil {
 		args = append(args, *filter.DeliveredAfter)
-		where += fmt.Sprintf(" AND delivered_at > $%d", len(args))
+		where += fmt.Sprintf(" AND delivered_at >= $%d", len(args))
 	}
 	if filter.DeliveredBefore != nil {
 		args = append(args, *filter.DeliveredBefore)
-		where += fmt.Sprintf(" AND delivered_at < $%d", len(args))
+		where += fmt.Sprintf(" AND delivered_at <= $%d", len(args))
 	}
 	if filter.Pending != nil {
 		if *filter.Pending {
@@ -190,17 +188,12 @@ type messageCursor struct {
 
 func encodeMessageCursor(receivedAt time.Time, id shared.UUID) string {
 	c := messageCursor{R: receivedAt, I: id.String()}
-	b, _ := json.Marshal(c)
-	return base64.StdEncoding.EncodeToString(b)
+	return persistence.EncodeCursor(c)
 }
 
 func decodeMessageCursor(s string) (time.Time, shared.UUID, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, shared.UUID{}, err
-	}
 	var c messageCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := persistence.DecodeCursor(s, &c); err != nil {
 		return time.Time{}, shared.UUID{}, err
 	}
 	id, err := uuid.Parse(c.I)

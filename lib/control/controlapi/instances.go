@@ -471,8 +471,13 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		pag := persistence.ListPagination{
-			Limit:  parseLimit(req, 100),
+			Limit:  limit,
 			Cursor: q.Get("cursor"),
 		}
 		var page persistence.PaginatedListResult[persistence.InstanceRow]

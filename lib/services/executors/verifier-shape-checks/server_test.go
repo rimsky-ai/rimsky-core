@@ -398,3 +398,49 @@ func TestExecute_StubProbeShortCircuits(t *testing.T) {
 		t.Errorf("expected Success terminal in stub mode: %T", outcome.GetOutcome())
 	}
 }
+
+func TestExecute_StubModeAnswersWithTheRequestedStubResponse(t *testing.T) {
+	srv := NewServer(true)
+	req := buildReq(t, map[string]any{
+		"stub_response": map[string]any{"verdict": "pass", "checked": float64(2)},
+	})
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta := outcome.GetSuccess().GetAttributesDelta().AsMap()
+	if delta["verdict"] != "pass" || delta["checked"] != float64(2) {
+		t.Errorf("attributes_delta = %+v, want the requested stub_response", delta)
+	}
+}
+
+func TestExecute_StubModeRefusesAStubResponseThatIsNotAnObject(t *testing.T) {
+	srv := NewServer(true)
+	req := buildReq(t, map[string]any{"stub_response": []any{"not", "an", "object"}})
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class = %q", errOut.GetErrorClass())
+	}
+}
+
+func TestExecute_StubModeStillRunsTheChecksWithNoStubProbeAndNoOverride(t *testing.T) {
+	srv := NewServer(true)
+	req := buildReq(t, map[string]any{
+		"checks": []any{map[string]any{"kind": "no_nulls", "config": map[string]any{"field": "id"}}},
+		"rows":   []any{map[string]any{"id": nil}},
+	})
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.GetError() == nil {
+		t.Fatalf("expected the null row to fail the check, got %T", outcome.GetOutcome())
+	}
+}

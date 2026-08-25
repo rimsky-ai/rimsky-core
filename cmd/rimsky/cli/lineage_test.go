@@ -45,7 +45,7 @@ func TestClient_PruneLineage(t *testing.T) {
 	}
 }
 
-func TestRunLineagePrune_RequiresBefore(t *testing.T) {
+func TestRunLineagePrune_RequiresACutoff(t *testing.T) {
 	if code := RunLineagePrune(context.Background(), []string{}); code != 2 {
 		t.Errorf("exit: %d", code)
 	}

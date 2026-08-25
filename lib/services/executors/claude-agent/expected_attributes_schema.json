@@ -12,6 +12,8 @@
       "readOnly": true,
       "default": ""
     },
+    "stub_response": { "default": null },
+    "stub_tags": { "default": null },
     "cli": {
       "type": "object",
       "properties": {

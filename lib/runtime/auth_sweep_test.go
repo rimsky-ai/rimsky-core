@@ -197,3 +197,140 @@ func TestSweepRotationGrace_AuditWriteFailureSurfacedAndAtomic(t *testing.T) {
 		t.Fatalf("expected revocation to be rolled back when the audit write fails atomically, but revoked_at=%v", row.RevokedAt)
 	}
 }
+
+// @concept: api-key
+func TestKeyExpiryIsAuditedOnceWhenTheKeysDeclaredEndPasses(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver: "sqlite",
+		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "state.db")},
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tables := d.Tables()
+
+	clock := shared.NewControllableClock(time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC))
+	expiresAt := clock.Now().Add(10 * time.Minute)
+
+	expiring := uuid.New()
+	expiringHash := sha256.Sum256([]byte("rk_expiring"))
+	endless := uuid.New()
+	endlessHash := sha256.Sum256([]byte("rk_endless"))
+	revoked := uuid.New()
+	revokedHash := sha256.Sum256([]byte("rk_revoked"))
+	revokedAt := clock.Now().Add(-30 * time.Minute)
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := tables.APIKeys().Insert(ctx, persistence.APIKey{
+			ID:          expiring,
+			KeyHash:     expiringHash[:],
+			Name:        "expiring",
+			Permissions: []byte(`[{"action":"*"}]`),
+			CreatedAt:   clock.Now().Add(-1 * time.Hour),
+			ExpiresAt:   &expiresAt,
+		}, tx); err != nil {
+			return err
+		}
+		if err := tables.APIKeys().Insert(ctx, persistence.APIKey{
+			ID:          revoked,
+			KeyHash:     revokedHash[:],
+			Name:        "revoked",
+			Permissions: []byte(`[{"action":"*"}]`),
+			CreatedAt:   clock.Now().Add(-1 * time.Hour),
+			ExpiresAt:   &expiresAt,
+			RevokedAt:   &revokedAt,
+		}, tx); err != nil {
+			return err
+		}
+		return tables.APIKeys().Insert(ctx, persistence.APIKey{
+			ID:          endless,
+			KeyHash:     endlessHash[:],
+			Name:        "endless",
+			Permissions: []byte(`[{"action":"*"}]`),
+			CreatedAt:   clock.Now().Add(-1 * time.Hour),
+		}, tx)
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	logger := shared.NewCapturingLogger()
+
+	n, err := runtime.SweepKeyExpiry(ctx, tables, clock, logger)
+	if err != nil {
+		t.Fatalf("SweepKeyExpiry before the expiry: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("the sweep reported %d keys whose expiry has not passed; want 0", n)
+	}
+
+	var hookCalls int
+	unregister := runtime.RegisterAuthMutationHook(func() { hookCalls++ })
+	defer unregister()
+
+	clock.Advance(11 * time.Minute)
+
+	n, err = runtime.SweepKeyExpiry(ctx, tables, clock, logger)
+	if err != nil {
+		t.Fatalf("SweepKeyExpiry: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expiry sweep reported %d keys; want 1 — a revoked key's expiry emits no event", n)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("expected 1 auth-mutation hook invocation when a key expired, got %d", hookCalls)
+	}
+
+	n, err = runtime.SweepKeyExpiry(ctx, tables, clock, logger)
+	if err != nil {
+		t.Fatalf("re-sweep: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("re-sweep reported %d keys; the expiry event must fire once per key", n)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("expected no additional hook invocation on the re-sweep, got %d", hookCalls)
+	}
+
+	row, ok, err := tables.APIKeys().GetByID(ctx, expiring, nil)
+	if err != nil || !ok {
+		t.Fatalf("post-sweep row: err=%v ok=%v", err, ok)
+	}
+	if row.RevokedAt != nil {
+		t.Fatalf("the expiry sweep revoked the row; revoked_at=%v", row.RevokedAt)
+	}
+
+	var events []persistence.EventRow
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rl, err := tables.Events().List(ctx, persistence.EventListFilter{KindIn: []string{auth.EventKeyExpired.String()}}, persistence.ListPagination{}, tx)
+		if err != nil {
+			return err
+		}
+		events = rl.Events
+		return nil
+	}); err != nil {
+		t.Fatalf("Events.List: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 auth.key_expired event; got %d", len(events))
+	}
+	for _, e := range events {
+		if got, _ := e.Payload.Map()["key_id"].(string); got == revoked.String() {
+			t.Fatalf("the sweep emits no expiry event for a revoked key; it emitted one for %s", got)
+		}
+	}
+	payload := events[0].Payload.Map()
+	if got, _ := payload["key_id"].(string); got != expiring.String() {
+		t.Fatalf("event key_id = %q; want %q", got, expiring.String())
+	}
+	if got, _ := payload["key_name"].(string); got != "expiring" {
+		t.Fatalf("event key_name = %q; want %q", got, "expiring")
+	}
+	if got, _ := payload["expires_at"].(string); got != expiresAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("event expires_at = %q; want %q", got, expiresAt.UTC().Format(time.RFC3339))
+	}
+}

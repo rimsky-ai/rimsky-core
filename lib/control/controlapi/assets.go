@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -26,11 +25,17 @@ import (
 )
 
 func registerAssetsRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/instances/{id}/assets", gate(deps, "asset:read", handleListAssets(deps)))
-	r.Get("/instances/{id}/assets/{alias}", gate(deps, "asset:read", handleGetAsset(deps)))
-	r.Get("/instances/{id}/assets/{alias}/versions", gate(deps, "asset:read", handleAssetVersions(deps)))
-	r.Get("/instances/{id}/assets/{alias}/materialization-history", gate(deps, "asset:read", handleAssetMaterializationHistory(deps)))
-	r.Delete("/instances/{id}/assets/{alias}", gate(deps, "asset:delete", handleDeleteAsset(deps)))
+	r.Get("/instances/{idOrKey}/assets", gate(deps, "asset:read", handleListAssets(deps)))
+	r.Get("/instances/{idOrKey}/assets/{alias}", gate(deps, "asset:read", handleGetAsset(deps)))
+	r.Get("/instances/{idOrKey}/assets/{alias}/versions", gate(deps, "asset:read", handleAssetVersions(deps)))
+	r.Get("/instances/{idOrKey}/assets/{alias}/materialization-history", gate(deps, "asset:read", handleAssetMaterializationHistory(deps)))
+	r.Delete("/instances/{idOrKey}/assets/{alias}", gate(deps, "asset:delete", handleDeleteAsset(deps)))
+}
+
+type assetVersionItem struct {
+	VersionID        string          `json:"version_id"`
+	CommittedAtUnixS int64           `json:"committed_at_unix_s"`
+	ProducerMetadata json.RawMessage `json:"producer_metadata"`
 }
 
 type assetItem struct {
@@ -48,12 +53,21 @@ type assetItem struct {
 
 func handleListAssets(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
+		resolved, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
 			return
 		}
-		instUUID := shared.UUID(instanceID)
+		if resolved == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
+			return
+		}
+		instUUID := resolved.ID
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		var (
 			rows  []persistence.ClaimHandleRow
 			nodes []persistence.NodeRow
@@ -121,8 +135,17 @@ func handleListAssets(deps AppDeps) http.HandlerFunc {
 			}
 			items = append(items, toAssetItem(r, node, claimAlias))
 		}
+		page, nextCursor, err := persistence.PageByKey(items, req.URL.Query().Get("cursor"), limit,
+			func(a assetItem) string {
+				return persistence.SortableTimeKey(a.ClaimedAt) + "|" + a.ClaimID
+			})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"assets": items,
+			"assets":      page,
+			"next_cursor": nextCursor,
 		})
 	}
 }
@@ -263,11 +286,16 @@ func lookupProducerForAlias(s spec.TemplateSpec, nodeType, claimAlias string) st
 
 func handleGetAsset(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
+		resolved, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
 			return
 		}
+		if resolved == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
+			return
+		}
+		instanceID := resolved.ID
 		nodeType, claimAlias, err := parseAssetAlias(chi.URLParam(req, "alias"))
 		if err != nil {
 			badRequest(w, err.Error())
@@ -278,7 +306,7 @@ func handleGetAsset(deps AppDeps) http.HandlerFunc {
 			node *persistence.NodeRow
 		)
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
+			inst, err := deps.Persist.Instances().Get(ctx, instanceID, tx)
 			if err != nil {
 				return err
 			}
@@ -315,12 +343,22 @@ func ifNode(node *persistence.NodeRow) persistence.NodeRow {
 
 func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
+		resolved, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
 			return
 		}
+		if resolved == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
+			return
+		}
+		instanceID := resolved.ID
 		nodeType, claimAlias, err := parseAssetAlias(chi.URLParam(req, "alias"))
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		limit, err := parseLimit(req, 100)
 		if err != nil {
 			badRequest(w, err.Error())
 			return
@@ -333,7 +371,7 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 		}
 		var row *persistence.ClaimHandleRow
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
+			inst, err := deps.Persist.Instances().Get(ctx, instanceID, tx)
 			if err != nil {
 				return err
 			}
@@ -373,28 +411,47 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		items := make([]map[string]any, 0, len(resp.Versions))
+		items := make([]assetVersionItem, 0, len(resp.Versions))
 		for _, v := range resp.Versions {
-			items = append(items, map[string]any{
-				"version_id":          v.VersionID,
-				"committed_at_unix_s": v.CommittedAtUnixS,
-				"producer_metadata":   json.RawMessage(v.ProducerMetadata),
+			items = append(items, assetVersionItem{
+				VersionID:        v.VersionID,
+				CommittedAtUnixS: v.CommittedAtUnixS,
+				ProducerMetadata: json.RawMessage(v.ProducerMetadata),
 			})
 		}
+		page, nextCursor, err := persistence.PageByKey(items, req.URL.Query().Get("cursor"), limit,
+			func(v assetVersionItem) string {
+				return fmt.Sprintf("%020d|%s", v.CommittedAtUnixS, v.VersionID)
+			})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"versions": items,
+			"versions":    page,
+			"next_cursor": nextCursor,
 		})
 	}
 }
 
 func handleAssetMaterializationHistory(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
+		resolved, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
 			return
 		}
+		if resolved == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
+			return
+		}
+		instanceID := resolved.ID
 		nodeType, claimAlias, err := parseAssetAlias(chi.URLParam(req, "alias"))
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		limit, err := parseLimit(req, 100)
 		if err != nil {
 			badRequest(w, err.Error())
 			return
@@ -403,7 +460,7 @@ func handleAssetMaterializationHistory(deps AppDeps) http.HandlerFunc {
 			row *persistence.ClaimHandleRow
 		)
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
+			inst, err := deps.Persist.Instances().Get(ctx, instanceID, tx)
 			if err != nil {
 				return err
 			}
@@ -435,19 +492,30 @@ func handleAssetMaterializationHistory(deps AppDeps) http.HandlerFunc {
 		for _, lr := range records {
 			items = append(items, toLineageItem(lr))
 		}
+		page, nextCursor, err := pageLineageItems(items, req.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"materialization_history": items,
+			"materialization_history": page,
+			"next_cursor":             nextCursor,
 		})
 	}
 }
 
 func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
+		resolved, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
 			return
 		}
+		if resolved == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
+			return
+		}
+		instanceID := resolved.ID
 		nodeType, claimAlias, err := parseAssetAlias(chi.URLParam(req, "alias"))
 		if err != nil {
 			badRequest(w, err.Error())
@@ -460,7 +528,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 
 		var row *persistence.ClaimHandleRow
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
+			inst, err := deps.Persist.Instances().Get(ctx, instanceID, tx)
 			if err != nil {
 				return err
 			}
@@ -536,11 +604,11 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 
 func handleDeleteAssetDryRun(
 	deps AppDeps, w http.ResponseWriter, req *http.Request,
-	instanceID uuid.UUID, nodeType, claimAlias string,
+	instanceID shared.UUID, nodeType, claimAlias string,
 ) {
 	var active []persistence.ClaimHolderRow
 	err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-		inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
+		inst, err := deps.Persist.Instances().Get(ctx, instanceID, tx)
 		if err != nil {
 			return err
 		}

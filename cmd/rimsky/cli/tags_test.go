@@ -92,7 +92,7 @@ func TestRunTagRm_OK(t *testing.T) {
 	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	var got int
 	out := captureStdout(t, func() {
-		got = cli.RunTagRm(context.Background(), []string{"v1"})
+		got = cli.RunTagRm(context.Background(), []string{"--yes", "v1"})
 	})
 	if got != 0 {
 		t.Errorf("exit %d", got)

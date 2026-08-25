@@ -7,8 +7,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -973,20 +971,15 @@ func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {
 		E time.Time `json:"e"`
 		I string    `json:"i"`
 	}{E: enqueued, I: id.String()}
-	b, _ := json.Marshal(c)
-	return base64.StdEncoding.EncodeToString(b)
+	return persistence.EncodeCursor(c)
 }
 
 func decodeDispatchCursor(s string) (time.Time, shared.UUID, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, shared.UUID{}, err
-	}
 	var c struct {
 		E time.Time `json:"e"`
 		I string    `json:"i"`
 	}
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := persistence.DecodeCursor(s, &c); err != nil {
 		return time.Time{}, shared.UUID{}, err
 	}
 	id, err := uuid.Parse(c.I)

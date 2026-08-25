@@ -101,12 +101,12 @@ func TestRunInstanceDelete_Conflict(t *testing.T) {
 	hash := deployedTemplate(t, srv, "v1")
 	key := "k"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
-	if got := cli.RunInstanceDelete(context.Background(), []string{inst.ID}); got != 1 {
+	if got := cli.RunInstanceDelete(context.Background(), []string{"--yes", inst.ID}); got != 1 {
 		t.Errorf("exit %d, want 1", got)
 	}
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)
-	if got := cli.RunInstanceDelete(context.Background(), []string{inst.ID}); got != 0 {
+	if got := cli.RunInstanceDelete(context.Background(), []string{"--yes", inst.ID}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
 }
@@ -127,14 +127,15 @@ func TestRunInstanceKill_Force(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	if got := cli.RunInstanceKill(context.Background(), []string{"--force", "--reason", "stuck", inst.ID}); got != 0 {
+	if got := cli.RunInstanceKill(context.Background(), []string{"--force", "--yes", "--reason", "stuck", inst.ID}); got != 0 {
 		t.Errorf("exit %d, want 0", got)
 	}
 	if !srv.State.IsTerminated(inst.ID) {
 		t.Error("instance not terminal after kill --force")
 	}
-	if got := cli.RunInstanceKill(context.Background(), []string{"--yes", inst.ID}); got != 0 {
-		t.Errorf("exit %d (--yes), want 0", got)
+	if got := cli.RunInstanceKill(context.Background(), []string{"--yes", inst.ID}); got != 2 {
+		t.Errorf("exit %d, want 2. --yes answers the destructive-verb prompt. --force is the verb's own "+
+			"precondition, and nothing stands in for it", got)
 	}
 }
 

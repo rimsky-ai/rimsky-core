@@ -68,7 +68,7 @@ func (b *apiKeysImpl) Insert(ctx context.Context, k persistence.APIKey, tx persi
 
 const sqliteSelectAPIKeyCols = `
 	id, key_hash, name, permissions, created_at,
-	created_by_key_id, last_used_at, expires_at, revoke_at, revoked_at`
+	created_by_key_id, last_used_at, expires_at, revoke_at, revoked_at, expiry_event_at`
 
 func (b *apiKeysImpl) GetByID(ctx context.Context, id shared.UUID, tx persistence.Tx) (persistence.APIKey, bool, error) {
 	rows, err := b.run(tx).QueryContext(ctx,
@@ -264,6 +264,41 @@ func (b *apiKeysImpl) SweepRotationGrace(ctx context.Context, now time.Time, tx 
 	return out, nil
 }
 
+// @concept: api-key
+func (b *apiKeysImpl) SweepExpired(ctx context.Context, now time.Time, tx persistence.Tx) ([]persistence.APIKey, error) {
+	nowStr := now.UTC().Format(timeLayoutFixedNanos)
+	rows, err := b.run(tx).QueryContext(ctx,
+		`UPDATE rimsky_api_keys
+		    SET expiry_event_at = ?
+		  WHERE expires_at IS NOT NULL AND expires_at <= ? AND expiry_event_at IS NULL
+		    AND revoked_at IS NULL
+		  RETURNING id, name, expires_at`, nowStr, nowStr)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.APIKeys.SweepExpired: %w", err)
+	}
+	defer rows.Close()
+	out := []persistence.APIKey{}
+	for rows.Next() {
+		var idStr, name, expiresAtStr string
+		if err := rows.Scan(&idStr, &name, &expiresAtStr); err != nil {
+			return nil, fmt.Errorf("sqlite.APIKeys.SweepExpired.scan: %w", err)
+		}
+		u, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.APIKeys.SweepExpired.parse-uuid %q: %w", idStr, err)
+		}
+		expiresAt, err := parseTime(expiresAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.APIKeys.SweepExpired.parse-expires-at %q: %w", expiresAtStr, err)
+		}
+		out = append(out, persistence.APIKey{ID: u, Name: name, ExpiresAt: &expiresAt, ExpiryEventAt: &now})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (b *apiKeysImpl) UpdateLastUsed(ctx context.Context, id shared.UUID, now time.Time, tx persistence.Tx) error {
 	_, err := b.run(tx).ExecContext(ctx,
 		`UPDATE rimsky_api_keys SET last_used_at = ? WHERE id = ?`,
@@ -320,10 +355,11 @@ func scanAPIKeyRow(rows *sql.Rows) (persistence.APIKey, error) {
 		expiresAtStr  sql.NullString
 		revokeAtStr   sql.NullString
 		revokedAtStr  sql.NullString
+		expiryEventAt sql.NullString
 	)
 	if err := rows.Scan(
 		&idStr, &k.KeyHash, &k.Name, &permsStr, &createdAtStr,
-		&createdByStr, &lastUsedAtStr, &expiresAtStr, &revokeAtStr, &revokedAtStr,
+		&createdByStr, &lastUsedAtStr, &expiresAtStr, &revokeAtStr, &revokedAtStr, &expiryEventAt,
 	); err != nil {
 		return persistence.APIKey{}, fmt.Errorf("sqlite.APIKeys.scan: %w", err)
 	}
@@ -372,6 +408,13 @@ func scanAPIKeyRow(rows *sql.Rows) (persistence.APIKey, error) {
 			return persistence.APIKey{}, fmt.Errorf("sqlite.APIKeys.scan.revoked_at: %w", err)
 		}
 		k.RevokedAt = &t
+	}
+	if expiryEventAt.Valid {
+		t, err := parseTime(expiryEventAt.String)
+		if err != nil {
+			return persistence.APIKey{}, fmt.Errorf("sqlite.APIKeys.scan.expiry_event_at: %w", err)
+		}
+		k.ExpiryEventAt = &t
 	}
 	return k, nil
 }

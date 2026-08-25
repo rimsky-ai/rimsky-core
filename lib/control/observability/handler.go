@@ -116,6 +116,11 @@ func internalErr(w http.ResponseWriter, err error) {
 
 func handleListClaimProducers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		pag, err := parsePagination(r)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		entries := []ServiceEntry{}
 		seen := map[string]bool{}
 		for _, e := range deps.ClaimProducers {
@@ -132,8 +137,20 @@ func handleListClaimProducers(deps Deps) http.HandlerFunc {
 			}
 			entries = append(entries, cached)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"claim_producers": entries})
+		page, nextCursor, err := pageServiceEntries(entries, pag)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"claim_producers": page,
+			"next_cursor":     nextCursor,
+		})
 	}
+}
+
+func pageServiceEntries(entries []ServiceEntry, pag persistence.ListPagination) ([]ServiceEntry, string, error) {
+	return persistence.PageByKey(entries, pag.Cursor, pag.Limit, func(e ServiceEntry) string { return e.Name })
 }
 
 func handleGetClaimProducer(deps Deps) http.HandlerFunc {
@@ -202,6 +219,11 @@ func pendingLifecycleDeliveries(rows []persistence.LifecycleOutboxRow) []Pending
 
 func handleListExecutors(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		pag, err := parsePagination(r)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		entries := []ServiceEntry{}
 		seen := map[string]bool{}
 		for _, e := range deps.Executors {
@@ -218,7 +240,15 @@ func handleListExecutors(deps Deps) http.HandlerFunc {
 			}
 			entries = append(entries, cached)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"executors": entries})
+		page, nextCursor, err := pageServiceEntries(entries, pag)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"executors":   page,
+			"next_cursor": nextCursor,
+		})
 	}
 }
 

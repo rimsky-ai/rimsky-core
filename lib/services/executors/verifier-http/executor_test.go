@@ -353,3 +353,38 @@ func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 		}
 	}
 }
+
+func TestExecute_StubModeAnswersWithTheRequestedStubResponse(t *testing.T) {
+	executor := NewServer(loopbackOpts(t, true))
+	req := buildReq(t, map[string]any{
+		"url":           "http://unreachable.invalid/",
+		"stub_response": map[string]any{"rows": float64(3), "ok": true},
+	})
+	outcome, err := executor.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta := outcome.GetSuccess().GetAttributesDelta().AsMap()
+	if delta["rows"] != float64(3) || delta["ok"] != true {
+		t.Errorf("attributes_delta = %+v, want the requested stub_response", delta)
+	}
+}
+
+func TestExecute_StubModeRefusesAStubResponseThatIsNotAnObject(t *testing.T) {
+	executor := NewServer(loopbackOpts(t, true))
+	req := buildReq(t, map[string]any{
+		"url":           "http://unreachable.invalid/",
+		"stub_response": "not-an-object",
+	})
+	outcome, err := executor.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class = %q", errOut.GetErrorClass())
+	}
+}

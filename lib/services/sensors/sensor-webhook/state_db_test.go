@@ -18,6 +18,8 @@ import (
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorauth"
 )
 
 func stateColumns(ctx context.Context, t *testing.T, s *stateDB) []string {
@@ -112,7 +114,7 @@ func TestStateDB_NeverPersistsSecret(t *testing.T) {
 
 	const secret = "super-secret-shared-value"
 	subscribeWebhook(t, svc, "sub-secret", "/wh/secret", "X-Idem", map[string]any{
-		"mode": authModeSecretHeader, "header": "X-Token", "secret": secret,
+		"mode": sensorauth.ModeSecretHeader, "header": "X-Token", "secret": secret,
 	})
 
 	srv := httptest.NewServer(router)

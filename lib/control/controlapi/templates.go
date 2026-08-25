@@ -580,7 +580,11 @@ func handleListTemplates(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		state := req.URL.Query().Get("state")
 		cursor := req.URL.Query().Get("cursor")
-		limit := parseLimit(req, 100)
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		var page persistence.PaginatedListResult[persistence.TemplateRow]
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			p, err := deps.Persist.Templates().List(ctx,

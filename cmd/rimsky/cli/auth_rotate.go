@@ -14,6 +14,7 @@ import (
 
 func RunAuthRotate(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth rotate", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("auth rotate", "<name-or-id> [--grace <duration>]"))
 	var (
 		endpointFlag, keyFlag string
 		grace                 string
@@ -21,13 +22,12 @@ func RunAuthRotate(ctx context.Context, args []string) int {
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
 	RegisterAPIKeyFlag(fs, &keyFlag)
 	fs.StringVar(&grace, "grace", "24h", "rotation grace duration")
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky auth rotate <name-or-id> [--grace=24h]")
-		return 2
+		return UsageError(fs)
 	}
 	endpoint, key, err := resolveAuthEndpointAndKey(endpointFlag, keyFlag)
 	if err != nil {

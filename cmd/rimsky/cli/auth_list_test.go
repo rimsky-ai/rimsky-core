@@ -5,7 +5,6 @@ package cli
 
 import (
 	"testing"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/roles"
 
@@ -77,37 +76,5 @@ func TestMatchRole(t *testing.T) {
 	custom := auth.Grant{{Action: "definitely-not-a-bundled-permission-set"}}
 	if got := matchRole(custom); got != "custom" {
 		t.Fatalf("matchRole(custom grant) = %q, want %q", got, "custom")
-	}
-}
-
-func TestParseExpiresDuration(t *testing.T) {
-	cases := []struct {
-		name    string
-		in      string
-		want    time.Duration
-		wantErr bool
-	}{
-		{"hours", "24h", 24 * time.Hour, false},
-		{"days", "30d", 30 * 24 * time.Hour, false},
-		{"fractional_days", "1.5d", 36 * time.Hour, false},
-		{"bare_d_is_not_a_day_count", "d", 0, true},
-		{"garbage", "not-a-duration", 0, true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := parseExpiresDuration(c.in)
-			if c.wantErr {
-				if err == nil {
-					t.Fatalf("parseExpiresDuration(%q) = %v, want error", c.in, got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("parseExpiresDuration(%q) returned error: %v", c.in, err)
-			}
-			if got != c.want {
-				t.Fatalf("parseExpiresDuration(%q) = %v, want %v", c.in, got, c.want)
-			}
-		})
 	}
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorauth"
 )
 
 func postWebhook(t *testing.T, base, path, idemHeader, idemKey string) int {
@@ -70,7 +72,7 @@ func TestAttachStateDB_RestoresWatermarkCacheBeforeAnySubscribe(t *testing.T) {
 		t.Fatalf("watermarkCache[%q] = %q, want %q", subID, cached, "seeded-key")
 	}
 
-	subscribeWithAuth(t, svc, subID, "/wh/attach", map[string]any{"mode": authModeNone})
+	subscribeWithAuth(t, svc, subID, "/wh/attach", map[string]any{"mode": sensorauth.ModeNone})
 
 	svc.mu.Lock()
 	restored := svc.watches[subID]
@@ -95,7 +97,7 @@ func TestReconcile_RestartRehydratesWatermarkAndBindingsLiveAgain(t *testing.T) 
 	const subID = "sub-restart"
 	const path = "/wh/restart"
 	const idemHeader = "X-Idem"
-	auth := map[string]any{"mode": authModeNone}
+	auth := map[string]any{"mode": sensorauth.ModeNone}
 
 	var pushedBefore int32
 	rimskyBefore := countingRimsky(&pushedBefore)
@@ -178,7 +180,7 @@ func TestReconcile_ExplicitTicksConvergeIdempotently(t *testing.T) {
 
 	tick := func() {
 		t.Helper()
-		subscribeWithAuth(t, svc, subID, path, map[string]any{"mode": authModeNone})
+		subscribeWithAuth(t, svc, subID, path, map[string]any{"mode": sensorauth.ModeNone})
 	}
 
 	tick()

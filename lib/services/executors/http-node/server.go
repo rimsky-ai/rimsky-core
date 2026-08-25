@@ -259,41 +259,15 @@ func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, er
 	return structpb.NewStruct(m)
 }
 
+// @concept: conformance
 func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
-	ud := req.GetAttributes().AsMap()
-	delta := stubmode.ResponseDelta()
-	if sr, ok := ud[stubmode.ResponseOverrideAttribute]; ok {
-		m, ok := sr.(map[string]any)
-		if !ok {
-			return execoutcome.Errored("http/attribute_invalid", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
-		}
-		delta = m
-	}
-	v, err := structpb.NewStruct(delta)
-	if err != nil {
-		return execoutcome.Errored("http/attribute_invalid", "stub_response not JSON-representable: "+err.Error())
-	}
-	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
-		AttributesDelta: v,
-		Changed:         true,
-		ChangeSummary:   "stub",
-		Scratch:         req.GetScratch(),
-		Tags:            stubTags(ud),
-	}}}
-}
-
-func stubTags(ud map[string]any) []string {
-	raw, ok := ud[stubmode.TagsAttribute].([]any)
-	if !ok {
-		return nil
-	}
-	tags := make([]string, 0, len(raw))
-	for _, v := range raw {
-		if s, ok := v.(string); ok {
-			tags = append(tags, s)
-		}
-	}
-	return tags
+	return stubprobe.Success(stubprobe.StubSuccess{
+		Attributes:    req.GetAttributes().AsMap(),
+		ChangeSummary: "stub",
+		ErrorClass:    "http/attribute_invalid",
+		Changed:       true,
+		Scratch:       req.GetScratch(),
+	})
 }
 
 const defaultParkProbeScratch = "http-node-stub-park-scratch"

@@ -5,8 +5,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -133,17 +131,12 @@ type lineageCursor struct {
 
 func encodeLineageCursor(observedAt time.Time, id shared.UUID) string {
 	c := lineageCursor{O: observedAt, I: id.String()}
-	b, _ := json.Marshal(c)
-	return base64.StdEncoding.EncodeToString(b)
+	return persistence.EncodeCursor(c)
 }
 
 func decodeLineageCursor(s string) (time.Time, shared.UUID, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, shared.UUID{}, err
-	}
 	var c lineageCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := persistence.DecodeCursor(s, &c); err != nil {
 		return time.Time{}, shared.UUID{}, err
 	}
 	id, err := uuid.Parse(c.I)

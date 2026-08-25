@@ -5,8 +5,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -847,20 +845,15 @@ func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {
 		E time.Time   `json:"e"`
 		I shared.UUID `json:"i"`
 	}{E: enqueued, I: id}
-	b, _ := json.Marshal(c)
-	return base64.StdEncoding.EncodeToString(b)
+	return persistence.EncodeCursor(c)
 }
 
 func decodeDispatchCursor(s string) (time.Time, shared.UUID, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, shared.UUID{}, err
-	}
 	var c struct {
 		E time.Time   `json:"e"`
 		I shared.UUID `json:"i"`
 	}
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := persistence.DecodeCursor(s, &c); err != nil {
 		return time.Time{}, shared.UUID{}, err
 	}
 	return c.E, c.I, nil

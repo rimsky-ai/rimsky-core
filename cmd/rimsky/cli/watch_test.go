@@ -320,12 +320,12 @@ func TestRunWatch_UntilTerminatedIgnoresIdle(t *testing.T) {
 	out := captureStdout(t, func() {
 		go func() {
 			done <- cli.RunWatch(context.Background(),
-				[]string{"--poll-interval", "50ms", "--until", "terminated", inst.ID})
+				[]string{"--poll-interval", "50ms", "--until-state", "terminated", inst.ID})
 		}()
 		waitForInstancePolls(t, srv, 4)
 		select {
 		case exit = <-done:
-			t.Errorf("watch --until terminated exited (%d) on a merely-idle instance", exit)
+			t.Errorf("watch --until-state terminated exited (%d) on a merely-idle instance", exit)
 		default:
 		}
 		terminatedAt, err := time.Parse(time.RFC3339, "2026-06-07T00:00:04Z")

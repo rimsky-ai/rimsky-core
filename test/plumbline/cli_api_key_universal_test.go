@@ -14,6 +14,8 @@ import (
 	"testing"
 )
 
+var controlAPIClientConstructors = []string{"cli.NewClient", "cli.NewClientWithKey"}
+
 type cliPackage struct {
 	name     string
 	dir      []string
@@ -27,24 +29,17 @@ var cliVerbPackages = []cliPackage{
 }
 
 var apiKeyUniversalExceptions = map[string]string{
-	"cli.RunCtxList":                         "context management reads and writes local state only",
-	"cli.RunCtxUse":                          "context management reads and writes local state only",
-	"cli.RunCtxAdd":                          "context management reads and writes local state only",
-	"cli.RunCtxRm":                           "context management reads and writes local state only",
-	"cli.RunCtxCurrent":                      "context management reads and writes local state only",
-	"cli.runDaemonStatus":                    "the host-daemon status verb reads local state only",
-	"cli.runDaemonStop":                      "the host-daemon stop verb writes local state only",
-	"cli.runDaemonStart":                     "the host-daemon start verb hands the key to the proxy under its own flag",
-	"cli.RunAuthLogin":                       "the interactive login verb reads the key from the terminal and stores it",
-	"compose.RunComposeRun":                  "the compose one-shot self-hosts its stack and reaches it over loopback",
-	"compose.RunTemplateRun":                 "the ephemeral-run verb reaches its self-hosted stack over loopback on the compose one-shot's own machinery; its remote branch delegates to cli.RunRunRemote, which this test checks",
-	"main.runConformanceExecutor":            "a conformance verb dials the service under test over that service's own protocol",
-	"main.runConformanceClaimProducer":       "a conformance verb dials the service under test over that service's own protocol",
-	"main.runConformancePublisher":           "a conformance verb dials the service under test over that service's own protocol",
-	"main.runConformanceValidation":          "a conformance verb dials the service under test over that service's own protocol",
-	"main.runConformanceDataProcessing":      "a conformance verb dials the service under test over that service's own protocol",
-	"main.runConformanceLifecycleSubscriber": "a conformance verb dials the service under test over that service's own protocol",
-	"main.runConformanceProbe":               "a conformance verb dials the service under test over that service's own protocol",
+	"cli.RunCtxList":         "context management reads and writes local state only",
+	"cli.RunCtxUse":          "context management reads and writes local state only",
+	"cli.RunCtxAdd":          "context management reads and writes local state only",
+	"cli.RunCtxRm":           "context management reads and writes local state only",
+	"cli.RunCtxCurrent":      "context management reads and writes local state only",
+	"cli.runDaemonStatus":    "the host-daemon status verb reads local state only",
+	"cli.runDaemonStop":      "the host-daemon stop verb writes local state only",
+	"cli.runDaemonStart":     "the host-daemon start verb hands the key to the proxy under its own flag",
+	"cli.RunAuthLogin":       "the interactive login verb reads the key from the terminal and stores it",
+	"compose.RunComposeRun":  "the compose one-shot self-hosts its stack and reaches it over loopback",
+	"compose.RunTemplateRun": "the ephemeral-run verb reaches its self-hosted stack over loopback on the compose one-shot's own machinery; its remote branch delegates to cli.RunRunRemote, which this test checks",
 }
 
 type funcNode struct {
@@ -244,6 +239,29 @@ func (g *cliCallGraph) reach(verb string) map[string]bool {
 	return tokens
 }
 
+func (g *cliCallGraph) reachCalls(verb string) map[string]bool {
+	calls := map[string]bool{}
+	seen := map[string]bool{verb: true}
+	queue := []string{verb}
+	for len(queue) > 0 {
+		key := queue[0]
+		queue = queue[1:]
+		node := g.funcs[key]
+		if node == nil {
+			continue
+		}
+		for callee := range node.calls {
+			calls[callee] = true
+			if seen[callee] || g.isVerb(callee) {
+				continue
+			}
+			seen[callee] = true
+			queue = append(queue, callee)
+		}
+	}
+	return calls
+}
+
 func anyToken(tokens map[string]bool, names ...string) bool {
 	for _, n := range names {
 		if tokens[n] {
@@ -268,7 +286,8 @@ func TestEveryVerbBuildingAControlAPIClientSendsTheResolvedKey(t *testing.T) {
 	var dialing, exempt, local, inherited []string
 	for _, verb := range g.verbs {
 		tokens := g.reach(verb)
-		if !anyToken(tokens, "NewClient", "NewClientWithKey") {
+		calls := g.reachCalls(verb)
+		if !anyToken(calls, controlAPIClientConstructors...) {
 			local = append(local, verb)
 			continue
 		}
@@ -299,4 +318,26 @@ func TestEveryVerbBuildingAControlAPIClientSendsTheResolvedKey(t *testing.T) {
 	t.Logf("%d verbs dial no control API: %s", len(local), strings.Join(local, ", "))
 	t.Logf("%d of them own no flag set and take their key flag from the verb that calls them: %s",
 		len(inherited), strings.Join(inherited, ", "))
+}
+
+// @concept: api-key
+func TestEveryVerbPresentingAnAPIKeyAcceptsOneOnItsOwnFlagSet(t *testing.T) {
+	g := loadCLICallGraph(t, findRepoRoot(t))
+
+	var presenting []string
+	for _, verb := range g.verbs {
+		tokens := g.reach(verb)
+		if !anyToken(tokens, "ResolveAPIKey") || !anyToken(tokens, "NewFlagSet") {
+			continue
+		}
+		presenting = append(presenting, verb)
+		if !anyToken(tokens, "RegisterCommonFlags", "RegisterAPIKeyFlag") {
+			t.Errorf("%s resolves an api-key but registers no api-key flag: a verb that presents a key "+
+				"as a credential accepts one on its own flag set", verb)
+		}
+	}
+	if len(presenting) == 0 {
+		t.Fatalf("no verb resolves an api-key across %d verbs: the check inspected nothing", len(g.verbs))
+	}
+	t.Logf("checked %d verbs presenting an api-key: %s", len(presenting), strings.Join(presenting, ", "))
 }

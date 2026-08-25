@@ -20,8 +20,8 @@ import (
 )
 
 type ObservabilityCheckOpts struct {
-	Endpoint             Endpoint
-	RetentionTestSeconds int
+	Endpoint      Endpoint
+	RetentionTest time.Duration
 }
 
 func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, logf func(format string, args ...any)) error {
@@ -116,8 +116,8 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 			logf("observability: canned dispatch skipped: %v\n", err)
 		}
 	}
-	if opts.RetentionTestSeconds > 0 && caps.GetSupportsTraceGet() {
-		if err := runRetentionProbe(ctx, client, cannedID, opts.RetentionTestSeconds, logf); err != nil {
+	if opts.RetentionTest > 0 && caps.GetSupportsTraceGet() {
+		if err := runRetentionProbe(ctx, client, cannedID, opts.RetentionTest, logf); err != nil {
 			return fmt.Errorf("retention probe: %w", err)
 		}
 	}
@@ -181,8 +181,8 @@ func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.Exe
 	return nil
 }
 
-func runRetentionProbe(ctx context.Context, obs genv1.ExecutorObservabilityClient, nodeRunID string, seconds int, logf func(string, ...any)) error {
-	wait := time.Duration(seconds+1) * time.Second
+func runRetentionProbe(ctx context.Context, obs genv1.ExecutorObservabilityClient, nodeRunID string, window time.Duration, logf func(string, ...any)) error {
+	wait := window + time.Second
 	logf("observability: retention probe — sleeping %v before re-querying\n", wait)
 	select {
 	case <-ctx.Done():

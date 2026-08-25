@@ -110,7 +110,11 @@ func (s *templateTagsImpl) List(
 	}
 	var cursor any
 	if pag.Cursor != "" {
-		cursor = pag.Cursor
+		v, err := persistence.DecodeKeyCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.TemplateTagRow]{}, persistence.ErrInvalidCursor
+		}
+		cursor = v
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+templateTagCols+`
@@ -138,7 +142,7 @@ func (s *templateTagsImpl) List(
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = out[len(out)-1].Tag
+		nextCursor = persistence.EncodeKeyCursor(out[len(out)-1].Tag)
 	}
 	return persistence.PaginatedListResult[persistence.TemplateTagRow]{Rows: out, NextCursor: nextCursor}, nil
 }

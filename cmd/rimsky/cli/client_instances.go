@@ -52,6 +52,13 @@ type ListInstancesResponse struct {
 	NextCursor string     `json:"next_cursor,omitempty"`
 }
 
+// @concept: node
+type ListNodesQuery struct {
+	Tag    string
+	Cursor string
+	Limit  int
+}
+
 type ListInstanceNodesResponse struct {
 	Nodes      []Node `json:"nodes"`
 	NextCursor string `json:"next_cursor,omitempty"`
@@ -128,8 +135,23 @@ func (c *Client) TerminateInstance(ctx context.Context, idOrKey string, reason s
 	return &out, nil
 }
 
-func (c *Client) ListInstanceNodes(ctx context.Context, idOrKey string) (*ListInstanceNodesResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(idOrKey)+"/nodes", nil)
+// @concept: node
+func (c *Client) ListInstanceNodes(ctx context.Context, idOrKey string, q ListNodesQuery) (*ListInstanceNodesResponse, error) {
+	v := url.Values{}
+	if q.Tag != "" {
+		v.Set("tag", q.Tag)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/v1/instances/" + url.PathEscape(idOrKey) + "/nodes"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -140,19 +162,33 @@ func (c *Client) ListInstanceNodes(ctx context.Context, idOrKey string) (*ListIn
 	return &out, nil
 }
 
-type BreakpointHitsResponse struct {
-	Hits      []map[string]any `json:"hits"`
-	NextSince int64            `json:"next_since"`
-	Truncated bool             `json:"truncated"`
+type InstanceNodeLister interface {
+	ListInstanceNodes(ctx context.Context, idOrKey string, q ListNodesQuery) (*ListInstanceNodesResponse, error)
 }
 
-func (c *Client) ListBreakpointHits(ctx context.Context, idOrKey string, since int64, limit int) (*BreakpointHitsResponse, error) {
+func PagedListInstanceNodes(ctx context.Context, c InstanceNodeLister, idOrKey string, q ListNodesQuery) ([]Node, error) {
+	return PageAll(func(cursor string) ([]Node, string, error) {
+		q.Cursor = cursor
+		page, err := c.ListInstanceNodes(ctx, idOrKey, q)
+		if err != nil {
+			return nil, "", err
+		}
+		return page.Nodes, page.NextCursor, nil
+	})
+}
+
+type BreakpointHitsResponse struct {
+	Hits       []map[string]any `json:"hits"`
+	NextCursor string           `json:"next_cursor"`
+}
+
+func (c *Client) ListBreakpointHits(ctx context.Context, idOrKey string, limit int, cursor string) (*BreakpointHitsResponse, error) {
 	v := url.Values{}
-	if since > 0 {
-		v.Set("since", strconv.FormatInt(since, 10))
-	}
 	if limit > 0 {
 		v.Set("limit", strconv.Itoa(limit))
+	}
+	if cursor != "" {
+		v.Set("cursor", cursor)
 	}
 	path := "/v1/instances/" + url.PathEscape(idOrKey) + "/breakpoint-hits"
 	if encoded := v.Encode(); encoded != "" {

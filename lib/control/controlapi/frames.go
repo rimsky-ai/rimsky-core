@@ -6,7 +6,6 @@ package controlapi
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,8 +16,8 @@ import (
 )
 
 func registerFramesRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/instances/{id}/frames", gate(deps, "instance:list-frames", handleListInstanceFrames(deps)))
-	r.Get("/instances/{id}/frames/{frame_id}", gate(deps, "instance:read-frame", handleGetInstanceFrame(deps)))
+	r.Get("/instances/{idOrKey}/frames", gate(deps, "instance:list-frames", handleListInstanceFrames(deps)))
+	r.Get("/instances/{idOrKey}/frames/{frame_id}", gate(deps, "instance:read-frame", handleGetInstanceFrame(deps)))
 }
 
 type frameItem struct {
@@ -39,20 +38,23 @@ type frameItem struct {
 
 type listFramesResponse struct {
 	Frames     []frameItem `json:"frames"`
-	NextCursor string      `json:"next_cursor,omitempty"`
+	NextCursor string      `json:"next_cursor"`
 }
 
 func handleListInstanceFrames(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		idStr := chi.URLParam(req, "id")
-		instanceID, err := uuid.Parse(idStr)
+		inst, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
+			return
+		}
+		if inst == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
 			return
 		}
 		q := req.URL.Query()
 		filter := persistence.FrameListFilter{}
-		instUUID := shared.UUID(instanceID)
+		instUUID := inst.ID
 		filter.InstanceID = &instUUID
 		if err := persistence.ApplyFrameStateQueryParam(&filter, q.Get("state")); err != nil {
 			badRequest(w, err.Error())
@@ -67,40 +69,22 @@ func handleListInstanceFrames(deps AppDeps) http.HandlerFunc {
 			tmUUID := shared.UUID(parsed)
 			filter.TriggeringMessageID = &tmUUID
 		}
-		if l := q.Get("limit"); l != "" {
-			n, perr := strconv.Atoi(l)
-			if perr != nil || n < 0 {
-				badRequest(w, "invalid limit")
-				return
-			}
+		limit, err := parseLimit(req, 50)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
 		}
-		pag := persistence.ListPagination{Cursor: q.Get("cursor"), Limit: parseLimit(req, 50)}
+		pag := persistence.ListPagination{Cursor: q.Get("cursor"), Limit: limit}
 
 		ctx := req.Context()
-		var (
-			instExists bool
-			page       persistence.PaginatedListResult[persistence.FrameRowWithMessage]
-		)
+		var page persistence.PaginatedListResult[persistence.FrameRowWithMessage]
 		err = deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			row, gerr := deps.Persist.Instances().Get(ctx, instUUID, tx)
-			if gerr != nil {
-				return gerr
-			}
-			if row == nil {
-				instExists = false
-				return nil
-			}
-			instExists = true
 			p, lerr := deps.Persist.Frames().ListForObservabilityWithMessage(ctx, filter, pag, tx)
 			page = p
 			return lerr
 		})
 		if err != nil {
 			writeError(w, err)
-			return
-		}
-		if !instExists {
-			notFoundResp(w, shared.ErrInstanceNotFound.Error())
 			return
 		}
 		items := make([]frameItem, 0, len(page.Rows))
@@ -113,10 +97,13 @@ func handleListInstanceFrames(deps AppDeps) http.HandlerFunc {
 
 func handleGetInstanceFrame(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		idStr := chi.URLParam(req, "id")
-		instanceID, err := uuid.Parse(idStr)
+		inst, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
+			return
+		}
+		if inst == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
 			return
 		}
 		frameIDStr := chi.URLParam(req, "frame_id")
@@ -127,31 +114,15 @@ func handleGetInstanceFrame(deps AppDeps) http.HandlerFunc {
 		}
 		ctx := req.Context()
 		// @story: frame-origin-audit
-		instUUID := shared.UUID(instanceID)
-		var (
-			instExists bool
-			row        *persistence.FrameRowWithMessage
-		)
+		instUUID := inst.ID
+		var row *persistence.FrameRowWithMessage
 		err = deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			inst, gerr := deps.Persist.Instances().Get(ctx, instUUID, tx)
-			if gerr != nil {
-				return gerr
-			}
-			if inst == nil {
-				instExists = false
-				return nil
-			}
-			instExists = true
 			r, gerr := deps.Persist.Frames().GetForObservabilityWithMessage(ctx, shared.UUID(frameID), tx)
 			row = r
 			return gerr
 		})
 		if err != nil {
 			writeError(w, err)
-			return
-		}
-		if !instExists {
-			notFoundResp(w, shared.ErrInstanceNotFound.Error())
 			return
 		}
 		if row == nil || row.InstanceID != instUUID {

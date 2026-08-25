@@ -255,7 +255,7 @@ func TestClient_ListInstanceNodes(t *testing.T) {
 	)
 	defer srv.Close()
 	c := NewClient(srv.URL)
-	got, err := c.ListInstanceNodes(context.Background(), "x")
+	got, err := c.ListInstanceNodes(context.Background(), "x", ListNodesQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

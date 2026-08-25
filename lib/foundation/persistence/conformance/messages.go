@@ -552,41 +552,80 @@ func testMessagesListDeliveredAfterBefore(t *testing.T, d persistence.Database) 
 		}
 	}
 
-	after := t1
-	page, err := messages.List(ctx, persistence.MessageListFilter{
-		InstanceID:     &fix.InstanceID,
-		DeliveredAfter: &after,
-	}, persistence.ListPagination{Limit: 10})
-	if err != nil {
-		t.Fatalf("List(delivered_after=t1): %v", err)
-	}
-	if len(page.Rows) != 2 {
-		t.Fatalf("delivered_after: got %d rows, want 2 (t2, t3)", len(page.Rows))
-	}
-
-	before := t3
-	page, err = messages.List(ctx, persistence.MessageListFilter{
-		InstanceID:      &fix.InstanceID,
-		DeliveredBefore: &before,
-	}, persistence.ListPagination{Limit: 10})
-	if err != nil {
-		t.Fatalf("List(delivered_before=t3): %v", err)
-	}
-	if len(page.Rows) != 2 {
-		t.Fatalf("delivered_before: got %d rows, want 2 (t1, t2)", len(page.Rows))
+	pendingID := shared.UUID(uuid.New())
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return messages.Insert(ctx, persistence.EnqueueMessageRequest{
+			ID:         pendingID,
+			InstanceID: fix.InstanceID,
+			Type:       "ping/recheck",
+			Sender:     "operator",
+			SenderKind: "operator",
+			ReceivedAt: t2,
+		}, tx)
+	}); err != nil {
+		t.Fatalf("Messages.Insert(pending): %v", err)
 	}
 
-	page, err = messages.List(ctx, persistence.MessageListFilter{
-		InstanceID:      &fix.InstanceID,
-		DeliveredAfter:  &after,
-		DeliveredBefore: &before,
-	}, persistence.ListPagination{Limit: 10})
-	if err != nil {
-		t.Fatalf("List(delivered_after+before): %v", err)
+	list := func(name string, f persistence.MessageListFilter) []persistence.MessageRow {
+		t.Helper()
+		f.InstanceID = &fix.InstanceID
+		page, err := messages.List(ctx, f, persistence.ListPagination{Limit: 10})
+		if err != nil {
+			t.Fatalf("List(%s): %v", name, err)
+		}
+		return page.Rows
 	}
-	if len(page.Rows) != 1 || page.Rows[0].ID != ids[1] {
-		t.Fatalf("delivered_after+before window: got %+v, want exactly t2 row %s",
-			page.Rows, ids[1])
+	holds := func(rows []persistence.MessageRow, id shared.UUID) bool {
+		for _, r := range rows {
+			if r.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	boundary := t2
+	afterRows := list("delivered_after=t2", persistence.MessageListFilter{DeliveredAfter: &boundary})
+	if !holds(afterRows, ids[1]) {
+		t.Fatalf("a message delivered exactly at the window's start belongs in the window; rows=%+v", afterRows)
+	}
+	if holds(afterRows, ids[0]) {
+		t.Fatalf("a message delivered before the window's start is outside it; rows=%+v", afterRows)
+	}
+	if !holds(afterRows, ids[2]) {
+		t.Fatalf("a message delivered after the window's start belongs in it; rows=%+v", afterRows)
+	}
+
+	beforeRows := list("delivered_before=t2", persistence.MessageListFilter{DeliveredBefore: &boundary})
+	if !holds(beforeRows, ids[1]) {
+		t.Fatalf("a message delivered exactly at the window's end belongs in the window; rows=%+v", beforeRows)
+	}
+	if !holds(beforeRows, ids[0]) {
+		t.Fatalf("a message delivered before the window's end belongs in it; rows=%+v", beforeRows)
+	}
+	if holds(beforeRows, ids[2]) {
+		t.Fatalf("a message delivered after the window's end is outside it; rows=%+v", beforeRows)
+	}
+
+	windowRows := list("delivered_after=t2+before=t2", persistence.MessageListFilter{
+		DeliveredAfter:  &boundary,
+		DeliveredBefore: &boundary,
+	})
+	if len(windowRows) != 1 || windowRows[0].ID != ids[1] {
+		t.Fatalf("a one-instant window holds exactly the message delivered at that instant; rows=%+v", windowRows)
+	}
+
+	unwindowed := list("no window", persistence.MessageListFilter{})
+	if !holds(unwindowed, pendingID) {
+		t.Fatalf("an unwindowed read lists an undelivered message; rows=%+v", unwindowed)
+	}
+	if holds(afterRows, pendingID) || holds(beforeRows, pendingID) {
+		t.Fatalf("an undelivered message has no delivery instant. It falls outside every delivery window")
+	}
+	pending := true
+	pendingRows := list("pending", persistence.MessageListFilter{Pending: &pending})
+	if !holds(pendingRows, pendingID) {
+		t.Fatalf("a caller reaches an undelivered message through the pending filter; rows=%+v", pendingRows)
 	}
 }
 

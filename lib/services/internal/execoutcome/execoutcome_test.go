@@ -18,20 +18,3 @@ func TestErrored_SetsClassAndMessage(t *testing.T) {
 		t.Fatalf("payload.message = %v", got)
 	}
 }
-
-func TestStubSuccess_SetsChangeSummary(t *testing.T) {
-	out := StubSuccess("verifier-http stub")
-	success := out.GetSuccess()
-	if success == nil {
-		t.Fatal("expected an Outcome_Success")
-	}
-	if success.GetChangeSummary() != "verifier-http stub" {
-		t.Fatalf("change_summary = %q", success.GetChangeSummary())
-	}
-	if success.GetChanged() {
-		t.Fatal("stub success outcome must not report Changed")
-	}
-	if got := success.GetAttributesDelta().AsMap()["stub"]; got != true {
-		t.Fatalf("attributes_delta.stub = %v", got)
-	}
-}

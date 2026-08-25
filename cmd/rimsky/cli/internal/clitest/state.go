@@ -483,13 +483,13 @@ func (s *InMemoryState) AddBreakpointHit(instanceID string, fields map[string]an
 	s.breakpointHits[instanceID] = append(s.breakpointHits[instanceID], hit)
 }
 
-func (s *InMemoryState) BreakpointHitsFor(instanceID string, since int64, limit int) []map[string]any {
+func (s *InMemoryState) BreakpointHitsFor(instanceID string, afterSeq int64, limit int) []map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := []map[string]any{}
 	for _, h := range s.breakpointHits[instanceID] {
 		seq, _ := h["seq"].(int64)
-		if seq <= since {
+		if seq <= afterSeq {
 			continue
 		}
 		cp := map[string]any{}

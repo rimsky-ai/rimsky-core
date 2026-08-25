@@ -13,16 +13,15 @@ import (
 
 func RunTagCreate(ctx context.Context, args []string) int {
 	var template string
-	fs, common, endpoint, code := runWithCommon("tag create", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("tag create", "<tag> --template <ref>", NoTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&template, "template", "", "tag or hash to point at")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky tag create <tag> --template <ref>")
-		return 2
+		return UsageError(fs)
 	}
 	tag := rest[0]
 	if template == "" {
@@ -35,19 +34,21 @@ func RunTagCreate(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
-	reportTagBinding(os.Stdout, common.Format, created, tag, template)
-	return 0
+	return reportTagBinding(common.Format, created, tag, template)
 }
 
 func RunTagList(ctx context.Context, args []string) int {
+	return runTagListNamed(ctx, "tag list", args)
+}
+
+func runTagListNamed(ctx context.Context, name string, args []string) int {
 	var prefix string
-	fs, common, endpoint, code := runWithCommon("tag list", args, func(fs *flag.FlagSet) {
+	_, common, endpoint, code := runWithCommon(name, "[--prefix <prefix>]", HasTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&prefix, "prefix", "", "client-side filter on tag prefix")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
-	_ = fs
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	all, err := pagedListTags(ctx, c, ListTagsQuery{})
@@ -63,43 +64,34 @@ func RunTagList(ctx context.Context, args []string) int {
 		}
 		all = filtered
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, all)
-		return 0
-	}
-	rows := make([][]string, 0, len(all))
-	for _, t := range all {
-		rows = append(rows, []string{t.Tag, TruncHash(t.TemplateID)})
-	}
-	EmitTable(os.Stdout, []string{"TAG", "HASH"}, rows)
-	return 0
+	return Render(common.Format, all, func() {
+		rows := make([][]string, 0, len(all))
+		for _, t := range all {
+			rows = append(rows, []string{t.Tag, TruncHash(t.TemplateID)})
+		}
+		EmitTable(os.Stdout, []string{"TAG", "HASH"}, rows)
+	})
 }
 
 func pagedListTags(ctx context.Context, c *Client, q ListTagsQuery) ([]Tag, error) {
-	var all []Tag
-	for {
+	return PageAll(func(cursor string) ([]Tag, string, error) {
+		q.Cursor = cursor
 		page, err := c.ListTags(ctx, q)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		all = append(all, page.Tags...)
-		if page.NextCursor == "" {
-			break
-		}
-		q.Cursor = page.NextCursor
-	}
-	return all, nil
+		return page.Tags, page.NextCursor, nil
+	})
 }
 
 func RunTagGet(ctx context.Context, args []string) int {
-	fs, common, endpoint, code := runWithCommon("tag get", args, nil)
-	if code != 0 {
+	fs, common, endpoint, code := runWithCommon("tag get", "<tag>", NoTable, args, nil)
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky tag get <tag>")
-		return 2
+		return UsageError(fs)
 	}
 	want := rest[0]
 	c := NewClient(endpoint)
@@ -110,16 +102,13 @@ func RunTagGet(ctx context.Context, args []string) int {
 	}
 	for _, t := range all {
 		if t.Tag == want {
-			if common.Format == FormatJSON {
-				_ = EmitJSON(os.Stdout, t)
-			} else {
+			return Render(common.Format, t, func() {
 				EmitKV(os.Stdout, [][2]string{
 					{"tag", t.Tag},
 					{"template_hash", t.TemplateID},
 					{"updated_at", t.UpdatedAt},
 				})
-			}
-			return 0
+			})
 		}
 	}
 	fmt.Fprintln(os.Stderr, "tag not found")
@@ -128,16 +117,15 @@ func RunTagGet(ctx context.Context, args []string) int {
 
 func RunTagMv(ctx context.Context, args []string) int {
 	var template string
-	fs, common, endpoint, code := runWithCommon("tag mv", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("tag mv", "<tag> --template <ref>", NoTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&template, "template", "", "tag or hash to point at")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky tag mv <tag> --template <ref>")
-		return 2
+		return UsageError(fs)
 	}
 	if template == "" {
 		fmt.Fprintln(os.Stderr, "--template is required")
@@ -149,18 +137,19 @@ func RunTagMv(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
-	reportTagBinding(os.Stdout, common.Format, moved, rest[0], template)
-	return 0
+	return reportTagBinding(common.Format, moved, rest[0], template)
 }
 
 func RunTagRm(ctx context.Context, args []string) int {
-	fs, common, endpoint, code := runWithCommon("tag rm", args, nil)
-	if code != 0 {
+	fs, common, endpoint, code := runWithCommon("tag rm", "<tag>", NoTable, args, nil)
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky tag rm <tag>")
+		return UsageError(fs)
+	}
+	if !ConfirmDestructiveTargets(common.Yes, "remove tag "+rest[0]) {
 		return 2
 	}
 	c := NewClient(endpoint)
@@ -168,7 +157,6 @@ func RunTagRm(ctx context.Context, args []string) int {
 	if err := c.DeleteTag(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}
-	reportRemoval(os.Stdout, common.Format, removalResult{Ref: rest[0], Removed: true},
+	return reportRemoval(common.Format, removalResult{Ref: rest[0], Removed: true},
 		fmt.Sprintf("%s removed", rest[0]))
-	return 0
 }

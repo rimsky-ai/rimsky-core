@@ -118,6 +118,7 @@ func applyDaemonStartFlags(cfg hostdaemon.Config, f daemonStartFlags) hostdaemon
 
 func runDaemonStart(args []string) int {
 	fs := flag.NewFlagSet("daemon start", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("daemon start", "--proxy <host:port> [flags]"))
 	allowPaths := fs.String("allow-paths", "", "comma-separated glob patterns for binary path validation")
 	listen := fs.String("listen", "", "daemon local listener addr (default 127.0.0.1:0)")
 	proxy := fs.String("proxy", "", "host-daemon-proxy endpoint host:port (overrides $RIMSKY_HOST_DAEMON_PROXY_URL)")
@@ -128,9 +129,8 @@ func runDaemonStart(args []string) int {
 	foreground := fs.Bool("foreground", false, "run in foreground (don't daemonize)")
 	label := fs.String("label", "", "anonymous routing label (silly-name) the daemon asks the proxy to adopt; only meaningful in anonymous mode (no --api-key)")
 	identityFile := fs.String("identity-file", "", "path to the anonymous identity JSON file the daemon reads/writes (default $XDG_CONFIG_HOME/rimsky/host-daemon/identity.json)")
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 
 	cfg, err := hostdaemon.LoadConfigFromEnv()
@@ -249,46 +249,88 @@ func daemonize(startArgs []string, stateDir, statusPath, proxy string, selfExecu
 }
 
 // @story: host-daemon-control-plane
+type daemonStatusReport struct {
+	Running   bool                     `json:"running"`
+	Connected bool                     `json:"connected"`
+	PID       int                      `json:"pid,omitempty"`
+	StalePID  bool                     `json:"stale_pid,omitempty"`
+	Proxy     string                   `json:"proxy,omitempty"`
+	Since     string                   `json:"since,omitempty"`
+	Detail    string                   `json:"detail,omitempty"`
+	Children  []hostdaemon.ChildStatus `json:"children,omitempty"`
+}
+
 func runDaemonStatus(args []string) int {
 	fs := flag.NewFlagSet("daemon status", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("daemon status", "[--state-dir <dir>]"))
 	stateDir := fs.String("state-dir", "", "directory for pid and status files (default ~/.rimsky)")
-	if err := parseInterspersed(fs, args); err != nil {
+	var common CommonFlags
+	RegisterOutputFlags(fs, &common)
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
+	}
+	if err := common.ResolveFormat("daemon status", NoTable); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	SetActiveCommonFlags(&common)
 	dir, err := resolveStateDir(*stateDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	pid, ok, err := readDaemonPIDFrom(dir)
+	report, err := gatherDaemonStatus(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	return Render(common.Format, report, func() {
+		printDaemonStatus(report)
+	})
+}
+
+// @story: host-daemon-control-plane
+func gatherDaemonStatus(dir string) (daemonStatusReport, error) {
+	pid, ok, err := readDaemonPIDFrom(dir)
+	if err != nil {
+		return daemonStatusReport{}, err
+	}
 	if !ok {
-		fmt.Fprintln(os.Stdout, "rimsky daemon: not running")
-		return 0
+		return daemonStatusReport{}, nil
 	}
 	if !processAlive(pid) {
-		fmt.Fprintf(os.Stdout, "rimsky daemon: not running (stale pid %d)\n", pid)
-		return 0
+		return daemonStatusReport{PID: pid, StalePID: true}, nil
 	}
-
-	statusPath := filepath.Join(dir, "daemon.status")
-	snap, present, readErr := readStatusFile(statusPath)
+	report := daemonStatusReport{Running: true, PID: pid}
+	snap, present, readErr := readStatusFile(filepath.Join(dir, "daemon.status"))
 	if readErr != nil {
-		fmt.Fprintf(os.Stdout, "rimsky daemon: running (pid %d, status unreadable: %v)\n", pid, readErr)
-		return 0
+		report.Detail = "status unreadable: " + readErr.Error()
+		return report, nil
 	}
 	if present && snap.Connected {
-		fmt.Fprintf(os.Stdout, "rimsky daemon: connected (pid %d, proxy %s, since %s)\n",
-			pid, snap.Proxy, snap.Since)
-		printDaemonChildren(snap.Children)
-		return 0
+		report.Connected = true
+		report.Proxy = snap.Proxy
+		report.Since = snap.Since
+		report.Children = snap.Children
 	}
-	fmt.Fprintf(os.Stdout, "rimsky daemon: running, disconnected (pid %d)\n", pid)
-	return 0
+	return report, nil
+}
+
+func printDaemonStatus(report daemonStatusReport) {
+	switch {
+	case !report.Running && report.StalePID:
+		fmt.Fprintf(os.Stdout, "rimsky daemon: not running (stale pid %d)\n", report.PID)
+	case !report.Running:
+		fmt.Fprintln(os.Stdout, "rimsky daemon: not running")
+	case report.Detail != "":
+		fmt.Fprintf(os.Stdout, "rimsky daemon: running (pid %d, %s)\n", report.PID, report.Detail)
+	case report.Connected:
+		fmt.Fprintf(os.Stdout, "rimsky daemon: connected (pid %d, proxy %s, since %s)\n",
+			report.PID, report.Proxy, report.Since)
+		printDaemonChildren(report.Children)
+	default:
+		fmt.Fprintf(os.Stdout, "rimsky daemon: running, disconnected (pid %d)\n", report.PID)
+	}
 }
 
 // @story: host-daemon-control-plane
@@ -309,10 +351,10 @@ func runDaemonStop(args []string) int {
 
 func stopDaemon(args []string, pc daemonProcessControl) int {
 	fs := flag.NewFlagSet("daemon stop", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("daemon stop", "[--state-dir <dir>]"))
 	stateDir := fs.String("state-dir", "", "directory for pid and status files (default ~/.rimsky)")
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 	dir, err := resolveStateDir(*stateDir)
 	if err != nil {

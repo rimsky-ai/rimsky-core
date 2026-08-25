@@ -23,6 +23,7 @@ var (
 	EventKeyCreated      = events.KindAuthKeyCreated()
 	EventKeyRevoked      = events.KindAuthKeyRevoked()
 	EventKeyRotated      = events.KindAuthKeyRotated()
+	EventKeyExpired      = events.KindAuthKeyExpired()
 )
 
 type DenialReason string
@@ -97,6 +98,13 @@ type KeyRevokedPayload struct {
 	Reason         KeyRevokedReason `json:"reason"`
 }
 
+// @concept: api-key
+type KeyExpiredPayload struct {
+	KeyID     shared.UUID `json:"key_id"`
+	KeyName   string      `json:"key_name"`
+	ExpiresAt time.Time   `json:"expires_at"`
+}
+
 type KeyRotatedPayload struct {
 	KeyID          shared.UUID  `json:"key_id"`
 	KeyName        string       `json:"key_name"`
@@ -112,6 +120,14 @@ func KeyRevokedProto(p KeyRevokedPayload) *genv1.AuthKeyRevokedPayload {
 		KeyName:        p.KeyName,
 		RevokedByKeyId: uuidStringPtr(p.RevokedByKeyID),
 		Reason:         string(p.Reason),
+	}
+}
+
+func KeyExpiredProto(p KeyExpiredPayload) *genv1.AuthKeyExpiredPayload {
+	return &genv1.AuthKeyExpiredPayload{
+		KeyId:     p.KeyID.String(),
+		KeyName:   p.KeyName,
+		ExpiresAt: timestamppb.New(p.ExpiresAt),
 	}
 }
 

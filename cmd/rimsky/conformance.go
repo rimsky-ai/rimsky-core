@@ -15,14 +15,17 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/sillyname"
 	claimproducerproto "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/dataprocessing"
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
 	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/hostdaemon"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/lifecyclesubscriber"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/publisher"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/validation"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/grpcdial"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	service "github.com/rimsky-ai/rimsky-core/lib/runtime/service"
 )
@@ -64,6 +67,8 @@ func dispatchConformance(args []string) int {
 		return runConformanceDataProcessing(rest)
 	case "lifecycle-subscriber":
 		return runConformanceLifecycleSubscriber(rest)
+	case "host-daemon":
+		return runConformanceHostDaemon(rest)
 	case "probe":
 		return runConformanceProbe(rest)
 	case "help", "--help", "-h":
@@ -75,18 +80,19 @@ func dispatchConformance(args []string) int {
 }
 
 func printConformanceUsage(w *os.File) {
-	fmt.Fprintln(w, "usage: rimsky conformance <executor|claim-producer|publisher|validation|data-processing|lifecycle-subscriber|probe> ...")
+	fmt.Fprintln(w, "usage: rimsky conformance <executor|claim-producer|publisher|validation|data-processing|lifecycle-subscriber|host-daemon|probe> ...")
 }
 
 // @decision: conformance-suite-per-protocol
 func runConformanceLifecycleSubscriber(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance lifecycle-subscriber", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("conformance lifecycle-subscriber", "--endpoint <grpc://host:port> [flags]"))
 	endpoint := fs.String("endpoint", "", "lifecycle-subscriber gRPC endpoint (e.g. grpc://localhost:9097)")
 	transport := fs.String("transport", "grpc", "transport: grpc")
 	timeout := fs.Duration("timeout", 30*time.Second, "suite timeout")
 	tlsMode := fs.String("tls", "off", "off|required — dial the endpoint with verified TLS against system roots")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return code
 	}
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky conformance lifecycle-subscriber: --endpoint required")
@@ -110,8 +116,69 @@ func runConformanceLifecycleSubscriber(args []string) int {
 	return 0
 }
 
+// @decision: conformance-suite-per-protocol
+// @concept: host-daemon-proxy
+func runConformanceHostDaemon(args []string) int {
+	fs := flag.NewFlagSet("rimsky conformance host-daemon", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("conformance host-daemon", "--endpoint <grpc://host:port> [flags]"))
+	endpoint := fs.String("endpoint", "", "host-daemon-proxy daemon-facing gRPC endpoint (e.g. grpc://localhost:8090)")
+	transport := fs.String("transport", "grpc", "transport: grpc")
+	timeout := fs.Duration("timeout", 30*time.Second, "per-suite timeout")
+	tlsMode := fs.String("tls", "off", "off|required — dial the endpoint with verified TLS against system roots")
+	daemonLabel := fs.String("daemon-label", "rimsky-conformance", "daemon_label the suite registers under")
+	routingLabel := fs.String("routing-label", "", "routing_label the suite asks for when it registers anonymously (default: let the server assign one)")
+	callbackBaseURL := fs.String("callback-base-url", "http://127.0.0.1:0", "local_callback_base_url the suite registers")
+	var apiKeyFlag string
+	cli.RegisterAPIKeyFlag(fs, &apiKeyFlag)
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return code
+	}
+
+	if *endpoint == "" {
+		fmt.Fprintln(os.Stderr, "rimsky conformance host-daemon: --endpoint required")
+		return 2
+	}
+	if *transport != "grpc" {
+		fmt.Fprintf(os.Stderr, "rimsky conformance host-daemon: --transport %q not supported; use grpc\n", *transport)
+		return 2
+	}
+	if *tlsMode != "off" && *tlsMode != "required" {
+		fmt.Fprintf(os.Stderr, "rimsky conformance host-daemon: --tls must be off or required, got %q\n", *tlsMode)
+		return 2
+	}
+
+	conn, err := grpc.NewClient(grpcdial.Target(*endpoint), grpc.WithTransportCredentials(grpcdial.TransportCredentials(*tlsMode)))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rimsky conformance host-daemon: dial: %v\n", err)
+		return 1
+	}
+	defer conn.Close()
+
+	apiKey := cli.ResolveAPIKey(apiKeyFlag, os.Getenv("RIMSKY_API_KEY"))
+	if apiKey == "" {
+		apiKey = sillyname.AnonymousCredentialSentinel
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	results := hostdaemon.Run(ctx, genv1.NewHostDaemonClient(conn), hostdaemon.RunOpts{
+		Registration: hostdaemon.Registration{
+			APIKey:          apiKey,
+			DaemonLabel:     *daemonLabel,
+			DaemonVersion:   resolvedVersion(),
+			RoutingLabel:    *routingLabel,
+			CallbackBaseURL: *callbackBaseURL,
+		},
+	})
+	return reportConformanceResults("rimsky conformance host-daemon", results,
+		func(r hostdaemon.CheckResult) string { return r.Name },
+		func(r hostdaemon.CheckResult) error { return r.Err })
+}
+
 func runConformanceExecutor(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance executor", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("conformance executor", "--endpoint <grpc://host:port> [flags]"))
 	endpoint := fs.String("endpoint", "", "endpoint URL (executor or lifecycle service)")
 	transport := fs.String("transport", "grpc", "transport: grpc")
 	allowLive := fs.Bool("allow-live", false, "run against a live (non-stub) endpoint; stub-requiring scenarios skip instead of the run refusing to start")
@@ -119,12 +186,12 @@ func runConformanceExecutor(args []string) int {
 	skip := fs.String("skip", "", "comma-list of scenario names to skip")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-scenario timeout")
 	checkObs := fs.Bool("check-observability", false, "additionally probe ExecutorObservability per spec §6")
-	retentionSec := fs.Int("retention-test-seconds", 0, "if >0, drive a canned dispatch then sleep this long and verify GetTrace returns evicted=true (spec §6 retention check)")
+	retentionWindow := fs.Duration("retention-test", 0, "if >0, drive a canned dispatch then sleep this long and verify GetTrace returns evicted=true (spec §6 retention check)")
 	callbackBind := fs.String("callback-bind", "127.0.0.1", "interface for the conformance callback receiver to bind (use 0.0.0.0 when the executor runs in a container)")
 	callbackHost := fs.String("callback-host", "", "host the executor should reach the callback receiver at (default: same as --callback-bind; for containerized executors set to host.docker.internal or a routable host IP)")
 	tlsMode := fs.String("tls", "off", "off|required — dial the executor with verified TLS against system roots (gRPC transport only; applies to the scenario suite and the observability probe alike)")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return code
 	}
 	if *tlsMode != "off" && *tlsMode != "required" {
 		fmt.Fprintf(os.Stderr, "rimsky conformance executor: --tls must be off or required, got %q\n", *tlsMode)
@@ -180,8 +247,8 @@ func runConformanceExecutor(args []string) int {
 
 	if *checkObs {
 		err := conformance.RunObservabilityCheck(ctx, conformance.ObservabilityCheckOpts{
-			Endpoint:             ep,
-			RetentionTestSeconds: *retentionSec,
+			Endpoint:      ep,
+			RetentionTest: *retentionWindow,
 		}, func(format string, args ...any) { fmt.Printf(format, args...) })
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "observability: %v\n", err)
@@ -214,13 +281,14 @@ func splitConformanceCSV(s string) []string {
 
 func runConformanceClaimProducer(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance claim-producer", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("conformance claim-producer", "--endpoint <endpoint> [flags]"))
 	endpoint := fs.String("endpoint", "", "claim-producer-service endpoint (e.g. grpc://localhost:9101, or a bare http(s) base URL for --transport http)")
 	transport := fs.String("transport", "grpc", "grpc|http")
 	timeout := fs.Duration("timeout", 10*time.Second, "per-check timeout")
 	checkObs := fs.Bool("check-observability", false, "additionally probe ClaimProducerObservability (gRPC only)")
-	retentionSec := fs.Int("retention-test-seconds", 0, "if >0, drive a canned claim then sleep this long and verify GetClaim returns evicted")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	retentionWindow := fs.Duration("retention-test", 0, "if >0, drive a canned claim then sleep this long and verify GetClaim returns evicted")
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return code
 	}
 
 	if *endpoint == "" {
@@ -261,8 +329,8 @@ func runConformanceClaimProducer(args []string) int {
 			return 2
 		}
 		if err := claimproducer.RunObservabilityCheck(ctx, claimproducer.ObservabilityCheckOpts{
-			Endpoint:             *endpoint,
-			RetentionTestSeconds: *retentionSec,
+			Endpoint:      *endpoint,
+			RetentionTest: *retentionWindow,
 		}, func(format string, args ...any) { fmt.Printf(format, args...) }); err != nil {
 			fmt.Fprintf(os.Stderr, "observability: %v\n", err)
 			return 1
@@ -276,6 +344,7 @@ const defaultConformancePublisherMessageType = "system/conformance"
 
 func runConformancePublisher(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance publisher", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("conformance publisher", "--endpoint <grpc://host:port> --kind <kind> [flags]"))
 	endpoint := fs.String("endpoint", "", "publisher gRPC endpoint (e.g. grpc://localhost:9202)")
 	transport := fs.String("transport", "grpc", "transport: grpc")
 	kind := fs.String("kind", "", "publisher kind to exercise (e.g. cron, http, object-store, webhook)")
@@ -286,8 +355,8 @@ func runConformancePublisher(args []string) int {
 	controlAPI := fs.String("control-api", "", "control-API base URL to poll for the publisher's pushed message (e.g. http://localhost:8080); enables the MessagePush check together with --instance-id (overrides $RIMSKY_CONTROL_API_URL)")
 	var apiKeyFlag string
 	cli.RegisterAPIKeyFlag(fs, &apiKeyFlag)
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return code
 	}
 
 	if *endpoint == "" {
@@ -369,12 +438,13 @@ func pollForConformancePublisherMessage(ctx context.Context, controlAPIURL, apiK
 
 func runConformanceValidation(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance validation", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("conformance validation", "--endpoint <grpc://host:port> [flags]"))
 	endpoint := fs.String("endpoint", "", "validation-advertising service gRPC endpoint (e.g. grpc://localhost:9095)")
 	transport := fs.String("transport", "grpc", "transport: grpc (the http+json bridge is not implemented for Validation)")
 	role := fs.String("role", "executor", "role to validate against: executor | claim_producer | lifecycle_subscriber | publisher")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-suite timeout")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return code
 	}
 
 	if *endpoint == "" {
@@ -407,11 +477,12 @@ func runConformanceValidation(args []string) int {
 
 func runConformanceDataProcessing(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance data-processing", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("conformance data-processing", "--endpoint <grpc://host:port> [flags]"))
 	endpoint := fs.String("endpoint", "", "data-processing-service gRPC endpoint (e.g. grpc://localhost:9101)")
 	transport := fs.String("transport", "grpc", "transport: grpc (the http+json bridge is not yet implemented for DataProcessing)")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-suite timeout")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return code
 	}
 
 	if *endpoint == "" {
@@ -444,13 +515,14 @@ func runConformanceDataProcessing(args []string) int {
 
 func runConformanceProbe(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance probe", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("conformance probe", "--endpoint <grpc://host:port> [flags]"))
 	endpoint := fs.String("endpoint", "", "executor endpoint URL")
 	transport := fs.String("transport", "grpc", "transport: grpc")
 	timeout := fs.Duration("timeout", 15*time.Second, "request timeout")
 	callbackBind := fs.String("callback-bind", "127.0.0.1", "interface for the callback receiver (use 0.0.0.0 with containerized executors)")
 	callbackHost := fs.String("callback-host", "", "host the executor should reach the callback at (default: same as --callback-bind)")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return code
 	}
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky conformance probe: --endpoint required")

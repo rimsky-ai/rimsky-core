@@ -6,7 +6,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -844,17 +843,12 @@ type nodeCursor struct {
 }
 
 func encodeNodeCursor(createdAt time.Time, id foundationshared.UUID) string {
-	b, _ := json.Marshal(nodeCursor{C: formatTime(createdAt), I: id.String()})
-	return base64.StdEncoding.EncodeToString(b)
+	return persistence.EncodeCursor(nodeCursor{C: formatTime(createdAt), I: id.String()})
 }
 
 func decodeNodeCursor(s string) (time.Time, foundationshared.UUID, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, foundationshared.UUID{}, err
-	}
 	var c nodeCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := persistence.DecodeCursor(s, &c); err != nil {
 		return time.Time{}, foundationshared.UUID{}, err
 	}
 	createdAt, err := parseTime(c.C)

@@ -34,10 +34,39 @@ func TestDispatch_RoutesRunToRunComposeRun(t *testing.T) {
 	}
 }
 
-func TestDispatch_RunHelpFlag(t *testing.T) {
-	if got := compose.Dispatch(context.Background(), []string{"run", "--help"}); got != 2 {
-		t.Errorf("Dispatch(run, --help) = %d, want 2", got)
+func TestComposeRunHelpPrintsItsOwnUsageOnStdoutAndSucceeds(t *testing.T) {
+	for _, flagSpelling := range []string{"--help", "-h"} {
+		stdout, code := captureStdout(t, func() int {
+			return compose.Dispatch(context.Background(), []string{"run", flagSpelling})
+		})
+		if code != 0 {
+			t.Errorf("compose run %s: exit %d, want 0", flagSpelling, code)
+		}
+		if !strings.Contains(stdout, "usage: rimsky compose run") {
+			t.Errorf("compose run %s: stdout %q, want the verb's own usage line", flagSpelling, stdout)
+		}
 	}
+}
+
+func captureStdout(t *testing.T, fn func() int) (string, int) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	done := make(chan []byte)
+	go func() {
+		buf, _ := io.ReadAll(r)
+		done <- buf
+	}()
+	code := fn()
+	_ = w.Close()
+	os.Stdout = saved
+	buf := <-done
+	_ = r.Close()
+	return string(buf), code
 }
 
 func captureStderr(t *testing.T, fn func() int) (string, int) {

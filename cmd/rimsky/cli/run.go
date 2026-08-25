@@ -25,37 +25,50 @@ func (r *RepeatedFlag) Set(v string) error {
 	return nil
 }
 
-func RunRegister(ctx context.Context, args []string) int { return RunTemplateRegister(ctx, args) }
+func RunRegister(ctx context.Context, args []string) int {
+	return runTemplateRegisterNamed(ctx, "register", args)
+}
 
-func RunDeploy(ctx context.Context, args []string) int { return RunTemplateDeploy(ctx, args) }
+func RunDeploy(ctx context.Context, args []string) int {
+	return runTemplateDeployNamed(ctx, "deploy", args)
+}
 
-func RunUndeploy(ctx context.Context, args []string) int { return RunTemplateUndeploy(ctx, args) }
+func RunUndeploy(ctx context.Context, args []string) int {
+	return runTemplateUndeployNamed(ctx, "undeploy", args)
+}
 
-func RunInstantiate(ctx context.Context, args []string) int { return RunInstanceCreate(ctx, args) }
+func RunInstantiate(ctx context.Context, args []string) int {
+	return runInstanceCreateNamed(ctx, "instantiate", args)
+}
 
-func RunRmInstance(ctx context.Context, args []string) int { return RunInstanceDelete(ctx, args) }
+func RunRmInstance(ctx context.Context, args []string) int {
+	return runInstanceDeleteNamed(ctx, "rm-instance", args)
+}
 
 func RunLs(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		return RunInstanceList(ctx, nil)
+		return runInstanceListNamed(ctx, "ls", nil)
 	}
 	switch args[0] {
 	case "templates":
-		return RunTemplateList(ctx, args[1:])
+		return runTemplateListNamed(ctx, "ls templates", args[1:])
 	case "instances":
-		return RunInstanceList(ctx, args[1:])
+		return runInstanceListNamed(ctx, "ls instances", args[1:])
 	case "tags":
-		return RunTagList(ctx, args[1:])
+		return runTagListNamed(ctx, "ls tags", args[1:])
+	case "help", "--help", "-h":
+		fmt.Fprintln(os.Stdout, UsageLine("ls", "[templates|instances|tags] [flags]"))
+		return 0
 	}
 	if strings.HasPrefix(args[0], "-") {
-		return RunInstanceList(ctx, args)
+		return runInstanceListNamed(ctx, "ls", args)
 	}
 	fmt.Fprintf(os.Stderr, "rimsky ls: unknown subcommand %q (want templates|instances|tags, or a flag for the default instance listing)\n", args[0])
 	return 2
 }
 
 func RunLogs(ctx context.Context, args []string) int {
-	return RunInstanceEvents(ctx, append([]string{"--follow"}, args...))
+	return runInstanceEventsNamed(ctx, "logs", append([]string{"--follow"}, args...))
 }
 
 // @decision: rimsky-run-self-hosts-templates
@@ -82,6 +95,7 @@ func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 		paramKV RepeatedFlag
 	)
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("run", "{<file>|--template <name>} [flags]"))
 	var common CommonFlags
 	RegisterCommonFlags(fs, &common)
 	fs.StringVar(&params, "params", "", "JSON object or @file path")
@@ -97,10 +111,10 @@ func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 		"Remote: auto-starts the local daemon if its ~/.rimsky/daemon.pid is not live. Self-host: spawned directly on loopback ports")
 	fs.BoolVar(&rf.SelfHost, "self-host", false,
 		"boot an in-process all-in-one stack for this run even when a context endpoint is configured (incompatible with --endpoint)")
-	if err := parseInterspersed(fs, args); err != nil {
-		return nil, RunFlags{}, 2
+	if code, done := ParseVerbFlags(fs, args); done {
+		return nil, RunFlags{}, code
 	}
-	if err := common.ResolveFormat(); err != nil {
+	if err := common.ResolveFormat("run", NoTable); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, RunFlags{}, 2
 	}
@@ -112,8 +126,7 @@ func ParseRunArgs(args []string) (*CommonFlags, RunFlags, int) {
 		return nil, RunFlags{}, 2
 	}
 	if rf.TemplateName == "" && len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky run {<file>|--template <name>} [--params ...] [--param k=v ...] [--service <name>=<path> ...] [--instance-key ...] [--tag ...] [--no-keep] [--self-host]")
-		return nil, RunFlags{}, 2
+		return nil, RunFlags{}, UsageError(fs)
 	}
 	if len(rest) == 1 {
 		rf.TemplateFile = rest[0]
@@ -213,11 +226,9 @@ func RunRunRemote(ctx context.Context, common *CommonFlags, endpoint string, rf 
 		return reportError(err)
 	}
 
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, inst)
-	} else {
+	Render(common.Format, inst, func() {
 		fmt.Fprintf(os.Stdout, "instance_id=%s\n", inst.UUID())
-	}
+	})
 
 	// @decision: compose-driver-sends-empty-message-after-create
 	if hasRoot {
@@ -351,12 +362,13 @@ func waitAndCleanup(ctx context.Context, c *Client, instanceID, hash string, pol
 		return reportError(err)
 	}
 	outcome := ExitAllSuccess
-	if nodes, err := c.ListInstanceNodes(signalCtx, instanceID); err != nil {
+	// @decision: exit-codes
+	if nodes, err := PagedListInstanceNodes(signalCtx, c, instanceID, ListNodesQuery{}); err != nil {
 		if signalCtx.Err() != nil {
 			return ExitInterrupt
 		}
 		return reportError(err)
-	} else if o, _ := ClassifyInstanceOutcome(nodes.Nodes); o != OutcomeSuccess {
+	} else if o, _ := ClassifyInstanceOutcome(nodes); o != OutcomeSuccess {
 		outcome = ExitAnyFailure
 	}
 	if err := c.DeleteInstance(signalCtx, instanceID); err != nil {

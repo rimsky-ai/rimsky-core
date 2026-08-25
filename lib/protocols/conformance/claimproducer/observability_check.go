@@ -21,8 +21,8 @@ import (
 )
 
 type ObservabilityCheckOpts struct {
-	Endpoint             string
-	RetentionTestSeconds int
+	Endpoint      string
+	RetentionTest time.Duration
 }
 
 func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, logf func(format string, args ...any)) error {
@@ -122,9 +122,9 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 		}
 	}
 
-	if opts.RetentionTestSeconds > 0 && caps.GetSupportsClaimGet() {
+	if opts.RetentionTest > 0 && caps.GetSupportsClaimGet() {
 		claimClient := genv1.NewClaimProducerClient(conn)
-		if err := runRetentionProbe(ctx, claimClient, client, opts.RetentionTestSeconds, logf, sleepRealtime); err != nil {
+		if err := runRetentionProbe(ctx, claimClient, client, opts.RetentionTest, logf, sleepRealtime); err != nil {
 			return err
 		}
 	}
@@ -135,7 +135,7 @@ func runRetentionProbe(
 	ctx context.Context,
 	claimClient genv1.ClaimProducerClient,
 	obsClient genv1.ClaimProducerObservabilityClient,
-	retentionSeconds int,
+	retentionWindow time.Duration,
 	logf func(format string, args ...any),
 	wait func(ctx context.Context, d time.Duration) error,
 ) error {
@@ -180,7 +180,7 @@ func runRetentionProbe(
 		return fmt.Errorf("retention probe: GetClaim immediately after Commit returned UNKNOWN; a just-terminated claim must remain visible until the retention window expires")
 	}
 
-	waitFor := time.Duration(retentionSeconds+1) * time.Second
+	waitFor := retentionWindow + time.Second
 	logf("observability: retention probe — driven claim %q terminal, sleeping %v before re-querying\n", claimID, waitFor)
 	if err := wait(ctx, waitFor); err != nil {
 		return err

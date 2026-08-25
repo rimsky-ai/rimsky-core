@@ -1,12 +1,12 @@
 -- Copyright © 2026 Fall Guy Consulting.
 -- SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial
 -- @concept: instance
--- @concept: host-agent-proxy
+-- @concept: host-daemon-proxy
 -- @concept: anonymous-mode
 
 -- 038-instance-target-routing-identity.sql
 --
--- Add target_routing_identity to rimsky_instances: the host-agent-proxy's
+-- Add target_routing_identity to rimsky_instances: the host-daemon-proxy's
 -- routing key for late-bound work — the api-key id for owner-created
 -- instances, the anonymous agent's silly-name for anonymous-mode instances.
 -- Pre-v1: any existing rows are back-stamped with the owner's api-key id

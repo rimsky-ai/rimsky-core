@@ -196,6 +196,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, foundationshared.ErrTemplateNotFound),
 		errors.Is(err, foundationshared.ErrInstanceNotFound),
 		errors.Is(err, foundationshared.ErrNodeNotFound),
+		errors.Is(err, foundationshared.ErrClaimHandleNotFound),
 		errors.Is(err, foundationshared.ErrBreakpointNotFound),
 		errors.Is(err, foundationshared.ErrBreakpointHitNotFound):
 		status = http.StatusNotFound

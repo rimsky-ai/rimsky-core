@@ -27,13 +27,15 @@ func OutcomeToCallbackBody(outcome AgentOutcome) map[string]any {
 		if outcome.ChangeSummary != nil {
 			summary = *outcome.ChangeSummary
 		}
-		return map[string]any{
-			"success": map[string]any{
-				"attributes_delta": outcome.AttributesDelta,
-				"changed":          outcome.Changed,
-				"change_summary":   summary,
-			},
+		success := map[string]any{
+			"attributes_delta": outcome.AttributesDelta,
+			"changed":          outcome.Changed,
+			"change_summary":   summary,
 		}
+		if len(outcome.Tags) > 0 {
+			success["tags"] = outcome.Tags
+		}
+		return map[string]any{"success": success}
 	case OutcomeBlocked:
 		return map[string]any{
 			"error": map[string]any{

@@ -35,6 +35,7 @@ const (
 	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_CREATED                OperationalKind = 3
 	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_REVOKED                OperationalKind = 4
 	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_ROTATED                OperationalKind = 5
+	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_EXPIRED                OperationalKind = 6
 	OperationalKind_OPERATIONAL_KIND_STATE_TRANSITION                OperationalKind = 10
 	OperationalKind_OPERATIONAL_KIND_WORK_STARTED                    OperationalKind = 11
 	OperationalKind_OPERATIONAL_KIND_WORK_COMPLETED                  OperationalKind = 12
@@ -87,6 +88,7 @@ var (
 		3:  "OPERATIONAL_KIND_AUTH_KEY_CREATED",
 		4:  "OPERATIONAL_KIND_AUTH_KEY_REVOKED",
 		5:  "OPERATIONAL_KIND_AUTH_KEY_ROTATED",
+		6:  "OPERATIONAL_KIND_AUTH_KEY_EXPIRED",
 		10: "OPERATIONAL_KIND_STATE_TRANSITION",
 		11: "OPERATIONAL_KIND_WORK_STARTED",
 		12: "OPERATIONAL_KIND_WORK_COMPLETED",
@@ -136,6 +138,7 @@ var (
 		"OPERATIONAL_KIND_AUTH_KEY_CREATED":                3,
 		"OPERATIONAL_KIND_AUTH_KEY_REVOKED":                4,
 		"OPERATIONAL_KIND_AUTH_KEY_ROTATED":                5,
+		"OPERATIONAL_KIND_AUTH_KEY_EXPIRED":                6,
 		"OPERATIONAL_KIND_STATE_TRANSITION":                10,
 		"OPERATIONAL_KIND_WORK_STARTED":                    11,
 		"OPERATIONAL_KIND_WORK_COMPLETED":                  12,
@@ -2549,6 +2552,66 @@ func (x *AuthKeyRevokedPayload) GetReason() string {
 	return ""
 }
 
+type AuthKeyExpiredPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyName       string                 `protobuf:"bytes,2,opt,name=key_name,json=keyName,proto3" json:"key_name,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthKeyExpiredPayload) Reset() {
+	*x = AuthKeyExpiredPayload{}
+	mi := &file_events_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthKeyExpiredPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthKeyExpiredPayload) ProtoMessage() {}
+
+func (x *AuthKeyExpiredPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_events_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthKeyExpiredPayload.ProtoReflect.Descriptor instead.
+func (*AuthKeyExpiredPayload) Descriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *AuthKeyExpiredPayload) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *AuthKeyExpiredPayload) GetKeyName() string {
+	if x != nil {
+		return x.KeyName
+	}
+	return ""
+}
+
+func (x *AuthKeyExpiredPayload) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 type AuthKeyRotatedPayload struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	KeyId          string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
@@ -2563,7 +2626,7 @@ type AuthKeyRotatedPayload struct {
 
 func (x *AuthKeyRotatedPayload) Reset() {
 	*x = AuthKeyRotatedPayload{}
-	mi := &file_events_proto_msgTypes[26]
+	mi := &file_events_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2575,7 +2638,7 @@ func (x *AuthKeyRotatedPayload) String() string {
 func (*AuthKeyRotatedPayload) ProtoMessage() {}
 
 func (x *AuthKeyRotatedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[26]
+	mi := &file_events_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2588,7 +2651,7 @@ func (x *AuthKeyRotatedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthKeyRotatedPayload.ProtoReflect.Descriptor instead.
 func (*AuthKeyRotatedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{26}
+	return file_events_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *AuthKeyRotatedPayload) GetKeyId() string {
@@ -2642,7 +2705,7 @@ type AttributesSchemaFailedPayload struct {
 
 func (x *AttributesSchemaFailedPayload) Reset() {
 	*x = AttributesSchemaFailedPayload{}
-	mi := &file_events_proto_msgTypes[27]
+	mi := &file_events_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2654,7 +2717,7 @@ func (x *AttributesSchemaFailedPayload) String() string {
 func (*AttributesSchemaFailedPayload) ProtoMessage() {}
 
 func (x *AttributesSchemaFailedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[27]
+	mi := &file_events_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2667,7 +2730,7 @@ func (x *AttributesSchemaFailedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttributesSchemaFailedPayload.ProtoReflect.Descriptor instead.
 func (*AttributesSchemaFailedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{27}
+	return file_events_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *AttributesSchemaFailedPayload) GetMessage() string {
@@ -2688,7 +2751,7 @@ type AttributeOverrideMatchedPayload struct {
 
 func (x *AttributeOverrideMatchedPayload) Reset() {
 	*x = AttributeOverrideMatchedPayload{}
-	mi := &file_events_proto_msgTypes[28]
+	mi := &file_events_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2700,7 +2763,7 @@ func (x *AttributeOverrideMatchedPayload) String() string {
 func (*AttributeOverrideMatchedPayload) ProtoMessage() {}
 
 func (x *AttributeOverrideMatchedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[28]
+	mi := &file_events_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2713,7 +2776,7 @@ func (x *AttributeOverrideMatchedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttributeOverrideMatchedPayload.ProtoReflect.Descriptor instead.
 func (*AttributeOverrideMatchedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{28}
+	return file_events_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *AttributeOverrideMatchedPayload) GetOverrideIndex() int32 {
@@ -2751,7 +2814,7 @@ type BreakpointHitPayload struct {
 
 func (x *BreakpointHitPayload) Reset() {
 	*x = BreakpointHitPayload{}
-	mi := &file_events_proto_msgTypes[29]
+	mi := &file_events_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2763,7 +2826,7 @@ func (x *BreakpointHitPayload) String() string {
 func (*BreakpointHitPayload) ProtoMessage() {}
 
 func (x *BreakpointHitPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[29]
+	mi := &file_events_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2776,7 +2839,7 @@ func (x *BreakpointHitPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BreakpointHitPayload.ProtoReflect.Descriptor instead.
 func (*BreakpointHitPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{29}
+	return file_events_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *BreakpointHitPayload) GetInstanceId() string {
@@ -2832,7 +2895,7 @@ type MessageDeadLetteredPayload struct {
 
 func (x *MessageDeadLetteredPayload) Reset() {
 	*x = MessageDeadLetteredPayload{}
-	mi := &file_events_proto_msgTypes[30]
+	mi := &file_events_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2844,7 +2907,7 @@ func (x *MessageDeadLetteredPayload) String() string {
 func (*MessageDeadLetteredPayload) ProtoMessage() {}
 
 func (x *MessageDeadLetteredPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[30]
+	mi := &file_events_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2857,7 +2920,7 @@ func (x *MessageDeadLetteredPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageDeadLetteredPayload.ProtoReflect.Descriptor instead.
 func (*MessageDeadLetteredPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{30}
+	return file_events_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *MessageDeadLetteredPayload) GetMessageId() string {
@@ -2895,7 +2958,7 @@ type FanOutDispatchedPayload struct {
 
 func (x *FanOutDispatchedPayload) Reset() {
 	*x = FanOutDispatchedPayload{}
-	mi := &file_events_proto_msgTypes[31]
+	mi := &file_events_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2907,7 +2970,7 @@ func (x *FanOutDispatchedPayload) String() string {
 func (*FanOutDispatchedPayload) ProtoMessage() {}
 
 func (x *FanOutDispatchedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[31]
+	mi := &file_events_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2920,7 +2983,7 @@ func (x *FanOutDispatchedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FanOutDispatchedPayload.ProtoReflect.Descriptor instead.
 func (*FanOutDispatchedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{31}
+	return file_events_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *FanOutDispatchedPayload) GetParentRunId() string {
@@ -2977,7 +3040,7 @@ type FanOutChildrenCreatedPayload struct {
 
 func (x *FanOutChildrenCreatedPayload) Reset() {
 	*x = FanOutChildrenCreatedPayload{}
-	mi := &file_events_proto_msgTypes[32]
+	mi := &file_events_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2989,7 +3052,7 @@ func (x *FanOutChildrenCreatedPayload) String() string {
 func (*FanOutChildrenCreatedPayload) ProtoMessage() {}
 
 func (x *FanOutChildrenCreatedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[32]
+	mi := &file_events_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3002,7 +3065,7 @@ func (x *FanOutChildrenCreatedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FanOutChildrenCreatedPayload.ProtoReflect.Descriptor instead.
 func (*FanOutChildrenCreatedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{32}
+	return file_events_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *FanOutChildrenCreatedPayload) GetParentRunId() string {
@@ -3045,7 +3108,7 @@ type SubClaimBeginCandidatePayload struct {
 
 func (x *SubClaimBeginCandidatePayload) Reset() {
 	*x = SubClaimBeginCandidatePayload{}
-	mi := &file_events_proto_msgTypes[33]
+	mi := &file_events_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3057,7 +3120,7 @@ func (x *SubClaimBeginCandidatePayload) String() string {
 func (*SubClaimBeginCandidatePayload) ProtoMessage() {}
 
 func (x *SubClaimBeginCandidatePayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[33]
+	mi := &file_events_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3070,7 +3133,7 @@ func (x *SubClaimBeginCandidatePayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubClaimBeginCandidatePayload.ProtoReflect.Descriptor instead.
 func (*SubClaimBeginCandidatePayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{33}
+	return file_events_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *SubClaimBeginCandidatePayload) GetParentClaimHandleId() string {
@@ -3112,7 +3175,7 @@ type SubClaimAcquiredPayload struct {
 
 func (x *SubClaimAcquiredPayload) Reset() {
 	*x = SubClaimAcquiredPayload{}
-	mi := &file_events_proto_msgTypes[34]
+	mi := &file_events_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3124,7 +3187,7 @@ func (x *SubClaimAcquiredPayload) String() string {
 func (*SubClaimAcquiredPayload) ProtoMessage() {}
 
 func (x *SubClaimAcquiredPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[34]
+	mi := &file_events_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3137,7 +3200,7 @@ func (x *SubClaimAcquiredPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubClaimAcquiredPayload.ProtoReflect.Descriptor instead.
 func (*SubClaimAcquiredPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{34}
+	return file_events_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *SubClaimAcquiredPayload) GetParentClaimHandleId() string {
@@ -3174,7 +3237,7 @@ type SubgraphInternalCascadeFiredPayload struct {
 
 func (x *SubgraphInternalCascadeFiredPayload) Reset() {
 	*x = SubgraphInternalCascadeFiredPayload{}
-	mi := &file_events_proto_msgTypes[35]
+	mi := &file_events_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3186,7 +3249,7 @@ func (x *SubgraphInternalCascadeFiredPayload) String() string {
 func (*SubgraphInternalCascadeFiredPayload) ProtoMessage() {}
 
 func (x *SubgraphInternalCascadeFiredPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[35]
+	mi := &file_events_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3199,7 +3262,7 @@ func (x *SubgraphInternalCascadeFiredPayload) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use SubgraphInternalCascadeFiredPayload.ProtoReflect.Descriptor instead.
 func (*SubgraphInternalCascadeFiredPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{35}
+	return file_events_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *SubgraphInternalCascadeFiredPayload) GetDelegateGraph() string {
@@ -3250,7 +3313,7 @@ type SubgraphDispatchedPayload struct {
 
 func (x *SubgraphDispatchedPayload) Reset() {
 	*x = SubgraphDispatchedPayload{}
-	mi := &file_events_proto_msgTypes[36]
+	mi := &file_events_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3262,7 +3325,7 @@ func (x *SubgraphDispatchedPayload) String() string {
 func (*SubgraphDispatchedPayload) ProtoMessage() {}
 
 func (x *SubgraphDispatchedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[36]
+	mi := &file_events_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3275,7 +3338,7 @@ func (x *SubgraphDispatchedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubgraphDispatchedPayload.ProtoReflect.Descriptor instead.
 func (*SubgraphDispatchedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{36}
+	return file_events_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *SubgraphDispatchedPayload) GetCallerRunId() string {
@@ -3325,7 +3388,7 @@ type SubgraphExitCarryPayload struct {
 
 func (x *SubgraphExitCarryPayload) Reset() {
 	*x = SubgraphExitCarryPayload{}
-	mi := &file_events_proto_msgTypes[37]
+	mi := &file_events_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3337,7 +3400,7 @@ func (x *SubgraphExitCarryPayload) String() string {
 func (*SubgraphExitCarryPayload) ProtoMessage() {}
 
 func (x *SubgraphExitCarryPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[37]
+	mi := &file_events_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3350,7 +3413,7 @@ func (x *SubgraphExitCarryPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubgraphExitCarryPayload.ProtoReflect.Descriptor instead.
 func (*SubgraphExitCarryPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{37}
+	return file_events_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *SubgraphExitCarryPayload) GetParentRunId() string {
@@ -3397,7 +3460,7 @@ type ClaimResolutionSettledPayload struct {
 
 func (x *ClaimResolutionSettledPayload) Reset() {
 	*x = ClaimResolutionSettledPayload{}
-	mi := &file_events_proto_msgTypes[38]
+	mi := &file_events_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3409,7 +3472,7 @@ func (x *ClaimResolutionSettledPayload) String() string {
 func (*ClaimResolutionSettledPayload) ProtoMessage() {}
 
 func (x *ClaimResolutionSettledPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[38]
+	mi := &file_events_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3422,7 +3485,7 @@ func (x *ClaimResolutionSettledPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimResolutionSettledPayload.ProtoReflect.Descriptor instead.
 func (*ClaimResolutionSettledPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{38}
+	return file_events_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ClaimResolutionSettledPayload) GetClaimHandleId() string {
@@ -3491,7 +3554,7 @@ type ParkedResumeStartedPayload struct {
 
 func (x *ParkedResumeStartedPayload) Reset() {
 	*x = ParkedResumeStartedPayload{}
-	mi := &file_events_proto_msgTypes[39]
+	mi := &file_events_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3503,7 +3566,7 @@ func (x *ParkedResumeStartedPayload) String() string {
 func (*ParkedResumeStartedPayload) ProtoMessage() {}
 
 func (x *ParkedResumeStartedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[39]
+	mi := &file_events_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3516,7 +3579,7 @@ func (x *ParkedResumeStartedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ParkedResumeStartedPayload.ProtoReflect.Descriptor instead.
 func (*ParkedResumeStartedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{39}
+	return file_events_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ParkedResumeStartedPayload) GetResumeReason() string {
@@ -3548,7 +3611,7 @@ type DebugOverrideAppliedPayload struct {
 
 func (x *DebugOverrideAppliedPayload) Reset() {
 	*x = DebugOverrideAppliedPayload{}
-	mi := &file_events_proto_msgTypes[40]
+	mi := &file_events_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3560,7 +3623,7 @@ func (x *DebugOverrideAppliedPayload) String() string {
 func (*DebugOverrideAppliedPayload) ProtoMessage() {}
 
 func (x *DebugOverrideAppliedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[40]
+	mi := &file_events_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3573,7 +3636,7 @@ func (x *DebugOverrideAppliedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugOverrideAppliedPayload.ProtoReflect.Descriptor instead.
 func (*DebugOverrideAppliedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{40}
+	return file_events_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *DebugOverrideAppliedPayload) GetAction() string {
@@ -3635,7 +3698,7 @@ type InstanceTerminatedPayload struct {
 
 func (x *InstanceTerminatedPayload) Reset() {
 	*x = InstanceTerminatedPayload{}
-	mi := &file_events_proto_msgTypes[41]
+	mi := &file_events_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3647,7 +3710,7 @@ func (x *InstanceTerminatedPayload) String() string {
 func (*InstanceTerminatedPayload) ProtoMessage() {}
 
 func (x *InstanceTerminatedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[41]
+	mi := &file_events_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3660,7 +3723,7 @@ func (x *InstanceTerminatedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstanceTerminatedPayload.ProtoReflect.Descriptor instead.
 func (*InstanceTerminatedPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{41}
+	return file_events_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *InstanceTerminatedPayload) GetActor() string {
@@ -3689,7 +3752,7 @@ type ServiceDeliveryStalledPayload struct {
 
 func (x *ServiceDeliveryStalledPayload) Reset() {
 	*x = ServiceDeliveryStalledPayload{}
-	mi := &file_events_proto_msgTypes[42]
+	mi := &file_events_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3701,7 +3764,7 @@ func (x *ServiceDeliveryStalledPayload) String() string {
 func (*ServiceDeliveryStalledPayload) ProtoMessage() {}
 
 func (x *ServiceDeliveryStalledPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[42]
+	mi := &file_events_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3714,7 +3777,7 @@ func (x *ServiceDeliveryStalledPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceDeliveryStalledPayload.ProtoReflect.Descriptor instead.
 func (*ServiceDeliveryStalledPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{42}
+	return file_events_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ServiceDeliveryStalledPayload) GetService() string {
@@ -3755,7 +3818,7 @@ type ServiceDeliveryRecoveredPayload struct {
 
 func (x *ServiceDeliveryRecoveredPayload) Reset() {
 	*x = ServiceDeliveryRecoveredPayload{}
-	mi := &file_events_proto_msgTypes[43]
+	mi := &file_events_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3767,7 +3830,7 @@ func (x *ServiceDeliveryRecoveredPayload) String() string {
 func (*ServiceDeliveryRecoveredPayload) ProtoMessage() {}
 
 func (x *ServiceDeliveryRecoveredPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[43]
+	mi := &file_events_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3780,7 +3843,7 @@ func (x *ServiceDeliveryRecoveredPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceDeliveryRecoveredPayload.ProtoReflect.Descriptor instead.
 func (*ServiceDeliveryRecoveredPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{43}
+	return file_events_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ServiceDeliveryRecoveredPayload) GetService() string {
@@ -3809,7 +3872,7 @@ type TerminalSuccessSignalPayload struct {
 
 func (x *TerminalSuccessSignalPayload) Reset() {
 	*x = TerminalSuccessSignalPayload{}
-	mi := &file_events_proto_msgTypes[44]
+	mi := &file_events_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3821,7 +3884,7 @@ func (x *TerminalSuccessSignalPayload) String() string {
 func (*TerminalSuccessSignalPayload) ProtoMessage() {}
 
 func (x *TerminalSuccessSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[44]
+	mi := &file_events_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3834,7 +3897,7 @@ func (x *TerminalSuccessSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalSuccessSignalPayload.ProtoReflect.Descriptor instead.
 func (*TerminalSuccessSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{44}
+	return file_events_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *TerminalSuccessSignalPayload) GetChanged() bool {
@@ -3879,7 +3942,7 @@ type TerminalErrorSignalPayload struct {
 
 func (x *TerminalErrorSignalPayload) Reset() {
 	*x = TerminalErrorSignalPayload{}
-	mi := &file_events_proto_msgTypes[45]
+	mi := &file_events_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3891,7 +3954,7 @@ func (x *TerminalErrorSignalPayload) String() string {
 func (*TerminalErrorSignalPayload) ProtoMessage() {}
 
 func (x *TerminalErrorSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[45]
+	mi := &file_events_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3904,7 +3967,7 @@ func (x *TerminalErrorSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalErrorSignalPayload.ProtoReflect.Descriptor instead.
 func (*TerminalErrorSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{45}
+	return file_events_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *TerminalErrorSignalPayload) GetErrorClass() string {
@@ -3960,7 +4023,7 @@ type TransientParkSignalPayload struct {
 
 func (x *TransientParkSignalPayload) Reset() {
 	*x = TransientParkSignalPayload{}
-	mi := &file_events_proto_msgTypes[46]
+	mi := &file_events_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3972,7 +4035,7 @@ func (x *TransientParkSignalPayload) String() string {
 func (*TransientParkSignalPayload) ProtoMessage() {}
 
 func (x *TransientParkSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[46]
+	mi := &file_events_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3985,7 +4048,7 @@ func (x *TransientParkSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransientParkSignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientParkSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{46}
+	return file_events_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *TransientParkSignalPayload) GetResumeAt() *timestamppb.Timestamp {
@@ -4022,7 +4085,7 @@ type TransientRetrySignalPayload struct {
 
 func (x *TransientRetrySignalPayload) Reset() {
 	*x = TransientRetrySignalPayload{}
-	mi := &file_events_proto_msgTypes[47]
+	mi := &file_events_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4034,7 +4097,7 @@ func (x *TransientRetrySignalPayload) String() string {
 func (*TransientRetrySignalPayload) ProtoMessage() {}
 
 func (x *TransientRetrySignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[47]
+	mi := &file_events_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4047,7 +4110,7 @@ func (x *TransientRetrySignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransientRetrySignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientRetrySignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{47}
+	return file_events_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *TransientRetrySignalPayload) GetAttempt() int32 {
@@ -4095,7 +4158,7 @@ type TransientAwaitAsyncSignalPayload struct {
 
 func (x *TransientAwaitAsyncSignalPayload) Reset() {
 	*x = TransientAwaitAsyncSignalPayload{}
-	mi := &file_events_proto_msgTypes[48]
+	mi := &file_events_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4107,7 +4170,7 @@ func (x *TransientAwaitAsyncSignalPayload) String() string {
 func (*TransientAwaitAsyncSignalPayload) ProtoMessage() {}
 
 func (x *TransientAwaitAsyncSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[48]
+	mi := &file_events_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4120,7 +4183,7 @@ func (x *TransientAwaitAsyncSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransientAwaitAsyncSignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientAwaitAsyncSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{48}
+	return file_events_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *TransientAwaitAsyncSignalPayload) GetAsyncAckId() string {
@@ -4147,7 +4210,7 @@ type TransientInfraSignalPayload struct {
 
 func (x *TransientInfraSignalPayload) Reset() {
 	*x = TransientInfraSignalPayload{}
-	mi := &file_events_proto_msgTypes[49]
+	mi := &file_events_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4159,7 +4222,7 @@ func (x *TransientInfraSignalPayload) String() string {
 func (*TransientInfraSignalPayload) ProtoMessage() {}
 
 func (x *TransientInfraSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[49]
+	mi := &file_events_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4172,7 +4235,7 @@ func (x *TransientInfraSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransientInfraSignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientInfraSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{49}
+	return file_events_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *TransientInfraSignalPayload) GetReason() string {
@@ -4199,7 +4262,7 @@ type TransientReleaseAndRequeueSignalPayload struct {
 
 func (x *TransientReleaseAndRequeueSignalPayload) Reset() {
 	*x = TransientReleaseAndRequeueSignalPayload{}
-	mi := &file_events_proto_msgTypes[50]
+	mi := &file_events_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4211,7 +4274,7 @@ func (x *TransientReleaseAndRequeueSignalPayload) String() string {
 func (*TransientReleaseAndRequeueSignalPayload) ProtoMessage() {}
 
 func (x *TransientReleaseAndRequeueSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[50]
+	mi := &file_events_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4224,7 +4287,7 @@ func (x *TransientReleaseAndRequeueSignalPayload) ProtoReflect() protoreflect.Me
 
 // Deprecated: Use TransientReleaseAndRequeueSignalPayload.ProtoReflect.Descriptor instead.
 func (*TransientReleaseAndRequeueSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{50}
+	return file_events_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *TransientReleaseAndRequeueSignalPayload) GetErrorClass() string {
@@ -4252,7 +4315,7 @@ type AttributeChangedSignalPayload struct {
 
 func (x *AttributeChangedSignalPayload) Reset() {
 	*x = AttributeChangedSignalPayload{}
-	mi := &file_events_proto_msgTypes[51]
+	mi := &file_events_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4264,7 +4327,7 @@ func (x *AttributeChangedSignalPayload) String() string {
 func (*AttributeChangedSignalPayload) ProtoMessage() {}
 
 func (x *AttributeChangedSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[51]
+	mi := &file_events_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4277,7 +4340,7 @@ func (x *AttributeChangedSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttributeChangedSignalPayload.ProtoReflect.Descriptor instead.
 func (*AttributeChangedSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{51}
+	return file_events_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *AttributeChangedSignalPayload) GetKey() string {
@@ -4310,7 +4373,7 @@ type SettlingSignalPayload struct {
 
 func (x *SettlingSignalPayload) Reset() {
 	*x = SettlingSignalPayload{}
-	mi := &file_events_proto_msgTypes[52]
+	mi := &file_events_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4322,7 +4385,7 @@ func (x *SettlingSignalPayload) String() string {
 func (*SettlingSignalPayload) ProtoMessage() {}
 
 func (x *SettlingSignalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_events_proto_msgTypes[52]
+	mi := &file_events_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4335,7 +4398,7 @@ func (x *SettlingSignalPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettlingSignalPayload.ProtoReflect.Descriptor instead.
 func (*SettlingSignalPayload) Descriptor() ([]byte, []int) {
-	return file_events_proto_rawDescGZIP(), []int{52}
+	return file_events_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *SettlingSignalPayload) GetErrorClass() string {
@@ -4556,7 +4619,12 @@ const file_events_proto_rawDesc = "" +
 	"\bkey_name\x18\x02 \x01(\tR\akeyName\x12.\n" +
 	"\x11revoked_by_key_id\x18\x03 \x01(\tH\x00R\x0erevokedByKeyId\x88\x01\x01\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reasonB\x14\n" +
-	"\x12_revoked_by_key_id\"\x84\x02\n" +
+	"\x12_revoked_by_key_id\"\x84\x01\n" +
+	"\x15AuthKeyExpiredPayload\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x19\n" +
+	"\bkey_name\x18\x02 \x01(\tR\akeyName\x129\n" +
+	"\n" +
+	"expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"\x84\x02\n" +
 	"\x15AuthKeyRotatedPayload\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x19\n" +
 	"\bkey_name\x18\x02 \x01(\tR\akeyName\x12\x1c\n" +
@@ -4706,7 +4774,7 @@ const file_events_proto_rawDesc = "" +
 	"\told_value\x18\x03 \x01(\v2\x16.google.protobuf.ValueR\boldValue\"8\n" +
 	"\x15SettlingSignalPayload\x12\x1f\n" +
 	"\verror_class\x18\x01 \x01(\tR\n" +
-	"errorClass*\xba\x10\n" +
+	"errorClass*\xe1\x10\n" +
 	"\x0fOperationalKind\x12 \n" +
 	"\x1cOPERATIONAL_KIND_UNSPECIFIED\x10\x00\x12*\n" +
 	"&OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED\x10\x01\x12'\n" +
@@ -4714,6 +4782,7 @@ const file_events_proto_rawDesc = "" +
 	"!OPERATIONAL_KIND_AUTH_KEY_CREATED\x10\x03\x12%\n" +
 	"!OPERATIONAL_KIND_AUTH_KEY_REVOKED\x10\x04\x12%\n" +
 	"!OPERATIONAL_KIND_AUTH_KEY_ROTATED\x10\x05\x12%\n" +
+	"!OPERATIONAL_KIND_AUTH_KEY_EXPIRED\x10\x06\x12%\n" +
 	"!OPERATIONAL_KIND_STATE_TRANSITION\x10\n" +
 	"\x12!\n" +
 	"\x1dOPERATIONAL_KIND_WORK_STARTED\x10\v\x12#\n" +
@@ -4770,7 +4839,7 @@ func file_events_proto_rawDescGZIP() []byte {
 }
 
 var file_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_events_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
+var file_events_proto_msgTypes = make([]protoimpl.MessageInfo, 54)
 var file_events_proto_goTypes = []any{
 	(OperationalKind)(0),                            // 0: rimsky.v1.OperationalKind
 	(*Event)(nil),                                   // 1: rimsky.v1.Event
@@ -4799,39 +4868,40 @@ var file_events_proto_goTypes = []any{
 	(*AuthAccessDeniedPayload)(nil),                 // 24: rimsky.v1.AuthAccessDeniedPayload
 	(*AuthKeyCreatedPayload)(nil),                   // 25: rimsky.v1.AuthKeyCreatedPayload
 	(*AuthKeyRevokedPayload)(nil),                   // 26: rimsky.v1.AuthKeyRevokedPayload
-	(*AuthKeyRotatedPayload)(nil),                   // 27: rimsky.v1.AuthKeyRotatedPayload
-	(*AttributesSchemaFailedPayload)(nil),           // 28: rimsky.v1.AttributesSchemaFailedPayload
-	(*AttributeOverrideMatchedPayload)(nil),         // 29: rimsky.v1.AttributeOverrideMatchedPayload
-	(*BreakpointHitPayload)(nil),                    // 30: rimsky.v1.BreakpointHitPayload
-	(*MessageDeadLetteredPayload)(nil),              // 31: rimsky.v1.MessageDeadLetteredPayload
-	(*FanOutDispatchedPayload)(nil),                 // 32: rimsky.v1.FanOutDispatchedPayload
-	(*FanOutChildrenCreatedPayload)(nil),            // 33: rimsky.v1.FanOutChildrenCreatedPayload
-	(*SubClaimBeginCandidatePayload)(nil),           // 34: rimsky.v1.SubClaimBeginCandidatePayload
-	(*SubClaimAcquiredPayload)(nil),                 // 35: rimsky.v1.SubClaimAcquiredPayload
-	(*SubgraphInternalCascadeFiredPayload)(nil),     // 36: rimsky.v1.SubgraphInternalCascadeFiredPayload
-	(*SubgraphDispatchedPayload)(nil),               // 37: rimsky.v1.SubgraphDispatchedPayload
-	(*SubgraphExitCarryPayload)(nil),                // 38: rimsky.v1.SubgraphExitCarryPayload
-	(*ClaimResolutionSettledPayload)(nil),           // 39: rimsky.v1.ClaimResolutionSettledPayload
-	(*ParkedResumeStartedPayload)(nil),              // 40: rimsky.v1.ParkedResumeStartedPayload
-	(*DebugOverrideAppliedPayload)(nil),             // 41: rimsky.v1.DebugOverrideAppliedPayload
-	(*InstanceTerminatedPayload)(nil),               // 42: rimsky.v1.InstanceTerminatedPayload
-	(*ServiceDeliveryStalledPayload)(nil),           // 43: rimsky.v1.ServiceDeliveryStalledPayload
-	(*ServiceDeliveryRecoveredPayload)(nil),         // 44: rimsky.v1.ServiceDeliveryRecoveredPayload
-	(*TerminalSuccessSignalPayload)(nil),            // 45: rimsky.v1.TerminalSuccessSignalPayload
-	(*TerminalErrorSignalPayload)(nil),              // 46: rimsky.v1.TerminalErrorSignalPayload
-	(*TransientParkSignalPayload)(nil),              // 47: rimsky.v1.TransientParkSignalPayload
-	(*TransientRetrySignalPayload)(nil),             // 48: rimsky.v1.TransientRetrySignalPayload
-	(*TransientAwaitAsyncSignalPayload)(nil),        // 49: rimsky.v1.TransientAwaitAsyncSignalPayload
-	(*TransientInfraSignalPayload)(nil),             // 50: rimsky.v1.TransientInfraSignalPayload
-	(*TransientReleaseAndRequeueSignalPayload)(nil), // 51: rimsky.v1.TransientReleaseAndRequeueSignalPayload
-	(*AttributeChangedSignalPayload)(nil),           // 52: rimsky.v1.AttributeChangedSignalPayload
-	(*SettlingSignalPayload)(nil),                   // 53: rimsky.v1.SettlingSignalPayload
-	(*timestamppb.Timestamp)(nil),                   // 54: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                         // 55: google.protobuf.Struct
-	(*structpb.Value)(nil),                          // 56: google.protobuf.Value
+	(*AuthKeyExpiredPayload)(nil),                   // 27: rimsky.v1.AuthKeyExpiredPayload
+	(*AuthKeyRotatedPayload)(nil),                   // 28: rimsky.v1.AuthKeyRotatedPayload
+	(*AttributesSchemaFailedPayload)(nil),           // 29: rimsky.v1.AttributesSchemaFailedPayload
+	(*AttributeOverrideMatchedPayload)(nil),         // 30: rimsky.v1.AttributeOverrideMatchedPayload
+	(*BreakpointHitPayload)(nil),                    // 31: rimsky.v1.BreakpointHitPayload
+	(*MessageDeadLetteredPayload)(nil),              // 32: rimsky.v1.MessageDeadLetteredPayload
+	(*FanOutDispatchedPayload)(nil),                 // 33: rimsky.v1.FanOutDispatchedPayload
+	(*FanOutChildrenCreatedPayload)(nil),            // 34: rimsky.v1.FanOutChildrenCreatedPayload
+	(*SubClaimBeginCandidatePayload)(nil),           // 35: rimsky.v1.SubClaimBeginCandidatePayload
+	(*SubClaimAcquiredPayload)(nil),                 // 36: rimsky.v1.SubClaimAcquiredPayload
+	(*SubgraphInternalCascadeFiredPayload)(nil),     // 37: rimsky.v1.SubgraphInternalCascadeFiredPayload
+	(*SubgraphDispatchedPayload)(nil),               // 38: rimsky.v1.SubgraphDispatchedPayload
+	(*SubgraphExitCarryPayload)(nil),                // 39: rimsky.v1.SubgraphExitCarryPayload
+	(*ClaimResolutionSettledPayload)(nil),           // 40: rimsky.v1.ClaimResolutionSettledPayload
+	(*ParkedResumeStartedPayload)(nil),              // 41: rimsky.v1.ParkedResumeStartedPayload
+	(*DebugOverrideAppliedPayload)(nil),             // 42: rimsky.v1.DebugOverrideAppliedPayload
+	(*InstanceTerminatedPayload)(nil),               // 43: rimsky.v1.InstanceTerminatedPayload
+	(*ServiceDeliveryStalledPayload)(nil),           // 44: rimsky.v1.ServiceDeliveryStalledPayload
+	(*ServiceDeliveryRecoveredPayload)(nil),         // 45: rimsky.v1.ServiceDeliveryRecoveredPayload
+	(*TerminalSuccessSignalPayload)(nil),            // 46: rimsky.v1.TerminalSuccessSignalPayload
+	(*TerminalErrorSignalPayload)(nil),              // 47: rimsky.v1.TerminalErrorSignalPayload
+	(*TransientParkSignalPayload)(nil),              // 48: rimsky.v1.TransientParkSignalPayload
+	(*TransientRetrySignalPayload)(nil),             // 49: rimsky.v1.TransientRetrySignalPayload
+	(*TransientAwaitAsyncSignalPayload)(nil),        // 50: rimsky.v1.TransientAwaitAsyncSignalPayload
+	(*TransientInfraSignalPayload)(nil),             // 51: rimsky.v1.TransientInfraSignalPayload
+	(*TransientReleaseAndRequeueSignalPayload)(nil), // 52: rimsky.v1.TransientReleaseAndRequeueSignalPayload
+	(*AttributeChangedSignalPayload)(nil),           // 53: rimsky.v1.AttributeChangedSignalPayload
+	(*SettlingSignalPayload)(nil),                   // 54: rimsky.v1.SettlingSignalPayload
+	(*timestamppb.Timestamp)(nil),                   // 55: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                         // 56: google.protobuf.Struct
+	(*structpb.Value)(nil),                          // 57: google.protobuf.Value
 }
 var file_events_proto_depIdxs = []int32{
-	54, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
+	55, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
 	2,  // 1: rimsky.v1.Event.message_sent:type_name -> rimsky.v1.MessageSentPayload
 	3,  // 2: rimsky.v1.Event.message_received:type_name -> rimsky.v1.MessageReceivedPayload
 	4,  // 3: rimsky.v1.Event.state_transition:type_name -> rimsky.v1.StateTransitionPayload
@@ -4853,38 +4923,39 @@ var file_events_proto_depIdxs = []int32{
 	20, // 19: rimsky.v1.Event.claim_held:type_name -> rimsky.v1.ClaimHeldPayload
 	21, // 20: rimsky.v1.Event.claim_resolved:type_name -> rimsky.v1.ClaimResolvedPayload
 	22, // 21: rimsky.v1.Event.template_resolution_failed:type_name -> rimsky.v1.TemplateResolutionFailedPayload
-	28, // 22: rimsky.v1.Event.attributes_schema_failed:type_name -> rimsky.v1.AttributesSchemaFailedPayload
-	29, // 23: rimsky.v1.Event.attribute_override_matched:type_name -> rimsky.v1.AttributeOverrideMatchedPayload
-	32, // 24: rimsky.v1.Event.fan_out_dispatched:type_name -> rimsky.v1.FanOutDispatchedPayload
-	36, // 25: rimsky.v1.Event.subgraph_internal_cascade_fired:type_name -> rimsky.v1.SubgraphInternalCascadeFiredPayload
-	40, // 26: rimsky.v1.Event.parked_resume_started:type_name -> rimsky.v1.ParkedResumeStartedPayload
-	42, // 27: rimsky.v1.Event.instance_terminated:type_name -> rimsky.v1.InstanceTerminatedPayload
-	55, // 28: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
-	55, // 29: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
-	54, // 30: rimsky.v1.OrphanedClaimReleasedPayload.last_progress_at:type_name -> google.protobuf.Timestamp
-	55, // 31: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
-	54, // 32: rimsky.v1.LockOrphanReapedPayload.expires_at:type_name -> google.protobuf.Timestamp
-	54, // 33: rimsky.v1.LockOrphanReapedPayload.claimed_at:type_name -> google.protobuf.Timestamp
-	55, // 34: rimsky.v1.AuthAccessAttemptedPayload.request_params:type_name -> google.protobuf.Struct
-	55, // 35: rimsky.v1.AuthAccessDeniedPayload.request_params:type_name -> google.protobuf.Struct
-	55, // 36: rimsky.v1.AuthKeyCreatedPayload.permissions:type_name -> google.protobuf.Struct
-	54, // 37: rimsky.v1.AuthKeyCreatedPayload.expires_at:type_name -> google.protobuf.Timestamp
-	54, // 38: rimsky.v1.AuthKeyRotatedPayload.revoke_at:type_name -> google.protobuf.Timestamp
-	56, // 39: rimsky.v1.DebugOverrideAppliedPayload.attribute_value:type_name -> google.protobuf.Value
-	55, // 40: rimsky.v1.TerminalSuccessSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
-	55, // 41: rimsky.v1.TerminalErrorSignalPayload.error_payload:type_name -> google.protobuf.Struct
-	55, // 42: rimsky.v1.TerminalErrorSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
-	54, // 43: rimsky.v1.TransientParkSignalPayload.resume_at:type_name -> google.protobuf.Timestamp
-	55, // 44: rimsky.v1.TransientRetrySignalPayload.error_payload:type_name -> google.protobuf.Struct
-	55, // 45: rimsky.v1.TransientInfraSignalPayload.details:type_name -> google.protobuf.Struct
-	55, // 46: rimsky.v1.TransientReleaseAndRequeueSignalPayload.error_payload:type_name -> google.protobuf.Struct
-	56, // 47: rimsky.v1.AttributeChangedSignalPayload.value:type_name -> google.protobuf.Value
-	56, // 48: rimsky.v1.AttributeChangedSignalPayload.old_value:type_name -> google.protobuf.Value
-	49, // [49:49] is the sub-list for method output_type
-	49, // [49:49] is the sub-list for method input_type
-	49, // [49:49] is the sub-list for extension type_name
-	49, // [49:49] is the sub-list for extension extendee
-	0,  // [0:49] is the sub-list for field type_name
+	29, // 22: rimsky.v1.Event.attributes_schema_failed:type_name -> rimsky.v1.AttributesSchemaFailedPayload
+	30, // 23: rimsky.v1.Event.attribute_override_matched:type_name -> rimsky.v1.AttributeOverrideMatchedPayload
+	33, // 24: rimsky.v1.Event.fan_out_dispatched:type_name -> rimsky.v1.FanOutDispatchedPayload
+	37, // 25: rimsky.v1.Event.subgraph_internal_cascade_fired:type_name -> rimsky.v1.SubgraphInternalCascadeFiredPayload
+	41, // 26: rimsky.v1.Event.parked_resume_started:type_name -> rimsky.v1.ParkedResumeStartedPayload
+	43, // 27: rimsky.v1.Event.instance_terminated:type_name -> rimsky.v1.InstanceTerminatedPayload
+	56, // 28: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
+	56, // 29: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
+	55, // 30: rimsky.v1.OrphanedClaimReleasedPayload.last_progress_at:type_name -> google.protobuf.Timestamp
+	56, // 31: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
+	55, // 32: rimsky.v1.LockOrphanReapedPayload.expires_at:type_name -> google.protobuf.Timestamp
+	55, // 33: rimsky.v1.LockOrphanReapedPayload.claimed_at:type_name -> google.protobuf.Timestamp
+	56, // 34: rimsky.v1.AuthAccessAttemptedPayload.request_params:type_name -> google.protobuf.Struct
+	56, // 35: rimsky.v1.AuthAccessDeniedPayload.request_params:type_name -> google.protobuf.Struct
+	56, // 36: rimsky.v1.AuthKeyCreatedPayload.permissions:type_name -> google.protobuf.Struct
+	55, // 37: rimsky.v1.AuthKeyCreatedPayload.expires_at:type_name -> google.protobuf.Timestamp
+	55, // 38: rimsky.v1.AuthKeyExpiredPayload.expires_at:type_name -> google.protobuf.Timestamp
+	55, // 39: rimsky.v1.AuthKeyRotatedPayload.revoke_at:type_name -> google.protobuf.Timestamp
+	57, // 40: rimsky.v1.DebugOverrideAppliedPayload.attribute_value:type_name -> google.protobuf.Value
+	56, // 41: rimsky.v1.TerminalSuccessSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
+	56, // 42: rimsky.v1.TerminalErrorSignalPayload.error_payload:type_name -> google.protobuf.Struct
+	56, // 43: rimsky.v1.TerminalErrorSignalPayload.attributes_delta:type_name -> google.protobuf.Struct
+	55, // 44: rimsky.v1.TransientParkSignalPayload.resume_at:type_name -> google.protobuf.Timestamp
+	56, // 45: rimsky.v1.TransientRetrySignalPayload.error_payload:type_name -> google.protobuf.Struct
+	56, // 46: rimsky.v1.TransientInfraSignalPayload.details:type_name -> google.protobuf.Struct
+	56, // 47: rimsky.v1.TransientReleaseAndRequeueSignalPayload.error_payload:type_name -> google.protobuf.Struct
+	57, // 48: rimsky.v1.AttributeChangedSignalPayload.value:type_name -> google.protobuf.Value
+	57, // 49: rimsky.v1.AttributeChangedSignalPayload.old_value:type_name -> google.protobuf.Value
+	50, // [50:50] is the sub-list for method output_type
+	50, // [50:50] is the sub-list for method input_type
+	50, // [50:50] is the sub-list for extension type_name
+	50, // [50:50] is the sub-list for extension extendee
+	0,  // [0:50] is the sub-list for field type_name
 }
 
 func init() { file_events_proto_init() }
@@ -4925,15 +4996,15 @@ func file_events_proto_init() {
 	file_events_proto_msgTypes[23].OneofWrappers = []any{}
 	file_events_proto_msgTypes[24].OneofWrappers = []any{}
 	file_events_proto_msgTypes[25].OneofWrappers = []any{}
-	file_events_proto_msgTypes[26].OneofWrappers = []any{}
-	file_events_proto_msgTypes[38].OneofWrappers = []any{}
+	file_events_proto_msgTypes[27].OneofWrappers = []any{}
+	file_events_proto_msgTypes[39].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_events_proto_rawDesc), len(file_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   53,
+			NumMessages:   54,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

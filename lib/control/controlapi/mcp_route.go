@@ -50,12 +50,13 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 
 func builtinSchemas() map[string][]byte {
 	obj := []byte(`{"type":"object","additionalProperties":true}`)
+	pagedObj := []byte(`{"type":"object","properties":{"limit":{"type":"integer"},"cursor":{"type":"string"}},"additionalProperties":true}`)
 	empty := []byte(`{"type":"object","additionalProperties":false}`)
 	return map[string][]byte{
 		"health_probe":         empty,
 		"auth_whoami":          empty,
 		"service_auth_ca_root": empty,
-		"instance_list":        obj,
+		"instance_list":        []byte(`{"type":"object","properties":{"template_hash":{"type":"string"},"active":{"type":"string","description":"1 | true | 0 | false"},"limit":{"type":"integer"},"cursor":{"type":"string"}}}`),
 		"instance_get":         []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_create":      []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"}},"required":["template"]}`),
 		"instance_terminate":   []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
@@ -63,15 +64,15 @@ func builtinSchemas() map[string][]byte {
 		"instance_resume":      []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_kill":        []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"reason":{"type":"string","description":"optional reason recorded on the teardown audit event"}},"required":["idOrKey"]}`),
 		// @decision: debug-channel-gate-paused-or-breakpoint
-		"instance_debug_override": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"action":{"type":"string","enum":["invalidate_node","set_attribute"]},"node_type":{"type":"string"},"attribute_key":{"type":"string"},"attribute_value":{}},"required":["id","action","node_type"]}`),
+		"instance_debug_override": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"action":{"type":"string","enum":["invalidate_node","set_attribute"]},"node_type":{"type":"string"},"attribute_key":{"type":"string"},"attribute_value":{}},"required":["idOrKey","action","node_type"]}`),
 
 		// @concept: breakpoint
-		"breakpoint_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"breakpoint_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["idOrKey"]}`),
 		"breakpoint_create":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"checkpoint":{"type":"string","enum":["before_dispatch","after_terminal"]},"matcher":{"type":"object"},"signal_type":{"type":"string","description":"only valid on after_terminal checkpoints"},"mode":{"type":"string","enum":["pause","notify_only"]},"overflow_policy":{"type":"string","enum":["drop_oldest","block_dispatch","auto_resume_after_ttl"]},"hit_ttl_seconds":{"type":"integer"},"ttl_seconds":{"type":"integer"}},"required":["idOrKey","checkpoint"]}`),
 		"breakpoint_delete":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"breakpoint_id":{"type":"string","description":"breakpoint UUID"}},"required":["idOrKey","breakpoint_id"]}`),
 		"breakpoint_resume_hit": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"breakpoint_id":{"type":"string","description":"breakpoint UUID"},"hit_id":{"type":"string","description":"breakpoint hit UUID"},"overlay":{"type":"object","description":"optional one-shot attribute overlay"}},"required":["idOrKey","breakpoint_id","hit_id"]}`),
 
-		"template_list":       obj,
+		"template_list":       []byte(`{"type":"object","properties":{"state":{"type":"string"},"limit":{"type":"integer"},"cursor":{"type":"string"}}}`),
 		"template_get":        []byte(`{"type":"object","properties":{"id":{"type":"string","description":"template tag or content hash"}},"required":["id"]}`),
 		"template_validate":   []byte(`{"type":"object","properties":{"spec":{"type":"object"}},"required":["spec"]}`),
 		"template_register":   []byte(`{"type":"object","properties":{"spec":{"type":"object"},"tag":{"type":"string"},"source":{"type":"string"}},"required":["spec"]}`),
@@ -79,12 +80,12 @@ func builtinSchemas() map[string][]byte {
 		"template_undeploy":   []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		"template_deregister": []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 
-		"tag_list":   obj,
+		"tag_list":   []byte(`{"type":"object","properties":{"limit":{"type":"integer"},"cursor":{"type":"string"}}}`),
 		"tag_create": []byte(`{"type":"object","properties":{"tag":{"type":"string"},"template":{"type":"string"}},"required":["tag","template"]}`),
 		"tag_set":    []byte(`{"type":"object","properties":{"tag":{"type":"string"},"template":{"type":"string"}},"required":["tag","template"]}`),
 		"tag_delete": []byte(`{"type":"object","properties":{"tag":{"type":"string"}},"required":["tag"]}`),
 
-		"node_list":  []byte(`{"type":"object","properties":{"idOrKey":{"type":"string"}},"required":["idOrKey"]}`),
+		"node_list":  []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"tag":{"type":"string"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["idOrKey"]}`),
 		"node_get":   []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		"node_reset": []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 
@@ -92,8 +93,8 @@ func builtinSchemas() map[string][]byte {
 		"run_get": []byte(`{"type":"object","properties":{"run_id":{"type":"string","description":"run (node-run) UUID"}},"required":["run_id"]}`),
 
 		// @concept: frame
-		"instance_frame_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"triggering_message_id":{"type":"string"}},"required":["id"]}`),
-		"instance_frame_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"frame_id":{"type":"string","description":"frame UUID"}},"required":["id","frame_id"]}`),
+		"instance_frame_list": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"triggering_message_id":{"type":"string"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["idOrKey"]}`),
+		"instance_frame_get":  []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"frame_id":{"type":"string","description":"frame UUID"}},"required":["idOrKey","frame_id"]}`),
 
 		// @decision: mcp-http-parity
 		"observability_get": []byte(`{"type":"object","properties":{"path_suffix":{"type":"string","description":"path below /v1/observability/, e.g. \"executors\" or \"executors/claude-agent/trace/<dispatch_id>\""}},"required":["path_suffix"]}`),
@@ -101,35 +102,35 @@ func builtinSchemas() map[string][]byte {
 		// @concept: service-auth
 		"service_enroll": []byte(`{"type":"object","properties":{"label":{"type":"string","description":"optional label recorded on the enrollment audit line"}}}`),
 
-		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string","description":"ignored; the server derives sender from the caller's identity or publisher_subscription_id"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Required: the server mints no key on the caller's behalf"}},"required":["id","type","idempotency_key"]}`),
-		"message_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
+		"message_send": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"type":{"type":"string"},"payload":{},"sender":{"type":"string","description":"ignored; the server derives sender from the caller's identity or publisher_subscription_id"},"publisher_subscription_id":{"type":"string","description":"if set, request is treated as a publisher send; otherwise as an operator send"},"idempotency_key":{"type":"string","description":"caller-supplied dedup key; a client retry with the same key replays instead of double-sending. Required: the server mints no key on the caller's behalf"}},"required":["idOrKey","type","idempotency_key"]}`),
+		"message_list": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["idOrKey"]}`),
 		"message_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"message id"}},"required":["id"]}`),
 
-		"event_list": obj,
+		"event_list": []byte(`{"type":"object","properties":{"kind":{"type":"string"},"instance_id":{"type":"string"},"node_id":{"type":"string"},"since":{"type":"string","description":"RFC3339 timestamp"},"until":{"type":"string","description":"RFC3339 timestamp"},"limit":{"type":"integer"},"cursor":{"type":"string"}}}`),
 
 		// @story: audit-log-read
 		"audit_list": []byte(`{"type":"object","properties":{"kind":{"type":"string"},"key_id":{"type":"string"},"key_name":{"type":"string"},"action":{"type":"string"},"action_prefix":{"type":"string"},"target":{"type":"string"},"status":{"type":"string"},"mode":{"type":"string"},"since":{"type":"string","description":"RFC3339 timestamp"},"until":{"type":"string","description":"RFC3339 timestamp"},"limit":{"type":"integer"},"cursor":{"type":"string"}}}`),
 
 		"lineage_get":               []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"claim_handle_id":{"type":"string"},"source_type":{"type":"string"},"source_id":{"type":"string"},"executor_name":{"type":"string"}}}`),
-		"lineage_run_ancestors":     []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["run_id"]}`),
-		"lineage_run_descendants":   []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["run_id"]}`),
-		"lineage_claim_ancestors":   []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["claim_handle_id"]}`),
-		"lineage_claim_descendants": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"}},"required":["claim_handle_id"]}`),
+		"lineage_run_ancestors":     []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["run_id"]}`),
+		"lineage_run_descendants":   []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["run_id"]}`),
+		"lineage_claim_ancestors":   []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["claim_handle_id"]}`),
+		"lineage_claim_descendants": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"},"depth":{"type":"integer","description":"walk depth, default 3, max 50"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["claim_handle_id"]}`),
 		"lineage_prune":             []byte(`{"type":"object","properties":{"before":{"type":"string","description":"RFC3339 timestamp"}},"required":["before"]}`),
 
-		"parked_node_list":   obj,
-		"waitset_list":       []byte(`{"type":"object","properties":{"frame":{"type":"string","description":"frame UUID (required)"},"receiver_run":{"type":"string","description":"narrow to one receiver node-run"}},"required":["frame"]}`),
-		"claim_holders_list": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"}},"required":["claim_handle_id"]}`),
+		"parked_node_list":   pagedObj,
+		"waitset_list":       []byte(`{"type":"object","properties":{"frame":{"type":"string","description":"frame UUID (required)"},"receiver_run":{"type":"string","description":"narrow to one receiver node-run"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["frame"]}`),
+		"claim_holders_list": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["claim_handle_id"]}`),
 
-		"asset_list":                    []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
-		"asset_get":                     []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
-		"asset_versions":                []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
-		"asset_materialization_history": []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
-		"asset_delete":                  []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
+		"asset_list":                    []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["idOrKey"]}`),
+		"asset_get":                     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"alias":{"type":"string"}},"required":["idOrKey","alias"]}`),
+		"asset_versions":                []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"alias":{"type":"string"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["idOrKey","alias"]}`),
+		"asset_materialization_history": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"alias":{"type":"string"},"limit":{"type":"integer"},"cursor":{"type":"string"}},"required":["idOrKey","alias"]}`),
+		"asset_delete":                  []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"alias":{"type":"string"}},"required":["idOrKey","alias"]}`),
 
-		"held_frames_list": obj,
+		"held_frames_list": pagedObj,
 
-		"auth_list":       obj,
+		"auth_list":       pagedObj,
 		"auth_get":        []byte(`{"type":"object","properties":{"nameOrID":{"type":"string"}},"required":["nameOrID"]}`),
 		"auth_status":     obj,
 		"auth_create_key": []byte(`{"type":"object","properties":{"name":{"type":"string"},"permissions":{"type":"array"},"expires_at":{"type":"string"}},"required":["name","permissions"]}`),

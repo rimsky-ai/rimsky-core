@@ -24,6 +24,7 @@ type Node struct {
 	InstanceID         string          `json:"instance_id"`
 	NodeType           string          `json:"node_type"`
 	Executor           string          `json:"executor,omitempty"`
+	Tags               []string        `json:"tags,omitempty"`
 	FrameID            string          `json:"frame_id,omitempty"`
 	CreatedAt          string          `json:"created_at"`
 	UpdatedAt          string          `json:"updated_at"`

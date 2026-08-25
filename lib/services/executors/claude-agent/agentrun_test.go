@@ -283,6 +283,54 @@ func TestRunAgentStubModeCompletes(t *testing.T) {
 	}
 }
 
+func TestRunAgentStubModeAnswersWithTheRequestedStubResponse(t *testing.T) {
+	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
+	opts := baseRunOpts(&fakeRunner{})
+	opts.Attributes = map[string]any{"stub_response": map[string]any{"answer": float64(42)}}
+	outcome := RunAgent(opts)
+	if outcome.Kind != OutcomeComplete {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	if outcome.AttributesDelta["answer"] != float64(42) {
+		t.Errorf("attributes_delta = %+v, want the requested stub_response", outcome.AttributesDelta)
+	}
+	if outcome.AttributesDelta["session_token"] != "run-1" {
+		t.Errorf("the session token still rides the delta: %+v", outcome.AttributesDelta)
+	}
+}
+
+func TestRunAgentStubModeCarriesTheRequestedStubTags(t *testing.T) {
+	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
+	opts := baseRunOpts(&fakeRunner{})
+	opts.Attributes = map[string]any{"stub_tags": []any{"alpha", "beta"}}
+	outcome := RunAgent(opts)
+	if outcome.Kind != OutcomeComplete {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	if len(outcome.Tags) != 2 || outcome.Tags[0] != "alpha" || outcome.Tags[1] != "beta" {
+		t.Errorf("terminal tags = %v, want the tags the probe requested", outcome.Tags)
+	}
+	body := OutcomeToCallbackBody(outcome)
+	success, ok := body["success"].(map[string]any)
+	if !ok {
+		t.Fatalf("callback body = %+v", body)
+	}
+	tags, ok := success["tags"].([]string)
+	if !ok || len(tags) != 2 {
+		t.Errorf("callback body success.tags = %v, want the requested tags on the wire", success["tags"])
+	}
+}
+
+func TestRunAgentStubModeRefusesAStubResponseThatIsNotAnObject(t *testing.T) {
+	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
+	opts := baseRunOpts(&fakeRunner{})
+	opts.Attributes = map[string]any{"stub_response": "not-an-object"}
+	outcome := RunAgent(opts)
+	if outcome.Kind != OutcomeErrored || outcome.ErrorClass != "agent/attribute_invalid" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
 func TestRunAgentStubProbePark(t *testing.T) {
 	t.Setenv("RIMSKY_EXECUTOR_STUB_MODE", "1")
 	opts := baseRunOpts(&fakeRunner{})

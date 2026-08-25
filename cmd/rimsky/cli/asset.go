@@ -16,15 +16,14 @@ import (
 
 func RunAssetList(ctx context.Context, args []string) int {
 	var instance string
-	_, common, endpoint, code := runWithCommon("asset list", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("asset list", "--instance <id-or-key>", HasTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	if instance == "" {
-		fmt.Fprintln(os.Stderr, "usage: rimsky asset list --instance <id-or-key>")
-		return 2
+		return UsageError(fs)
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
@@ -32,23 +31,20 @@ func RunAssetList(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
-	resp, err := c.ListAssets(ctx, id)
+	assets, err := PagedListAssets(ctx, c, id, ListAssetsQuery{})
 	if err != nil {
 		return reportError(err)
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, resp.Assets)
-		return 0
-	}
-	rows := make([][]string, 0, len(resp.Assets))
-	for _, a := range resp.Assets {
-		rows = append(rows, []string{
-			a.Alias, a.NodeType, a.ProducerName, a.VersionID,
-			a.ClaimedAt.UTC().Format(time.RFC3339),
-		})
-	}
-	EmitTable(os.Stdout, []string{"ALIAS", "NODE_TYPE", "PRODUCER", "VERSION", "CLAIMED_AT"}, rows)
-	return 0
+	return Render(common.Format, assets, func() {
+		rows := make([][]string, 0, len(assets))
+		for _, a := range assets {
+			rows = append(rows, []string{
+				a.Alias, a.NodeType, a.ProducerName, a.VersionID,
+				a.ClaimedAt.UTC().Format(time.RFC3339),
+			})
+		}
+		EmitTable(os.Stdout, []string{"ALIAS", "NODE_TYPE", "PRODUCER", "VERSION", "CLAIMED_AT"}, rows)
+	})
 }
 
 func resolveInstanceUUID(ctx context.Context, c *Client, ref string) (string, error) {
@@ -64,16 +60,15 @@ func resolveInstanceUUID(ctx context.Context, c *Client, ref string) (string, er
 
 func RunAssetShow(ctx context.Context, args []string) int {
 	var instance string
-	fs, common, endpoint, code := runWithCommon("asset show", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("asset show", "--instance <id-or-key> <node_type>.<claim_alias>", NoTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky asset show --instance <id-or-key> <node_type>.<claim_alias>")
-		return 2
+		return UsageError(fs)
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
@@ -85,34 +80,29 @@ func RunAssetShow(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, a)
-		return 0
-	}
-	pairs := [][2]string{
-		{"alias", a.Alias},
-		{"claim_id", a.ClaimID},
-		{"producer_name", a.ProducerName},
-		{"node_type", a.NodeType},
-		{"version_id", a.VersionID},
-		{"claimed_at", a.ClaimedAt.UTC().Format(time.RFC3339)},
-	}
-	EmitKV(os.Stdout, pairs)
-	return 0
+	return Render(common.Format, a, func() {
+		EmitKV(os.Stdout, [][2]string{
+			{"alias", a.Alias},
+			{"claim_id", a.ClaimID},
+			{"producer_name", a.ProducerName},
+			{"node_type", a.NodeType},
+			{"version_id", a.VersionID},
+			{"claimed_at", a.ClaimedAt.UTC().Format(time.RFC3339)},
+		})
+	})
 }
 
 func RunAssetVersions(ctx context.Context, args []string) int {
 	var instance string
-	fs, common, endpoint, code := runWithCommon("asset versions", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("asset versions", "--instance <id-or-key> <alias>", HasTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky asset versions --instance <id-or-key> <alias>")
-		return 2
+		return UsageError(fs)
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
@@ -124,34 +114,37 @@ func RunAssetVersions(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, v)
-		return 0
-	}
+	Render(common.Format, v, func() {
+		if v.Error != "" {
+			fmt.Fprintf(os.Stderr, "%s\n", v.Error)
+			return
+		}
+		rows := make([][]string, 0, len(v.Versions))
+		for _, vv := range v.Versions {
+			versionID, _ := vv["version_id"].(string)
+			rows = append(rows, []string{versionID, formatCommittedAtUnixS(vv["committed_at_unix_s"])})
+		}
+		EmitTable(os.Stdout, []string{"VERSION_ID", "COMMITTED_AT"}, rows)
+	})
 	if v.Error != "" {
-		fmt.Fprintf(os.Stderr, "%s\n", v.Error)
 		return 1
 	}
-	rows := make([][]string, 0, len(v.Versions))
-	for _, vv := range v.Versions {
-		versionID, _ := vv["version_id"].(string)
-		rows = append(rows, []string{versionID, formatCommittedAtUnixS(vv["committed_at_unix_s"])})
-	}
-	EmitTable(os.Stdout, []string{"VERSION_ID", "COMMITTED_AT"}, rows)
 	return 0
 }
 
 func RunAssetDelete(ctx context.Context, args []string) int {
 	var instance string
-	fs, common, endpoint, code := runWithCommon("asset delete", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("asset delete", "--instance <id-or-key> <alias>", NoTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky asset delete --instance <id-or-key> <alias>")
+		return UsageError(fs)
+	}
+	if !ConfirmDestructiveTargets(common.Yes, "delete asset "+rest[0]+" on instance "+instance) {
 		return 2
 	}
 	c := NewClient(endpoint)
@@ -163,26 +156,24 @@ func RunAssetDelete(ctx context.Context, args []string) int {
 	if err := c.DeleteAsset(ctx, id, rest[0]); err != nil {
 		return reportError(err)
 	}
-	reportRemoval(os.Stdout, common.Format, removalResult{Ref: rest[0], Instance: id, Removed: true},
+	return reportRemoval(common.Format, removalResult{Ref: rest[0], Instance: id, Removed: true},
 		fmt.Sprintf("deleted asset %s on instance %s", rest[0], id))
-	return 0
 }
 
 func RunAssetLineage(ctx context.Context, args []string) int {
 	var instance, version string
 	var depth int
-	fs, common, endpoint, code := runWithCommon("asset lineage", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("asset lineage", "--instance <id-or-key> <alias> [--version v] [--depth N]", HasTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
 		fs.StringVar(&version, "version", "", "filter to one version_id (client-side)")
 		fs.IntVar(&depth, "depth", 3, "walk depth (default 3, max 50)")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky asset lineage --instance <id-or-key> <alias> [--version v] [--depth N]")
-		return 2
+		return UsageError(fs)
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
@@ -208,20 +199,17 @@ func RunAssetLineage(ctx context.Context, args []string) int {
 		}
 		rows = filtered
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, rows)
-		return 0
-	}
-	table := make([][]string, 0, len(rows))
-	for _, r := range rows {
-		table = append(table, []string{
-			r.ID, r.RecordKind,
-			r.ObservedAt.UTC().Format(time.RFC3339),
-			truncateSnippet(string(r.Record), 60),
-		})
-	}
-	EmitTable(os.Stdout, []string{"ID", "KIND", "OBSERVED_AT", "RECORD"}, table)
-	return 0
+	return Render(common.Format, rows, func() {
+		table := make([][]string, 0, len(rows))
+		for _, r := range rows {
+			table = append(table, []string{
+				r.ID, r.RecordKind,
+				r.ObservedAt.UTC().Format(time.RFC3339),
+				truncateSnippet(string(r.Record), 60),
+			})
+		}
+		EmitTable(os.Stdout, []string{"ID", "KIND", "OBSERVED_AT", "RECORD"}, table)
+	})
 }
 
 func recordCarriesVersion(record json.RawMessage, want string) bool {

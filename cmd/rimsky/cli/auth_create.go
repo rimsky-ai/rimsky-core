@@ -9,19 +9,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
-
-func parseExpiresDuration(s string) (time.Duration, error) {
-	if days, ok := strings.CutSuffix(s, "d"); ok && days != "" {
-		if n, err := strconv.ParseFloat(days, 64); err == nil {
-			return time.Duration(n * float64(24*time.Hour)), nil
-		}
-	}
-	return time.ParseDuration(s)
-}
 
 type authStringSliceFlag []string
 
@@ -33,6 +23,7 @@ func (s *authStringSliceFlag) Set(v string) error {
 
 func RunAuthCreateKey(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth create-key", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("auth create-key", "--name <name> {--role <name>|--role-file <path>} [--expires <duration>]"))
 	var (
 		endpointFlag, keyFlag string
 		name                  string
@@ -47,9 +38,9 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 	fs.StringVar(&rolePath, "role-file", "", "load role from a JSON file instead of bundled")
 	fs.Var(&addFlags, "add", "append a grant entry for this action (repeatable)")
 	fs.Var(&removeFlags, "remove", "remove grant entries matching this action (repeatable)")
-	fs.StringVar(&expires, "expires", "", "duration until the key expires (e.g. 24h, 30d)")
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	fs.StringVar(&expires, "expires", "", "duration until the key expires (Go duration syntax, e.g. 24h or 720h)")
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 	if strings.TrimSpace(name) == "" {
 		fmt.Fprintln(os.Stderr, "rimsky auth create-key: --name is required")
@@ -74,7 +65,7 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 		"permissions": grant,
 	}
 	if expires != "" {
-		d, err := parseExpiresDuration(expires)
+		d, err := time.ParseDuration(expires)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "invalid --expires duration:", err.Error())
 			return 2

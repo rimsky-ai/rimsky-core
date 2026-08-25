@@ -81,7 +81,7 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if existing != nil {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "tag already exists"})
+			writeTagCreateOutcome(w, req, body.Tag, hash, *existing)
 			return
 		}
 		if WriteDryRunResponse(w, req, "would_have_created_tag", map[string]any{
@@ -93,14 +93,26 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 		var inserted bool
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			ok, err := deps.Persist.TemplateTags().InsertIfAbsent(ctx, body.Tag, hash, tx)
+			if err != nil {
+				return err
+			}
 			inserted = ok
+			if ok {
+				return nil
+			}
+			r, err := deps.Persist.TemplateTags().Get(ctx, body.Tag, tx)
+			existing = r
 			return err
 		}); err != nil {
 			writeError(w, err)
 			return
 		}
 		if !inserted {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "tag already exists"})
+			if existing == nil {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "tag already exists"})
+				return
+			}
+			writeTagCreateOutcome(w, req, body.Tag, hash, *existing)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -110,14 +122,42 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 	}
 }
 
+// @concept: tag
+// @concept: dry-run
+func writeTagCreateOutcome(w http.ResponseWriter, req *http.Request, tag, hash string, existing persistence.TemplateTagRow) {
+	if existing.TemplateID == hash {
+		if WriteDryRunResponse(w, req, "would_have_left_tag_unchanged", map[string]any{
+			"tag":         tag,
+			"template_id": existing.TemplateID,
+		}) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"tag":         tag,
+			"template_id": existing.TemplateID,
+		})
+		return
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":       "tag already exists and names a different template",
+		"tag":         tag,
+		"template_id": existing.TemplateID,
+	})
+}
+
 func handleListTags(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		limit, limErr := parseLimit(req, 100)
+		if limErr != nil {
+			badRequest(w, limErr.Error())
+			return
+		}
 		var page persistence.PaginatedListResult[persistence.TemplateTagRow]
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			p, err := deps.Persist.TemplateTags().List(
 				ctx,
 				persistence.ListPagination{
-					Limit:  parseLimit(req, 100),
+					Limit:  limit,
 					Cursor: req.URL.Query().Get("cursor"),
 				},
 				tx,

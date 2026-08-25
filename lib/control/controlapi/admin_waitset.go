@@ -23,7 +23,8 @@ type WaitSetEntry struct {
 }
 
 type WaitSetResponse struct {
-	WaitSet []WaitSetEntry `json:"wait_set"`
+	WaitSet    []WaitSetEntry `json:"wait_set"`
+	NextCursor string         `json:"next_cursor"`
 }
 
 func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
@@ -47,6 +48,11 @@ func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 				return
 			}
 			receiver = &rid
+		}
+		limit, limErr := parseLimit(req, 100)
+		if limErr != nil {
+			badRequest(w, limErr.Error())
+			return
 		}
 		out := WaitSetResponse{WaitSet: []WaitSetEntry{}}
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -83,6 +89,16 @@ func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		page, nextCursor, pageErr := persistence.PageByKey(out.WaitSet, req.URL.Query().Get("cursor"), limit,
+			func(e WaitSetEntry) string {
+				return e.ReceiverNodeRunID.String() + "|" + e.SenderNodeRunID.String() + "|" + e.TopicKind
+			})
+		if pageErr != nil {
+			writeError(w, pageErr)
+			return
+		}
+		out.WaitSet = page
+		out.NextCursor = nextCursor
 		writeJSON(w, http.StatusOK, out)
 	}
 }

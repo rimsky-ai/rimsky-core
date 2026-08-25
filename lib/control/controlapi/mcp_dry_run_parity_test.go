@@ -236,6 +236,48 @@ func TestMCPWrite_UnderDryRunGrant_NoMutationAndProtocolSkinMCP(t *testing.T) {
 	}
 }
 
+// @concept: dry-run
+func TestDryRunTagCreateOnAnExistingTagStillSaysItIsARehearsal(t *testing.T) {
+	h := newMCPParityHarness(t)
+	admin := h.mintKey(t, "admin", `[{"action":"*"}]`)
+
+	status, out := h.http(t, "POST", "/v1/templates", admin, validTemplateBody("dry-run-existing-"+uuid.NewString()))
+	require.Equal(t, http.StatusCreated, status, out)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+
+	tagName := "dry-run-existing-tag-" + uuid.NewString()
+	status, out = h.http(t, "POST", "/v1/tags", admin, map[string]any{"tag": tagName, "template": tplID})
+	require.Equal(t, http.StatusCreated, status, out)
+
+	dryRunner := h.mintKey(t, "dry-run-existing-tagger",
+		`[{"action":"mcp:read"},{"action":"tag:create","mode":"dry_run"}]`)
+
+	status, out = h.http(t, "POST", "/v1/tags", dryRunner, map[string]any{"tag": tagName, "template": tplID})
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["dry_run"],
+		"a dry-run create on a tag that already names the same template must still say it was a rehearsal: %v", out)
+	require.Contains(t, out, "would_have_left_tag_unchanged")
+
+	status, out = h.http(t, "POST", "/v1/templates", admin, validTemplateBody("dry-run-other-"+uuid.NewString()))
+	require.Equal(t, http.StatusCreated, status, out)
+	otherID, _ := out["template_id"].(string)
+	require.NotEmpty(t, otherID)
+
+	status, out = h.http(t, "POST", "/v1/tags", dryRunner, map[string]any{"tag": tagName, "template": otherID})
+	require.Equal(t, http.StatusConflict, status,
+		"a dry run previews what the write would produce, and this write would be refused: %v", out)
+
+	status, out = h.http(t, "GET", "/v1/tags", admin, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	for _, tg := range out["tags"].([]any) {
+		m, _ := tg.(map[string]any)
+		if m["tag"] == tagName {
+			require.Equal(t, tplID, m["template_id"], "the dry runs moved the tag")
+		}
+	}
+}
+
 func TestMCPLineageAncestorsDescendants_ReachDedicatedRoutesNotTheRunItem(t *testing.T) {
 	h := newMCPParityHarness(t)
 	admin := h.mintKey(t, "admin", `[{"action":"*"}]`)

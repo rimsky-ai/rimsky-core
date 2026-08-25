@@ -11,7 +11,7 @@ const InProcURL = "inproc://http-node"
 
 // @decision: expected-attributes-schema-closed
 func SchemaBytes() []byte {
-	return []byte(`{"type":"object","properties":{"url":{"type":"string","default":""},"method":{"type":"string","default":"GET"},"headers":{"type":"object","additionalProperties":{"type":"string"},"default":{}},"body":{"default":null},"expect_status":{"type":"array","items":{"type":"integer"},"default":[]},"error_class_field":{"type":"string","default":""},"stub_probe":{"type":"boolean","default":false},"stub":{"type":"boolean","readOnly":true}},"additionalProperties":false}`)
+	return []byte(`{"type":"object","properties":{"url":{"type":"string","default":""},"method":{"type":"string","default":"GET"},"headers":{"type":"object","additionalProperties":{"type":"string"},"default":{}},"body":{"default":null},"expect_status":{"type":"array","items":{"type":"integer"},"default":[]},"error_class_field":{"type":"string","default":""},"stub_probe":{"type":"boolean","default":false},"stub":{"type":"boolean","readOnly":true},"stub_response":{"default":null},"stub_tags":{"default":null}},"additionalProperties":false}`)
 }
 
 func DeclaredTags() []string {

@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Format int
@@ -17,22 +19,75 @@ type Format int
 const (
 	FormatHuman Format = iota
 	FormatJSON
+	FormatYAML
+	FormatTable
 )
+
+const FormatNames = "human|json|yaml|table"
 
 func ParseFormat(s string) (Format, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "", "human", "text", "table":
+	case "human":
 		return FormatHuman, nil
 	case "json":
 		return FormatJSON, nil
+	case "yaml":
+		return FormatYAML, nil
+	case "table":
+		return FormatTable, nil
 	}
-	return FormatHuman, fmt.Errorf("unknown output format %q (want human|json)", s)
+	return FormatHuman, fmt.Errorf("unknown output format %q (want %s)", s, FormatNames)
 }
 
 func EmitJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+func EmitYAML(w io.Writer, v any) error {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	var shaped any
+	if err := json.Unmarshal(raw, &shaped); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "---\n"); err != nil {
+		return err
+	}
+	enc := yaml.NewEncoder(w)
+	enc.SetIndent(2)
+	if err := enc.Encode(shaped); err != nil {
+		return err
+	}
+	return enc.Close()
+}
+
+func (f Format) Structured() bool { return f == FormatJSON || f == FormatYAML }
+
+func EmitStructured(w io.Writer, f Format, v any) error {
+	if f == FormatYAML {
+		return EmitYAML(w, v)
+	}
+	return EmitJSON(w, v)
+}
+
+type TableSupport bool
+
+const (
+	HasTable TableSupport = true
+	NoTable  TableSupport = false
+)
+
+func Render(f Format, v any, human func()) int {
+	if f.Structured() {
+		_ = EmitStructured(os.Stdout, f, v)
+		return 0
+	}
+	human()
+	return 0
 }
 
 func EmitTable(w io.Writer, headers []string, rows [][]string) {
@@ -115,12 +170,10 @@ type removalResult struct {
 	Removed  bool   `json:"removed"`
 }
 
-func reportRemoval(w io.Writer, format Format, removed removalResult, humanLine string) {
-	if format == FormatJSON {
-		_ = EmitJSON(w, removed)
-		return
-	}
-	fmt.Fprintln(w, humanLine)
+func reportRemoval(format Format, removed removalResult, humanLine string) int {
+	return Render(format, removed, func() {
+		fmt.Fprintln(os.Stdout, humanLine)
+	})
 }
 
 type resetResult struct {
@@ -128,13 +181,11 @@ type resetResult struct {
 	Reset bool   `json:"reset"`
 }
 
-func reportTagBinding(w io.Writer, format Format, tag *Tag, name, template string) {
-	if format == FormatJSON {
-		if tag == nil {
-			tag = &Tag{Tag: name, TemplateID: template}
-		}
-		_ = EmitJSON(w, tag)
-		return
+func reportTagBinding(format Format, tag *Tag, name, template string) int {
+	if tag == nil {
+		tag = &Tag{Tag: name, TemplateID: template}
 	}
-	fmt.Fprintf(w, "%s → %s\n", name, template)
+	return Render(format, tag, func() {
+		fmt.Fprintf(os.Stdout, "%s → %s\n", name, template)
+	})
 }

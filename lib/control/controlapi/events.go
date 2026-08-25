@@ -28,7 +28,7 @@ type eventResponseItem struct {
 
 type listEventsResponse struct {
 	Events     []eventResponseItem `json:"events"`
-	NextCursor string              `json:"next_cursor,omitempty"`
+	NextCursor string              `json:"next_cursor"`
 }
 
 func registerEventsRoutes(r chi.Router, deps AppDeps) {
@@ -87,8 +87,13 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 			}
 			filter.Until = &t
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		pag := persistence.ListPagination{
-			Limit:  parseLimit(req, 100),
+			Limit:  limit,
 			Cursor: q.Get("cursor"),
 		}
 		var page persistence.EventListResult

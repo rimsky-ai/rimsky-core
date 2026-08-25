@@ -8,15 +8,95 @@ package stubprobe
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/execoutcome"
 )
+
+// @concept: conformance
+type StubSuccess struct {
+	Attributes    map[string]any
+	ChangeSummary string
+	ErrorClass    string
+	Changed       bool
+	Scratch       []byte
+}
+
+// @concept: conformance
+func HasResponseOverride(attrs map[string]any) bool {
+	raw, present := attrs[stubmode.ResponseOverrideAttribute]
+	return present && raw != nil
+}
+
+// @concept: conformance
+func SuccessDelta(attrs map[string]any) (map[string]any, error) {
+	raw, present := attrs[stubmode.ResponseOverrideAttribute]
+	if !present || raw == nil {
+		return stubmode.ResponseDelta(), nil
+	}
+	override, isObject := raw.(map[string]any)
+	if !isObject {
+		return nil, fmt.Errorf("%s must be a JSON object, got %T", stubmode.ResponseOverrideAttribute, raw)
+	}
+	delta := make(map[string]any, len(override))
+	for k, v := range override {
+		delta[k] = v
+	}
+	return delta, nil
+}
+
+// @concept: conformance
+func Success(spec StubSuccess) *genv1.Outcome {
+	delta, err := SuccessDelta(spec.Attributes)
+	if err != nil {
+		return execoutcome.Errored(spec.ErrorClass, err.Error())
+	}
+	tags, err := Tags(spec.Attributes)
+	if err != nil {
+		return execoutcome.Errored(spec.ErrorClass, err.Error())
+	}
+	value, err := structpb.NewStruct(delta)
+	if err != nil {
+		return execoutcome.Errored(spec.ErrorClass,
+			stubmode.ResponseOverrideAttribute+" not JSON-representable: "+err.Error())
+	}
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		AttributesDelta: value,
+		Changed:         spec.Changed,
+		ChangeSummary:   spec.ChangeSummary,
+		Scratch:         spec.Scratch,
+		Tags:            tags,
+	}}}
+}
+
+// @concept: conformance
+func Tags(attrs map[string]any) ([]string, error) {
+	value, present := attrs[stubmode.TagsAttribute]
+	if !present || value == nil {
+		return nil, nil
+	}
+	raw, isArray := value.([]any)
+	if !isArray {
+		return nil, fmt.Errorf("%s must be a JSON array of strings, got %T", stubmode.TagsAttribute, value)
+	}
+	tags := make([]string, 0, len(raw))
+	for i, v := range raw {
+		s, isString := v.(string)
+		if !isString {
+			return nil, fmt.Errorf("%s[%d] must be a string, got %T", stubmode.TagsAttribute, i, v)
+		}
+		tags = append(tags, s)
+	}
+	return tags, nil
+}
 
 const defaultParkDelay = 30 * time.Second
 

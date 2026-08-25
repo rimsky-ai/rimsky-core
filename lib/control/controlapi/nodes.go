@@ -215,7 +215,11 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		cursor := req.URL.Query().Get("cursor")
-		limit := parseLimit(req, 100)
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		tagFilter := req.URL.Query().Get("tag")
 		var page persistence.PaginatedListResult[persistence.NodeRow]
 		summaryByID := map[shared.UUID]persistence.NodeRunSummary{}
@@ -263,6 +267,7 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 	}
 }
 
+// @concept: instance
 func resolveInstance(ctx context.Context, deps AppDeps, idOrKey string) (*persistence.InstanceRow, error) {
 	var out *persistence.InstanceRow
 	if id, err := uuid.Parse(idOrKey); err == nil {

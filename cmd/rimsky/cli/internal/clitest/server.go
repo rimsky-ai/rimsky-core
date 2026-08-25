@@ -4,11 +4,11 @@
 package clitest
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,7 +18,14 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
+
+const maxFakePageSize = 500
+
+var BreakpointHitsDefaultPageSize = 100
 
 type Server struct {
 	*httptest.Server
@@ -36,6 +43,7 @@ type Server struct {
 	listEventsHits  atomic.Int64
 
 	ListInstancesDefaultPageSize int
+	ListNodesDefaultPageSize     int
 }
 
 func (s *Server) GetInstanceHitCount() int64 { return s.getInstanceHits.Load() }
@@ -164,6 +172,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 	r.Post("/v1/nodes/{id}/reset", s.handleResetNode)
 
 	r.Get("/v1/events", s.handleListEvents)
+	r.Get("/v1/audit", s.handleListAudit)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -721,8 +730,50 @@ func (s *Server) handleListInstanceNodes(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "instance not found"})
 		return
 	}
-	out := s.State.ListNodes(inst.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"nodes": out, "next_cursor": ""})
+	all := s.State.ListNodes(inst.ID)
+	if tag := r.URL.Query().Get("tag"); tag != "" {
+		kept := all[:0]
+		for _, n := range all {
+			for _, t := range n.Tags {
+				if t == tag {
+					kept = append(kept, n)
+					break
+				}
+			}
+		}
+		all = kept
+	}
+
+	start := 0
+	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+		for i, n := range all {
+			if n.ID == cursor {
+				start = i + 1
+				break
+			}
+		}
+	}
+
+	limit := s.ListNodesDefaultPageSize
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "limit must be a positive integer"})
+			return
+		}
+		limit = parsed
+	}
+
+	end := len(all)
+	nextCursor := ""
+	if limit > 0 && start+limit < len(all) {
+		end = start + limit
+		nextCursor = all[end-1].ID
+	}
+
+	out := make([]cli.Node, 0, end-start)
+	out = append(out, all[start:end]...)
+	writeJSON(w, http.StatusOK, map[string]any{"nodes": out, "next_cursor": nextCursor})
 }
 
 func (s *Server) handleListBreakpointHits(w http.ResponseWriter, r *http.Request) {
@@ -736,37 +787,48 @@ func (s *Server) handleListBreakpointHits(w http.ResponseWriter, r *http.Request
 		return
 	}
 	q := r.URL.Query()
-	var since int64
-	if v := q.Get("since"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			since = n
+	limit, ok := parseFakeLimit(w, q, BreakpointHitsDefaultPageSize)
+	if !ok {
+		return
+	}
+	var afterSeq int64
+	if raw := q.Get("cursor"); raw != "" {
+		seq, err := persistence.DecodeKeyCursor(raw)
+		parsed, convErr := strconv.ParseInt(seq, 10, 64)
+		if err != nil || convErr != nil || parsed < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "breakpoint-hits: bad cursor"})
+			return
 		}
+		afterSeq = parsed
 	}
-	limit := 100
-	if v := q.Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > 500 {
-		limit = 500
-	}
-	hits := s.State.BreakpointHitsFor(inst.ID, since, limit)
-	truncated := len(hits) > limit
-	if truncated {
+	hits := s.State.BreakpointHitsFor(inst.ID, afterSeq, limit)
+	nextCursor := ""
+	if len(hits) > limit {
 		hits = hits[:limit]
-	}
-	nextSince := since
-	if len(hits) > 0 {
 		if seq, ok := hits[len(hits)-1]["seq"].(int64); ok {
-			nextSince = seq
+			nextCursor = persistence.EncodeKeyCursor(strconv.FormatInt(seq, 10))
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"hits":       hits,
-		"next_since": nextSince,
-		"truncated":  truncated,
+		"hits":        hits,
+		"next_cursor": nextCursor,
 	})
+}
+
+func parseFakeLimit(w http.ResponseWriter, q url.Values, fallback int) (int, bool) {
+	raw := q.Get("limit")
+	if raw == "" {
+		return fallback, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "limit must be a positive integer"})
+		return 0, false
+	}
+	if n > maxFakePageSize {
+		n = maxFakePageSize
+	}
+	return n, true
 }
 
 func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
@@ -857,23 +919,40 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
+	if s.maybeFail(w, r, "/v1/audit") {
+		return
+	}
+	q := r.URL.Query()
+	var since, until *time.Time
+	for name, into := range map[string]**time.Time{"since": &since, "until": &until} {
+		v := q.Get(name)
+		if v == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid " + name + " (RFC3339 required)"})
+			return
+		}
+		*into = &t
+	}
+	rows := s.State.EventsPage("", since, until, q.Get("kind"), time.Time{}, 0, false, 100)
+	writeJSON(w, http.StatusOK, map[string]any{"audit": rows, "next_cursor": ""})
+}
+
 type eventCursorFake struct {
 	O time.Time `json:"o"`
 	I int64     `json:"i"`
 }
 
 func encodeEventCursorFake(occurred time.Time, id int64) string {
-	b, _ := json.Marshal(eventCursorFake{O: occurred, I: id})
-	return base64.StdEncoding.EncodeToString(b)
+	return persistence.EncodeCursor(eventCursorFake{O: occurred, I: id})
 }
 
 func decodeEventCursorFake(s string) (time.Time, int64, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, 0, err
-	}
 	var c eventCursorFake
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := persistence.DecodeCursor(s, &c); err != nil {
 		return time.Time{}, 0, err
 	}
 	return c.O, c.I, nil

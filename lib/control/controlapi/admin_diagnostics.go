@@ -26,7 +26,8 @@ func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 
 // @decision: service-delivery-stall-signal
 type LifecycleOutboxResponse struct {
-	Services []LifecycleOutboxService `json:"services"`
+	Services   []LifecycleOutboxService `json:"services"`
+	NextCursor string                   `json:"next_cursor"`
 }
 
 // @decision: service-delivery-stall-signal
@@ -55,6 +56,11 @@ type LifecycleOutboxEntry struct {
 // @concept: lifecycle-subscriber
 func handleAdminLifecycleOutbox(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		limit, limErr := parseLimit(req, 100)
+		if limErr != nil {
+			badRequest(w, limErr.Error())
+			return
+		}
 		out := LifecycleOutboxResponse{Services: []LifecycleOutboxService{}}
 		now := deps.Clock.Now()
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -96,8 +102,20 @@ func handleAdminLifecycleOutbox(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		page, nextCursor, pageErr := persistence.PageByKey(out.Services, req.URL.Query().Get("cursor"), limit,
+			func(s LifecycleOutboxService) string { return s.Service })
+		if pageErr != nil {
+			writeError(w, pageErr)
+			return
+		}
+		out.Services = page
+		out.NextCursor = nextCursor
 		writeJSON(w, http.StatusOK, out)
 	}
+}
+
+func producerOutboxKey(seq int64) string {
+	return fmt.Sprintf("%020d", seq)
 }
 
 type producerVerbOutboxProvider interface {
@@ -109,6 +127,7 @@ type ProducerOutboxResponse struct {
 	OldestEnqueuedAt *time.Time            `json:"oldest_enqueued_at,omitempty"`
 	OldestAgeSeconds *float64              `json:"oldest_age_seconds,omitempty"`
 	Entries          []ProducerOutboxEntry `json:"entries"`
+	NextCursor       string                `json:"next_cursor"`
 }
 
 type ProducerOutboxEntry struct {
@@ -131,6 +150,21 @@ func handleAdminProducerOutbox(deps AppDeps) http.HandlerFunc {
 			writeError(w, fmt.Errorf("store %T does not expose the producer-verb outbox", deps.Persist))
 			return
 		}
+		limit, limErr := parseLimit(req, persistence.DefaultServiceOutboxPageSize)
+		if limErr != nil {
+			badRequest(w, limErr.Error())
+			return
+		}
+		cursor := req.URL.Query().Get("cursor")
+		after := ""
+		if cursor != "" {
+			key, curErr := persistence.DecodeKeyCursor(cursor)
+			if curErr != nil {
+				writeError(w, persistence.ErrInvalidCursor)
+				return
+			}
+			after = key
+		}
 		out := ProducerOutboxResponse{Entries: []ProducerOutboxEntry{}}
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			rows, err := provider.ProducerVerbOutbox().ListAll(ctx, tx)
@@ -139,6 +173,13 @@ func handleAdminProducerOutbox(deps AppDeps) http.HandlerFunc {
 			}
 			out.Depth = len(rows)
 			for _, row := range rows {
+				if out.OldestEnqueuedAt == nil || row.EnqueuedAt.Before(*out.OldestEnqueuedAt) {
+					enqueuedAt := row.EnqueuedAt
+					out.OldestEnqueuedAt = &enqueuedAt
+				}
+				if producerOutboxKey(row.Seq) <= after || len(out.Entries) > limit {
+					continue
+				}
 				entry := ProducerOutboxEntry{
 					Seq:           row.Seq,
 					ProducerName:  row.ProducerName,
@@ -153,14 +194,7 @@ func handleAdminProducerOutbox(deps AppDeps) http.HandlerFunc {
 					iid := row.InstanceID.String()
 					entry.InstanceID = &iid
 				}
-				if out.OldestEnqueuedAt == nil || row.EnqueuedAt.Before(*out.OldestEnqueuedAt) {
-					enqueuedAt := row.EnqueuedAt
-					out.OldestEnqueuedAt = &enqueuedAt
-				}
-				// @decision: service-delivery-stall-signal
-				if len(out.Entries) < persistence.DefaultServiceOutboxPageSize {
-					out.Entries = append(out.Entries, entry)
-				}
+				out.Entries = append(out.Entries, entry)
 			}
 			return nil
 		})
@@ -172,12 +206,21 @@ func handleAdminProducerOutbox(deps AppDeps) http.HandlerFunc {
 			age := deps.Clock.Now().Sub(*out.OldestEnqueuedAt).Seconds()
 			out.OldestAgeSeconds = &age
 		}
+		page, nextCursor, pageErr := persistence.PageByKey(out.Entries, cursor, limit,
+			func(e ProducerOutboxEntry) string { return producerOutboxKey(e.Seq) })
+		if pageErr != nil {
+			writeError(w, pageErr)
+			return
+		}
+		out.Entries = page
+		out.NextCursor = nextCursor
 		writeJSON(w, http.StatusOK, out)
 	}
 }
 
 type HeldFramesResponse struct {
-	Frames []HeldFrameEntry `json:"frames"`
+	Frames     []HeldFrameEntry `json:"frames"`
+	NextCursor string           `json:"next_cursor"`
 }
 
 type HeldFrameEntry struct {
@@ -195,6 +238,7 @@ type NodeStateRow struct {
 
 type ParkedNodesResponse struct {
 	ParkedNodes []ParkedNodeEntry `json:"parked_nodes"`
+	NextCursor  string            `json:"next_cursor"`
 }
 
 type ParkedNodeEntry struct {
@@ -206,6 +250,11 @@ type ParkedNodeEntry struct {
 
 func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		limit, limErr := parseLimit(req, 100)
+		if limErr != nil {
+			badRequest(w, limErr.Error())
+			return
+		}
 		out := HeldFramesResponse{Frames: []HeldFrameEntry{}}
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			parked, err := listParkedDiagnostic(ctx, deps, tx)
@@ -247,6 +296,16 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		page, nextCursor, pageErr := persistence.PageByKey(out.Frames, req.URL.Query().Get("cursor"), limit,
+			func(f HeldFrameEntry) string {
+				return persistence.SortableTimeKey(f.HeldSince) + "|" + f.FrameID
+			})
+		if pageErr != nil {
+			writeError(w, pageErr)
+			return
+		}
+		out.Frames = page
+		out.NextCursor = nextCursor
 		writeJSON(w, http.StatusOK, out)
 	}
 }
@@ -254,6 +313,11 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 // @concept: parked-state
 func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		limit, limErr := parseLimit(req, 100)
+		if limErr != nil {
+			badRequest(w, limErr.Error())
+			return
+		}
 		out := ParkedNodesResponse{ParkedNodes: []ParkedNodeEntry{}}
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			parked, err := listParkedDiagnostic(ctx, deps, tx)
@@ -278,6 +342,16 @@ func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		page, nextCursor, pageErr := persistence.PageByKey(out.ParkedNodes, req.URL.Query().Get("cursor"), limit,
+			func(p ParkedNodeEntry) string {
+				return persistence.SortableTimeKey(p.ParkedAt) + "|" + p.NodeID
+			})
+		if pageErr != nil {
+			writeError(w, pageErr)
+			return
+		}
+		out.ParkedNodes = page
+		out.NextCursor = nextCursor
 		writeJSON(w, http.StatusOK, out)
 	}
 }

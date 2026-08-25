@@ -28,19 +28,42 @@ func TestCreateTag_HappyPath(t *testing.T) {
 	require.Equal(t, tplID, body["template_id"])
 }
 
-func TestCreateTag_DuplicateRejected(t *testing.T) {
+// @concept: tag
+func TestCreateTag_RepeatingTheSameMappingSucceedsAndPointingElsewhereConflicts(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
 	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("dup-tag-"+uuid.NewString()))
 	tplID := out["template_id"].(string)
+	_, other := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("dup-tag-other-"+uuid.NewString()))
+	otherTplID := other["template_id"].(string)
+	require.NotEqual(t, tplID, otherTplID)
 
 	tag := "dup-" + uuid.NewString()
-	status, _ := h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": tplID})
-	require.Equal(t, http.StatusCreated, status)
-	status, _ = h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": tplID})
-	require.Equal(t, http.StatusConflict, status)
+	status, body := h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": tplID})
+	require.Equal(t, http.StatusCreated, status, body)
+
+	status, body = h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": tplID})
+	require.Equal(t, http.StatusOK, status, body)
+	require.Equal(t, tag, body["tag"])
+	require.Equal(t, tplID, body["template_id"])
+
+	status, body = h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": otherTplID})
+	require.Equal(t, http.StatusConflict, status, body)
+	require.Equal(t, tplID, body["template_id"])
+
+	status, listed := h.httpJSON(t, "GET", "/v1/tags?limit=500", nil)
+	require.Equal(t, http.StatusOK, status, listed)
+	found := false
+	for _, raw := range listed["tags"].([]any) {
+		row := raw.(map[string]any)
+		if row["tag"] == tag {
+			found = true
+			require.Equal(t, tplID, row["template_id"])
+		}
+	}
+	require.True(t, found, "the tag survives a refused re-point: %v", listed)
 }
 
 func TestCreateTag_RejectsHashShape(t *testing.T) {

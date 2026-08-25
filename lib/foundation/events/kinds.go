@@ -86,6 +86,7 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_AUTH_KEY_CREATED:                "auth.key_created",
 	genv1.OperationalKind_OPERATIONAL_KIND_AUTH_KEY_REVOKED:                "auth.key_revoked",
 	genv1.OperationalKind_OPERATIONAL_KIND_AUTH_KEY_ROTATED:                "auth.key_rotated",
+	genv1.OperationalKind_OPERATIONAL_KIND_AUTH_KEY_EXPIRED:                "auth.key_expired",
 	genv1.OperationalKind_OPERATIONAL_KIND_STATE_TRANSITION:                "state_transition",
 	genv1.OperationalKind_OPERATIONAL_KIND_WORK_STARTED:                    "work_started",
 	genv1.OperationalKind_OPERATIONAL_KIND_WORK_COMPLETED:                  "work_completed",
@@ -176,6 +177,11 @@ func KindAuthKeyRevoked() Kind {
 }
 func KindAuthKeyRotated() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_AUTH_KEY_ROTATED)
+}
+
+// @concept: api-key
+func KindAuthKeyExpired() Kind {
+	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_AUTH_KEY_EXPIRED)
 }
 func KindStateTransition() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_STATE_TRANSITION)

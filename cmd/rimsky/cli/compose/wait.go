@@ -29,7 +29,7 @@ const (
 )
 
 type instanceClient interface {
-	ListInstanceNodes(ctx context.Context, idOrKey string) (*cli.ListInstanceNodesResponse, error)
+	ListInstanceNodes(ctx context.Context, idOrKey string, q cli.ListNodesQuery) (*cli.ListInstanceNodesResponse, error)
 	ListInstanceFrames(ctx context.Context, idOrKey, state string) (*cli.ListFramesResponse, error)
 	ListInstanceMessages(ctx context.Context, idOrKey string, q cli.ListMessagesQuery) (*cli.ListMessagesResponse, error)
 	TerminateInstance(ctx context.Context, idOrKey string, reason string) (*cli.Instance, error)
@@ -79,9 +79,9 @@ func WaitForInstancesTerminal(
 			if name == "" {
 				name = id
 			}
-			nodes, nerr := client.ListInstanceNodes(ctx, id)
-			if nerr == nil && nodes != nil {
-				for _, n := range nodes.Nodes {
+			nodes, nerr := cli.PagedListInstanceNodes(ctx, client, id, cli.ListNodesQuery{})
+			if nerr == nil {
+				for _, n := range nodes {
 					if !isNodeSettled(n.RunSummary) {
 						continue
 					}
@@ -106,10 +106,10 @@ func WaitForInstancesTerminal(
 			for _, f := range frames.observe(id, running) {
 				printer.FrameTick(project, name, f.id, f.ordinal)
 			}
-			if nodes == nil || !idle {
+			if nerr != nil || !idle {
 				continue
 			}
-			outcome, nodeCount := classifyInstanceOutcome(nodes.Nodes)
+			outcome, nodeCount := classifyInstanceOutcome(nodes)
 			outcomes[id] = outcome
 			printer.InstanceTerminal(project, name, outcome, nodeCount)
 			delete(remaining, id)

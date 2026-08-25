@@ -52,7 +52,7 @@ func authWriteVerbs() []authWriteVerb {
 			intent: "would_have_revoked_key",
 			detail: "operator",
 			run: func(ctx context.Context, endpoint string) int {
-				return cli.RunAuthRevoke(ctx, []string{"--endpoint", endpoint, "--key", "k", "operator"})
+				return cli.RunAuthRevoke(ctx, []string{"--endpoint", endpoint, "--key", "k", "--yes", "operator"})
 			},
 		},
 	}

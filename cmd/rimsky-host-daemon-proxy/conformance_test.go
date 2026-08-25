@@ -27,6 +27,8 @@ import (
 	stub "github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
+
+	hostdaemonconf "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/hostdaemon"
 )
 
 type conformanceExecStub struct {
@@ -496,5 +498,71 @@ func TestProxyPassesClaimProducerConformanceSuite(t *testing.T) {
 		if r.Err != nil {
 			t.Errorf("%s failed through the proxy: %v", r.Name, r.Err)
 		}
+	}
+}
+
+// @concept: host-daemon
+// @decision: conformance-suite-per-protocol
+func TestProxyPassesHostDaemonConformanceSuite(t *testing.T) {
+	proxyAddr, _ := startRealProxyServer(t, "owner-1", "codegen", "./codegen")
+	conn, err := grpc.NewClient(proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	results := hostdaemonconf.Run(context.Background(), genv1.NewHostDaemonClient(conn), hostdaemonconf.RunOpts{
+		Registration: hostdaemonconf.Registration{
+			APIKey:          "owner-1",
+			DaemonLabel:     "conformance",
+			DaemonVersion:   "test",
+			CallbackBaseURL: "http://127.0.0.1:1/",
+		},
+	})
+	ran := map[string]bool{}
+	for _, r := range results {
+		ran[r.Name] = true
+		if r.Err != nil {
+			t.Errorf("%s failed against the proxy: %v", r.Name, r.Err)
+		}
+	}
+	for _, name := range []string{
+		"RegisterAck",
+		"HeartbeatAcked",
+		"DuplicateRegisterIgnored",
+		"UnknownSpawnReapedIgnored",
+		"UnknownStreamDispatchIgnored",
+		"LocalHttpForwardAnswered",
+		"RegisterRefusesAnEmptyApiKey",
+		"ConnectRefusesANonRegisterFirstFrame",
+		"OneConnectionPerRoutingIdentity",
+	} {
+		if !ran[name] {
+			t.Errorf("the suite stopped before %s; every check must reach the server", name)
+		}
+	}
+}
+
+func TestHostDaemonConformanceSuiteFailsAServerThatNeverAcksARegistration(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	genv1.RegisterHostDaemonServer(srv, &genv1.UnimplementedHostDaemonServer{})
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	results := hostdaemonconf.Run(context.Background(), genv1.NewHostDaemonClient(conn), hostdaemonconf.RunOpts{
+		Registration: hostdaemonconf.Registration{APIKey: "owner-1"},
+	})
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatalf("a server that implements nothing must fail the suite at the handshake, got %+v", results)
 	}
 }

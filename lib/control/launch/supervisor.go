@@ -199,6 +199,8 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		SyncRPCDeadlineDefault:      rimskyCfg.Dispatch.SyncRPCDeadlineDefault,
 		MaxQuietPeriodDefault:       rimskyCfg.Dispatch.MaxQuietPeriodDefault,
 		MaxRuntimeDefault:           rimskyCfg.Dispatch.MaxRuntimeDefault,
+		MaxRetriesDefault:           rimskyCfg.Dispatch.MaxRetriesDefault,
+		RetryBackoffDefault:         rimskyCfg.Dispatch.RetryBackoffDefault,
 		Resolver:                    resolver,
 		ClaimProducers:              storesCfg,
 		Publishers:                  rimskyCfg.Publishers,

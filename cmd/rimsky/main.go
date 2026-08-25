@@ -25,6 +25,10 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "version", "--version", "-v":
+		if wantsHelp(os.Args[2:]) {
+			fmt.Fprintln(os.Stdout, cli.UsageLine("version", "— print the CLI version and exit"))
+			return
+		}
 		fmt.Printf("rimsky %s\n", resolvedVersion())
 		return
 	case "help", "--help", "-h":
@@ -72,6 +76,8 @@ func main() {
 		os.Exit(cli.RunLogs(context.Background(), os.Args[2:]))
 	case "watch":
 		os.Exit(cli.RunWatch(context.Background(), os.Args[2:]))
+	case "audit":
+		os.Exit(cli.RunAudit(context.Background(), os.Args[2:]))
 	case "auth":
 		os.Exit(cli.RunAuth(os.Args[2:]))
 	case "conformance":
@@ -83,6 +89,15 @@ func main() {
 		printRootUsage(os.Stderr)
 		os.Exit(2)
 	}
+}
+
+func wantsHelp(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" || a == "help" {
+			return true
+		}
+	}
+	return false
 }
 
 func dispatchCompose(args []string) int {
@@ -339,7 +354,7 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  rm-instance <id>      Delete a terminal instance")
 	fmt.Fprintln(w, "  ls [templates|instances|tags]")
 	fmt.Fprintln(w, "  logs <id-or-key>      Stream events (poll-based)")
-	fmt.Fprintln(w, "  watch <id-or-key>     Live feed: events + breakpoint hits until idle (--until)")
+	fmt.Fprintln(w, "  watch <id-or-key>     Live feed: events + breakpoint hits until idle (--until-state)")
 	fmt.Fprintln(w, "  health")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Literal API:")
@@ -352,6 +367,7 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  messages tail | show")
 	fmt.Fprintln(w, "  asset list | show | versions | delete | lineage")
 	fmt.Fprintln(w, "  lineage prune")
+	fmt.Fprintln(w, "  audit                 Read the auth-relevant action audit feed")
 	fmt.Fprintln(w, "  parked list")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Auth:")
@@ -375,7 +391,7 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Conformance:")
 	fmt.Fprintln(w, "  conformance executor | claim-producer | publisher | validation |")
-	fmt.Fprintln(w, "              data-processing | lifecycle-subscriber | probe")
+	fmt.Fprintln(w, "              data-processing | lifecycle-subscriber | host-daemon | probe")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Version:")
 	fmt.Fprintln(w, "  version | --version | -v     Print the CLI version and exit")
@@ -383,13 +399,22 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "Common flags (control-api verbs — the dev-loop, literal-API, and health verbs above):")
 	fmt.Fprintln(w, "  --endpoint <url>     Override control-api endpoint")
 	fmt.Fprintln(w, "  --key <token>        API key (Bearer token; or set RIMSKY_API_KEY)")
-	fmt.Fprintln(w, "  -o, --output human|json")
+	fmt.Fprintln(w, "  -o, --output "+cli.FormatNames)
 	fmt.Fprintln(w, "                       Output format (default human)")
 	fmt.Fprintln(w, "  --no-color           Disable ANSI color")
-	fmt.Fprintln(w, "  --yes                Confirm destructive operations")
-	fmt.Fprintln(w, "  -h, --help           Show this help")
+	fmt.Fprintln(w, "  -y, --yes            Confirm destructive operations")
+	fmt.Fprintln(w, "  -h, --help           Show this node's usage and exit 0")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "These five families parse their own flags and do NOT accept the common set:")
-	fmt.Fprintln(w, "  auth   daemon   conformance   compose run   ctx use|add|rm|current")
-	fmt.Fprintln(w, "  (run `rimsky <family> --help` for each family's own flags)")
+	fmt.Fprintln(w, "Short flags:")
+	fmt.Fprintln(w, "  -h (--help)   -v (--version)   -y (--yes)   -o (--output)")
+	fmt.Fprintln(w, "  -f (--follow) on the streaming reads; -f is the manifest path under `compose`")
+	fmt.Fprintln(w, "Each short flag is one letter in its own token. Short flags never cluster, and a")
+	fmt.Fprintln(w, "value never attaches to its flag.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "These verbs parse their own flags instead of the common set:")
+	fmt.Fprintln(w, "  auth init | login | create-key | revoke | rotate")
+	fmt.Fprintln(w, "  daemon start | stop        ctx use | add | rm")
+	fmt.Fprintln(w, "  conformance <protocol>     compose run")
+	fmt.Fprintln(w, "`daemon status` and `ctx current` take -o and --no-color only. Run")
+	fmt.Fprintln(w, "`rimsky <verb> --help` for each verb's own flags.")
 }

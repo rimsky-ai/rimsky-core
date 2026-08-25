@@ -6,12 +6,37 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
-	"time"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
+
+const upstreamSecret = "s3cret-upstream-token"
+
+func subscribeRequestWithAuth(t *testing.T, subscriptionID string) *genv1.SubscribeRequest {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"url":           "http://example.test/feed",
+		"poll_interval": "30s",
+		"auth": map[string]any{
+			"mode":   "secret_header",
+			"header": "X-Upstream-Token",
+			"secret": upstreamSecret,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &genv1.SubscribeRequest{
+		PublisherSubscriptionId: subscriptionID,
+		InstanceId:              "inst-1",
+		Kind:                    "http",
+		MessageType:             "invalidate",
+		ResolvedConfig:          raw,
+	}
+}
 
 func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 	ctx := context.Background()
@@ -24,39 +49,30 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 		t.Fatalf("openStateDB: %v", err)
 	}
 	defer s1.Close()
-	w := &Watch{
-		SubscriptionID: "sub-2",
-		InstanceID:     "inst-2",
-		URL:            "http://example.test/feed",
-		PollInterval:   30 * time.Second,
-		MatchStatus:    []int{200},
-
-		MessageType: "invalidate",
-	}
-	if err := s1.UpsertSubscription(ctx, w); err != nil {
+	if err := s1.UpsertSubscription(ctx, &Watch{SubscriptionID: "sub-2"}); err != nil {
 		t.Fatalf("UpsertSubscription: %v", err)
 	}
 	if err := s1.UpdateLastHash(ctx, "sub-2", "sha256-restart"); err != nil {
 		t.Fatalf("UpdateLastHash: %v", err)
 	}
 
-	got, err := s1.GetSubscription(ctx, "sub-2")
+	got, err := s1.GetWatermark(ctx, "sub-2")
 	if err != nil {
-		t.Fatalf("GetSubscription: %v", err)
+		t.Fatalf("GetWatermark: %v", err)
 	}
 	if got == nil {
-		t.Fatal("GetSubscription returned nil for known subscription_id")
+		t.Fatal("GetWatermark returned nil for known subscription_id")
 	}
 	if got.LastHash != "sha256-restart" {
 		t.Fatalf("expected LastHash=sha256-restart, got %q", got.LastHash)
 	}
 
-	got, err = s1.GetSubscription(ctx, "sub-nonexistent")
+	got, err = s1.GetWatermark(ctx, "sub-nonexistent")
 	if err != nil {
-		t.Fatalf("GetSubscription nonexistent: %v", err)
+		t.Fatalf("GetWatermark nonexistent: %v", err)
 	}
 	if got != nil {
-		t.Fatal("GetSubscription should return nil for unknown id")
+		t.Fatal("GetWatermark should return nil for unknown id")
 	}
 }
 
@@ -88,58 +104,102 @@ func TestSubscribe_StateUpsertFailure_FailsRPCAndRollsBackInMemoryWatch(t *testi
 	}
 }
 
-func TestStateDB_PersistsAcrossRestart(t *testing.T) {
+// @decision: secret-at-rest-posture
+func TestStateDB_KeepsNoCopyOfTheUpstreamCredential(t *testing.T) {
 	ctx := context.Background()
 	dsn := harness.StartFreshPostgres(ctx, t)
-
 	t.Setenv("RIMSKY_SENSOR_HTTP_STATE_DSN", dsn)
 
-	s1, err := openStateDB(ctx)
+	state, err := openStateDB(ctx)
 	if err != nil {
 		t.Fatalf("openStateDB: %v", err)
 	}
-	if s1 == nil {
-		t.Fatal("openStateDB returned nil with DSN set")
+	defer state.Close()
+
+	s := NewSensorService("", loopbackGuard(t), noopLogger{})
+	s.AttachStateDB(state)
+	if _, err := s.Subscribe(ctx, subscribeRequestWithAuth(t, "sub-auth")); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if s.watches["sub-auth"].Auth == nil {
+		t.Fatal("the mounted watch carries no auth block; the poll would send no credentials")
 	}
 
-	w := &Watch{
-		SubscriptionID: "sub-1",
-		InstanceID:     "inst-1",
-		URL:            "http://example.test/feed",
-		PollInterval:   30 * time.Second,
-		MatchStatus:    []int{200},
-		MatchJSONKey:   "status",
-		MatchJSONVal:   "ready",
+	rows, err := state.db.Query(ctx, `SELECT to_jsonb(t)::text FROM sensor_http_state t`)
+	if err != nil {
+		t.Fatalf("read the sensor's own state: %v", err)
+	}
+	defer rows.Close()
+	persisted := 0
+	for rows.Next() {
+		var dumped string
+		if err := rows.Scan(&dumped); err != nil {
+			t.Fatalf("scan row: %v", err)
+		}
+		persisted++
+		if strings.Contains(dumped, upstreamSecret) {
+			t.Errorf("the sensor's own state holds the upstream credential in clear: %s", dumped)
+		}
+	}
+	if persisted != 1 {
+		t.Fatalf("expected one persisted row for the mounted subscription, got %d", persisted)
+	}
+}
 
-		MessageType: "invalidate",
+// @decision: secret-at-rest-posture
+func TestRestartTakesTheCredentialBackFromResyncNotFromItsOwnState(t *testing.T) {
+	ctx := context.Background()
+	dsn := harness.StartFreshPostgres(ctx, t)
+	t.Setenv("RIMSKY_SENSOR_HTTP_STATE_DSN", dsn)
+
+	first, err := openStateDB(ctx)
+	if err != nil {
+		t.Fatalf("openStateDB: %v", err)
 	}
-	if err := s1.UpsertSubscription(ctx, w); err != nil {
-		t.Fatalf("UpsertSubscription: %v", err)
+	before := NewSensorService("", loopbackGuard(t), noopLogger{})
+	before.AttachStateDB(first)
+	if _, err := before.Subscribe(ctx, subscribeRequestWithAuth(t, "sub-auth")); err != nil {
+		t.Fatalf("Subscribe: %v", err)
 	}
-	if err := s1.UpdateLastHash(ctx, "sub-1", "sha256-abc"); err != nil {
+	if err := first.UpdateLastHash(ctx, "sub-auth", "sha256-before-restart"); err != nil {
 		t.Fatalf("UpdateLastHash: %v", err)
 	}
-	if err := s1.Close(); err != nil {
+	if err := first.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	s2, err := openStateDB(ctx)
+	second, err := openStateDB(ctx)
 	if err != nil {
 		t.Fatalf("openStateDB after restart: %v", err)
 	}
-	defer s2.Close()
-	subs, err := s2.ListAll(ctx)
-	if err != nil {
-		t.Fatalf("ListAll: %v", err)
+	defer second.Close()
+	after := NewSensorService("", loopbackGuard(t), noopLogger{})
+	after.AttachStateDB(second)
+
+	if _, mounted := after.watches["sub-auth"]; mounted {
+		t.Fatal("the restarted sensor mounted a watch from its own state; it would poll before resync " +
+			"delivered the credentials, and report the subscription live so resync never arrives")
 	}
-	if len(subs) != 1 {
-		t.Fatalf("expected 1 subscription, got %d", len(subs))
+
+	if _, err := after.Subscribe(ctx, subscribeRequestWithAuth(t, "sub-auth")); err != nil {
+		t.Fatalf("resync Subscribe: %v", err)
 	}
-	if subs[0].SubscriptionID != "sub-1" || subs[0].LastHash != "sha256-abc" {
-		t.Errorf("subscription state did not roundtrip: %+v", subs[0])
+	restored, mounted := after.watches["sub-auth"]
+	if !mounted {
+		t.Fatal("resync did not mount the subscription")
 	}
-	if subs[0].LastPollAt.IsZero() {
-		t.Errorf("subscription state did not restore last_poll_at: %+v", subs[0])
+	if restored.Auth == nil || restored.Auth.Secret != upstreamSecret {
+		t.Fatalf("resync did not restore the operator's credentials: %+v", restored.Auth)
+	}
+	if restored.LastHash != "sha256-before-restart" {
+		t.Errorf("the watermark did not survive the restart: LastHash = %q", restored.LastHash)
+	}
+	if restored.LastPollAt.IsZero() {
+		t.Error("the resynced watch left LastPollAt zero after a restart — it would immediately re-poll")
+	}
+	if restored.LastPollAt.Before(restored.StartedAt) {
+		t.Errorf("restored LastPollAt = %v, before the row's own start stamp %v — the watch would claim a poll that never happened",
+			restored.LastPollAt, restored.StartedAt)
 	}
 }
 
@@ -155,74 +215,18 @@ func TestStateDB_LastPollAtZeroWhenNeverPolled(t *testing.T) {
 	}
 	defer s1.Close()
 
-	w := &Watch{
-		SubscriptionID: "sub-never-polled",
-		InstanceID:     "inst-1",
-		URL:            "http://example.test/feed",
-		PollInterval:   30 * time.Second,
-		MessageType:    "invalidate",
-	}
-	if err := s1.UpsertSubscription(ctx, w); err != nil {
+	if err := s1.UpsertSubscription(ctx, &Watch{SubscriptionID: "sub-never-polled"}); err != nil {
 		t.Fatalf("UpsertSubscription: %v", err)
 	}
 
-	got, err := s1.GetSubscription(ctx, "sub-never-polled")
+	got, err := s1.GetWatermark(ctx, "sub-never-polled")
 	if err != nil {
-		t.Fatalf("GetSubscription: %v", err)
+		t.Fatalf("GetWatermark: %v", err)
 	}
 	if got == nil {
-		t.Fatal("GetSubscription returned nil for known subscription_id")
+		t.Fatal("GetWatermark returned nil for known subscription_id")
 	}
 	if !got.LastPollAt.IsZero() {
 		t.Fatalf("expected zero LastPollAt for a subscription never polled, got %v", got.LastPollAt)
-	}
-}
-
-func TestAttachStateDB_RestoresLastPollAtSoRestartDoesNotForceImmediateRepoll(t *testing.T) {
-	ctx := context.Background()
-	dsn := harness.StartFreshPostgres(ctx, t)
-
-	t.Setenv("RIMSKY_SENSOR_HTTP_STATE_DSN", dsn)
-
-	s1, err := openStateDB(ctx)
-	if err != nil {
-		t.Fatalf("openStateDB: %v", err)
-	}
-	w := &Watch{
-		SubscriptionID: "sub-attach",
-		InstanceID:     "inst-1",
-		URL:            "http://example.test/feed",
-		PollInterval:   time.Hour,
-		MessageType:    "invalidate",
-	}
-	if err := s1.UpsertSubscription(ctx, w); err != nil {
-		t.Fatalf("UpsertSubscription: %v", err)
-	}
-	if err := s1.UpdateLastHash(ctx, "sub-attach", "sha256-attach"); err != nil {
-		t.Fatalf("UpdateLastHash: %v", err)
-	}
-	if err := s1.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	s2, err := openStateDB(ctx)
-	if err != nil {
-		t.Fatalf("openStateDB after restart: %v", err)
-	}
-	defer s2.Close()
-
-	svc := NewSensorService("", loopbackGuard(t), noopLogger{})
-	svc.AttachStateDB(s2)
-
-	restored, ok := svc.watches["sub-attach"]
-	if !ok {
-		t.Fatal("AttachStateDB did not restore the subscription")
-	}
-	if restored.LastPollAt.IsZero() {
-		t.Fatal("AttachStateDB left LastPollAt zero after restart — every restored watch would immediately re-poll")
-	}
-	if restored.LastPollAt.Before(restored.StartedAt) {
-		t.Fatalf("restored LastPollAt = %v, before the row's own start stamp %v — the restored watch would claim a poll that never happened",
-			restored.LastPollAt, restored.StartedAt)
 	}
 }

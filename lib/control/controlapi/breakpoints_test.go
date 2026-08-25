@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -333,8 +334,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ := out["hits"].([]any)
 	require.Len(t, hits, 3)
-	require.EqualValues(t, seq3, int64(out["next_since"].(float64)))
-	require.Equal(t, false, out["truncated"])
+	require.Equal(t, "", out["next_cursor"], "a whole collection on one page carries an empty next_cursor")
 
 	first, _ := hits[0].(map[string]any)
 	require.EqualValues(t, seq1, int64(first["seq"].(float64)))
@@ -355,21 +355,23 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.NoError(t, json.Unmarshal(httpJSONBytes, &httpBody))
 	require.Equal(t, mcpBody, httpBody, "HTTP route and MCP resource must return identical breakpoint-hits payloads")
 
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?since=%d", instID, seq1), nil)
-	require.Equal(t, http.StatusOK, status, out)
-	hits, _ = out["hits"].([]any)
-	require.Len(t, hits, 2)
-	require.EqualValues(t, seq3, int64(out["next_since"].(float64)))
-	require.Equal(t, false, out["truncated"])
-
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?limit=2", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ = out["hits"].([]any)
 	require.Len(t, hits, 2)
-	require.EqualValues(t, seq2, int64(out["next_since"].(float64)))
-	require.Equal(t, true, out["truncated"])
+	cursor, _ := out["next_cursor"].(string)
+	require.NotEmpty(t, cursor, "a truncated page names the cursor that reaches the rest")
 
-	status, _ = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?since=-1", instID), nil)
+	status, out = h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/breakpoint-hits?limit=2&cursor=%s", instID, url.QueryEscape(cursor)), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	hits, _ = out["hits"].([]any)
+	require.Len(t, hits, 1, "the cursor reaches the rest of the collection")
+	require.Equal(t, "", out["next_cursor"])
+	last, _ := hits[0].(map[string]any)
+	require.EqualValues(t, seq3, int64(last["seq"].(float64)))
+
+	status, _ = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?cursor=not-a-cursor", instID), nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
 

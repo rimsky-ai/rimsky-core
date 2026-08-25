@@ -44,13 +44,6 @@ func TestMCPInitialize(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected map result; got %T", resp.Result)
 	}
-	caps, ok := m["capabilities"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing capabilities: %+v", m)
-	}
-	if _, ok := caps["tools"]; !ok {
-		t.Fatalf("missing tools capability: %+v", caps)
-	}
 	if m["protocolVersion"] != "2025-06-18" {
 		t.Fatalf("expected default protocolVersion when the client omits one; got %+v", m["protocolVersion"])
 	}
@@ -327,9 +320,9 @@ func getMCPStream(t *testing.T, baseURL, sessionID string) {
 	}
 }
 
-func TestMCPUnsupportedMethod(t *testing.T) {
+func TestMCPMethodOutsideTheProtocolAnswersMethodNotFound(t *testing.T) {
 	server := &mcp.Server{Tools: &fakeCatalog{}}
-	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":4,"method":"prompts/list"}`)
+	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":4,"method":"totally/unknown"}`)
 	if resp.Error == nil || resp.Error.Code != mcp.CodeMethodNotFound {
 		t.Fatalf("expected method-not-found; got %+v", resp.Error)
 	}
@@ -433,4 +426,82 @@ func (f *fakeRegistry) AllTools() []string { return f.tools }
 func (f *fakeRegistry) EntryForTool(name string) (mcp.RegistryEntry, bool) {
 	e, ok := f.entries[name]
 	return e, ok
+}
+
+// @decision: mcp-base-methods-scope
+func TestMCPPingAnswersAnEmptyResultWithoutASession(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}}
+	resp, _ := serveRPCWithHeaders(t, server, "", `{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+	if resp.Error != nil {
+		t.Fatalf("ping is a liveness check every client sends; it must not error: %+v", resp.Error)
+	}
+	m, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("ping must answer an object result; got %T", resp.Result)
+	}
+	if len(m) != 0 {
+		t.Fatalf("ping's result carries nothing; got %+v", m)
+	}
+}
+
+// @decision: mcp-base-methods-scope
+func TestMCPInitializeDeclaresOnlyTheCapabilitiesItServes(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}}
+	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	if resp.Error != nil {
+		t.Fatalf("initialize: %v", resp.Error)
+	}
+	caps := resp.Result.(map[string]any)["capabilities"].(map[string]any)
+	for _, served := range []string{"tools", "resources"} {
+		if _, ok := caps[served]; !ok {
+			t.Errorf("capabilities must name %q, which the server serves: %+v", served, caps)
+		}
+	}
+	for _, unserved := range []string{"prompts", "logging", "completions", "sampling", "roots"} {
+		if _, ok := caps[unserved]; ok {
+			t.Errorf("capabilities must not name %q, which the server does not serve: %+v", unserved, caps)
+		}
+	}
+	resources := caps["resources"].(map[string]any)
+	if resources["subscribe"] != false {
+		t.Errorf("resources/subscribe is unimplemented, so the capability must say subscribe: false; got %+v", resources)
+	}
+}
+
+// @decision: mcp-base-methods-scope
+func TestMCPUnimplementedBaseMethodsAnswerMethodNotFound(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}}
+	for _, method := range []string{
+		"prompts/list", "prompts/get",
+		"resources/subscribe", "resources/unsubscribe", "resources/templates/list",
+		"roots/list", "sampling/createMessage", "logging/setLevel",
+		"completion/complete",
+	} {
+		resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":1,"method":"`+method+`"}`)
+		if resp.Error == nil {
+			t.Errorf("the server must answer method-not-found for %s, which it does not serve; got result %+v", method, resp.Result)
+			continue
+		}
+		if resp.Error.Code != mcp.CodeMethodNotFound {
+			t.Errorf("%s answered code %d, want method-not-found (%d)", method, resp.Error.Code, mcp.CodeMethodNotFound)
+		}
+	}
+}
+
+// @decision: mcp-base-methods-scope
+func TestMCPServesEveryMethodTheDecisionNames(t *testing.T) {
+	server := &mcp.Server{Tools: &fakeCatalog{}, Resources: &fakeResources{}}
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a_read","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"resources/list"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"rimsky://instances/probe"}}`,
+	} {
+		resp := serveRPC(t, server, body)
+		if resp.Error != nil && resp.Error.Code == mcp.CodeMethodNotFound {
+			t.Errorf("the server serves %s and must not answer method-not-found: %+v", body, resp.Error)
+		}
+	}
 }

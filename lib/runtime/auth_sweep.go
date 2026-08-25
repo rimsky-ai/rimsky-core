@@ -59,6 +59,53 @@ func SweepRotationGrace(
 	return len(swept), nil
 }
 
+// @concept: api-key
+func SweepKeyExpiry(
+	ctx context.Context,
+	tables persistence.Tables,
+	clock shared.Clock,
+	log shared.Logger,
+) (int, error) {
+	now := clock.Now()
+	var expired []persistence.APIKey
+	err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var txErr error
+		expired, txErr = tables.APIKeys().SweepExpired(ctx, now, tx)
+		if txErr != nil {
+			return txErr
+		}
+		for _, k := range expired {
+			expiresAt := now
+			if k.ExpiresAt != nil {
+				expiresAt = *k.ExpiresAt
+			}
+			payload := auth.KeyExpiredPayload{
+				KeyID:     k.ID,
+				KeyName:   k.Name,
+				ExpiresAt: expiresAt,
+			}
+			if txErr := emitKeyExpired(ctx, tables, log, payload, tx); txErr != nil {
+				return txErr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	for _, k := range expired {
+		if log != nil {
+			log.Info("AUTH.KEY.EXPIRED", "key_id", k.ID.String(), "key_name", k.Name)
+		}
+	}
+	if len(expired) > 0 {
+		for _, h := range registeredAuthMutationHooks() {
+			h()
+		}
+	}
+	return len(expired), nil
+}
+
 type AuthMutationHook = func()
 
 type registeredHook struct {
@@ -107,6 +154,19 @@ func emitKeyRevoked(ctx context.Context, tables persistence.Tables, log shared.L
 	}, tx); err != nil {
 		if log != nil {
 			log.Error("AUTH.KEYREVOKEDEVENT.APPENDFAILED", "key_id", p.KeyID.String(), "err", err.Error())
+		}
+		return err
+	}
+	return nil
+}
+
+func emitKeyExpired(ctx context.Context, tables persistence.Tables, log shared.Logger, p auth.KeyExpiredPayload, tx persistence.Tx) error {
+	if err := tables.Events().Append(ctx, persistence.EventAppendInput{
+		Kind:    events.KindAuthKeyExpired(),
+		Payload: eventpayload.New(auth.KeyExpiredProto(p)),
+	}, tx); err != nil {
+		if log != nil {
+			log.Error("AUTH.KEYEXPIREDEVENT.APPENDFAILED", "key_id", p.KeyID.String(), "err", err.Error())
 		}
 		return err
 	}

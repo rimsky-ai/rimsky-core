@@ -263,3 +263,171 @@ func TestAdvanceTailWatermark_ResetsIDsWhenTheWatermarkMoves(t *testing.T) {
 		t.Errorf("the row at the new watermark must be the seen set: %v", seen)
 	}
 }
+
+// @concept: message
+func TestRunMessagesTailNarrowsToTheDeliveryWindow(t *testing.T) {
+	const since = "2026-08-01T00:00:00Z"
+	const until = "2026-08-02T00:00:00Z"
+	var gotAfter, gotBefore string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAfter = r.URL.Query().Get("delivered_after")
+		gotBefore = r.URL.Query().Get("delivered_before")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{}})
+	}))
+	defer srv.Close()
+
+	const uuid = "5cb9362f-1111-2222-3333-444455556666"
+	if code := RunMessagesTail(context.Background(), []string{
+		"--endpoint", srv.URL, "--instance", uuid, "--since", since, "--until", until,
+	}); code != 0 {
+		t.Fatalf("messages tail --since --until: exit %d", code)
+	}
+	if gotAfter != since {
+		t.Errorf("delivered_after = %q, want %q: --since names the start of the delivery window", gotAfter, since)
+	}
+	if gotBefore != until {
+		t.Errorf("delivered_before = %q, want %q: --until names the end of the delivery window", gotBefore, until)
+	}
+}
+
+func TestRunMessagesTailReachesAnUndeliveredMessageWithPending(t *testing.T) {
+	var gotPending string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPending = r.URL.Query().Get("pending")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{
+				{
+					"id": "m-pending", "instance_id": "abc", "type": "ping/recheck",
+					"sender": "operator", "sender_kind": "operator",
+					"received_at": time.Now().UTC().Format(time.RFC3339),
+				},
+			},
+			"next_cursor": "",
+		})
+	}))
+	defer srv.Close()
+
+	const uuid = "5cb9362f-1111-2222-3333-444455556666"
+	out := captureStdout(t, func() {
+		if code := RunMessagesTail(context.Background(), []string{
+			"--endpoint", srv.URL, "--instance", uuid, "--pending",
+		}); code != 0 {
+			t.Fatalf("messages tail --pending: exit %d", code)
+		}
+	})
+	if gotPending != "true" {
+		t.Errorf("pending = %q, want %q: --pending is how a caller reaches an undelivered message", gotPending, "true")
+	}
+	if !strings.Contains(out, "m-pending") {
+		t.Errorf("the undelivered message did not reach stdout: %q", out)
+	}
+}
+
+func TestRunMessagesTailRefusesPendingWithADeliveryWindow(t *testing.T) {
+	reached := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{}})
+	}))
+	defer srv.Close()
+
+	const uuid = "5cb9362f-1111-2222-3333-444455556666"
+	for _, window := range [][]string{{"--since", "2026-08-01T00:00:00Z"}, {"--until", "2026-08-02T00:00:00Z"}} {
+		args := append([]string{"--endpoint", srv.URL, "--instance", uuid, "--pending"}, window...)
+		if code := RunMessagesTail(context.Background(), args); code == 0 {
+			t.Fatalf("messages tail %v: exit 0; --pending and a delivery window select disjoint sets", window)
+		}
+	}
+	if reached {
+		t.Error("a refused verb still reached the deployment")
+	}
+}
+
+func TestRunMessagesTailWalksTheWholeWindowAcrossPages(t *testing.T) {
+	pages := map[string][]map[string]any{
+		"": {
+			{"id": "m1", "instance_id": "abc", "type": "t", "sender": "s", "sender_kind": "operator",
+				"received_at": "2026-08-01T00:00:03Z"},
+		},
+		"c1": {
+			{"id": "m2", "instance_id": "abc", "type": "t", "sender": "s", "sender_kind": "operator",
+				"received_at": "2026-08-01T00:00:02Z"},
+		},
+		"c2": {
+			{"id": "m3", "instance_id": "abc", "type": "t", "sender": "s", "sender_kind": "operator",
+				"received_at": "2026-08-01T00:00:01Z"},
+		},
+	}
+	next := map[string]string{"": "c1", "c1": "c2", "c2": ""}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cursor := r.URL.Query().Get("cursor")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages":    pages[cursor],
+			"next_cursor": next[cursor],
+		})
+	}))
+	defer srv.Close()
+
+	const uuid = "5cb9362f-1111-2222-3333-444455556666"
+	out := captureStdout(t, func() {
+		if code := RunMessagesTail(context.Background(), []string{
+			"--endpoint", srv.URL, "--instance", uuid, "--since", "2026-08-01T00:00:00Z",
+		}); code != 0 {
+			t.Fatalf("messages tail --since: non-zero exit")
+		}
+	})
+	for _, id := range []string{"m1", "m2", "m3"} {
+		if !strings.Contains(out, id) {
+			t.Errorf("a windowed read stopped at the first page: %q is missing from %q", id, out)
+		}
+	}
+}
+
+func TestRunMessagesTailWithoutAWindowReadsOneBoundedPage(t *testing.T) {
+	var requests int
+	var gotLimit string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		gotLimit = r.URL.Query().Get("limit")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"messages": []map[string]any{
+				{"id": "m1", "instance_id": "abc", "type": "t", "sender": "s", "sender_kind": "operator",
+					"received_at": "2026-08-01T00:00:03Z"},
+			},
+			"next_cursor": "c1",
+		})
+	}))
+	defer srv.Close()
+
+	const uuid = "5cb9362f-1111-2222-3333-444455556666"
+	var out string
+	notice := captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			if code := RunMessagesTail(context.Background(), []string{
+				"--endpoint", srv.URL, "--instance", uuid,
+			}); code != 0 {
+				t.Fatalf("messages tail: non-zero exit")
+			}
+		})
+	})
+	if requests != 1 {
+		t.Errorf("a bare tail issued %d requests; it reads one bounded page", requests)
+	}
+	if gotLimit != "100" {
+		t.Errorf("limit=%q, want the tail's page size", gotLimit)
+	}
+	if !strings.Contains(out, "m1") {
+		t.Errorf("the newest page is missing from %q", out)
+	}
+	if !strings.Contains(notice, "--since") {
+		t.Errorf("messages tail truncated its read and named no window flags; stderr=%q", notice)
+	}
+	if strings.Contains(out, "--since") {
+		t.Errorf("messages tail printed its notice among the rows on stdout; stdout=%q", out)
+	}
+}

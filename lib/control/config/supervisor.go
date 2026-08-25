@@ -13,6 +13,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
@@ -48,14 +49,17 @@ type SupervisorConfig struct {
 	SyncRPCDeadlineDefault time.Duration
 	MaxQuietPeriodDefault  time.Duration
 	MaxRuntimeDefault      time.Duration
-	Resolver               executor.Resolver
-	ClaimProducers         RemoteClaimProducersConfig
-	Publishers             RemotePublishersConfig
-	NamedLocks             locks.NamedLocksConfig
-	CallbackHost           string
-	CallbackPort           int
-	CallbackAdvertiseHost  string
-	CallbackAdvertisePort  int
+	// @decision: dispatch-defaults-cover-every-node-timing-key
+	MaxRetriesDefault     int
+	RetryBackoffDefault   *spec.RetryBackoffConfig
+	Resolver              executor.Resolver
+	ClaimProducers        RemoteClaimProducersConfig
+	Publishers            RemotePublishersConfig
+	NamedLocks            locks.NamedLocksConfig
+	CallbackHost          string
+	CallbackPort          int
+	CallbackAdvertiseHost string
+	CallbackAdvertisePort int
 
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
@@ -212,6 +216,8 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		SyncRPCDeadlineDefault:      cfg.SyncRPCDeadlineDefault,
 		MaxQuietPeriodDefault:       cfg.MaxQuietPeriodDefault,
 		MaxRuntimeDefault:           cfg.MaxRuntimeDefault,
+		MaxRetriesDefault:           cfg.MaxRetriesDefault,
+		RetryBackoffDefault:         cfg.RetryBackoffDefault,
 		Resolver:                    cfg.Resolver,
 		ClaimProducerRegistry:       registry,
 		NamedLocks:                  cfg.NamedLocks,

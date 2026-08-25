@@ -10,8 +10,8 @@ import (
 )
 
 func RunHealth(ctx context.Context, args []string) int {
-	_, common, endpoint, code := runWithCommon("health", args, nil)
-	if code != 0 {
+	_, common, endpoint, code := runWithCommon("health", "", NoTable, args, nil)
+	if common == nil {
 		return code
 	}
 
@@ -22,15 +22,11 @@ func RunHealth(ctx context.Context, args []string) int {
 		return reportError(err)
 	}
 
-	switch common.Format {
-	case FormatJSON:
-		_ = EmitJSON(os.Stdout, resp)
-	default:
+	return Render(common.Format, resp, func() {
 		EmitKV(os.Stdout, [][2]string{
 			{"status", resp.Status},
 			{"endpoint", endpoint},
 			{"supervisors", fmt.Sprintf("%d", len(resp.Supervisors))},
 		})
-	}
-	return 0
+	})
 }

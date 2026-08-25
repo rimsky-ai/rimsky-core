@@ -175,6 +175,11 @@ func handleListKeys(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		nameFilter := r.URL.Query().Get("name_filter")
 		includeRevoked := r.URL.Query().Get("include_revoked") == "true"
+		limit, err := parseLimit(r, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		rows, err := deps.AuthState.Tables.APIKeys().List(r.Context(), includeRevoked, nameFilter, nil)
 		if err != nil {
 			writeError(w, err)
@@ -184,7 +189,13 @@ func handleListKeys(deps AppDeps) http.HandlerFunc {
 		for _, row := range rows {
 			out = append(out, rowToDTO(row))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"keys": out})
+		page, nextCursor, err := persistence.PageByKey(out, r.URL.Query().Get("cursor"), limit,
+			func(k keyDTO) string { return persistence.SortableTimeKey(k.CreatedAt) + "|" + k.ID.String() })
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"keys": page, "next_cursor": nextCursor})
 	}
 }
 

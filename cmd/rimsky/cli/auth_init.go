@@ -15,11 +15,12 @@ import (
 
 func RunAuthInit(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth init", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("auth init", ""))
 	var endpointFlag, keyFlag string
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
 	RegisterAPIKeyFlag(fs, &keyFlag)
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 	endpoint, key, err := resolveAuthEndpointAndKey(endpointFlag, keyFlag)
 	if err != nil {

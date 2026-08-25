@@ -103,9 +103,11 @@ var validRestart = map[string]bool{
 	"always":     true,
 }
 
-var validTemplateState = map[string]bool{
-	"registered": true,
-	"deployed":   true,
+// @decision: compose-undeployed-is-registered
+var templateStateSynonyms = map[string]string{
+	"registered": "registered",
+	"undeployed": "registered",
+	"deployed":   "deployed",
 }
 
 func (m *Manifest) Validate() error {
@@ -143,12 +145,8 @@ func (m *Manifest) Validate() error {
 				tagSeen[t.Tag] = i
 			}
 		}
-		state := t.State
-		if state == "" {
-			state = "deployed"
-		}
-		if !validTemplateState[state] {
-			errs = append(errs, fmt.Errorf("templates[%d].state: %q must be one of registered|deployed", i, state))
+		if t.State != "" && templateStateSynonyms[t.State] == "" {
+			errs = append(errs, fmt.Errorf("templates[%d].state: %q must be one of registered|deployed|undeployed", i, t.State))
 		}
 	}
 
@@ -167,8 +165,15 @@ func (m *Manifest) Validate() error {
 		if inst.Template == "" {
 			errs = append(errs, fmt.Errorf("instances[%d].template: required", i))
 		} else if !hashRe.MatchString(inst.Template) {
-			if _, ok := tagSeen[inst.Template]; !ok {
+			entry, ok := tagSeen[inst.Template]
+			switch {
+			case !ok:
 				errs = append(errs, fmt.Errorf("instances[%d].template: %q is neither a manifest tag nor a hash", i, inst.Template))
+			// @decision: compose-undeployed-is-registered
+			case m.Templates[entry].EffectiveState() != "deployed":
+				errs = append(errs, fmt.Errorf(
+					"instances[%d].template: %q runs on tag %q, which templates[%d] declares %s; an instance runs only on a deployed template",
+					i, inst.Name, inst.Template, entry, m.Templates[entry].State))
 			}
 		}
 		restart := inst.Restart
@@ -259,11 +264,41 @@ func validateClaimProducerEntry(name string, e ManifestClaimProducerEntry) []err
 	return errs
 }
 
+// @decision: compose-undeployed-is-registered
 func (t TemplateRef) EffectiveState() string {
 	if t.State == "" {
 		return "deployed"
 	}
+	if canonical, known := templateStateSynonyms[t.State]; known {
+		return canonical
+	}
 	return t.State
+}
+
+// @decision: compose-undeployed-is-registered
+func (m *Manifest) ValidateResolvedStates(resolved map[string]string) error {
+	type declaration struct{ tag, state string }
+	claimed := map[string]declaration{}
+	var errs []error
+	for _, t := range m.Templates {
+		ptag := m.PrefixedTag(t.Tag)
+		hash, ok := resolved[ptag]
+		if !ok {
+			continue
+		}
+		state := t.EffectiveState()
+		prior, seen := claimed[hash]
+		if !seen {
+			claimed[hash] = declaration{tag: ptag, state: state}
+			continue
+		}
+		if prior.state != state {
+			errs = append(errs, fmt.Errorf(
+				"templates: %q declares %s and %q declares %s, and both name template %s; a template holds one state per content hash, so declare one",
+				prior.tag, prior.state, ptag, state, hash))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (i InstanceRef) EffectiveRestart() string {

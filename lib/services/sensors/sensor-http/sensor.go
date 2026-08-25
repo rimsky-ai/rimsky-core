@@ -24,6 +24,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/publisherkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/egress"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorauth"
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorpub"
 )
 
@@ -39,6 +40,7 @@ type Watch struct {
 	MatchJSONVal   string
 	MessageType    string
 	ResolvedConfig []byte
+	Auth           *sensorauth.AuthConfig
 	StartedAt      time.Time
 
 	LastPollAt time.Time
@@ -49,6 +51,7 @@ type SensorService struct {
 	genv1.UnimplementedPublisherServer
 	mu             sync.Mutex
 	watches        map[string]*Watch
+	watermarks     map[string]SubscriptionWatermark
 	rimskyEndpoint string
 	httpClient     *http.Client
 	pollClient     *http.Client
@@ -68,32 +71,16 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 	if state == nil {
 		return
 	}
-	rows, err := state.ListAll(context.Background())
+	// @decision: secret-at-rest-posture
+	rows, err := state.ListWatermarks(context.Background())
 	if err != nil {
 		s.logger.Warn("SENSORHTTP.STATEDBATTACH.LISTFAILED", "error", err.Error())
 		return
 	}
 	for _, r := range rows {
-		s.watches[r.SubscriptionID] = &Watch{
-			SubscriptionID: r.SubscriptionID,
-			InstanceID:     r.InstanceID,
-			URL:            r.URL,
-			PollInterval:   r.PollInterval,
-			MatchStatus:    r.MatchStatus,
-			MatchJSONKey:   r.MatchJSONKey,
-			MatchJSONVal:   r.MatchJSONVal,
-			MessageType:    r.MessageType,
-			StartedAt:      r.StartedAt,
-			LastHash:       r.LastHash,
-			LastPollAt:     r.LastPollAt,
-		}
-		s.logger.Info("SENSORHTTP.STATE.RECOVERED",
-			"publisher_subscription_id", r.SubscriptionID,
-			"url", r.URL,
-			"poll_interval", r.PollInterval.String(),
-			"restored_last_hash", r.LastHash != "",
-			"restored_last_poll_at", r.LastPollAt)
+		s.watermarks[r.SubscriptionID] = r
 	}
+	s.logger.Info("SENSORHTTP.WATERMARKS.RESTORED", "count", len(rows))
 }
 
 type logger interface {
@@ -111,6 +98,7 @@ func (s *SensorService) SetPublishClient(c *http.Client) {
 func NewSensorService(rimskyEndpoint string, pollGuard egress.Guard, log logger) *SensorService {
 	return &SensorService{
 		watches:        make(map[string]*Watch),
+		watermarks:     make(map[string]SubscriptionWatermark),
 		rimskyEndpoint: rimskyEndpoint,
 		httpClient:     &http.Client{Timeout: 30 * time.Second},
 		pollClient:     pollGuard.HTTPClient(30 * time.Second),
@@ -142,6 +130,15 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 									}
 								}
 							}
+						},
+						"auth": {
+							"type": "object",
+							"properties": {
+								"mode": {"type": "string", "enum": ["secret_header", "none"]},
+								"header": {"type": "string"},
+								"secret": {"type": "string"}
+							},
+							"required": ["mode"]
 						}
 					},
 					"required": ["url"]
@@ -166,12 +163,17 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 				Value string `json:"value"`
 			} `json:"jsonpath"`
 		} `json:"match"`
+		Auth *sensorauth.AuthConfig `json:"auth"`
 	}
 	if err := json.Unmarshal(req.GetResolvedConfig(), &cfg); err != nil {
 		return nil, fmt.Errorf("decode resolved_config: %w", err)
 	}
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("resolved_config.url required")
+	}
+	// @decision: http-poll-sensor-auth-outbound
+	if err := sensorauth.ValidateOutbound(cfg.Auth); err != nil {
+		return nil, err
 	}
 	interval := 30 * time.Second
 	if cfg.PollInterval != "" {
@@ -196,19 +198,26 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		MatchJSONVal:   cfg.Match.JSONPath.Value,
 		MessageType:    messageType,
 		ResolvedConfig: append([]byte(nil), req.GetResolvedConfig()...),
+		Auth:           cfg.Auth,
 		StartedAt:      now,
 	}
 	s.mu.Lock()
 	state := s.state
+	watermark, cached := s.watermarks[w.SubscriptionID]
 	s.mu.Unlock()
-	if state != nil {
-		if persisted, err := state.GetSubscription(ctx, w.SubscriptionID); err != nil {
+	// @decision: secret-at-rest-posture
+	if !cached && state != nil {
+		if persisted, err := state.GetWatermark(ctx, w.SubscriptionID); err != nil {
 			s.logger.Warn("SENSORHTTP.SUBSCRIBE.STATEGETFAILED",
 				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		} else if persisted != nil {
-			w.LastHash = persisted.LastHash
-			w.StartedAt = persisted.StartedAt
+			watermark, cached = *persisted, true
 		}
+	}
+	if cached {
+		w.LastHash = watermark.LastHash
+		w.LastPollAt = watermark.LastPollAt
+		w.StartedAt = watermark.StartedAt
 	}
 	s.mu.Lock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
@@ -243,6 +252,7 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 	defer s.mu.Unlock()
 	if _, ok := s.watches[req.GetPublisherSubscriptionId()]; ok {
 		delete(s.watches, req.GetPublisherSubscriptionId())
+		delete(s.watermarks, req.GetPublisherSubscriptionId())
 		s.logger.Info("SENSORHTTP.SUBSCRIPTION.STOPPED", "publisher_subscription_id", req.GetPublisherSubscriptionId())
 		if s.state != nil {
 			if err := s.state.DeleteSubscription(context.Background(), req.GetPublisherSubscriptionId()); err != nil {
@@ -305,6 +315,8 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
 		return
 	}
+	// @decision: http-poll-sensor-auth-outbound
+	sensorauth.ApplyOutbound(w.Auth, req)
 	resp, err := s.pollClient.Do(req)
 	if err != nil {
 		s.logger.Warn("SENSORHTTP.POLL.DIALFAILED",

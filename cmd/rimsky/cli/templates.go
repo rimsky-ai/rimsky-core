@@ -20,17 +20,18 @@ import (
 	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 )
 
-func runWithCommon(name string, args []string, registerExtra func(fs *flag.FlagSet)) (*flag.FlagSet, *CommonFlags, string, int) {
+func runWithCommon(name, argSpec string, tables TableSupport, args []string, registerExtra func(fs *flag.FlagSet)) (*flag.FlagSet, *CommonFlags, string, int) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	SetUsage(fs, UsageLine(name, argSpec))
 	var common CommonFlags
 	RegisterCommonFlags(fs, &common)
 	if registerExtra != nil {
 		registerExtra(fs)
 	}
-	if err := parseInterspersed(fs, args); err != nil {
-		return nil, nil, "", 2
+	if code, done := ParseVerbFlags(fs, args); done {
+		return nil, nil, "", code
 	}
-	if err := common.ResolveFormat(); err != nil {
+	if err := common.ResolveFormat(name, tables); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, nil, "", 2
 	}
@@ -148,21 +149,24 @@ func readSourceFile(inputPath, baseDir string) (string, error) {
 }
 
 func RunTemplateRegister(ctx context.Context, args []string) int {
+	return runTemplateRegisterNamed(ctx, "template register", args)
+}
+
+func runTemplateRegisterNamed(ctx context.Context, name string, args []string) int {
 	var tag, source string
 	var warningsAsErrors bool
-	fs, common, endpoint, code := runWithCommon("template register", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon(name, "<file> [--warnings-as-errors]", NoTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&tag, "tag", "", "tag to attach to the registered template")
 		fs.StringVar(&source, "source", "", "free-form source description")
 		fs.BoolVar(&warningsAsErrors, "warnings-as-errors", false,
 			"reject registration if the validation pipeline produced any warnings")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky template register <file> [--warnings-as-errors]")
-		return 2
+		return UsageError(fs)
 	}
 	spec, err := ReadSpecFile(rest[0])
 	if err != nil {
@@ -190,9 +194,7 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 		return reportError(err)
 	}
 	// @story: validation-warnings-surfaced
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, tpl)
-	} else {
+	return Render(common.Format, tpl, func() {
 		for _, w := range tpl.ValidationWarnings {
 			fmt.Fprintf(os.Stderr, "warning: %s: %s\n", w.Path, w.Msg)
 		}
@@ -200,23 +202,21 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 			{"template_hash", tpl.Hash()},
 			{"tags", strings.Join(tpl.Tags, ",")},
 		})
-	}
-	return 0
+	})
 }
 
 func RunTemplateLint(ctx context.Context, args []string) int {
 	var warningsAsErrors bool
-	fs, common, endpoint, code := runWithCommon("template lint", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("template lint", "[--warnings-as-errors] <file>", NoTable, args, func(fs *flag.FlagSet) {
 		fs.BoolVar(&warningsAsErrors, "warnings-as-errors", false,
 			"treat validation warnings as findings (exit 1 if any warnings)")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky template lint [--warnings-as-errors] <file>")
-		return 2
+		return UsageError(fs)
 	}
 	spec, err := ReadSpecFile(rest[0])
 	if err != nil {
@@ -230,9 +230,7 @@ func RunTemplateLint(ctx context.Context, args []string) int {
 		return reportError(err)
 	}
 
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, res)
-	} else {
+	Render(common.Format, res, func() {
 		for _, w := range res.ValidationWarnings {
 			fmt.Fprintf(os.Stderr, "warning: %s: %s\n", w.Path, w.Msg)
 		}
@@ -242,7 +240,7 @@ func RunTemplateLint(ctx context.Context, args []string) int {
 		if res.Ok {
 			fmt.Fprintln(os.Stdout, "ok")
 		}
-	}
+	})
 	if res.Ok {
 		return 0
 	}
@@ -250,15 +248,18 @@ func RunTemplateLint(ctx context.Context, args []string) int {
 }
 
 func RunTemplateList(ctx context.Context, args []string) int {
+	return runTemplateListNamed(ctx, "template list", args)
+}
+
+func runTemplateListNamed(ctx context.Context, name string, args []string) int {
 	var stateFlag, tagPrefix string
-	fs, common, endpoint, code := runWithCommon("template list", args, func(fs *flag.FlagSet) {
+	_, common, endpoint, code := runWithCommon(name, "[--state <state>] [--tag-prefix <prefix>]", HasTable, args, func(fs *flag.FlagSet) {
 		fs.StringVar(&stateFlag, "state", "", "filter by state")
 		fs.StringVar(&tagPrefix, "tag-prefix", "", "client-side filter on attached tag prefix")
 	})
-	if code != 0 {
+	if common == nil {
 		return code
 	}
-	_ = fs
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	q := ListTemplatesQuery{State: stateFlag}
@@ -281,20 +282,17 @@ func RunTemplateList(ctx context.Context, args []string) int {
 	sort.Slice(all, func(i, j int) bool {
 		return primaryTag(all[i].Tags) < primaryTag(all[j].Tags)
 	})
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, all)
-		return 0
-	}
-	rows := make([][]string, 0, len(all))
-	for _, t := range all {
-		rows = append(rows, []string{
-			TruncHash(t.Hash()),
-			t.State,
-			strings.Join(t.Tags, ","),
-		})
-	}
-	EmitTable(os.Stdout, []string{"HASH", "STATE", "TAGS"}, rows)
-	return 0
+	return Render(common.Format, all, func() {
+		rows := make([][]string, 0, len(all))
+		for _, t := range all {
+			rows = append(rows, []string{
+				TruncHash(t.Hash()),
+				t.State,
+				strings.Join(t.Tags, ","),
+			})
+		}
+		EmitTable(os.Stdout, []string{"HASH", "STATE", "TAGS"}, rows)
+	})
 }
 
 func primaryTag(tags []string) string {
@@ -307,30 +305,24 @@ func primaryTag(tags []string) string {
 }
 
 func pagedListTemplates(ctx context.Context, c *Client, q ListTemplatesQuery) ([]Template, error) {
-	var all []Template
-	for {
+	return PageAll(func(cursor string) ([]Template, string, error) {
+		q.Cursor = cursor
 		page, err := c.ListTemplates(ctx, q)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		all = append(all, page.Templates...)
-		if page.NextCursor == "" {
-			break
-		}
-		q.Cursor = page.NextCursor
-	}
-	return all, nil
+		return page.Templates, page.NextCursor, nil
+	})
 }
 
 func RunTemplateGet(ctx context.Context, args []string) int {
-	fs, common, endpoint, code := runWithCommon("template get", args, nil)
-	if code != 0 {
+	fs, common, endpoint, code := runWithCommon("template get", "<ref>", NoTable, args, nil)
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky template get <ref>")
-		return 2
+		return UsageError(fs)
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
@@ -338,28 +330,28 @@ func RunTemplateGet(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, tpl)
-		return 0
-	}
-	EmitKV(os.Stdout, [][2]string{
-		{"template_hash", tpl.Hash()},
-		{"state", tpl.State},
-		{"tags", strings.Join(tpl.Tags, ",")},
-		{"source", tpl.Source},
+	return Render(common.Format, tpl, func() {
+		EmitKV(os.Stdout, [][2]string{
+			{"template_hash", tpl.Hash()},
+			{"state", tpl.State},
+			{"tags", strings.Join(tpl.Tags, ",")},
+			{"source", tpl.Source},
+		})
 	})
-	return 0
 }
 
 func RunTemplateDeploy(ctx context.Context, args []string) int {
-	fs, common, endpoint, code := runWithCommon("template deploy", args, nil)
-	if code != 0 {
+	return runTemplateDeployNamed(ctx, "template deploy", args)
+}
+
+func runTemplateDeployNamed(ctx context.Context, name string, args []string) int {
+	fs, common, endpoint, code := runWithCommon(name, "<ref>", NoTable, args, nil)
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky template deploy <ref>")
-		return 2
+		return UsageError(fs)
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
@@ -367,26 +359,29 @@ func RunTemplateDeploy(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, tpl)
-		return 0
-	}
-	if tpl.NoOp {
-		fmt.Fprintf(os.Stdout, "%s already deployed\n", rest[0])
-	} else {
-		fmt.Fprintf(os.Stdout, "%s deployed\n", rest[0])
-	}
-	return 0
+	return Render(common.Format, tpl, func() {
+		if tpl.NoOp {
+			fmt.Fprintf(os.Stdout, "%s already deployed\n", rest[0])
+		} else {
+			fmt.Fprintf(os.Stdout, "%s deployed\n", rest[0])
+		}
+	})
 }
 
 func RunTemplateUndeploy(ctx context.Context, args []string) int {
-	fs, common, endpoint, code := runWithCommon("template undeploy", args, nil)
-	if code != 0 {
+	return runTemplateUndeployNamed(ctx, "template undeploy", args)
+}
+
+func runTemplateUndeployNamed(ctx context.Context, name string, args []string) int {
+	fs, common, endpoint, code := runWithCommon(name, "<ref>", NoTable, args, nil)
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky template undeploy <ref>")
+		return UsageError(fs)
+	}
+	if !ConfirmDestructiveTargets(common.Yes, "undeploy template "+rest[0]) {
 		return 2
 	}
 	c := NewClient(endpoint)
@@ -395,26 +390,25 @@ func RunTemplateUndeploy(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportError(err)
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, tpl)
-		return 0
-	}
-	if tpl.NoOp {
-		fmt.Fprintf(os.Stdout, "%s already undeployed\n", rest[0])
-	} else {
-		fmt.Fprintf(os.Stdout, "%s undeployed\n", rest[0])
-	}
-	return 0
+	return Render(common.Format, tpl, func() {
+		if tpl.NoOp {
+			fmt.Fprintf(os.Stdout, "%s already undeployed\n", rest[0])
+		} else {
+			fmt.Fprintf(os.Stdout, "%s undeployed\n", rest[0])
+		}
+	})
 }
 
 func RunTemplateRm(ctx context.Context, args []string) int {
-	fs, common, endpoint, code := runWithCommon("template rm", args, nil)
-	if code != 0 {
+	fs, common, endpoint, code := runWithCommon("template rm", "<ref>", NoTable, args, nil)
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky template rm <ref>")
+		return UsageError(fs)
+	}
+	if !ConfirmDestructiveTargets(common.Yes, "remove template "+rest[0]) {
 		return 2
 	}
 	c := NewClient(endpoint)
@@ -422,9 +416,8 @@ func RunTemplateRm(ctx context.Context, args []string) int {
 	if err := c.DeleteTemplate(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}
-	reportRemoval(os.Stdout, common.Format, removalResult{Ref: rest[0], Removed: true},
+	return reportRemoval(common.Format, removalResult{Ref: rest[0], Removed: true},
 		fmt.Sprintf("%s removed", rest[0]))
-	return 0
 }
 
 func JSONString(v any) string {

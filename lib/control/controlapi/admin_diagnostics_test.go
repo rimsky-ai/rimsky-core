@@ -101,6 +101,9 @@ func (fakeAPIKeys) SetRevokeAt(context.Context, shared.UUID, time.Time, persiste
 func (fakeAPIKeys) SweepRotationGrace(context.Context, time.Time, persistence.Tx) ([]persistence.APIKey, error) {
 	return nil, nil
 }
+func (fakeAPIKeys) SweepExpired(context.Context, time.Time, persistence.Tx) ([]persistence.APIKey, error) {
+	return nil, nil
+}
 func (fakeAPIKeys) UpdateLastUsed(context.Context, shared.UUID, time.Time, persistence.Tx) error {
 	return nil
 }

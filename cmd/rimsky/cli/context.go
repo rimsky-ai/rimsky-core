@@ -12,12 +12,13 @@ import (
 
 func RunCtxList(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx list", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("ctx list", ""))
 	var common CommonFlags
 	RegisterCommonFlags(fs, &common)
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
-	if err := common.ResolveFormat(); err != nil {
+	if err := common.ResolveFormat("ctx list", HasTable); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -27,25 +28,22 @@ func RunCtxList(args []string, configPath string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, redactedConfig(cfg))
-		return 0
-	}
-	names := make([]string, 0, len(cfg.Contexts))
-	for name := range cfg.Contexts {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	rows := make([][]string, 0, len(names))
-	for _, name := range names {
-		marker := ""
-		if name == cfg.CurrentContext {
-			marker = "*"
+	return Render(common.Format, redactedConfig(cfg), func() {
+		names := make([]string, 0, len(cfg.Contexts))
+		for name := range cfg.Contexts {
+			names = append(names, name)
 		}
-		rows = append(rows, []string{marker, name, cfg.Contexts[name].Endpoint})
-	}
-	EmitTable(os.Stdout, []string{"", "NAME", "ENDPOINT"}, rows)
-	return 0
+		sort.Strings(names)
+		rows := make([][]string, 0, len(names))
+		for _, name := range names {
+			marker := ""
+			if name == cfg.CurrentContext {
+				marker = "*"
+			}
+			rows = append(rows, []string{marker, name, cfg.Contexts[name].Endpoint})
+		}
+		EmitTable(os.Stdout, []string{"", "NAME", "ENDPOINT"}, rows)
+	})
 }
 
 const redactedAPIKeyPlaceholder = "REDACTED"
@@ -63,12 +61,12 @@ func redactedConfig(cfg *Config) *Config {
 
 func RunCtxUse(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx use", flag.ContinueOnError)
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	SetUsage(fs, UsageLine("ctx use", "<name>"))
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky ctx use <name>")
-		return 2
+		return UsageError(fs)
 	}
 	name := fs.Arg(0)
 	if !ValidContextName(name) {
@@ -95,14 +93,14 @@ func RunCtxUse(args []string, configPath string) int {
 
 func RunCtxAdd(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx add", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("ctx add", "<name> --endpoint <url>"))
 	var endpoint string
 	fs.StringVar(&endpoint, "endpoint", "", "API endpoint for the new context")
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky ctx add <name> --endpoint <url>")
-		return 2
+		return UsageError(fs)
 	}
 	name := fs.Arg(0)
 	if !ValidContextName(name) {
@@ -136,12 +134,12 @@ func RunCtxAdd(args []string, configPath string) int {
 
 func RunCtxRm(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx rm", flag.ContinueOnError)
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	SetUsage(fs, UsageLine("ctx rm", "<name>"))
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky ctx rm <name>")
-		return 2
+		return UsageError(fs)
 	}
 	name := fs.Arg(0)
 	cfg, err := LoadConfig(configPath)
@@ -166,11 +164,24 @@ func RunCtxRm(args []string, configPath string) int {
 	return 0
 }
 
+type currentContext struct {
+	Name     string `json:"name"`
+	Endpoint string `json:"endpoint"`
+}
+
 func RunCtxCurrent(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx current", flag.ContinueOnError)
-	if err := parseInterspersed(fs, args); err != nil {
+	SetUsage(fs, UsageLine("ctx current", ""))
+	var common CommonFlags
+	RegisterOutputFlags(fs, &common)
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
+	}
+	if err := common.ResolveFormat("ctx current", NoTable); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	SetActiveCommonFlags(&common)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -185,6 +196,8 @@ func RunCtxCurrent(args []string, configPath string) int {
 		fmt.Fprintf(os.Stderr, "current context %q not defined in %s\n", cfg.CurrentContext, configPath)
 		return 1
 	}
-	fmt.Fprintf(os.Stdout, "%s\t%s\n", cfg.CurrentContext, ctx.Endpoint)
-	return 0
+	current := currentContext{Name: cfg.CurrentContext, Endpoint: ctx.Endpoint}
+	return Render(common.Format, current, func() {
+		fmt.Fprintf(os.Stdout, "%s\t%s\n", current.Name, current.Endpoint)
+	})
 }

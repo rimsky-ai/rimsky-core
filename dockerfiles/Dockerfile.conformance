@@ -6,8 +6,8 @@
 #   docker run rimsky-conformance rimsky conformance executor \
 #     --endpoint <addr> --transport grpc
 # The runners probe an EXTERNAL impl (executor / claim-producer / publisher /
-# validation / data-processing / lifecycle-subscriber) against the rimsky
-# protocol.
+# validation / data-processing / lifecycle-subscriber / host-daemon)
+# against the rimsky protocol.
 
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 ARG TARGETOS
@@ -28,6 +28,6 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.title="rimsky-conformance"
-LABEL org.opencontainers.image.description="Protocol conformance runners (executor, claim-producer, publisher, validation, data-processing, lifecycle-subscriber) plus the conformance probe, selected via 'rimsky conformance <protocol>'."
+LABEL org.opencontainers.image.description="Protocol conformance runners (executor, claim-producer, publisher, validation, data-processing, lifecycle-subscriber, host-daemon) plus the conformance probe, selected via 'rimsky conformance <protocol>'."
 COPY --from=build /out/ /usr/local/bin/
 USER nonroot:nonroot

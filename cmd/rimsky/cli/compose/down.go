@@ -99,13 +99,15 @@ type composeDownFlags struct {
 
 func parseComposeDownFlags(args []string) (*composeDownFlags, int) {
 	fs := flag.NewFlagSet("compose down", flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine("compose down", "[-f <manifest>]"))
 	out := &composeDownFlags{}
+	// @decision: short-flags-single-letter
 	fs.StringVar(&out.manifestPath, "f", "rimsky-compose.yml", "manifest path")
 	cli.RegisterCommonFlags(fs, &out.common)
-	if err := fs.Parse(args); err != nil {
-		return nil, 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return nil, code
 	}
-	if err := out.common.ResolveFormat(); err != nil {
+	if err := out.common.ResolveFormat("compose down", cli.NoTable); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, 2
 	}
@@ -119,7 +121,7 @@ func parseComposeDownFlags(args []string) (*composeDownFlags, int) {
 
 func RunComposeDown(ctx context.Context, args []string) int {
 	flags, code := parseComposeDownFlags(args)
-	if code != 0 {
+	if flags == nil {
 		return code
 	}
 	m, err := LoadManifest(flags.manifestPath)
@@ -144,22 +146,18 @@ func runComposeDownWithManifest(ctx context.Context, m *Manifest, c *cli.Client,
 		return reportPlanError(err)
 	}
 	destructiveSteps := append([]Step(nil), plan.Steps...)
-	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
+	if !cli.ConfirmDestructiveTargets(flags.common.Yes, destructiveStepTargets(destructiveSteps)...) {
 		return 2
 	}
-	asJSON := flags.common.Format == cli.FormatJSON
 	narration := io.Writer(os.Stdout)
-	if asJSON {
+	if flags.common.Format.Structured() {
 		narration = os.Stderr
 	}
 	created, applied, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: narration})
 	if err != nil {
 		return reportApplyError(err)
 	}
-	if asJSON {
-		_ = cli.EmitJSON(os.Stdout, newApplyResult(m.Project, applied, created))
-		return 0
-	}
-	fmt.Fprintln(os.Stdout, "compose down complete")
-	return 0
+	return cli.Render(flags.common.Format, newApplyResult(m.Project, applied, created), func() {
+		fmt.Fprintln(os.Stdout, "compose down complete")
+	})
 }

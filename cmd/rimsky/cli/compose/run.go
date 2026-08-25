@@ -57,7 +57,7 @@ func RunComposeRun(ctx context.Context, args []string) int {
 		return 130
 	}
 	flags, code := parseComposeRunFlags(args)
-	if code != 0 {
+	if flags == nil {
 		return code
 	}
 
@@ -463,14 +463,7 @@ func reapSpawnedFatal(spawns []*hostdaemon.SpawnedService, logger *slog.Logger) 
 func parseComposeRunFlags(args []string) (*composeRunFlags, int) {
 	flags := &composeRunFlags{}
 	fs := flag.NewFlagSet("compose run", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.Usage = func() {
-		out := fs.Output()
-		fmt.Fprintln(out, "usage: rimsky compose run [flags] <manifest>")
-		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "Flags:")
-		fs.PrintDefaults()
-	}
+	cli.SetUsage(fs, cli.UsageLine("compose run", "[flags] <manifest>"))
 	fs.StringVar(&flags.name, "name", "", "run name; appended to the per-run artifact directory (defaults to manifest project)")
 	fs.StringVar(&flags.workdir, "workdir", "", "override the artifact root; suppresses walk-up discovery")
 	fs.DurationVar(&flags.timeout, "timeout", 0, "max wall-clock duration; 0 = unbounded")
@@ -479,14 +472,13 @@ func parseComposeRunFlags(args []string) (*composeRunFlags, int) {
 	fs.BoolVar(&flags.json, "json", false, "emit progress as JSON Lines on stderr")
 	fs.Var(&flags.services, "service", "late-bound service binding: <name>=<path>. Repeatable.")
 
-	if err := fs.Parse(args); err != nil {
-		return nil, 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return nil, code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: exactly one positional <manifest> required")
-		fs.Usage()
-		return nil, 2
+		return nil, cli.UsageError(fs)
 	}
 	flags.manifestPath = strings.TrimSpace(rest[0])
 	if flags.manifestPath == "" {

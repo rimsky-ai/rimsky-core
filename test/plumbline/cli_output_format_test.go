@@ -11,6 +11,9 @@ import (
 var notTheVerbsOwnRendering = map[string]bool{
 	"cli.runWithCommon":         true,
 	"cli.RegisterCommonFlags":   true,
+	"cli.RegisterOutputFlags":   true,
+	"cli.Render":                true,
+	"cli.EmitStructured":        true,
 	"cli.reportError":           true,
 	"cli.ReportDryRunPreview":   true,
 	"compose.reportApplyError":  true,
@@ -34,7 +37,7 @@ func TestEveryVerbDeclaringTheOutputFormatFlagReadsIt(t *testing.T) {
 	var declaring, exempt, formatless []string
 	for _, verb := range g.verbs {
 		tokens := g.reach(verb)
-		if !anyToken(tokens, "runWithCommon", "RegisterCommonFlags") {
+		if !anyToken(tokens, "runWithCommon", "RegisterCommonFlags", "RegisterOutputFlags") {
 			formatless = append(formatless, verb)
 			continue
 		}
@@ -44,9 +47,10 @@ func TestEveryVerbDeclaringTheOutputFormatFlagReadsIt(t *testing.T) {
 		}
 		declaring = append(declaring, verb)
 		idents := g.reachIdents(verb, notTheVerbsOwnRendering)
-		if !idents["FormatJSON"] {
-			t.Errorf("%s registers the common flag set, so its help advertises -o json. It never reads the "+
-				"resolved format. A verb that declares the flag renders what the flag asks for", verb)
+		if !idents["Render"] && !idents["EmitStructured"] {
+			t.Errorf("%s never routes its payload through the shared renderer. It declares the "+
+				"output-format flag, so its help advertises every format the CLI names. A verb that "+
+				"declares the flag renders what the flag asks for", verb)
 		}
 	}
 

@@ -5,8 +5,12 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseFormat(t *testing.T) {
@@ -15,11 +19,14 @@ func TestParseFormat(t *testing.T) {
 		want Format
 		err  bool
 	}{
-		{"", FormatHuman, false},
+		{"", 0, true},
 		{"human", FormatHuman, false},
 		{"json", FormatJSON, false},
 		{"JSON", FormatJSON, false},
-		{"yaml", 0, true},
+		{"yaml", FormatYAML, false},
+		{"table", FormatTable, false},
+		{"text", 0, true},
+		{"pretty", 0, true},
 	}
 	for _, c := range cases {
 		got, err := ParseFormat(c.in)
@@ -29,6 +36,44 @@ func TestParseFormat(t *testing.T) {
 		if !c.err && got != c.want {
 			t.Errorf("%q: got %v want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestUnknownOutputFormatNamesTheFormatsItAccepts(t *testing.T) {
+	_, err := ParseFormat("pretty")
+	if err == nil {
+		t.Fatal("an unrecognized -o value must fail. It must never fall back to human output")
+	}
+	if !strings.Contains(err.Error(), FormatNames) {
+		t.Errorf("error %q does not name the accepted formats %q", err, FormatNames)
+	}
+}
+
+func TestYAMLOutputCarriesTheSameFieldsAsJSON(t *testing.T) {
+	value := struct {
+		Ref     string   `json:"ref"`
+		Removed bool     `json:"removed"`
+		Tags    []string `json:"tags"`
+	}{Ref: "project-alpha", Removed: true, Tags: []string{"a", "b"}}
+
+	var asJSON, asYAML bytes.Buffer
+	if err := EmitStructured(&asJSON, FormatJSON, value); err != nil {
+		t.Fatal(err)
+	}
+	if err := EmitStructured(&asYAML, FormatYAML, value); err != nil {
+		t.Fatal(err)
+	}
+
+	var fromJSON, fromYAML map[string]any
+	if err := json.Unmarshal(asJSON.Bytes(), &fromJSON); err != nil {
+		t.Fatalf("json output does not parse: %v", err)
+	}
+	if err := yaml.Unmarshal(asYAML.Bytes(), &fromYAML); err != nil {
+		t.Fatalf("yaml output does not parse: %v", err)
+	}
+	if !reflect.DeepEqual(fromJSON, fromYAML) {
+		t.Errorf("-o yaml and -o json must carry the same fields. yaml carried %#v; json carried %#v",
+			fromYAML, fromJSON)
 	}
 }
 

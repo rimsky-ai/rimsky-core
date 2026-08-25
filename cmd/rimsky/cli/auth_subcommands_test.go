@@ -98,18 +98,30 @@ func TestAuthCreate_FlagParseError(t *testing.T) {
 	}
 }
 
-func TestAuthList_HappyPath(t *testing.T) {
+func TestAuthListSpellsItsJSONWithTheOneOutputFlag(t *testing.T) {
 	stub := newStubServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/auth/keys") {
 			http.Error(w, "unexpected route", http.StatusNotFound)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{
+			{"name": "n1", "id": "id-1", "created_at": "2026-01-01T00:00:00Z", "last_used_at": ""},
+		}})
 	})
-	code := cli.RunAuthList(context.Background(),
-		[]string{"--endpoint", stub.srv.URL, "--key", "k", "--json"})
+	var code int
+	out := captureAuthStdout(t, func() {
+		code = cli.RunAuthList(context.Background(),
+			[]string{"--endpoint", stub.srv.URL, "--key", "k", "-o", "json"})
+	})
 	if code != 0 {
-		t.Fatalf("RunAuthList exit code: got %d want 0", code)
+		t.Fatalf("auth list -o json: got exit %d want 0", code)
+	}
+	var keys []map[string]any
+	if err := json.Unmarshal([]byte(out), &keys); err != nil {
+		t.Fatalf("auth list -o json did not emit a JSON array on stdout: %v (%q)", err, out)
+	}
+	if len(keys) != 1 || keys[0]["name"] != "n1" {
+		t.Fatalf("auth list -o json emitted %#v, want the one key row", keys)
 	}
 }
 
@@ -146,7 +158,7 @@ func TestAuthRevoke_HappyPath(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "k1", "name": "n1"})
 	})
 	code := cli.RunAuthRevoke(context.Background(),
-		[]string{"--endpoint", stub.srv.URL, "--key", "k", "n1"})
+		[]string{"--endpoint", stub.srv.URL, "--key", "k", "--yes", "n1"})
 	if code != 0 {
 		t.Fatalf("RunAuthRevoke exit code: got %d want 0", code)
 	}
@@ -190,12 +202,21 @@ func TestAuthCreate_ExpiresFlag(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"k1","name":"n1","plaintext":"rim_secret"}`))
 	})
 	code := cli.RunAuthCreateKey(context.Background(),
-		[]string{"--endpoint", stub.srv.URL, "--key", "operator-bearer", "--name", "n1", "--role", "admin", "--expires", "30d"})
+		[]string{"--endpoint", stub.srv.URL, "--key", "operator-bearer", "--name", "n1", "--role", "admin", "--expires", "720h"})
 	if code != 0 {
-		t.Fatalf("RunAuthCreateKey with --expires 30d: got exit %d want 0", code)
+		t.Fatalf("RunAuthCreateKey with --expires 720h: got exit %d want 0", code)
 	}
 	if !strings.Contains(string(stub.lastRaw), "expires_at") {
 		t.Fatalf("request body should carry expires_at, got: %s", stub.lastRaw)
+	}
+}
+
+func TestAuthCreateExpiresTakesTheOneDurationGrammar(t *testing.T) {
+	code := cli.RunAuthCreateKey(context.Background(),
+		[]string{"--endpoint", "http://unused", "--key", "k", "--name", "n1", "--role", "admin", "--expires", "30d"})
+	if code != 2 {
+		t.Fatalf("--expires 30d: got exit %d, want 2. Every duration flag parses the one Go duration "+
+			"grammar, so the day suffix is gone", code)
 	}
 }
 
@@ -260,7 +281,7 @@ func TestAuthRevoke_ForceLeaveAnonymousSetsQueryParam(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "k1", "name": "n1"})
 	})
 	code := cli.RunAuthRevoke(context.Background(),
-		[]string{"--endpoint", stub.srv.URL, "--key", "k", "--force-leave-anonymous", "n1"})
+		[]string{"--endpoint", stub.srv.URL, "--key", "k", "--force-leave-anonymous", "--yes", "n1"})
 	if code != 0 {
 		t.Fatalf("RunAuthRevoke --force-leave-anonymous: got exit %d want 0", code)
 	}

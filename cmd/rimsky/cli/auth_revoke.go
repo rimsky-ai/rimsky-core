@@ -14,19 +14,24 @@ import (
 
 func RunAuthRevoke(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("auth revoke", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("auth revoke", "<name-or-id> [--force-leave-anonymous] [--yes]"))
 	var (
 		endpointFlag, keyFlag string
 		force                 bool
+		yes                   bool
 	)
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
 	RegisterAPIKeyFlag(fs, &keyFlag)
 	fs.BoolVar(&force, "force-leave-anonymous", false, "allow revocation that drops the deployment to zero active keys")
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	RegisterYesFlag(fs, &yes)
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky auth revoke <name-or-id> [--force-leave-anonymous]")
+		return UsageError(fs)
+	}
+	if !ConfirmDestructiveTargets(yes, "revoke api-key "+rest[0]) {
 		return 2
 	}
 	endpoint, key, err := resolveAuthEndpointAndKey(endpointFlag, keyFlag)

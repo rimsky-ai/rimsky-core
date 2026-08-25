@@ -117,6 +117,9 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		resolved[m.PrefixedTag(t.Tag)] = hash
 		specBodies[hash] = spec
 	}
+	if err := m.ValidateResolvedStates(resolved); err != nil {
+		return nil, err
+	}
 
 	registers := []Step{}
 	registered := map[string]bool{}
@@ -190,6 +193,8 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 			Tag:          ptag,
 		})
 	}
+	// @decision: compose-undeployed-is-registered
+	declaredUndeploy := map[string]string{}
 	for _, t := range m.Templates {
 		ptag := m.PrefixedTag(t.Tag)
 		newHash := resolved[ptag]
@@ -197,7 +202,7 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 			continue
 		}
 		if cur, ok := state.TemplatesByH[newHash]; ok && cur.State == "deployed" {
-			oldHashesNeedingUndeploy[newHash] = true
+			declaredUndeploy[newHash] = ptag
 		}
 	}
 
@@ -290,6 +295,18 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 			Action:       ActionUndeploy,
 			Kind:         KindTemplate,
 			TemplateHash: hash,
+		})
+	}
+	for hash, ptag := range declaredUndeploy {
+		if oldHashesNeedingUndeploy[hash] {
+			continue
+		}
+		undeploys = append(undeploys, Step{
+			Action:       ActionUndeploy,
+			Kind:         KindTemplate,
+			TemplateHash: hash,
+			Tag:          ptag,
+			Note:         "manifest declares " + ptag + " registered",
 		})
 	}
 	sort.Slice(undeploys, func(i, j int) bool { return undeploys[i].TemplateHash < undeploys[j].TemplateHash })
@@ -387,11 +404,11 @@ func classifyRestart(ctx context.Context, c *cli.Client, inst cli.Instance, poli
 
 // @concept: node-run
 func aggregateOutcome(ctx context.Context, c *cli.Client, instanceID string) (string, error) {
-	resp, err := c.ListInstanceNodes(ctx, instanceID)
+	nodes, err := cli.PagedListInstanceNodes(ctx, c, instanceID, cli.ListNodesQuery{})
 	if err != nil {
 		return "", err
 	}
-	for _, n := range resp.Nodes {
+	for _, n := range nodes {
 		s := n.RunSummary
 		if s == nil {
 			return "failure", nil

@@ -63,7 +63,7 @@ func applyErrorPolicyWithScratchAndSettleHook(
 	if err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: load evaluator state: %w", err)
 	}
-	maxRetries, backoff := resolveRetryConfig(acq.NodeDef)
+	maxRetries, backoff := resolveRetryConfig(acq.NodeDef, args)
 	resolved := node.Evaluate(policy, state, maxRetries, backoff, nil)
 	if err := args.Persist.Nodes().UpdateRunEvaluatorState(ctx, acq.NodeRunID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: persist evaluator state: %w", err)
@@ -341,7 +341,7 @@ func applyTerminalInfraError(
 	if err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: load evaluator state: %w", err)
 	}
-	maxRetries, _ := resolveRetryConfig(acq.NodeDef)
+	maxRetries, _ := resolveRetryConfig(acq.NodeDef, args)
 	if maxRetries <= 0 {
 		maxRetries = defaultInfraRetryCap
 	}
@@ -478,18 +478,23 @@ func lookupPolicyForNodeWithFallback(acq *acquisition, primary, fallback string)
 	return nil
 }
 
-func resolveRetryConfig(nd *node.TemplateNodeDef) (int, node.BackoffConfig) {
-	maxRetries := 0
+// @decision: dispatch-defaults-cover-every-node-timing-key
+func resolveRetryConfig(nd *node.TemplateNodeDef, args RunArgs) (int, node.BackoffConfig) {
+	maxRetries := args.MaxRetriesDefault
 	if nd != nil && nd.MaxRetries != nil {
 		maxRetries = *nd.MaxRetries
 	}
-	var backoff node.BackoffConfig
+	declared := args.RetryBackoffDefault
 	if nd != nil && nd.RetryBackoff != nil {
+		declared = nd.RetryBackoff
+	}
+	var backoff node.BackoffConfig
+	if declared != nil {
 		backoff = node.BackoffConfig{
-			Kind:        nd.RetryBackoff.Kind,
-			Jitter:      nd.RetryBackoff.Jitter,
-			BaseDelayMs: nd.RetryBackoff.BaseDelayMs,
-			MaxDelayMs:  nd.RetryBackoff.MaxDelayMs,
+			Kind:        declared.Kind,
+			Jitter:      declared.Jitter,
+			BaseDelayMs: declared.BaseDelayMs,
+			MaxDelayMs:  declared.MaxDelayMs,
 		}
 	}
 	return maxRetries, backoff

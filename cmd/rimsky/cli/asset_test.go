@@ -38,7 +38,7 @@ func TestClient_ListAssets(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(srv.URL)
-	resp, err := c.ListAssets(context.Background(), "abc")
+	resp, err := c.ListAssets(context.Background(), "abc", ListAssetsQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,18 +219,27 @@ func TestRunAssetVersions_RendersTable(t *testing.T) {
 	}
 }
 
-func TestRunAssetVersions_ServerErrorFieldExitsOne(t *testing.T) {
+func TestRunAssetVersions_ServerErrorFieldExitsOneInEveryFormat(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": "alias not found"})
 	}))
 	defer srv.Close()
 
-	code := RunAssetVersions(context.Background(), []string{
-		"--endpoint", srv.URL, "--instance", "550e8400-e29b-41d4-a716-446655440001", "ghost.alias",
-	})
-	if code != 1 {
-		t.Errorf("exit %d, want 1 when the response carries an error field", code)
+	for _, format := range []string{"", "json", "yaml", "table"} {
+		args := []string{"--endpoint", srv.URL, "--instance", "550e8400-e29b-41d4-a716-446655440001"}
+		if format != "" {
+			args = append(args, "-o", format)
+		}
+		args = append(args, "ghost.alias")
+
+		var code int
+		out := captureStdout(t, func() {
+			code = RunAssetVersions(context.Background(), args)
+		})
+		if code != 1 {
+			t.Errorf("-o %q: exit %d, want 1 when the response carries an error field (stdout=%q)", format, code, out)
+		}
 	}
 }
 
@@ -245,7 +254,7 @@ func TestRunAssetDelete_OK(t *testing.T) {
 
 	var code int
 	out := captureStdout(t, func() {
-		code = RunAssetDelete(context.Background(), []string{
+		code = RunAssetDelete(context.Background(), []string{"--yes",
 			"--endpoint", srv.URL, "--instance", "550e8400-e29b-41d4-a716-446655440001", "loader.fs",
 		})
 	})

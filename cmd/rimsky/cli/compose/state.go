@@ -74,18 +74,11 @@ func QueryState(ctx context.Context, c *cli.Client, project string) (*ComposeSta
 }
 
 func pagedListTags(ctx context.Context, c *cli.Client) ([]cli.Tag, error) {
-	var all []cli.Tag
-	q := cli.ListTagsQuery{}
-	for {
-		page, err := c.ListTags(ctx, q)
+	return cli.PageAll(func(cursor string) ([]cli.Tag, string, error) {
+		page, err := c.ListTags(ctx, cli.ListTagsQuery{Cursor: cursor})
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		all = append(all, page.Tags...)
-		if page.NextCursor == "" {
-			break
-		}
-		q.Cursor = page.NextCursor
-	}
-	return all, nil
+		return page.Tags, page.NextCursor, nil
+	})
 }

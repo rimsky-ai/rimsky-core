@@ -405,7 +405,7 @@ func TestMCPMessageSend_CallerSuppliedIdempotencyKeyReplaysInsteadOfDoubleSendin
 			"params": map[string]any{
 				"name": "message_send",
 				"arguments": map[string]any{
-					"id":              instID,
+					"idOrKey":         instID,
 					"type":            "system/invalidate",
 					"idempotency_key": idemKey,
 				},
@@ -466,8 +466,8 @@ func TestMCPMessageSend_OmittedIdempotencyKeyFailsNamingTheArgument(t *testing.T
 		"params": map[string]any{
 			"name": "message_send",
 			"arguments": map[string]any{
-				"id":   instID,
-				"type": "system/invalidate",
+				"idOrKey": instID,
+				"type":    "system/invalidate",
 			},
 		},
 	}
@@ -1002,7 +1002,7 @@ func TestMCPMessageSend_AnUnauthorizedCallerIsRefusedBeforeItLearnsTheArguments(
 	instID, _ := out["instance_id"].(string)
 	require.NotEmpty(t, instID)
 
-	arguments := map[string]any{"id": instID, "type": "system/invalidate"}
+	arguments := map[string]any{"idOrKey": instID, "type": "system/invalidate"}
 	rpcBody := map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{"name": "message_send", "arguments": arguments},

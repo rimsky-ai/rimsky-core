@@ -665,3 +665,64 @@ func containsAction(list []compose.Action, target compose.Action) bool {
 	}
 	return false
 }
+
+func planForDeclaredState(t *testing.T, declared string) *compose.Plan {
+	t.Helper()
+	srv := clitest.NewServer(t)
+	defer srv.Close()
+	c := cli.NewClient(srv.URL)
+
+	dir, m := makeManifest(t, `project: p
+templates:
+  - path: spec.yml
+    tag: a@1.0
+    state: `+declared+`
+`)
+	for i := range m.Templates {
+		m.Templates[i].Path = filepath.Join(dir, m.Templates[i].Path)
+	}
+	hash, spec, err := compose.ResolveTemplate(m.Templates[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registeredHash, _ := srv.State.RegisterTemplate(specToMap(t, spec), "p:a@1.0", "")
+	if registeredHash != hash {
+		t.Fatalf("fixture hash mismatch: registered %q resolved %q", registeredHash, hash)
+	}
+	srv.State.SetTemplateState(hash, "deployed")
+
+	state, err := compose.QueryState(context.Background(), c, m.Project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := compose.ComputePlan(context.Background(), c, m, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func TestComputePlan_DeclaringRegisteredUndeploysATemplateTheDeploymentHoldsDeployed(t *testing.T) {
+	for _, declared := range []string{"registered", "undeployed"} {
+		t.Run(declared, func(t *testing.T) {
+			plan := planForDeclaredState(t, declared)
+			actions := []compose.Action{}
+			for _, s := range plan.Steps {
+				actions = append(actions, s.Action)
+			}
+			if !sameActions(actions, []compose.Action{compose.ActionUndeploy}) {
+				t.Fatalf("actions: %+v want a single undeploy", plan.Steps)
+			}
+			if plan.Steps[0].TemplateHash == "" {
+				t.Errorf("undeploy step names no template hash: %+v", plan.Steps[0])
+			}
+		})
+	}
+}
+
+func TestComputePlan_DeclaringDeployedLeavesADeployedTemplateAlone(t *testing.T) {
+	plan := planForDeclaredState(t, "deployed")
+	if plan.Summary.Changes != 0 {
+		t.Fatalf("plan: %+v", plan.Steps)
+	}
+}

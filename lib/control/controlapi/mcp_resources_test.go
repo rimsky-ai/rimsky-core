@@ -136,14 +136,13 @@ func TestResources_Read_ByInstance(t *testing.T) {
 	require.Equal(t, uri, contents.URI)
 
 	var body struct {
-		Hits      []map[string]any `json:"hits"`
-		NextSince int64            `json:"next_since"`
-		Truncated bool             `json:"truncated"`
+		Hits       []map[string]any `json:"hits"`
+		NextCursor string           `json:"next_cursor"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(contents.Text), &body))
 	require.Len(t, body.Hits, 3)
-	require.Equal(t, seq3, body.NextSince)
-	require.False(t, body.Truncated)
+	require.Equal(t, "", body.NextCursor)
+	require.EqualValues(t, seq3, int64(body.Hits[2]["seq"].(float64)))
 
 	require.EqualValues(t, seq1, int64(body.Hits[0]["seq"].(float64)))
 	require.NotEmpty(t, body.Hits[0]["hit_id"])
@@ -151,7 +150,7 @@ func TestResources_Read_ByInstance(t *testing.T) {
 	require.NotNil(t, body.Hits[0]["dispatch_context"])
 }
 
-func TestResources_Read_BySinceCursor(t *testing.T) {
+func TestResources_Read_ByCursor(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -166,20 +165,26 @@ func TestResources_Read_BySinceCursor(t *testing.T) {
 
 	cat := buildResourceCatalog(h)
 	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?since=%d", instID, seq1)
-	contents, rpcErr := cat.Read(req, uri)
+	firstPage, rpcErr := cat.Read(req, fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?limit=1", instID))
 	require.Nil(t, rpcErr)
 
 	var body struct {
-		Hits      []map[string]any `json:"hits"`
-		NextSince int64            `json:"next_since"`
-		Truncated bool             `json:"truncated"`
+		Hits       []map[string]any `json:"hits"`
+		NextCursor string           `json:"next_cursor"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(contents.Text), &body))
-	require.Len(t, body.Hits, 2, "since=%d should drop seq1 (%d) and keep seq2 (%d) + seq3 (%d)", seq1, seq1, seq2, seq3)
+	require.NoError(t, json.Unmarshal([]byte(firstPage.Text), &body))
+	require.Len(t, body.Hits, 1)
+	require.EqualValues(t, seq1, int64(body.Hits[0]["seq"].(float64)))
+	require.NotEmpty(t, body.NextCursor, "a truncated page names the cursor that reaches the rest")
+
+	rest, rpcErr := cat.Read(req, fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?cursor=%s",
+		instID, url.QueryEscape(body.NextCursor)))
+	require.Nil(t, rpcErr)
+	require.NoError(t, json.Unmarshal([]byte(rest.Text), &body))
+	require.Len(t, body.Hits, 2, "the cursor reaches the hits after seq1 (%d): seq2 (%d) and seq3 (%d)", seq1, seq2, seq3)
 	require.EqualValues(t, seq2, int64(body.Hits[0]["seq"].(float64)))
 	require.EqualValues(t, seq3, int64(body.Hits[1]["seq"].(float64)))
-	require.Equal(t, seq3, body.NextSince)
+	require.Equal(t, "", body.NextCursor)
 }
 
 func TestResources_Read_PollingCursorFlow(t *testing.T) {
@@ -200,28 +205,30 @@ func TestResources_Read_PollingCursorFlow(t *testing.T) {
 	cat := buildResourceCatalog(h)
 	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
 
-	cursor := int64(0)
+	cursor := ""
 	collected := []int64{}
 	for page := 0; page < 10; page++ {
-		uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?since=%d&limit=2", instID, cursor)
+		uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?limit=2", instID)
+		if cursor != "" {
+			uri += "&cursor=" + url.QueryEscape(cursor)
+		}
 		contents, rpcErr := cat.Read(req, uri)
 		require.Nil(t, rpcErr, "page %d: %+v", page, rpcErr)
 		var body struct {
-			Hits      []map[string]any `json:"hits"`
-			NextSince int64            `json:"next_since"`
-			Truncated bool             `json:"truncated"`
+			Hits       []map[string]any `json:"hits"`
+			NextCursor string           `json:"next_cursor"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(contents.Text), &body))
 		for _, h := range body.Hits {
 			collected = append(collected, int64(h["seq"].(float64)))
 		}
-		cursor = body.NextSince
-		if !body.Truncated {
+		if body.NextCursor == "" {
 			require.Equal(t, 2, page, "expected the final page to be page index 2 (third iteration)")
 			break
 		}
-		require.Less(t, page, 2, "a truncated (non-final) page must come before the final page index")
-		require.Equal(t, 2, len(body.Hits), "truncated pages should be full")
+		require.Less(t, page, 2, "a non-final page must come before the final page index")
+		require.Equal(t, 2, len(body.Hits), "a page that names a next cursor is full")
+		cursor = body.NextCursor
 	}
 	require.Equal(t, seeded, collected, "polling loop should drain every seeded hit in seq order")
 }
@@ -243,9 +250,8 @@ func TestResources_Read_ByBreakpoint(t *testing.T) {
 	require.Nil(t, rpcErr, "%+v", rpcErr)
 
 	var body struct {
-		Hits      []map[string]any `json:"hits"`
-		NextSince int64            `json:"next_since"`
-		Truncated bool             `json:"truncated"`
+		Hits       []map[string]any `json:"hits"`
+		NextCursor string           `json:"next_cursor"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(contents.Text), &body))
 	require.Len(t, body.Hits, 1)
@@ -300,16 +306,16 @@ func TestResources_Read_PermissionDenied(t *testing.T) {
 
 func TestResources_Read_LimitCappedAtMax(t *testing.T) {
 	t.Parallel()
-	_, limit, rpcErr := parseSinceLimit(url.Values{"limit": []string{"9999"}})
+	limit, rpcErr := parseResourceLimit(url.Values{"limit": []string{"9999"}})
 	require.Nil(t, rpcErr)
 	require.Equal(t, resourceReadMaxLimit, limit,
 		"a limit above the ceiling clamps to it rather than reaching the store")
 
-	_, limit, rpcErr = parseSinceLimit(url.Values{"limit": []string{"7"}})
+	limit, rpcErr = parseResourceLimit(url.Values{"limit": []string{"7"}})
 	require.Nil(t, rpcErr)
 	require.Equal(t, 7, limit, "a limit under the ceiling is honored as given")
 
-	_, limit, rpcErr = parseSinceLimit(url.Values{})
+	limit, rpcErr = parseResourceLimit(url.Values{})
 	require.Nil(t, rpcErr)
 	require.Equal(t, resourceReadDefaultLimit, limit, "an absent limit takes the default")
 }

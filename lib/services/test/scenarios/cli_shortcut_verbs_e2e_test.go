@@ -59,7 +59,7 @@ func TestDevLoopShortcutVerbsAreIndistinguishableFromTheirGroupedForms(t *testin
 		label := strings.Join(pair.shortcut, " ") + " ~ " + strings.Join(pair.grouped, " ") + ", undefined flag"
 		cli.requireSameOutput(label,
 			append(append([]string{}, pair.shortcut...), "--nope"),
-			append(append([]string{}, pair.grouped...), "--nope"), verbatim)
+			append(append([]string{}, pair.grouped...), "--nope"), verbNameElided(pair))
 	}
 
 	humanA := cli.registerTemplate("shortcut-probe-human-a")
@@ -104,13 +104,14 @@ func TestDevLoopShortcutVerbsAreIndistinguishableFromTheirGroupedForms(t *testin
 		[]string{"instance", "delete", absentInstanceB, "--yes"}, normalized)
 
 	cli.requireSameOutput("undeploy ~ template undeploy, human",
-		[]string{"undeploy", humanA}, []string{"template", "undeploy", humanB}, normalized)
+		[]string{"undeploy", humanA, "--yes"},
+		[]string{"template", "undeploy", humanB, "--yes"}, normalized)
 	cli.requireSameOutput("undeploy ~ template undeploy, json",
-		[]string{"undeploy", jsonA, "-o", "json"},
-		[]string{"template", "undeploy", jsonB, "-o", "json"}, normalized)
+		[]string{"undeploy", jsonA, "--yes", "-o", "json"},
+		[]string{"template", "undeploy", jsonB, "--yes", "-o", "json"}, normalized)
 	cli.requireSameOutput("undeploy ~ template undeploy, missing template",
-		[]string{"undeploy", missingTemplateRef},
-		[]string{"template", "undeploy", missingTemplateRef}, normalized)
+		[]string{"undeploy", missingTemplateRef, "--yes"},
+		[]string{"template", "undeploy", missingTemplateRef, "--yes"}, normalized)
 }
 
 const missingTemplateRef = "sha256-dead"
@@ -185,6 +186,19 @@ func (c *cliRunner) flagSet(verb []string) []string {
 type outputCanon func(string) string
 
 func verbatim(s string) string { return s }
+
+func verbNameElided(pair shortcutPair) outputCanon {
+	spellings := []string{
+		"rimsky " + strings.Join(pair.shortcut, " "),
+		"rimsky " + strings.Join(pair.grouped, " "),
+	}
+	return func(s string) string {
+		for _, spelling := range spellings {
+			s = strings.ReplaceAll(s, spelling, "rimsky VERB")
+		}
+		return s
+	}
+}
 
 var (
 	hashPattern      = regexp.MustCompile(`sha256-[0-9a-f]+…?`)
@@ -266,7 +280,7 @@ func (c *cliRunner) terminalInstances(t *testing.T, ep harness.RimskyEndpoint, w
 			"interchangeable subjects: %v", len(ids), want, ids)
 	}
 	for _, id := range ids {
-		if out, code := c.run("instance", "kill", id, "--force"); code != 0 {
+		if out, code := c.run("instance", "kill", id, "--force", "--yes"); code != 0 {
 			t.Fatalf("rimsky instance kill %s exited %d:\n%s", id, code, out)
 		}
 	}

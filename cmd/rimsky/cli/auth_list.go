@@ -19,56 +19,57 @@ import (
 )
 
 func RunAuthList(ctx context.Context, args []string) int {
-	fs := flag.NewFlagSet("auth list", flag.ContinueOnError)
 	var (
-		endpointFlag, keyFlag string
-		nameFilter            string
-		includeRevoked        bool
-		jsonOut               bool
+		nameFilter     string
+		includeRevoked bool
 	)
-	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
-	RegisterAPIKeyFlag(fs, &keyFlag)
-	fs.StringVar(&nameFilter, "name-filter", "", "glob filter on key name")
-	fs.BoolVar(&includeRevoked, "include-revoked", false, "include revoked rows")
-	fs.BoolVar(&jsonOut, "json", false, "output JSON")
-	if err := parseInterspersed(fs, args); err != nil {
-		return 2
+	_, common, endpoint, code := runWithCommon("auth list", "[--name-filter <glob>] [--include-revoked]", HasTable, args,
+		func(fs *flag.FlagSet) {
+			fs.StringVar(&nameFilter, "name-filter", "", "glob filter on key name")
+			fs.BoolVar(&includeRevoked, "include-revoked", false, "include revoked rows")
+		})
+	if common == nil {
+		return code
 	}
-	endpoint, key, err := resolveAuthEndpointAndKey(endpointFlag, keyFlag)
+	c := newAuthClient(endpoint, common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
+	var failedPath string
+	keys, err := PageAll(func(cursor string) ([]map[string]any, string, error) {
+		q := url.Values{}
+		if nameFilter != "" {
+			q.Set("name_filter", nameFilter)
+		}
+		if includeRevoked {
+			q.Set("include_revoked", "true")
+		}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		path := "/v1/auth/keys"
+		if enc := q.Encode(); enc != "" {
+			path += "?" + enc
+		}
+		failedPath = path
+		var resp struct {
+			Keys       []map[string]any `json:"keys"`
+			NextCursor string           `json:"next_cursor"`
+		}
+		if _, err := c.RawCall(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return nil, "", err
+		}
+		return resp.Keys, resp.NextCursor, nil
+	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	path := "/v1/auth/keys"
-	q := url.Values{}
-	if nameFilter != "" {
-		q.Set("name_filter", nameFilter)
-	}
-	if includeRevoked {
-		q.Set("include_revoked", "true")
-	}
-	if enc := q.Encode(); enc != "" {
-		path += "?" + enc
-	}
-	c := newAuthClient(endpoint, key)
-	var resp struct {
-		Keys []map[string]any `json:"keys"`
-	}
-	if _, err := c.RawCall(ctx, http.MethodGet, path, nil, &resp); err != nil {
-		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodGet, path, err))
+		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodGet, failedPath, err))
 		return 1
 	}
-	if jsonOut {
-		bs, _ := json.MarshalIndent(resp.Keys, "", "  ")
-		fmt.Fprintln(os.Stdout, string(bs))
-		return 0
-	}
-	if len(resp.Keys) == 0 {
-		fmt.Fprintln(os.Stdout, "(no API keys)")
-		return 0
-	}
-	fmt.Fprintln(os.Stdout, "NAME\tID\tROLE\tCREATED\tLAST_USED")
-	for _, k := range resp.Keys {
+	return Render(common.Format, keys, func() {
+		EmitTable(os.Stdout, []string{"NAME", "ID", "ROLE", "CREATED", "LAST_USED"}, authKeyRows(keys))
+	})
+}
+
+func authKeyRows(keys []map[string]any) [][]string {
+	rows := make([][]string, 0, len(keys))
+	for _, k := range keys {
 		name, _ := k["name"].(string)
 		id, _ := k["id"].(string)
 		created, _ := k["created_at"].(string)
@@ -80,10 +81,9 @@ func RunAuthList(ctx context.Context, args []string) int {
 		permsRaw, _ := json.Marshal(k["permissions"])
 		var perms auth.Grant
 		_ = json.Unmarshal(permsRaw, &perms)
-		roleMatch := matchRole(perms)
-		fmt.Fprintf(os.Stdout, "%s\t%s\t%s\t%s\t%s\n", name, idShort, roleMatch, created, lastUsed)
+		rows = append(rows, []string{name, idShort, matchRole(perms), created, lastUsed})
 	}
-	return 0
+	return rows
 }
 
 func matchRole(g auth.Grant) string {

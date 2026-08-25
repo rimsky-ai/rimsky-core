@@ -116,7 +116,7 @@ func TestMCPResourcesRead_ShapesResponse(t *testing.T) {
 			return &mcp.ResourceContents{
 				URI:      uri,
 				MimeType: "application/x-rimsky-breakpoint-hits+json",
-				Text:     `{"hits":[],"next_since":0,"truncated":false}`,
+				Text:     `{"hits":[],"next_cursor":""}`,
 			}, nil
 		},
 	}
@@ -154,7 +154,7 @@ func TestMCPResourcesRead_PassesCursorQueryParamsToCatalog(t *testing.T) {
 		},
 	}
 	server := &mcp.Server{Tools: &fakeCatalog{}, Resources: fr}
-	requestURI := "rimsky://instances/00000000-0000-0000-0000-000000000001/breakpoint-hits?since=42&limit=10"
+	requestURI := "rimsky://instances/00000000-0000-0000-0000-000000000001/breakpoint-hits?after=42&limit=10"
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      5,
@@ -209,23 +209,23 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 	}
 	fr := &fakeResources{
 		readFn: func(r *http.Request, uri string) (*mcp.ResourceContents, *mcp.Error) {
-			since, limit := parseFakeCursor(uri, t)
+			after, limit := parseFakeCursor(uri, t)
 			page := []map[string]any{}
 			for _, h := range allHits {
-				if int64(h["seq"].(int)) > since {
+				if int64(h["seq"].(int)) > after {
 					page = append(page, h)
 					if len(page) >= limit {
 						break
 					}
 				}
 			}
-			next := since
+			next := after
 			if len(page) > 0 {
 				next = int64(page[len(page)-1]["seq"].(int))
 			}
 			body, _ := json.Marshal(map[string]any{
 				"hits":       page,
-				"next_since": next,
+				"next_after": next,
 				"truncated":  len(page) >= limit,
 			})
 			return &mcp.ResourceContents{
@@ -259,7 +259,7 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 		c := contents[0].(map[string]any)
 		var inner struct {
 			Hits      []map[string]any `json:"hits"`
-			NextSince int64            `json:"next_since"`
+			NextAfter int64            `json:"next_after"`
 			Truncated bool             `json:"truncated"`
 		}
 		if err := json.Unmarshal([]byte(c["text"].(string)), &inner); err != nil {
@@ -269,7 +269,7 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 			seq := int64(h["seq"].(float64))
 			collected = append(collected, seq)
 		}
-		cursor = inner.NextSince
+		cursor = inner.NextAfter
 		if !inner.Truncated {
 			break
 		}
@@ -297,7 +297,7 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 	c := resp.Result.(map[string]any)["contents"].([]any)[0].(map[string]any)
 	var inner struct {
 		Hits      []map[string]any `json:"hits"`
-		NextSince int64            `json:"next_since"`
+		NextAfter int64            `json:"next_after"`
 		Truncated bool             `json:"truncated"`
 	}
 	if err := json.Unmarshal([]byte(c["text"].(string)), &inner); err != nil {
@@ -317,7 +317,7 @@ func parseFakeCursor(uri string, t *testing.T) (int64, int) {
 	if qIdx < 0 {
 		return 0, 100
 	}
-	since := int64(0)
+	after := int64(0)
 	limit := 100
 	for _, kv := range strings.Split(uri[qIdx+1:], "&") {
 		eq := strings.Index(kv, "=")
@@ -326,15 +326,15 @@ func parseFakeCursor(uri string, t *testing.T) (int64, int) {
 		}
 		k, v := kv[:eq], kv[eq+1:]
 		switch k {
-		case "since":
+		case "after":
 			var n int64
 			for _, c := range v {
 				if c < '0' || c > '9' {
-					t.Fatalf("bad since digit: %q", v)
+					t.Fatalf("bad after digit: %q", v)
 				}
 				n = n*10 + int64(c-'0')
 			}
-			since = n
+			after = n
 		case "limit":
 			var n int
 			for _, c := range v {
@@ -346,12 +346,12 @@ func parseFakeCursor(uri string, t *testing.T) (int64, int) {
 			limit = n
 		}
 	}
-	return since, limit
+	return after, limit
 }
 
-func buildCursorURI(since int64, limit int) string {
-	return "rimsky://instances/00000000-0000-0000-0000-000000000001/breakpoint-hits?since=" +
-		itoa(since) + "&limit=" + itoa(int64(limit))
+func buildCursorURI(after int64, limit int) string {
+	return "rimsky://instances/00000000-0000-0000-0000-000000000001/breakpoint-hits?after=" +
+		itoa(after) + "&limit=" + itoa(int64(limit))
 }
 
 func itoa(n int64) string {

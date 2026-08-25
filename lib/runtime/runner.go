@@ -59,6 +59,11 @@ type RunArgs struct {
 
 	MaxRuntimeDefault time.Duration
 
+	// @decision: dispatch-defaults-cover-every-node-timing-key
+	MaxRetriesDefault int
+
+	RetryBackoffDefault *spec.RetryBackoffConfig
+
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 

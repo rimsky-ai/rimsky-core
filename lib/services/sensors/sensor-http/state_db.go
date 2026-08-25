@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -42,21 +40,23 @@ func openStateDB(ctx context.Context) (*stateDB, error) {
 	return s, nil
 }
 
+// @decision: secret-at-rest-posture
 func (s *stateDB) bootstrap(ctx context.Context) error {
 	const schema = `
 		CREATE TABLE IF NOT EXISTS sensor_http_state (
 		    publisher_subscription_id TEXT PRIMARY KEY,
-		    instance_id               TEXT NOT NULL,
-		    url                       TEXT NOT NULL,
-		    poll_interval             TEXT NOT NULL,
-		    match_status              TEXT NOT NULL,
-		    match_json_key            TEXT,
-		    match_json_val            TEXT,
-		    message_type              TEXT NOT NULL,
 		    last_poll_at              TIMESTAMPTZ,
 		    last_hash                 TEXT,
 		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 		);
+		ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS auth;
+		ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS url;
+		ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS poll_interval;
+		ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS match_status;
+		ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS match_json_key;
+		ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS match_json_val;
+		ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS message_type;
+		ALTER TABLE sensor_http_state DROP COLUMN IF EXISTS instance_id;
 	`
 	_, err := s.db.Exec(ctx, schema)
 	return err
@@ -75,31 +75,11 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 		return nil
 	}
 	const q = `
-		INSERT INTO sensor_http_state (
-		    publisher_subscription_id, instance_id, url, poll_interval,
-		    match_status, match_json_key, match_json_val,
-		    message_type
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (publisher_subscription_id) DO UPDATE SET
-		    instance_id     = EXCLUDED.instance_id,
-		    url             = EXCLUDED.url,
-		    poll_interval   = EXCLUDED.poll_interval,
-		    match_status    = EXCLUDED.match_status,
-		    match_json_key  = EXCLUDED.match_json_key,
-		    match_json_val  = EXCLUDED.match_json_val,
-		    message_type    = EXCLUDED.message_type
+		INSERT INTO sensor_http_state (publisher_subscription_id)
+		VALUES ($1)
+		ON CONFLICT (publisher_subscription_id) DO NOTHING
 	`
-	matchStatus := ""
-	for i, c := range w.MatchStatus {
-		if i > 0 {
-			matchStatus += ","
-		}
-		matchStatus += fmt.Sprintf("%d", c)
-	}
-	_, err := s.db.Exec(ctx, q,
-		w.SubscriptionID, w.InstanceID, w.URL, w.PollInterval.String(),
-		matchStatus, w.MatchJSONKey, w.MatchJSONVal,
-		w.MessageType)
+	_, err := s.db.Exec(ctx, q, w.SubscriptionID)
 	return err
 }
 
@@ -121,38 +101,27 @@ func (s *stateDB) UpdateLastHash(ctx context.Context, subscriptionID, hash strin
 	return err
 }
 
-type SubscriptionState struct {
+type SubscriptionWatermark struct {
 	SubscriptionID string
-	InstanceID     string
-	URL            string
-	PollInterval   time.Duration
-	MatchStatus    []int
-	MatchJSONKey   string
-	MatchJSONVal   string
-	MessageType    string
 	StartedAt      time.Time
 	LastHash       string
 	LastPollAt     time.Time
 }
 
-func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
+func (s *stateDB) ListWatermarks(ctx context.Context) ([]SubscriptionWatermark, error) {
 	if s == nil {
 		return nil, nil
 	}
 	rows, err := s.db.Query(ctx,
-		`SELECT publisher_subscription_id, instance_id, url, poll_interval,
-		        COALESCE(match_status, ''),
-		        COALESCE(match_json_key, ''),
-		        COALESCE(match_json_val, ''),
-		        message_type, started_at, COALESCE(last_hash, ''), last_poll_at
+		`SELECT publisher_subscription_id, started_at, COALESCE(last_hash, ''), last_poll_at
 		   FROM sensor_http_state`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []SubscriptionState{}
+	out := []SubscriptionWatermark{}
 	for rows.Next() {
-		w, err := scanSubscriptionState(rows.Scan)
+		w, err := scanWatermark(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
@@ -161,20 +130,16 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	return out, rows.Err()
 }
 
-func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*SubscriptionState, error) {
+func (s *stateDB) GetWatermark(ctx context.Context, subscriptionID string) (*SubscriptionWatermark, error) {
 	if s == nil {
 		return nil, nil
 	}
 	row := s.db.QueryRow(ctx,
-		`SELECT publisher_subscription_id, instance_id, url, poll_interval,
-		        COALESCE(match_status, ''),
-		        COALESCE(match_json_key, ''),
-		        COALESCE(match_json_val, ''),
-		        message_type, started_at, COALESCE(last_hash, ''), last_poll_at
+		`SELECT publisher_subscription_id, started_at, COALESCE(last_hash, ''), last_poll_at
 		   FROM sensor_http_state
 		  WHERE publisher_subscription_id = $1`,
 		subscriptionID)
-	w, err := scanSubscriptionState(row.Scan)
+	w, err := scanWatermark(row.Scan)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -184,44 +149,16 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 	return &w, nil
 }
 
-func scanSubscriptionState(scan func(...any) error) (SubscriptionState, error) {
+func scanWatermark(scan func(...any) error) (SubscriptionWatermark, error) {
 	var (
-		w            SubscriptionState
-		pollInterval string
-		matchStatus  string
-		lastPollAt   *time.Time
+		w          SubscriptionWatermark
+		lastPollAt *time.Time
 	)
-	if err := scan(&w.SubscriptionID, &w.InstanceID, &w.URL, &pollInterval,
-		&matchStatus, &w.MatchJSONKey, &w.MatchJSONVal,
-		&w.MessageType, &w.StartedAt, &w.LastHash, &lastPollAt); err != nil {
-		return SubscriptionState{}, err
+	if err := scan(&w.SubscriptionID, &w.StartedAt, &w.LastHash, &lastPollAt); err != nil {
+		return SubscriptionWatermark{}, err
 	}
 	if lastPollAt != nil {
 		w.LastPollAt = *lastPollAt
-	}
-	if pollInterval != "" {
-		d, err := time.ParseDuration(pollInterval)
-		if err != nil {
-			return SubscriptionState{}, fmt.Errorf("parse persisted poll_interval %q for %s: %w",
-				pollInterval, w.SubscriptionID, err)
-		}
-		w.PollInterval = d
-	}
-	if matchStatus != "" {
-		parts := strings.Split(matchStatus, ",")
-		w.MatchStatus = make([]int, 0, len(parts))
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			n, err := strconv.Atoi(p)
-			if err != nil {
-				return SubscriptionState{}, fmt.Errorf("parse persisted match_status %q for %s: %w",
-					matchStatus, w.SubscriptionID, err)
-			}
-			w.MatchStatus = append(w.MatchStatus, n)
-		}
 	}
 	return w, nil
 }

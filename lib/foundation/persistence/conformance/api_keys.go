@@ -283,6 +283,69 @@ func testAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
+	t.Run("SweepExpired_ReportsEachKeyOnce", func(t *testing.T) {
+		expired := uuid.New()
+		expiredHash := sha256Of([]byte("rk_expired"))
+		expiresAt := now.Add(-1 * time.Minute)
+		mustInsert(t, ctx, tables, keys, persistence.APIKey{
+			ID: expired, KeyHash: expiredHash[:], Name: "already-expired",
+			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now.Add(-time.Hour),
+			ExpiresAt: &expiresAt,
+		})
+		live := uuid.New()
+		liveHash := sha256Of([]byte("rk_not_expired"))
+		livesUntil := now.Add(time.Hour)
+		mustInsert(t, ctx, tables, keys, persistence.APIKey{
+			ID: live, KeyHash: liveHash[:], Name: "still-live",
+			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now.Add(-time.Hour),
+			ExpiresAt: &livesUntil,
+		})
+		endless := uuid.New()
+		endlessHash := sha256Of([]byte("rk_no_expiry"))
+		mustInsert(t, ctx, tables, keys, persistence.APIKey{
+			ID: endless, KeyHash: endlessHash[:], Name: "no-expiry",
+			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now.Add(-time.Hour),
+		})
+		swept, err := keys.SweepExpired(ctx, now, nil)
+		if err != nil {
+			t.Fatalf("SweepExpired: %v", err)
+		}
+		var sweptExpired *persistence.APIKey
+		for i, k := range swept {
+			if k.ID == live || k.ID == endless {
+				t.Fatalf("SweepExpired returned an unexpired key: %+v", k)
+			}
+			if k.ID == expired {
+				sweptExpired = &swept[i]
+			}
+		}
+		if sweptExpired == nil {
+			t.Fatalf("expected the expired key in the sweep; got %+v", swept)
+		}
+		if sweptExpired.ExpiresAt == nil || !sweptExpired.ExpiresAt.Equal(expiresAt) {
+			t.Fatalf("swept key carries expires_at %v, want %v", sweptExpired.ExpiresAt, expiresAt)
+		}
+		again, err := keys.SweepExpired(ctx, now, nil)
+		if err != nil {
+			t.Fatalf("SweepExpired second pass: %v", err)
+		}
+		for _, k := range again {
+			if k.ID == expired {
+				t.Fatalf("a key already reported expired came back on the next sweep")
+			}
+		}
+		row, ok, err := keys.GetByID(ctx, expired, nil)
+		if err != nil || !ok {
+			t.Fatalf("GetByID after sweep: err=%v ok=%v", err, ok)
+		}
+		if row.ExpiryEventAt == nil {
+			t.Fatalf("expected the swept row to carry expiry_event_at")
+		}
+		if row.RevokedAt != nil {
+			t.Fatalf("expiry sweep must not revoke the row; revoked_at=%v", row.RevokedAt)
+		}
+	})
+
 	t.Run("SetRevokeAt_MissingID", func(t *testing.T) {
 		setFound, err := keys.SetRevokeAt(ctx, uuid.New(), now, nil)
 		if err != nil || setFound {

@@ -24,7 +24,7 @@ func RunTemplateRun(ctx context.Context, args []string) int {
 		return 130
 	}
 	common, rf, code := cli.ParseRunArgs(args)
-	if code != 0 {
+	if common == nil {
 		return code
 	}
 	if rf.SelfHost && common.Endpoint != "" {
@@ -178,11 +178,9 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		fmt.Fprintln(os.Stderr, "rimsky run: create instance:", err)
 		return coord.Drain(context.Background(), bootFailureReason(bootCtx))
 	}
-	if common.Format == cli.FormatJSON {
-		_ = cli.EmitJSON(os.Stdout, inst)
-	} else {
+	cli.Render(common.Format, inst, func() {
 		fmt.Fprintf(os.Stdout, "instance_id=%s\n", inst.UUID())
-	}
+	})
 
 	// @decision: compose-driver-sends-empty-message-after-create
 	if _, err := c.CreateInstanceMessage(bootCtx, inst.UUID(), "run-wake-"+inst.UUID(),
@@ -195,7 +193,7 @@ func runTemplateSelfHost(ctx context.Context, common *cli.CommonFlags, rf cli.Ru
 		logger.Warn("COMPOSE.LATESTSYMLINK.UPDATEFAILED", "err", err.Error())
 	}
 
-	printer := newProgressPrinter(os.Stderr, false, false, common.Format == cli.FormatJSON)
+	printer := newProgressPrinter(os.Stderr, false, false, common.Format.Structured())
 
 	releaseBootSignalWatcher()
 	if bootCtx.Err() != nil {

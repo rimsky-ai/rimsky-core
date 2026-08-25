@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,9 +20,13 @@ import (
 )
 
 func RunAuthLogin(ctx context.Context, args []string) int {
-	if len(args) > 0 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky auth login (interactive; reads URL and api-key from the terminal)")
-		return 2
+	fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
+	SetUsage(fs, UsageLine("auth login", "(interactive; reads URL and api-key from the terminal)"))
+	if code, done := ParseVerbFlags(fs, args); done {
+		return code
+	}
+	if fs.NArg() > 0 {
+		return UsageError(fs)
 	}
 
 	cfgPath, err := DefaultConfigPath()

@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/pki"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	configload "github.com/rimsky-ai/rimsky-core/lib/protocols/config"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
@@ -55,16 +56,21 @@ type ServiceDeliveryConfig struct {
 }
 
 type yamlDispatchDefaults struct {
-	SyncRPCDeadline *time.Duration `yaml:"sync_rpc_deadline"`
-	MaxQuietPeriod  *time.Duration `yaml:"max_quiet_period"`
-	MaxRuntime      *time.Duration `yaml:"max_runtime"`
+	SyncRPCDeadline *time.Duration           `yaml:"sync_rpc_deadline"`
+	MaxQuietPeriod  *time.Duration           `yaml:"max_quiet_period"`
+	MaxRuntime      *time.Duration           `yaml:"max_runtime"`
+	MaxRetries      *int                     `yaml:"max_retries"`
+	RetryBackoff    *spec.RetryBackoffConfig `yaml:"retry_backoff"`
 }
 
 // @decision: three-dispatch-deadlines
+// @decision: dispatch-defaults-cover-every-node-timing-key
 type DispatchDefaultsConfig struct {
 	SyncRPCDeadlineDefault time.Duration
 	MaxQuietPeriodDefault  time.Duration
 	MaxRuntimeDefault      time.Duration
+	MaxRetriesDefault      int
+	RetryBackoffDefault    *spec.RetryBackoffConfig
 }
 
 const capabilitiesHandshakeTimeout = 30 * time.Second
@@ -720,7 +726,47 @@ func parseDispatchDefaults(in *yamlDispatchDefaults) (DispatchDefaultsConfig, er
 		}
 		out.MaxRuntimeDefault = *in.MaxRuntime
 	}
+	// @decision: dispatch-defaults-cover-every-node-timing-key
+	if in.MaxRetries != nil {
+		if *in.MaxRetries < 0 {
+			return DispatchDefaultsConfig{}, fmt.Errorf("dispatch_defaults.max_retries must be non-negative")
+		}
+		out.MaxRetriesDefault = *in.MaxRetries
+	}
+	if in.RetryBackoff != nil {
+		if err := validateRetryBackoffDefault(*in.RetryBackoff); err != nil {
+			return DispatchDefaultsConfig{}, err
+		}
+		backoff := *in.RetryBackoff
+		out.RetryBackoffDefault = &backoff
+	}
 	return out, nil
+}
+
+func validateRetryBackoffDefault(b spec.RetryBackoffConfig) error {
+	switch b.Kind {
+	case "", spec.BackoffLinear, spec.BackoffExponential:
+	default:
+		return fmt.Errorf("dispatch_defaults.retry_backoff.kind %q invalid (want %q or %q)", b.Kind, spec.BackoffLinear, spec.BackoffExponential)
+	}
+	switch b.Jitter {
+	case "", spec.JitterNone, spec.JitterPlusMinus:
+	default:
+		return fmt.Errorf("dispatch_defaults.retry_backoff.jitter %q invalid (want %q or %q)", b.Jitter, spec.JitterNone, spec.JitterPlusMinus)
+	}
+	if b.BaseDelayMs < 0 {
+		return fmt.Errorf("dispatch_defaults.retry_backoff.base_delay_ms must not be negative, got %d", b.BaseDelayMs)
+	}
+	if b.MaxDelayMs < 0 {
+		return fmt.Errorf("dispatch_defaults.retry_backoff.max_delay_ms must not be negative, got %d", b.MaxDelayMs)
+	}
+	if b.MaxDelayMs > 0 && b.BaseDelayMs > 0 && b.MaxDelayMs < b.BaseDelayMs {
+		return fmt.Errorf("dispatch_defaults.retry_backoff.max_delay_ms %d is below base_delay_ms %d", b.MaxDelayMs, b.BaseDelayMs)
+	}
+	if b.BaseDelayMs == 0 && (b.Kind != "" || b.Jitter != "" || b.MaxDelayMs > 0) {
+		return fmt.Errorf("dispatch_defaults.retry_backoff.base_delay_ms must be positive when a backoff is configured")
+	}
+	return nil
 }
 
 func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics, error) {

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
@@ -58,17 +57,21 @@ func (e *debugCrossFrameRunError) Error() string {
 }
 
 func registerDebugOverrideRoutes(r chi.Router, deps AppDeps) {
-	r.Post("/instances/{id}/debug/override", gate(deps, "instance:debug-override", handleDebugOverride(deps)))
+	r.Post("/instances/{idOrKey}/debug/override", gate(deps, "instance:debug-override", handleDebugOverride(deps)))
 }
 
 func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		idStr := chi.URLParam(req, "id")
-		instanceID, err := uuid.Parse(idStr)
+		resolved, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
 			return
 		}
+		if resolved == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
+			return
+		}
+		instUUID := resolved.ID
 		var body DebugOverrideRequest
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 			badRequest(w, "invalid JSON body: "+err.Error())
@@ -96,7 +99,6 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 			badRequest(w, fmt.Sprintf("unknown action %q (one of invalidate_node, set_attribute)", body.Action))
 			return
 		}
-		instUUID := shared.UUID(instanceID)
 		actor := requestingKeyID(req.Context())
 		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 
@@ -157,7 +159,7 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 		})
 		if isDryRun && errors.Is(txErr, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_applied_debug_override", map[string]any{
-				"instance_id": instanceID.String(),
+				"instance_id": instUUID.String(),
 				"action":      body.Action,
 				"node_type":   body.NodeType,
 				"gate_state":  gateState,

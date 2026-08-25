@@ -78,7 +78,7 @@ func (s *Server) servePost(w http.ResponseWriter, r *http.Request) {
 		writeRPCError(w, req.ID, CodeInvalidRequest, "jsonrpc must be 2.0")
 		return
 	}
-	if req.Method != "initialize" {
+	if !methodExemptFromSession(req.Method) {
 		sid := r.Header.Get(sessionHeader)
 		if sid == "" {
 			writeRPCErrorStatus(w, http.StatusBadRequest, req.ID, CodeSessionRequired, "missing "+sessionHeader+" header: call initialize first")
@@ -93,9 +93,12 @@ func (s *Server) servePost(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	// @decision: mcp-base-methods-scope
 	switch req.Method {
 	case "initialize":
 		s.handleInitialize(w, req)
+	case "ping":
+		writeRPCResult(w, req.ID, map[string]any{})
 	case "tools/list":
 		s.handleToolsList(w, r, req)
 	case "tools/call":
@@ -107,6 +110,10 @@ func (s *Server) servePost(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeRPCError(w, req.ID, CodeMethodNotFound, "method not found: "+req.Method)
 	}
+}
+
+func methodExemptFromSession(method string) bool {
+	return method == "initialize" || method == "ping"
 }
 
 func (s *Server) serveDelete(w http.ResponseWriter, r *http.Request) {
@@ -241,7 +248,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, req Request) {
 	writeRPCResult(w, req.ID, map[string]any{
 		"protocolVersion": version,
 		"capabilities": map[string]any{
-			"tools":     map[string]any{},
+			"tools":     map[string]any{"listChanged": false},
 			"resources": map[string]any{"subscribe": false, "listChanged": false},
 		},
 		"serverInfo": map[string]any{

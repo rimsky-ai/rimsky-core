@@ -17,6 +17,7 @@ enum OperationalKind {
   OPERATIONAL_KIND_AUTH_KEY_CREATED = 3;
   OPERATIONAL_KIND_AUTH_KEY_REVOKED = 4;
   OPERATIONAL_KIND_AUTH_KEY_ROTATED = 5;
+  OPERATIONAL_KIND_AUTH_KEY_EXPIRED = 6;
   OPERATIONAL_KIND_STATE_TRANSITION = 10;
   OPERATIONAL_KIND_WORK_STARTED = 11;
   OPERATIONAL_KIND_WORK_COMPLETED = 12;
@@ -322,6 +323,12 @@ message AuthKeyRevokedPayload {
   string key_name = 2;
   optional string revoked_by_key_id = 3;
   string reason = 4;
+}
+
+message AuthKeyExpiredPayload {
+  string key_id = 1;
+  string key_name = 2;
+  google.protobuf.Timestamp expires_at = 3;
 }
 
 message AuthKeyRotatedPayload {

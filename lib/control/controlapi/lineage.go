@@ -104,6 +104,12 @@ func toLineageItem(r persistence.LineageRow) lineageRecordItem {
 	}
 }
 
+func pageLineageItems(items []lineageRecordItem, cursor string, limit int) ([]lineageRecordItem, string, error) {
+	return persistence.PageByKey(items, cursor, limit, func(i lineageRecordItem) string {
+		return persistence.SortableTimeKey(i.ObservedAt) + "|" + i.ID
+	})
+}
+
 func parseDepth(req *http.Request) (int, error) {
 	s := req.URL.Query().Get("depth")
 	if s == "" {
@@ -151,6 +157,11 @@ func handleLineageRunAncestors(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		ancestors, _, err := walkLineageRuns(req.Context(), deps, shared.UUID(runID), depth, lineageWalkDirectionAncestors)
 		if err != nil {
 			writeError(w, err)
@@ -160,9 +171,15 @@ func handleLineageRunAncestors(deps AppDeps) http.HandlerFunc {
 		for _, lr := range ancestors {
 			items = append(items, toLineageItem(lr))
 		}
+		page, nextCursor, err := pageLineageItems(items, req.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ancestors": items,
-			"depth":     depth,
+			"ancestors":   page,
+			"depth":       depth,
+			"next_cursor": nextCursor,
 		})
 	}
 }
@@ -179,6 +196,11 @@ func handleLineageRunDescendants(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		descendants, truncated, err := walkLineageRuns(req.Context(), deps, shared.UUID(runID), depth, lineageWalkDirectionDescendants)
 		if err != nil {
 			writeError(w, err)
@@ -188,10 +210,16 @@ func handleLineageRunDescendants(deps AppDeps) http.HandlerFunc {
 		for _, lr := range descendants {
 			items = append(items, toLineageItem(lr))
 		}
+		page, nextCursor, err := pageLineageItems(items, req.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"descendants": items,
+			"descendants": page,
 			"depth":       depth,
 			"truncated":   truncated,
+			"next_cursor": nextCursor,
 		})
 	}
 }
@@ -435,6 +463,11 @@ func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		out, err := walkLineageClaims(req.Context(), deps, shared.UUID(claimID), depth, lineageWalkDirectionAncestors)
 		if err != nil {
 			writeError(w, err)
@@ -444,9 +477,15 @@ func handleLineageClaimAncestors(deps AppDeps) http.HandlerFunc {
 		for _, lr := range out {
 			items = append(items, toLineageItem(lr))
 		}
+		page, nextCursor, err := pageLineageItems(items, req.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ancestors": items,
-			"depth":     depth,
+			"ancestors":   page,
+			"depth":       depth,
+			"next_cursor": nextCursor,
 		})
 	}
 }
@@ -464,6 +503,11 @@ func handleLineageClaimDescendants(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		out, err := walkLineageClaims(req.Context(), deps, shared.UUID(claimID), depth, lineageWalkDirectionDescendants)
 		if err != nil {
 			writeError(w, err)
@@ -473,9 +517,15 @@ func handleLineageClaimDescendants(deps AppDeps) http.HandlerFunc {
 		for _, lr := range out {
 			items = append(items, toLineageItem(lr))
 		}
+		page, nextCursor, err := pageLineageItems(items, req.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"descendants": items,
+			"descendants": page,
 			"depth":       depth,
+			"next_cursor": nextCursor,
 		})
 	}
 }
@@ -486,6 +536,11 @@ func handleLineageBySource(deps AppDeps) http.HandlerFunc {
 		sourceID := chi.URLParam(req, "source_id")
 		if sourceKind == "" || sourceID == "" {
 			badRequest(w, "source_type and source_id required")
+			return
+		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
 			return
 		}
 		rows, truncated, err := queryAllLineageRecords(req.Context(), deps,
@@ -500,9 +555,15 @@ func handleLineageBySource(deps AppDeps) http.HandlerFunc {
 		for _, r := range rows {
 			matches = append(matches, toLineageItem(r))
 		}
+		page, nextCursor, err := pageLineageItems(matches, req.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"records":   matches,
-			"truncated": truncated,
+			"records":     page,
+			"truncated":   truncated,
+			"next_cursor": nextCursor,
 		})
 	}
 }
@@ -535,6 +596,11 @@ func handleLineageByProducer(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "executor_name required")
 			return
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		version := req.URL.Query().Get("version")
 		rows, truncated, err := queryAllLineageRecords(req.Context(), deps,
 			persistence.LineageQuery{Kind: persistence.LineageRecordKindClaimTerminal},
@@ -548,9 +614,15 @@ func handleLineageByProducer(deps AppDeps) http.HandlerFunc {
 		for _, r := range rows {
 			matches = append(matches, toLineageItem(r))
 		}
+		page, nextCursor, err := pageLineageItems(matches, req.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"records":   matches,
-			"truncated": truncated,
+			"records":     page,
+			"truncated":   truncated,
+			"next_cursor": nextCursor,
 		})
 	}
 }

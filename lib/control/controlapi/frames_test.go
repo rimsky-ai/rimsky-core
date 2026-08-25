@@ -305,13 +305,13 @@ func TestFrames_List_UnknownInstanceReturns404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-func TestFrames_List_InvalidInstanceIDReturns400(t *testing.T) {
+func TestFrames_List_UnknownInstanceKeyReturns404(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	status, _ := h.httpJSON(t, "GET", "/v1/instances/not-a-uuid/frames", nil)
-	require.Equal(t, http.StatusBadRequest, status)
+	status, _ := h.httpJSON(t, "GET", "/v1/instances/no-such-instance-key/frames", nil)
+	require.Equal(t, http.StatusNotFound, status)
 }
 
 func TestFrames_List_InvalidLimitReturns400(t *testing.T) {
@@ -348,14 +348,14 @@ func TestFrames_Get_UnknownInstanceReturns404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-func TestFrames_Get_InvalidInstanceIDReturns400(t *testing.T) {
+func TestFrames_Get_UnknownInstanceKeyReturns404(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	url := fmt.Sprintf("/v1/instances/not-a-uuid/frames/%s", uuid.NewString())
+	url := fmt.Sprintf("/v1/instances/no-such-instance-key/frames/%s", uuid.NewString())
 	status, _ := h.httpJSON(t, "GET", url, nil)
-	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, http.StatusNotFound, status)
 }
 
 func TestFrames_Get_InvalidFrameIDReturns400(t *testing.T) {

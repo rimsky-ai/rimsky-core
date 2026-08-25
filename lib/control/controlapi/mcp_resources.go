@@ -66,7 +66,7 @@ func (c *breakpointResourceCatalog) List(r *http.Request) ([]mcp.Resource, error
 				URI:      "rimsky://instances/" + id + "/breakpoint-hits",
 				Name:     "Breakpoint hits for instance " + id,
 				MimeType: breakpointHitsMimeType,
-				Description: "Breakpoint hits for instance " + id + ". Read with ?since=<seq> and ?limit=<n>." +
+				Description: "Breakpoint hits for instance " + id + ". Read with ?limit=<n> and ?cursor=<next_cursor>." +
 					" A single breakpoint's hits are also readable directly at rimsky://breakpoints/{breakpoint_id}/hits.",
 			})
 		}
@@ -104,7 +104,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 			if inst == nil {
 				return foundationshared.ErrInstanceNotFound
 			}
-			hits, err = c.deps.Persist.BreakpointHits().ListSinceForInstance(ctx, parsed.id, parsed.since, fetchLimit, tx)
+			hits, err = c.deps.Persist.BreakpointHits().ListSinceForInstance(ctx, parsed.id, parsed.afterSeq, fetchLimit, tx)
 			return err
 		})
 	case bpHitsScopeBreakpoint:
@@ -116,7 +116,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 			if bp == nil {
 				return foundationshared.ErrBreakpointNotFound
 			}
-			hits, err = c.deps.Persist.BreakpointHits().ListSinceForBreakpoint(ctx, parsed.id, parsed.since, fetchLimit, tx)
+			hits, err = c.deps.Persist.BreakpointHits().ListSinceForBreakpoint(ctx, parsed.id, parsed.afterSeq, fetchLimit, tx)
 			return err
 		})
 	}
@@ -127,23 +127,19 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 		return nil, &mcp.Error{Code: mcp.CodeInternalError, Message: hitsErr.Error()}
 	}
 
-	truncated := len(hits) > parsed.limit
-	if truncated {
+	nextCursor := ""
+	if len(hits) > parsed.limit {
 		hits = hits[:parsed.limit]
+		nextCursor = encodeSeqCursor(hits[len(hits)-1].Seq)
 	}
 
 	items := make([]map[string]any, 0, len(hits))
 	for _, h := range hits {
 		items = append(items, hitToWireShape(h))
 	}
-	nextSince := parsed.since
-	if len(hits) > 0 {
-		nextSince = hits[len(hits)-1].Seq
-	}
 	bodyBytes, err := json.Marshal(map[string]any{
-		"hits":       items,
-		"next_since": nextSince,
-		"truncated":  truncated,
+		"hits":        items,
+		"next_cursor": nextCursor,
 	})
 	if err != nil {
 		return nil, &mcp.Error{Code: mcp.CodeInternalError, Message: "marshal hits: " + err.Error()}
@@ -181,10 +177,10 @@ func hitToWireShape(h persistence.BreakpointHitRow) map[string]any {
 }
 
 type parsedBreakpointHitsURI struct {
-	kind  bpHitsURIKind
-	id    foundationshared.UUID
-	since int64
-	limit int
+	kind     bpHitsURIKind
+	id       foundationshared.UUID
+	afterSeq int64
+	limit    int
 }
 
 type bpHitsURIKind int
@@ -220,37 +216,37 @@ func parseBreakpointHitsURI(raw string) (*parsedBreakpointHitsURI, *mcp.Error) {
 	if err != nil {
 		return nil, &mcp.Error{Code: mcp.CodeInvalidParams, Message: "id segment must be a UUID: " + err.Error()}
 	}
-	since, limit, rpcErr := parseSinceLimit(u.Query())
+	limit, rpcErr := parseResourceLimit(u.Query())
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+	afterSeq := int64(0)
+	if raw := u.Query().Get("cursor"); raw != "" {
+		seq, err := decodeSeqCursor(raw)
+		if err != nil {
+			return nil, &mcp.Error{Code: mcp.CodeInvalidParams, Message: "cursor is not one this server minted (got " + raw + ")"}
+		}
+		afterSeq = seq
+	}
 	return &parsedBreakpointHitsURI{
-		kind:  kind,
-		id:    id,
-		since: since,
-		limit: limit,
+		kind:     kind,
+		id:       id,
+		afterSeq: afterSeq,
+		limit:    limit,
 	}, nil
 }
 
-func parseSinceLimit(q url.Values) (int64, int, *mcp.Error) {
-	since := int64(0)
-	if v := q.Get("since"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			return 0, 0, &mcp.Error{Code: mcp.CodeInvalidParams, Message: "since must be a non-negative integer (got " + v + ")"}
-		}
-		since = n
+func parseResourceLimit(q url.Values) (int, *mcp.Error) {
+	v := q.Get("limit")
+	if v == "" {
+		return resourceReadDefaultLimit, nil
 	}
-	limit := resourceReadDefaultLimit
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return 0, 0, &mcp.Error{Code: mcp.CodeInvalidParams, Message: "limit must be a positive integer (got " + v + ")"}
-		}
-		if n > resourceReadMaxLimit {
-			n = resourceReadMaxLimit
-		}
-		limit = n
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, &mcp.Error{Code: mcp.CodeInvalidParams, Message: "limit must be a positive integer (got " + v + ")"}
 	}
-	return since, limit, nil
+	if n > resourceReadMaxLimit {
+		return resourceReadMaxLimit, nil
+	}
+	return n, nil
 }

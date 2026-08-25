@@ -6,7 +6,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -149,17 +148,12 @@ type templateCursor struct {
 }
 
 func encodeTemplateCursor(registeredAt time.Time, id string) string {
-	b, _ := json.Marshal(templateCursor{R: formatTime(registeredAt), I: id})
-	return base64.StdEncoding.EncodeToString(b)
+	return persistence.EncodeCursor(templateCursor{R: formatTime(registeredAt), I: id})
 }
 
 func decodeTemplateCursor(s string) (time.Time, string, error) {
-	raw, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return time.Time{}, "", err
-	}
 	var c templateCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := persistence.DecodeCursor(s, &c); err != nil {
 		return time.Time{}, "", err
 	}
 	registeredAt, err := parseTime(c.R)

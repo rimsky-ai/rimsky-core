@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -25,11 +26,28 @@ type AssetItem struct {
 }
 
 type ListAssetsResponse struct {
-	Assets []AssetItem `json:"assets"`
+	Assets     []AssetItem `json:"assets"`
+	NextCursor string      `json:"next_cursor"`
 }
 
-func (c *Client) ListAssets(ctx context.Context, instanceID string) (*ListAssetsResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(instanceID)+"/assets", nil)
+type ListAssetsQuery struct {
+	Cursor string
+	Limit  int
+}
+
+func (c *Client) ListAssets(ctx context.Context, instanceID string, q ListAssetsQuery) (*ListAssetsResponse, error) {
+	v := url.Values{}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/v1/instances/" + url.PathEscape(instanceID) + "/assets"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -38,6 +56,17 @@ func (c *Client) ListAssets(ctx context.Context, instanceID string) (*ListAssets
 		return nil, err
 	}
 	return &out, nil
+}
+
+func PagedListAssets(ctx context.Context, c *Client, instanceID string, q ListAssetsQuery) ([]AssetItem, error) {
+	return PageAll(func(cursor string) ([]AssetItem, string, error) {
+		q.Cursor = cursor
+		page, err := c.ListAssets(ctx, instanceID, q)
+		if err != nil {
+			return nil, "", err
+		}
+		return page.Assets, page.NextCursor, nil
+	})
 }
 
 func (c *Client) GetAsset(ctx context.Context, instanceID, alias string) (*AssetItem, error) {

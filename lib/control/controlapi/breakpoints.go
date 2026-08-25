@@ -219,6 +219,11 @@ func handleListBreakpoints(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		var rows []persistence.BreakpointRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			var err error
@@ -228,11 +233,22 @@ func handleListBreakpoints(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		out := make([]breakpointItem, 0, len(rows))
-		for _, r := range rows {
+		page, nextCursor, err := persistence.PageByKey(rows, req.URL.Query().Get("cursor"), limit,
+			func(r persistence.BreakpointRow) string {
+				return persistence.SortableTimeKey(r.CreatedAt) + "|" + r.ID.String()
+			})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		out := make([]breakpointItem, 0, len(page))
+		for _, r := range page {
 			out = append(out, toBreakpointItem(r))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"breakpoints": out})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"breakpoints": out,
+			"next_cursor": nextCursor,
+		})
 	}
 }
 
@@ -247,36 +263,41 @@ func handleListBreakpointHits(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		since, limit, mcpErr := parseSinceLimit(req.URL.Query())
-		if mcpErr != nil {
-			badRequest(w, mcpErr.Message)
+		limit, limErr := parseLimit(req, resourceReadDefaultLimit)
+		if limErr != nil {
+			badRequest(w, limErr.Error())
 			return
+		}
+		afterSeq := int64(0)
+		if raw := req.URL.Query().Get("cursor"); raw != "" {
+			seq, err := decodeSeqCursor(raw)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			afterSeq = seq
 		}
 		var hits []persistence.BreakpointHitRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			var err error
-			hits, err = deps.Persist.BreakpointHits().ListSinceForInstance(ctx, inst.ID, since, limit+1, tx)
+			hits, err = deps.Persist.BreakpointHits().ListSinceForInstance(ctx, inst.ID, afterSeq, limit+1, tx)
 			return err
 		}); err != nil {
 			writeError(w, err)
 			return
 		}
-		truncated := len(hits) > limit
-		if truncated {
+		nextCursor := ""
+		if len(hits) > limit {
 			hits = hits[:limit]
+			nextCursor = encodeSeqCursor(hits[len(hits)-1].Seq)
 		}
 		items := make([]map[string]any, 0, len(hits))
 		for _, h := range hits {
 			items = append(items, hitToWireShape(h))
 		}
-		nextSince := since
-		if len(hits) > 0 {
-			nextSince = hits[len(hits)-1].Seq
-		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"hits":       items,
-			"next_since": nextSince,
-			"truncated":  truncated,
+			"hits":        items,
+			"next_cursor": nextCursor,
 		})
 	}
 }

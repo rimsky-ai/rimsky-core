@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/stubmode"
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/stubprobe"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
@@ -46,6 +47,7 @@ type AgentOutcome struct {
 	Payload         any
 	ResumeAt        *time.Time
 	SessionToken    string
+	Tags            []string
 }
 
 func erroredOutcome(errorClass string, payload any) AgentOutcome {
@@ -161,38 +163,22 @@ func runAgentStub(opts AgentRunOptions) AgentOutcome {
 	}
 
 	summary := "stub"
-	if !stubmode.IsProbe(attrs) {
-		return defaultStubCompleteOutcome(opts.SessionID, &summary)
+	// @concept: conformance
+	delta, err := stubprobe.SuccessDelta(attrs)
+	if err != nil {
+		return erroredOutcome("agent/attribute_invalid", map[string]any{"reason": err.Error()})
 	}
-
-	if stubResponse, present := attrs[stubmode.ResponseOverrideAttribute]; present {
-		obj, isObject := stubResponse.(map[string]any)
-		if !isObject {
-			return erroredOutcome("agent/attribute_invalid", map[string]any{
-				"reason": fmt.Sprintf("stub_response must be a JSON object, got %T", stubResponse),
-			})
-		}
-		delta := map[string]any{}
-		for k, v := range obj {
-			delta[k] = v
-		}
-		delta["session_token"] = opts.SessionID
-		return AgentOutcome{
-			Kind:            OutcomeComplete,
-			AttributesDelta: delta,
-			Changed:         true,
-			ChangeSummary:   &summary,
-		}
+	tags, err := stubprobe.Tags(attrs)
+	if err != nil {
+		return erroredOutcome("agent/attribute_invalid", map[string]any{"reason": err.Error()})
 	}
-	return defaultStubCompleteOutcome(opts.SessionID, &summary)
-}
-
-func defaultStubCompleteOutcome(sessionID string, changeSummary *string) AgentOutcome {
+	delta["session_token"] = opts.SessionID
 	return AgentOutcome{
 		Kind:            OutcomeComplete,
-		AttributesDelta: map[string]any{stubmode.ResponseAttribute: true, "session_token": sessionID},
+		AttributesDelta: delta,
 		Changed:         true,
-		ChangeSummary:   changeSummary,
+		ChangeSummary:   &summary,
+		Tags:            tags,
 	}
 }
 

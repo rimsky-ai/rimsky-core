@@ -107,11 +107,8 @@ func UpdateLatestSymlink(root, runDir string) error {
 		return fmt.Errorf("compute relative symlink target from %q to %q: %w", linkDir, runDir, err)
 	}
 
-	if sentinelErr := os.Symlink(".", linkPath); sentinelErr != nil && !errors.Is(sentinelErr, os.ErrExist) {
-		return fmt.Errorf("install sentinel symlink %q: %w", linkPath, sentinelErr)
-	}
 	if fi, lerr := os.Lstat(linkPath); lerr == nil && fi.Mode()&os.ModeSymlink == 0 {
-		return fmt.Errorf("latest at %q is not a symlink (mode %s); refusing to swap", linkPath, fi.Mode())
+		return fmt.Errorf("latest at %q is not a symlink (mode %s); refusing to replace it", linkPath, fi.Mode())
 	}
 
 	tmpName := fmt.Sprintf("latest.tmp.%d.%d.%d", os.Getpid(), time.Now().UnixNano(), stagingCounter.Add(1))
@@ -119,10 +116,9 @@ func UpdateLatestSymlink(root, runDir string) error {
 	if symErr := os.Symlink(relTarget, tmpPath); symErr != nil {
 		return fmt.Errorf("stage symlink %q -> %q: %w", tmpPath, relTarget, symErr)
 	}
-	if swapErr := swapAtomicInodes(tmpPath, linkPath); swapErr != nil {
+	if renameErr := os.Rename(tmpPath, linkPath); renameErr != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("atomic swap %q <-> %q: %w", tmpPath, linkPath, swapErr)
+		return fmt.Errorf("atomic rename %q -> %q: %w", tmpPath, linkPath, renameErr)
 	}
-	_ = os.Remove(tmpPath)
 	return nil
 }

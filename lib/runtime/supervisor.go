@@ -16,6 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/service"
@@ -35,13 +36,16 @@ type Config struct {
 	SyncRPCDeadlineDefault time.Duration
 	MaxQuietPeriodDefault  time.Duration
 	MaxRuntimeDefault      time.Duration
-	Resolver               executor.Resolver
-	ClaimProducerRegistry  *locks.Registry
-	NamedLocks             locks.NamedLocksConfig
-	CallbackHost           string
-	CallbackPort           int
-	CallbackAdvertiseHost  string
-	CallbackAdvertisePort  int
+	// @decision: dispatch-defaults-cover-every-node-timing-key
+	MaxRetriesDefault     int
+	RetryBackoffDefault   *spec.RetryBackoffConfig
+	Resolver              executor.Resolver
+	ClaimProducerRegistry *locks.Registry
+	NamedLocks            locks.NamedLocksConfig
+	CallbackHost          string
+	CallbackPort          int
+	CallbackAdvertiseHost string
+	CallbackAdvertisePort int
 
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
@@ -172,6 +176,8 @@ func Start(cfg Config) (*Handle, error) {
 		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
 		DeclaredTagsFor:             cfg.DeclaredTagsFor,
 		Metrics:                     cfg.Metrics,
+		MaxRetriesDefault:           cfg.MaxRetriesDefault,
+		RetryBackoffDefault:         cfg.RetryBackoffDefault,
 		LateBindServiceProxies:      cfg.LateBindServiceProxies,
 		LifecycleKick:               cfg.LifecycleKick,
 		DataProcessors:              cfg.DataProcessors,
@@ -366,6 +372,8 @@ func runLoop(
 				SyncRPCDeadlineDefault:      cfg.SyncRPCDeadlineDefault,
 				MaxQuietPeriodDefault:       cfg.MaxQuietPeriodDefault,
 				MaxRuntimeDefault:           cfg.MaxRuntimeDefault,
+				MaxRetriesDefault:           cfg.MaxRetriesDefault,
+				RetryBackoffDefault:         cfg.RetryBackoffDefault,
 				ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
 				DeclaredTagsFor:             cfg.DeclaredTagsFor,
 				Metrics:                     cfg.Metrics,

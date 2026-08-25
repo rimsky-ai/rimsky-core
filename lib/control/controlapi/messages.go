@@ -46,8 +46,8 @@ func dedupSenderKind(senderKind string, ident auth.Identity) string {
 }
 
 func registerMessagesRoutes(r chi.Router, deps AppDeps) {
-	r.Post("/instances/{id}/messages", gate(deps, "message:send", handleCreateMessage(deps)))
-	r.Get("/instances/{id}/messages", gate(deps, "message:read", handleListInstanceMessages(deps)))
+	r.Post("/instances/{idOrKey}/messages", gate(deps, "message:send", handleCreateMessage(deps)))
+	r.Get("/instances/{idOrKey}/messages", gate(deps, "message:read", handleListInstanceMessages(deps)))
 	r.Get("/messages/{id}", gate(deps, "message:read", handleGetMessage(deps)))
 }
 
@@ -79,7 +79,7 @@ type messageItem struct {
 
 type listMessagesResponse struct {
 	Messages   []messageItem `json:"messages"`
-	NextCursor string        `json:"next_cursor,omitempty"`
+	NextCursor string        `json:"next_cursor"`
 }
 
 func toMessageItem(r persistence.MessageRow) messageItem {
@@ -115,12 +115,16 @@ func (e *unknownMessageTypeError) Error() string {
 
 func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		idStr := chi.URLParam(req, "id")
-		instanceID, err := uuid.Parse(idStr)
+		resolved, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
 			return
 		}
+		if resolved == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
+			return
+		}
+		instanceID := resolved.ID
 		var body postMessageRequest
 		dec := json.NewDecoder(req.Body)
 		dec.DisallowUnknownFields()
@@ -142,7 +146,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 
 		isDryRun := ModeFromContext(req.Context()) == auth.ModeDryRun
 		msgID := shared.UUID(uuid.New())
-		instUUID := shared.UUID(instanceID)
+		instUUID := instanceID
 		ident, _ := IdentityFromContextOK(req.Context())
 		senderSubject := operatorSenderSubject(ident)
 		var finalMessageID = msgID
@@ -300,14 +304,17 @@ var errInstanceTerminated = errors.New("instance has terminated; no further mess
 
 func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		idStr := chi.URLParam(req, "id")
-		instanceID, err := uuid.Parse(idStr)
+		inst, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
 		if err != nil {
-			badRequest(w, "invalid instance id")
+			writeError(w, err)
+			return
+		}
+		if inst == nil {
+			notFoundResp(w, shared.ErrInstanceNotFound.Error())
 			return
 		}
 		q := req.URL.Query()
-		instUUID := shared.UUID(instanceID)
+		instUUID := inst.ID
 		filter := persistence.MessageListFilter{
 			InstanceID: &instUUID,
 			Sender:     q.Get("sender"),
@@ -355,8 +362,13 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		pag := persistence.ListPagination{
-			Limit:  parseLimit(req, 100),
+			Limit:  limit,
 			Cursor: q.Get("cursor"),
 		}
 		page, err := deps.Persist.Messages().List(req.Context(), filter, pag)

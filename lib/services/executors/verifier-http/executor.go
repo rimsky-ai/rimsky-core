@@ -26,6 +26,15 @@ import (
 
 const defaultParkProbeScratch = "verifier-http-stub-park-scratch"
 
+// @concept: conformance
+func stubSuccess(attrs map[string]any) *genv1.Outcome {
+	return stubprobe.Success(stubprobe.StubSuccess{
+		Attributes:    attrs,
+		ChangeSummary: "verifier-http stub",
+		ErrorClass:    "verifier/attribute_invalid",
+	})
+}
+
 // @concept: executor
 type Server struct {
 	genv1.UnimplementedExecutorServer
@@ -45,8 +54,8 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 	ud := req.GetAttributes().AsMap()
 	if s.stubMode {
 		// @concept: conformance
-		if stubmode.IsProbe(ud) {
-			return execoutcome.StubSuccess("verifier-http stub"), nil
+		if stubmode.IsProbe(ud) || stubprobe.HasResponseOverride(ud) {
+			return stubSuccess(ud), nil
 		}
 		if stubmode.IsParkProbe(ud) {
 			return stubprobe.Park(ud, req.GetScratch(), defaultParkProbeScratch), nil
@@ -60,7 +69,7 @@ func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1
 		return execoutcome.Errored("verifier/attribute_invalid", "attributes.url required"), nil
 	}
 	if s.stubMode {
-		return execoutcome.StubSuccess("verifier-http stub"), nil
+		return stubSuccess(ud), nil
 	}
 	timeout := 60 * time.Second
 	if ms, ok := checkspec.Numeric(ud["timeout_ms"]); ok && ms > 0 {

@@ -25,6 +25,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/internal/sensorauth"
 )
 
 func signHMAC(secret, ts string, body []byte) string {
@@ -103,7 +105,7 @@ func TestServeWebhook_HMAC_AcceptsSignedRejectsUnsigned(t *testing.T) {
 	ts := strconv.FormatInt(pin.Unix(), 10)
 
 	signed, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/hmac", bytes.NewReader(body))
-	signed.Header.Set(defaultSignatureHeader, signHMAC(secret, ts, body))
+	signed.Header.Set(sensorauth.DefaultSignatureHeader, signHMAC(secret, ts, body))
 	signed.Header.Set("X-Rimsky-Timestamp", ts)
 	resp, err := http.DefaultClient.Do(signed)
 	if err != nil {
@@ -126,7 +128,7 @@ func TestServeWebhook_HMAC_AcceptsSignedRejectsUnsigned(t *testing.T) {
 	}
 
 	wrong, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/hmac", bytes.NewReader(body))
-	wrong.Header.Set(defaultSignatureHeader, signHMAC("not-the-secret", ts, body))
+	wrong.Header.Set(sensorauth.DefaultSignatureHeader, signHMAC("not-the-secret", ts, body))
 	wrong.Header.Set("X-Rimsky-Timestamp", ts)
 	resp, err = http.DefaultClient.Do(wrong)
 	if err != nil {
@@ -138,7 +140,7 @@ func TestServeWebhook_HMAC_AcceptsSignedRejectsUnsigned(t *testing.T) {
 	}
 
 	tampered, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/hmac", bytes.NewReader([]byte(`{"event":"tampered"}`)))
-	tampered.Header.Set(defaultSignatureHeader, signHMAC(secret, ts, body))
+	tampered.Header.Set(sensorauth.DefaultSignatureHeader, signHMAC(secret, ts, body))
 	tampered.Header.Set("X-Rimsky-Timestamp", ts)
 	resp, err = http.DefaultClient.Do(tampered)
 	if err != nil {
@@ -202,7 +204,7 @@ func TestServeWebhook_HMAC_ReplayUnderFreshTimestampRejected(t *testing.T) {
 
 	do := func(sig, ts string) int {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/replay", bytes.NewReader(body))
-		req.Header.Set(defaultSignatureHeader, sig)
+		req.Header.Set(sensorauth.DefaultSignatureHeader, sig)
 		req.Header.Set("X-Rimsky-Timestamp", ts)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -256,7 +258,7 @@ func TestServeWebhook_HMAC_ReplayWindowRejectsStale(t *testing.T) {
 	post := func(ts time.Time) int {
 		tsStr := strconv.FormatInt(ts.Unix(), 10)
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/hmac-ts", bytes.NewReader(body))
-		req.Header.Set(defaultSignatureHeader, signHMAC(secret, tsStr, body))
+		req.Header.Set(sensorauth.DefaultSignatureHeader, signHMAC(secret, tsStr, body))
 		req.Header.Set("X-Rimsky-Timestamp", tsStr)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

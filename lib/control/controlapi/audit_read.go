@@ -27,6 +27,7 @@ var auditKinds = []string{
 	auth.EventKeyCreated.String(),
 	auth.EventKeyRevoked.String(),
 	auth.EventKeyRotated.String(),
+	auth.EventKeyExpired.String(),
 }
 
 func registerAuditRoutes(r chi.Router, deps AppDeps) {
@@ -97,8 +98,13 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 			}
 			filter.Until = &t
 		}
+		limit, err := parseLimit(req, 100)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		pag := persistence.ListPagination{
-			Limit:  parseLimit(req, 100),
+			Limit:  limit,
 			Cursor: q.Get("cursor"),
 		}
 		var page persistence.EventListResult

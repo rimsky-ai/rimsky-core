@@ -94,7 +94,10 @@ type CallbackServer struct {
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	DeclaredTagsFor             func(executorName string) (tags []string, ok bool)
 	Metrics                     MetricsHook
-	LateBindServiceProxies      map[string]string
+	// @decision: dispatch-defaults-cover-every-node-timing-key
+	MaxRetriesDefault      int
+	RetryBackoffDefault    *spec.RetryBackoffConfig
+	LateBindServiceProxies map[string]string
 	// @decision: lifecycle-drain-per-role
 	LifecycleKick func()
 	// @concept: data-processing
@@ -531,6 +534,8 @@ func (c *CallbackServer) runArgs(supervisorID string, claimProducerRegistry *loc
 		ExpectedAttributesSchemaFor: c.ExpectedAttributesSchemaFor,
 		DeclaredTagsFor:             c.DeclaredTagsFor,
 		Metrics:                     c.Metrics,
+		MaxRetriesDefault:           c.MaxRetriesDefault,
+		RetryBackoffDefault:         c.RetryBackoffDefault,
 		LateBindServiceProxies:      c.LateBindServiceProxies,
 		LifecycleKick:               c.LifecycleKick,
 		DataProcessors:              c.DataProcessors,

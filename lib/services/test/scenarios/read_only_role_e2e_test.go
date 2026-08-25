@@ -81,7 +81,7 @@ func TestReadOnlyRoleGrantsEveryReadActionAndNoWrite(t *testing.T) {
 
 	for _, action := range []string{"instance:list-frames", "instance:read-frame"} {
 		method, path := firstRouteFor(t, registry, action, map[string]string{
-			"id": instanceID, "frame_id": absentIdentifier,
+			"id": instanceID, "idOrKey": instanceID, "frame_id": absentIdentifier,
 		})
 		status := driveAs(t, ep, readOnlyKey, action, method, path)
 		if status != http.StatusForbidden {

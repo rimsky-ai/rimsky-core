@@ -4,7 +4,6 @@
 package compose
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -178,11 +177,7 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 	return nil, true, nil
 }
 
-func EmitPlan(w io.Writer, plan *Plan, format cli.Format) {
-	if format == cli.FormatJSON {
-		_ = cli.EmitJSON(w, plan)
-		return
-	}
+func EmitPlan(w io.Writer, plan *Plan) {
 	header := fmt.Sprintf("Plan for project=%s", plan.Project)
 	if plan.Context != "" {
 		header += fmt.Sprintf(", context=%s", plan.Context)
@@ -303,41 +298,12 @@ func precomputeUndeployBindings(ctx context.Context, c *cli.Client, project stri
 	return out
 }
 
-func confirmDestructive(yes bool, in io.Reader, out io.Writer, destructiveSteps []Step) bool {
-	if len(destructiveSteps) == 0 {
-		return true
-	}
-	if yes {
-		return true
-	}
-	if !isTerminal(in) {
-		fmt.Fprintln(out, "destructive operations require --yes:")
-		for _, s := range destructiveSteps {
-			fmt.Fprintln(out, "  "+formatStep(s))
-		}
-		return false
-	}
-	fmt.Fprintln(out, "the following destructive operations are scheduled:")
+func destructiveStepTargets(destructiveSteps []Step) []string {
+	out := make([]string, 0, len(destructiveSteps))
 	for _, s := range destructiveSteps {
-		fmt.Fprintln(out, "  "+formatStep(s))
+		out = append(out, formatStep(s))
 	}
-	fmt.Fprintf(out, "Proceed? [y/N] ")
-	br := bufio.NewReader(in)
-	line, _ := br.ReadString('\n')
-	line = strings.TrimSpace(strings.ToLower(line))
-	return line == "y"
-}
-
-func isTerminal(r io.Reader) bool {
-	f, ok := r.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return (info.Mode() & os.ModeCharDevice) != 0
+	return out
 }
 
 type composeUpFlags struct {
@@ -345,15 +311,17 @@ type composeUpFlags struct {
 	common       cli.CommonFlags
 }
 
-func parseComposeFlags(name string, args []string) (*composeUpFlags, []string, int) {
+func parseComposeFlags(name string, tables cli.TableSupport, args []string) (*composeUpFlags, []string, int) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	cli.SetUsage(fs, cli.UsageLine(name, "[-f <manifest>]"))
 	out := &composeUpFlags{}
+	// @decision: short-flags-single-letter
 	fs.StringVar(&out.manifestPath, "f", "rimsky-compose.yml", "path to rimsky-compose.yml")
 	cli.RegisterCommonFlags(fs, &out.common)
-	if err := fs.Parse(args); err != nil {
-		return nil, nil, 2
+	if code, done := cli.ParseVerbFlags(fs, args); done {
+		return nil, nil, code
 	}
-	if err := out.common.ResolveFormat(); err != nil {
+	if err := out.common.ResolveFormat(name, tables); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return nil, nil, 2
 	}
@@ -406,8 +374,8 @@ func clientForContext(common *cli.CommonFlags, manifestContext string) (*cli.Cli
 }
 
 func RunComposeUp(ctx context.Context, args []string) int {
-	flags, _, code := parseComposeFlags("compose up", args)
-	if code != 0 {
+	flags, _, code := parseComposeFlags("compose up", cli.NoTable, args)
+	if flags == nil {
 		return code
 	}
 	m, c, _, code := loadManifestAndClient(flags)
@@ -433,33 +401,29 @@ func runComposeUpWithManifest(ctx context.Context, m *Manifest, c *cli.Client, f
 			destructiveSteps = append(destructiveSteps, step)
 		}
 	}
-	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
+	if !cli.ConfirmDestructiveTargets(flags.common.Yes, destructiveStepTargets(destructiveSteps)...) {
 		return 2
 	}
-	asJSON := flags.common.Format == cli.FormatJSON
 	narration := io.Writer(os.Stdout)
-	if asJSON {
+	if flags.common.Format.Structured() {
 		narration = os.Stderr
 	}
 	created, applied, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: narration})
 	if err != nil {
 		return reportApplyError(err)
 	}
-	if asJSON {
-		_ = cli.EmitJSON(os.Stdout, newApplyResult(m.Project, applied, created))
-		return 0
-	}
-	if applied == 0 {
-		fmt.Fprintln(os.Stdout, "no changes")
-	} else {
-		fmt.Fprintf(os.Stdout, "applied %d changes\n", applied)
-	}
-	return 0
+	return cli.Render(flags.common.Format, newApplyResult(m.Project, applied, created), func() {
+		if applied == 0 {
+			fmt.Fprintln(os.Stdout, "no changes")
+		} else {
+			fmt.Fprintf(os.Stdout, "applied %d changes\n", applied)
+		}
+	})
 }
 
 func RunComposePlan(ctx context.Context, args []string) int {
-	flags, _, code := parseComposeFlags("compose plan", args)
-	if code != 0 {
+	flags, _, code := parseComposeFlags("compose plan", cli.NoTable, args)
+	if flags == nil {
 		return code
 	}
 	m, c, _, code := loadManifestAndClient(flags)
@@ -474,7 +438,9 @@ func RunComposePlan(ctx context.Context, args []string) int {
 	if err != nil {
 		return reportPlanError(err)
 	}
-	EmitPlan(os.Stdout, plan, flags.common.Format)
+	cli.Render(flags.common.Format, plan, func() {
+		EmitPlan(os.Stdout, plan)
+	})
 	if plan.Summary.Changes == 0 && !plan.HasDriftWarnings {
 		return 0
 	}
@@ -482,8 +448,8 @@ func RunComposePlan(ctx context.Context, args []string) int {
 }
 
 func RunComposeStatus(ctx context.Context, args []string) int {
-	flags, _, code := parseComposeFlags("compose status", args)
-	if code != 0 {
+	flags, _, code := parseComposeFlags("compose status", cli.HasTable, args)
+	if flags == nil {
 		return code
 	}
 	m, c, _, code := loadManifestAndClient(flags)
@@ -561,19 +527,14 @@ func RunComposeStatus(ctx context.Context, args []string) int {
 		rows = append(rows, annot{Kind: "instance", Name: key, Annotation: ann})
 	}
 
-	if flags.common.Format == cli.FormatJSON {
-		_ = cli.EmitJSON(os.Stdout, map[string]any{
-			"project": m.Project,
-			"items":   rows,
-		})
-		return 0
-	}
-	out := make([][]string, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, []string{r.Kind, r.Name, r.Annotation})
-	}
-	cli.EmitTable(os.Stdout, []string{"KIND", "NAME", "ANNOTATION"}, out)
-	return 0
+	status := map[string]any{"project": m.Project, "items": rows}
+	return cli.Render(flags.common.Format, status, func() {
+		out := make([][]string, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, []string{r.Kind, r.Name, r.Annotation})
+		}
+		cli.EmitTable(os.Stdout, []string{"KIND", "NAME", "ANNOTATION"}, out)
+	})
 }
 
 func reportPlanError(err error) int {

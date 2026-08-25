@@ -149,6 +149,81 @@ func TestApplyTerminalInfraError_NodeMaxRetriesOverridesDefaultCap(t *testing.T)
 	}
 }
 
+// @decision: dispatch-defaults-cover-every-node-timing-key
+func TestApplyTerminalInfraError_DeploymentMaxRetriesDefaultCapsRetriesLikeANodesOwn(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const deploymentCap = 2
+	nodeDef := &node.TemplateNodeDef{Type: "holder", Executor: "test-executor"}
+	args, acq, tables := seedHeldErrorFixture(t, cascade.NodeStateRunning, nodeDef)
+	args.MaxRetriesDefault = deploymentCap
+
+	for attempt := 1; attempt <= deploymentCap; attempt++ {
+		driveInfraErrorOnce(t, tables, args, acq)
+		var runRow *persistence.NodeRunForGate
+		if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
+			runRow = r
+			return err
+		}); err != nil {
+			t.Fatalf("load run: %v", err)
+		}
+		if runRow.State != cascade.NodeStateRunning {
+			t.Fatalf("attempt %d of dispatch_defaults.max_retries=%d: run state = %v, want %v",
+				attempt, deploymentCap, runRow.State, cascade.NodeStateRunning)
+		}
+	}
+
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, err := applyTerminalInfraError(ctx, args, acq, "dial_boom", nil, nil, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("applyTerminalInfraError (give-up attempt): %v", err)
+	}
+	var runRow *persistence.NodeRunForGate
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
+		runRow = r
+		return err
+	}); err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if runRow.State != cascade.NodeStateFailed {
+		t.Fatalf("dispatch_defaults.max_retries=%d must cap infra retries exactly as a node's own "+
+			"max_retries does: after %d retries one more infra error must give up (state=failed); got %v",
+			deploymentCap, deploymentCap, runRow.State)
+	}
+}
+
+// @decision: dispatch-defaults-cover-every-node-timing-key
+func TestApplyTerminalInfraError_NoDeploymentDefaultKeepsRimskysOwnCap(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	nodeDef := &node.TemplateNodeDef{Type: "holder", Executor: "test-executor"}
+	args, acq, tables := seedHeldErrorFixture(t, cascade.NodeStateRunning, nodeDef)
+	if args.MaxRetriesDefault != 0 {
+		t.Fatalf("fixture MaxRetriesDefault = %d, want 0 (a deployment that sets no default)", args.MaxRetriesDefault)
+	}
+
+	for attempt := 1; attempt <= wantDefaultInfraRetryCap; attempt++ {
+		driveInfraErrorOnce(t, tables, args, acq)
+	}
+	var runRow *persistence.NodeRunForGate
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := tables.Nodes().GetRunForGate(ctx, acq.NodeRunID, tx)
+		runRow = r
+		return err
+	}); err != nil {
+		t.Fatalf("load run: %v", err)
+	}
+	if runRow.State != cascade.NodeStateRunning {
+		t.Fatalf("with no node and no deployment max_retries, infra errors retry to rimsky's own cap of %d; got %v",
+			wantDefaultInfraRetryCap, runRow.State)
+	}
+}
+
 // @concept: sub-graph
 func TestApplyTerminalInfraError_SubgraphExitNodeStillRetriesAndGivesUp(t *testing.T) {
 	t.Parallel()

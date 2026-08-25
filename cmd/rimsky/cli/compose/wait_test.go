@@ -50,7 +50,7 @@ func (f *fakeInstanceClient) script(id string, frame fakeFrame) {
 	f.frames[id] = append(f.frames[id], frame)
 }
 
-func (f *fakeInstanceClient) ListInstanceNodes(ctx context.Context, id string) (*cli.ListInstanceNodesResponse, error) {
+func (f *fakeInstanceClient) ListInstanceNodes(ctx context.Context, id string, q cli.ListNodesQuery) (*cli.ListInstanceNodesResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.polls++
@@ -201,7 +201,7 @@ type transientNodesErrorClient struct {
 	errOnce error
 }
 
-func (c *transientNodesErrorClient) ListInstanceNodes(ctx context.Context, id string) (*cli.ListInstanceNodesResponse, error) {
+func (c *transientNodesErrorClient) ListInstanceNodes(ctx context.Context, id string, q cli.ListNodesQuery) (*cli.ListInstanceNodesResponse, error) {
 	c.mu.Lock()
 	frames := c.fakeInstanceClient.frames[id]
 	cursor := c.fakeInstanceClient.idx[id]
@@ -212,7 +212,7 @@ func (c *transientNodesErrorClient) ListInstanceNodes(ctx context.Context, id st
 		return nil, c.errOnce
 	}
 	c.mu.Unlock()
-	return c.fakeInstanceClient.ListInstanceNodes(ctx, id)
+	return c.fakeInstanceClient.ListInstanceNodes(ctx, id, q)
 }
 
 func TestWaitForInstancesTerminal_TransientNodesErrorPreservesOutcome(t *testing.T) {
@@ -242,7 +242,7 @@ type zeroRunNodeClient struct {
 	poll int
 }
 
-func (c *zeroRunNodeClient) ListInstanceNodes(_ context.Context, _ string) (*cli.ListInstanceNodesResponse, error) {
+func (c *zeroRunNodeClient) ListInstanceNodes(_ context.Context, _ string, _ cli.ListNodesQuery) (*cli.ListInstanceNodesResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.poll++

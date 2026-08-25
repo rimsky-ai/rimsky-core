@@ -17,27 +17,28 @@ import (
 
 func RunWatch(ctx context.Context, args []string) int {
 	var pollInterval time.Duration
-	var until string
+	var untilState string
 	var since string
 	var kind string
-	fs, common, endpoint, code := runWithCommon("watch", args, func(fs *flag.FlagSet) {
-		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "polling interval")
-		fs.StringVar(&until, "until", "idle",
-			"exit condition: idle (no open frame and no pending messages) or terminated (operator-terminated instance)")
-		fs.StringVar(&since, "since", "", "only events at or after this RFC3339 timestamp")
-		fs.StringVar(&kind, "kind", "", "only events of this kind (server-side filter)")
-	})
-	if code != 0 {
+	fs, common, endpoint, code := runWithCommon("watch",
+		"<id-or-key> [--poll-interval ...] [--since <RFC3339>] [--kind <kind>] [--until-state idle|terminated]",
+		NoTable, args, func(fs *flag.FlagSet) {
+			fs.DurationVar(&pollInterval, "poll-interval", time.Second, "polling interval")
+			fs.StringVar(&untilState, "until-state", "idle",
+				"exit condition: idle (no open frame and no pending messages) or terminated (operator-terminated instance)")
+			fs.StringVar(&since, "since", "", "only events at or after this RFC3339 timestamp")
+			fs.StringVar(&kind, "kind", "", "only events of this kind (server-side filter)")
+		})
+	if common == nil {
 		return code
 	}
-	if until != "idle" && until != "terminated" {
-		fmt.Fprintln(os.Stderr, "rimsky watch: --until must be idle or terminated")
+	if untilState != "idle" && untilState != "terminated" {
+		fmt.Fprintln(os.Stderr, "rimsky watch: --until-state must be idle or terminated")
 		return 2
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky watch <id-or-key> [--poll-interval ...] [--since <RFC3339>] [--kind <kind>]")
-		return 2
+		return UsageError(fs)
 	}
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
@@ -84,7 +85,7 @@ func RunWatch(ctx context.Context, args []string) int {
 					render: func() { printWatchEvent(common.Format, e) },
 				})
 			}
-			if reachedAlreadySeen || page.NextCursor == "" {
+			if reachedAlreadySeen || page.NextCursor == "" || page.NextCursor == nextCursor || len(page.Events) == 0 {
 				break
 			}
 			nextCursor = page.NextCursor
@@ -108,7 +109,7 @@ func RunWatch(ctx context.Context, args []string) int {
 			printWatchTerminal(common.Format, inst)
 			return 0
 		}
-		if until == "idle" {
+		if untilState == "idle" {
 			idle, err := instanceIsIdle(signalCtx, c, id)
 			if err != nil {
 				if signalCtx.Err() != nil {
@@ -167,8 +168,8 @@ func parseWatchTime(s string) time.Time {
 }
 
 func printWatchEvent(format Format, e Event) {
-	if format == FormatJSON {
-		_ = EmitJSON(os.Stdout, map[string]any{"source": "event", "event": e})
+	if format.Structured() {
+		_ = EmitStructured(os.Stdout, format, map[string]any{"source": "event", "event": e})
 		return
 	}
 	if e.Kind == "breakpoint.hit" {
@@ -187,8 +188,8 @@ func watchEventDetail(e Event) string {
 }
 
 func printWatchTerminal(format Format, inst *Instance) {
-	if format == FormatJSON {
-		_ = EmitJSON(os.Stdout, map[string]any{"source": "terminal", "instance": inst})
+	if format.Structured() {
+		_ = EmitStructured(os.Stdout, format, map[string]any{"source": "terminal", "instance": inst})
 		return
 	}
 	terminatedAt := ""
@@ -199,8 +200,8 @@ func printWatchTerminal(format Format, inst *Instance) {
 }
 
 func printWatchIdle(format Format, inst *Instance) {
-	if format == FormatJSON {
-		_ = EmitJSON(os.Stdout, map[string]any{"source": "idle", "instance": inst})
+	if format.Structured() {
+		_ = EmitStructured(os.Stdout, format, map[string]any{"source": "idle", "instance": inst})
 		return
 	}
 	fmt.Fprintf(os.Stdout, "idle\tinstance %s has no open frame and no pending messages\n", inst.UUID())

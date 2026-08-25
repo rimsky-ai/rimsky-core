@@ -177,14 +177,14 @@ func TestMcpTransportParity(t *testing.T) {
 			name:     "message",
 			readTool: "message_list",
 			readArgs: map[string]any{
-				"id": instanceID,
+				"idOrKey": instanceID,
 			},
 			readHTTPVerb: http.MethodGet,
 			readHTTPPath: "/v1/instances/" + instanceID + "/messages",
 			mutationTool: "message_send",
 			// @decision: idempotency-key-header-universal
 			mutationArgs: map[string]any{
-				"id":              instanceID,
+				"idOrKey":         instanceID,
 				"type":            "parity/probe",
 				"idempotency_key": "mcp-parity-probe-" + uuid.NewString(),
 				"payload": map[string]any{
@@ -228,7 +228,7 @@ func TestMcpTransportParity(t *testing.T) {
 			name:     "asset",
 			readTool: "asset_list",
 			readArgs: map[string]any{
-				"id": instanceID,
+				"idOrKey": instanceID,
 			},
 			readHTTPVerb: http.MethodGet,
 			readHTTPPath: "/v1/instances/" + instanceID + "/assets",
@@ -452,7 +452,7 @@ func assertObservableStateMutationParity(t *testing.T, ep harness.RimskyEndpoint
 		}
 
 	case "message":
-		instID := cat.mutationArgs["id"].(string)
+		instID := cat.mutationArgs["idOrKey"].(string)
 		status, raw := getJSONAuth(t, ep, "/v1/instances/"+instID+"/messages", bearer)
 		if status != http.StatusOK {
 			t.Fatalf("message mutation parity: GET /v1/instances/%s/messages returned %d, want 200\nbody: %s", instID, status, string(raw))

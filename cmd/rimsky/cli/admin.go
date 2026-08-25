@@ -10,13 +10,15 @@ import (
 )
 
 func RunAdminReset(ctx context.Context, args []string) int {
-	fs, common, endpoint, code := runWithCommon("admin reset", args, nil)
-	if code != 0 {
+	fs, common, endpoint, code := runWithCommon("admin reset", "<node-id>", NoTable, args, nil)
+	if common == nil {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky admin reset <node-id>")
+		return UsageError(fs)
+	}
+	if !ConfirmDestructiveTargets(common.Yes, "reset node "+rest[0]) {
 		return 2
 	}
 	c := NewClient(endpoint)
@@ -24,10 +26,7 @@ func RunAdminReset(ctx context.Context, args []string) int {
 	if err := c.ResetNode(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, resetResult{Node: rest[0], Reset: true})
-		return 0
-	}
-	fmt.Fprintf(os.Stdout, "reset %s\n", rest[0])
-	return 0
+	return Render(common.Format, resetResult{Node: rest[0], Reset: true}, func() {
+		fmt.Fprintf(os.Stdout, "reset %s\n", rest[0])
+	})
 }

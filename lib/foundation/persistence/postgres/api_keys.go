@@ -69,7 +69,7 @@ func (b *apiKeysImpl) Insert(ctx context.Context, k persistence.APIKey, tx persi
 
 const selectAPIKeyCols = `
 	id, key_hash, name, permissions, created_at,
-	created_by_key_id, last_used_at, expires_at, revoke_at, revoked_at`
+	created_by_key_id, last_used_at, expires_at, revoke_at, revoked_at, expiry_event_at`
 
 func (b *apiKeysImpl) GetByID(ctx context.Context, id shared.UUID, tx persistence.Tx) (persistence.APIKey, bool, error) {
 	row, err := b.run(tx).Query(ctx,
@@ -248,6 +248,35 @@ func (b *apiKeysImpl) SweepRotationGrace(ctx context.Context, now time.Time, tx 
 	return out, nil
 }
 
+// @concept: api-key
+func (b *apiKeysImpl) SweepExpired(ctx context.Context, now time.Time, tx persistence.Tx) ([]persistence.APIKey, error) {
+	rows, err := b.run(tx).Query(ctx,
+		`UPDATE rimsky_api_keys
+		    SET expiry_event_at = $1
+		  WHERE expires_at IS NOT NULL AND expires_at <= $1 AND expiry_event_at IS NULL
+		    AND revoked_at IS NULL
+		  RETURNING id, name, expires_at`, now)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.APIKeys.SweepExpired: %w", err)
+	}
+	defer rows.Close()
+	out := []persistence.APIKey{}
+	for rows.Next() {
+		var k persistence.APIKey
+		var expiresAt time.Time
+		if err := rows.Scan(&k.ID, &k.Name, &expiresAt); err != nil {
+			return nil, fmt.Errorf("postgres.APIKeys.SweepExpired.scan: %w", err)
+		}
+		k.ExpiresAt = &expiresAt
+		k.ExpiryEventAt = &now
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (b *apiKeysImpl) UpdateLastUsed(ctx context.Context, id shared.UUID, now time.Time, tx persistence.Tx) error {
 	_, err := b.run(tx).Exec(ctx,
 		`UPDATE rimsky_api_keys SET last_used_at = $2 WHERE id = $1`, id, now)
@@ -295,10 +324,10 @@ func scanAPIKeys(rows pgx.Rows) ([]persistence.APIKey, error) {
 func scanAPIKeyRow(rows pgx.Rows) (persistence.APIKey, error) {
 	var k persistence.APIKey
 	var createdBy *shared.UUID
-	var lastUsed, expiresAt, revokeAt, revokedAt *time.Time
+	var lastUsed, expiresAt, revokeAt, revokedAt, expiryEventAt *time.Time
 	if err := rows.Scan(
 		&k.ID, &k.KeyHash, &k.Name, &k.Permissions, &k.CreatedAt,
-		&createdBy, &lastUsed, &expiresAt, &revokeAt, &revokedAt,
+		&createdBy, &lastUsed, &expiresAt, &revokeAt, &revokedAt, &expiryEventAt,
 	); err != nil {
 		return persistence.APIKey{}, fmt.Errorf("postgres.APIKeys.scan: %w", err)
 	}
@@ -307,6 +336,7 @@ func scanAPIKeyRow(rows pgx.Rows) (persistence.APIKey, error) {
 	k.ExpiresAt = expiresAt
 	k.RevokeAt = revokeAt
 	k.RevokedAt = revokedAt
+	k.ExpiryEventAt = expiryEventAt
 	return k, nil
 }
 

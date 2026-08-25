@@ -225,7 +225,7 @@ func TestRunTemplateRm_OK(t *testing.T) {
 	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	var got int
 	out := captureStdout(t, func() {
-		got = cli.RunTemplateRm(context.Background(), []string{"v1"})
+		got = cli.RunTemplateRm(context.Background(), []string{"--yes", "v1"})
 	})
 	if got != 0 {
 		t.Errorf("exit %d", got)
@@ -239,7 +239,7 @@ func TestRunTemplateRm_Conflict(t *testing.T) {
 	srv := setupClitest(t)
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	srv.State.SetTemplateState(hash, "deployed")
-	if got := cli.RunTemplateRm(context.Background(), []string{"v1"}); got != 1 {
+	if got := cli.RunTemplateRm(context.Background(), []string{"--yes", "v1"}); got != 1 {
 		t.Errorf("exit %d, want 1 (conflict)", got)
 	}
 }

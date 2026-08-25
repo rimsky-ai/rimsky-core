@@ -24,6 +24,7 @@ type APIKey struct {
 	ExpiresAt      *time.Time
 	RevokeAt       *time.Time
 	RevokedAt      *time.Time
+	ExpiryEventAt  *time.Time
 }
 
 func (k APIKey) ActiveAt(now time.Time) bool {
@@ -74,6 +75,8 @@ type APIKeyTable interface {
 	SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx Tx) (found bool, err error)
 
 	SweepRotationGrace(ctx context.Context, now time.Time, tx Tx) ([]APIKey, error)
+
+	SweepExpired(ctx context.Context, now time.Time, tx Tx) ([]APIKey, error)
 
 	UpdateLastUsed(ctx context.Context, id shared.UUID, now time.Time, tx Tx) error
 }

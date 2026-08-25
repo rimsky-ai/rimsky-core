@@ -214,7 +214,9 @@ func TestRunTick_FrameEndDetection_ObservesDBStampedDuration(t *testing.T) {
 
 	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
-	startedAt := time.Now().Add(-5 * time.Second)
+	var dbNow time.Time
+	pgdbtest.QueryRowForTest(ctx, t, d, `SELECT now()`, []any{}, &dbNow)
+	startedAt := dbNow.Add(-5 * time.Second)
 	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &startedAt)
 	seedNode(t, ctx, d, instanceID, src, "fresh", &frameID)
 	markMessageDelivered(t, ctx, d, msgID)

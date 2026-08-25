@@ -81,18 +81,25 @@ func TestClaimHoldersRoute(t *testing.T) {
 	status, _ := doJSON(t, router, http.MethodGet, "/v1/claim-handles/not-a-uuid/holders", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 
-	emptyID := uuid.New().String()
-	status, body := doJSON(t, router, http.MethodGet, "/v1/claim-handles/"+emptyID+"/holders", nil)
-	require.Equal(t, http.StatusOK, status, string(body))
-	var emptyResp struct {
-		Holders []map[string]any `json:"holders"`
-	}
-	require.NoError(t, json.Unmarshal(body, &emptyResp))
-	require.Empty(t, emptyResp.Holders)
+	unknownID := uuid.New().String()
+	status, body := doJSON(t, router, http.MethodGet, "/v1/claim-handles/"+unknownID+"/holders", nil)
+	require.Equal(t, http.StatusNotFound, status, string(body))
 
 	holderNodeID := seedThrowawayNode(t, h)
 	holderNodeRunID := seedRunForNode(ctx, t, h, holderNodeID)
 	claimHandleID := seedScopeClaimHandle(ctx, t, h, holderNodeID)
+
+	status, body = doJSON(t, router, http.MethodGet, "/v1/claim-handles/"+claimHandleID.String()+"/holders", nil)
+	require.Equal(t, http.StatusOK, status, string(body))
+	var emptyResp struct {
+		Holders    []map[string]any `json:"holders"`
+		NextCursor string           `json:"next_cursor"`
+	}
+	require.NoError(t, json.Unmarshal(body, &emptyResp))
+	require.NotNil(t, emptyResp.Holders)
+	require.Empty(t, emptyResp.Holders)
+	require.Contains(t, string(body), `"holders":[]`)
+
 	claimHolderID := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
@@ -105,14 +112,20 @@ func TestClaimHoldersRoute(t *testing.T) {
 	status, body = doJSON(t, router, http.MethodGet, "/v1/claim-handles/"+claimHandleID.String()+"/holders", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	var resp struct {
-		Holders []map[string]any `json:"holders"`
+		Holders    []map[string]any `json:"holders"`
+		NextCursor string           `json:"next_cursor"`
 	}
 	require.NoError(t, json.Unmarshal(body, &resp))
 	require.Len(t, resp.Holders, 1)
+	require.Empty(t, resp.NextCursor)
 	require.Equal(t, claimHolderID.String(), resp.Holders[0]["id"])
 	require.Equal(t, claimHandleID.String(), resp.Holders[0]["claim_handle_id"])
 	require.Equal(t, holderNodeRunID.String(), resp.Holders[0]["holder_run_id"])
 	require.Equal(t, "active", resp.Holders[0]["state"])
+
+	status, body = doJSON(t, router, http.MethodGet,
+		"/v1/claim-handles/"+claimHandleID.String()+"/holders?cursor=not-a-cursor", nil)
+	require.Equal(t, http.StatusBadRequest, status, string(body))
 }
 
 func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
